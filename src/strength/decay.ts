@@ -119,14 +119,35 @@ export class StrengthDecayManager {
 
   /**
    * Eviction sweep (T-03-EVICT, STR-03).
-   * Scans all nodes; evicts those where:
+   * Scans all nodes; evicts those where ALL three conditions hold:
    *   tombstoned = 1  AND  effective_s < evictionSThreshold  AND  c < evictionCThreshold
    *
    * The AND-gate means tombstoned=0 nodes are structurally protected regardless of s/c.
+   * This is the invariant: no origin=observed/asserted_by_user node with tombstoned=0
+   * can ever be evicted by decay alone. (T-03-EVICT)
+   *
    * Returns the ids of evicted nodes (deleted from DB).
    */
   runEvictionSweep(): string[] {
-    // STUB — no-op
-    return [];
+    const rows = this.stmtGetAllNodes.all() as NodeRow[];
+    const nowMs = this.clock.nowMs();
+    const evicted: string[] = [];
+
+    for (const row of rows) {
+      // Compute the lazy effective strength at current time
+      const effectiveS = this.effectiveStrength(row.s, row.last_access, nowMs, this.config.lambda);
+
+      // AND-gated predicate: all three conditions required (T-03-EVICT)
+      if (
+        row.tombstoned === 1 &&
+        effectiveS < this.config.evictionSThreshold &&
+        row.c < this.config.evictionCThreshold
+      ) {
+        this.stmtDeleteNode.run(row.id);
+        evicted.push(row.id);
+      }
+    }
+
+    return evicted;
   }
 }
