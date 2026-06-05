@@ -122,6 +122,43 @@ export interface EngineConfig {
    * 1536 dims → 6KB/node at v1 scale (negligible).
    */
   embeddingDimensions: number;
+
+  // --- Phase 2: consolidation tunables (D-13 calibration placeholders) ---
+
+  /**
+   * Top-k candidate count passed to the judge (D-18).
+   * 5 balances recall (enough candidates) vs. cost (judge evaluates each).
+   * Increase if missed-match rate is high in dogfood; decrease if cost is a concern.
+   */
+  candidateK: number;
+
+  /**
+   * Salience below which a non-hard-keep episode is skipped in consolidation replay (CONSOL-01).
+   * 0.2 means episodes with <20% salience are skipped unless force-kept.
+   * Calibrate against real transcript cadence — too low wastes LLM budget on noise.
+   */
+  consolSkipThreshold: number;
+
+  /**
+   * Best-candidate cosine similarity below which a claim auto-classifies as `unrelated`
+   * with no judge call; above it the claim escalates to the judge (UPDATE-02).
+   * 0.3 is conservative: only extremely dissimilar claims skip the judge.
+   * Safe-direction-only rule: below threshold → unrelated (never auto-confirms).
+   */
+  unrelatedSimilarityThreshold: number;
+
+  /**
+   * PE/resistance ratio below which a `contradict` HOLDs (weak challenge vs. strong node) (D-15/D-16).
+   * 0.8: if PE magnitude < 0.8× resistance, the contradiction is not strong enough to reconcile.
+   */
+  peReconcileBandLow: number;
+
+  /**
+   * PE/resistance ratio above which a `contradict` appends a new divergent trace instead of
+   * reconciling (D-15/D-16). 2.0: extreme/categorical contradictions coexist rather than overwrite.
+   * Between peReconcileBandLow and peReconcileBandHigh → tombstone-and-replace reconcile.
+   */
+  peReconcileBandHigh: number;
 }
 
 /** Default salience weights for the Allocation Gate. Calibrate against real transcripts. */
@@ -170,4 +207,9 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   anthropicModel: 'claude-haiku-4-5-20251001',
   openaiEmbedModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
+  candidateK: 5,
+  consolSkipThreshold: 0.2,
+  unrelatedSimilarityThreshold: 0.3,
+  peReconcileBandLow: 0.8,
+  peReconcileBandHigh: 2.0,
 };
