@@ -48,3 +48,11 @@ export { AnthropicJudge, MockJudge } from './model/judge';
 // ── Consolidation utilities (Phase 2) ────────────────────────────────────────
 export { normalizeValue } from './consolidation/normalize';
 export { Consolidator } from './consolidation/consolidator';
+
+// ── PE-gated update routing (Phase 2, Plan 03, spec §4 D-15/D-16/D-19/D-20) ─
+export type { UpdateAction } from './consolidation/update-decision';
+export {
+  routeContradiction,
+  isOscillation,
+  countDistinctProvenance,
+} from './consolidation/update-decision';

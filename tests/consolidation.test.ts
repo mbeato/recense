@@ -1,9 +1,15 @@
 /**
  * Behavioral tests for the Consolidator (offline sleep pass).
- * Covers: CONSOL-01/02/03, UPDATE-01/02/03 (confirm/extend/unrelated/HOLD routes).
+ * Covers: CONSOL-01/02/03, UPDATE-01/02/03/04/05 (all routes including
+ * PE-gated reconcile, append-new, force-destabilize, oscillation guard).
  *
  * Harness mirrors tests/seeder.test.ts: in-memory Database, initSchema, FakeClock,
  * DEFAULT_CONFIG, and fully deterministic mocks (no network).
+ *
+ * Phase-2 ROADMAP criteria proven through the integrated path:
+ *   Criterion 1 — changed fact reconciles (tombstoned old, new current, excluded from topk)
+ *   Criterion 3 — N distinct-session contradictions force-destabilize regardless of strength
+ *   Criterion 5 — two real reconciles: flip-back escalates to append-new (oscillation guard)
  */
 
 import Database from 'better-sqlite3';
@@ -358,9 +364,15 @@ describe('Consolidator', () => {
     expect(edges.length).toBe(0); // no edges
   });
 
-  // ── contradict HOLD ───────────────────────────────────────────────────────
+  // ── contradict HOLD (re-audited for D-19 filter) ─────────────────────────
+  //
+  // These two tests prove the D-19 filter at record time:
+  //   (a) a provenance-eligible episode IS recorded (the Plan-02 contract, preserved)
+  //   (b) an inferred-origin episode is DROPPED — recordContradiction is NOT called
 
-  it('contradict HOLD: judge contradict verdict records PendingContradiction; node is NOT tombstoned', async () => {
+  it('contradict HOLD: provenance-eligible episode records PendingContradiction; node is NOT tombstoned', async () => {
+    // Node: s=0.5, c=0.7 → resistance = 0.35 (no decay — FakeClock, same timestamp)
+    // magnitude=0.1 → ratio = 0.1/0.35 ≈ 0.286 < peReconcileBandLow(0.8) → HOLD
     const candidateId = newId();
     h.store.upsertNode({ id: candidateId, type: 'fact', value: 'established fact', origin: 'observed', s: 0.5, c: 0.7 });
     const sameEmbedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
@@ -370,7 +382,7 @@ describe('Consolidator', () => {
     const contradictVerdict: JudgeVerdict = {
       best_candidate_id: candidateId,
       relation: 'contradict',
-      magnitude: 0.4,
+      magnitude: 0.1, // HOLD band: ratio≈0.29 < 0.8
     };
     const judge = new MockJudge([contradictVerdict]);
     const extractor = new MockClaimExtractor([{ type: 'fact', value: 'contradicting claim here' }]);
@@ -393,14 +405,58 @@ describe('Consolidator', () => {
     await consolidator.consolidate();
 
     const node = h.store.getNode(candidateId)!;
-    // Node is NOT tombstoned — HOLD only this slice
+    // Node is NOT tombstoned — HOLD (not reconcile)
     expect(node.tombstoned).toBe(0);
 
-    // pending_contradictions should have grown by 1
+    // pending_contradictions must have grown by 1 — provenance-eligible episode IS recorded
     const contradictions = JSON.parse(node.pending_contradictions) as PendingContradiction[];
     expect(contradictions).toHaveLength(1);
     expect(contradictions[0]!.session_id).toBe('session-contradict');
     expect(contradictions[0]!.origin).toBe('observed');
+  });
+
+  it('contradict HOLD D-19 filter: inferred-origin contradiction is DROPPED — recordContradiction NOT called', async () => {
+    // D-19: claimOrigin='inferred' → skip recordContradiction entirely.
+    // Inferred echoes cannot inflate the force-destabilization count.
+    const candidateId = newId();
+    h.store.upsertNode({ id: candidateId, type: 'fact', value: 'well known fact', origin: 'observed', s: 0.5, c: 0.7 });
+    const sameEmbedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmbedder.embed(['well known fact']);
+    h.store.setEmbedding(candidateId, vec!);
+
+    const contradictVerdict: JudgeVerdict = {
+      best_candidate_id: candidateId,
+      relation: 'contradict',
+      magnitude: 0.1, // HOLD band
+    };
+    const judge = new MockJudge([contradictVerdict]);
+    // The claim inherits episode.origin='inferred' inside the consolidator
+    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'inferred-origin contradiction' }]);
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+    );
+
+    // Episode with origin='inferred' → claimOrigin is 'inferred' → NOT provenance-eligible (D-19)
+    h.episodes.append({
+      content: 'inferred contradiction content',
+      origin: 'inferred',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-inferred-contradict',
+      source_inference_id: null,
+    });
+
+    await consolidator.consolidate();
+
+    const node = h.store.getNode(candidateId)!;
+    // Node is NOT tombstoned — inferred-origin does not even trigger HOLD recording
+    expect(node.tombstoned).toBe(0);
+
+    // pending_contradictions must be EMPTY — inferred contradiction is dropped (D-19)
+    const contradictions = JSON.parse(node.pending_contradictions) as PendingContradiction[];
+    expect(contradictions).toHaveLength(0);
   });
 
   // ── CONSOL-02 re-embed dirty nodes ────────────────────────────────────────
@@ -556,5 +612,286 @@ describe('Consolidator', () => {
     // Second node's strength should have increased
     const s2AfterResume = h.store.getNode(nodeId2)!.s;
     expect(s2AfterResume).toBeGreaterThan(0.3);
+  });
+
+  // ── ROADMAP Criterion 1: changed fact reconciles ─────────────────────────
+  //
+  // Mid-band contradict: old node tombstoned + new current value set, carrying
+  // prev_value = superseded value; tombstoned node absent from topk nomination.
+
+  it('criterion 1: mid-band contradict tombstones old node, mints new current with prev_value, excluded from topk', async () => {
+    // Node: s=0.5, c=0.7 → resistance = 0.5 * 0.7 = 0.35 (FakeClock, no decay)
+    // magnitude=0.5 → ratio = 0.5/0.35 ≈ 1.43, between 0.8 and 2.0 → 'reconcile'
+    const oldNodeId = newId();
+    const oldValue = 'engineer';
+    h.store.upsertNode({ id: oldNodeId, type: 'fact', value: oldValue, origin: 'observed', s: 0.5, c: 0.7 });
+    const sameEmbedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmbedder.embed([oldValue]);
+    h.store.setEmbedding(oldNodeId, vec!);
+
+    const newValue = 'manager';
+    const contradictVerdict: JudgeVerdict = {
+      best_candidate_id: oldNodeId,
+      relation: 'contradict',
+      magnitude: 0.5, // mid-band: ratio ≈ 1.43
+    };
+    const judge = new MockJudge([contradictVerdict]);
+    const extractor = new MockClaimExtractor([{ type: 'fact', value: newValue }]);
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'role changed to manager',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-reconcile',
+      source_inference_id: null,
+    });
+
+    await consolidator.consolidate();
+
+    // Old node must be tombstoned (superseded)
+    const oldNode = h.store.getNode(oldNodeId)!;
+    expect(oldNode.tombstoned).toBe(1);
+
+    // A new current node with the new value must exist
+    const allNodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    const newCurrentNodes = allNodes.filter(n => n.value === newValue && n.tombstoned === 0);
+    expect(newCurrentNodes).toHaveLength(1);
+
+    // The new node carries the superseded value as prev_value (D-20 oscillation breadcrumb)
+    expect(newCurrentNodes[0]!.prev_value).toBe(oldValue);
+
+    // topk MUST NOT include the tombstoned old node (CandidateRetriever excludes tombstoned=1)
+    const queryVec = new Float32Array(h.config.embeddingDimensions);
+    queryVec[0] = 1.0;
+    const topkResults = h.retriever.topk(queryVec, 10);
+    const topkIds = topkResults.map(r => r.id);
+    expect(topkIds).not.toContain(oldNodeId);
+  });
+
+  // ── ROADMAP Criterion 3: force-destabilize at N distinct sessions ─────────
+  //
+  // A strong node that resists individual contradictions (HOLD) is force-destabilized
+  // once N *distinct* sessions have contradicted it (Chen-2020 lock-in fix, D-19).
+
+  it('criterion 3: N distinct-session contradictions force-destabilize regardless of strength', async () => {
+    // Strong node: s=0.9, c=0.8 → resistance = 0.72 (FakeClock, no decay)
+    // HOLD magnitude=0.1: ratio = 0.1/0.72 ≈ 0.14 < 0.8 → HOLD for each individual episode
+    // contradictionN=3 (DEFAULT_CONFIG): after 3 distinct sessions → force-destabilize
+    const strongNodeId = newId();
+    const strongValue = 'established strong belief';
+    const contradictingValue = 'updated belief after evidence';
+
+    h.store.upsertNode({
+      id: strongNodeId, type: 'fact', value: strongValue,
+      origin: 'observed', s: 0.9, c: 0.8,
+    });
+    const sameEmbedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmbedder.embed([strongValue]);
+    h.store.setEmbedding(strongNodeId, vec!);
+
+    // Three HOLD-band contradictions from three distinct sessions
+    const holdVerdict = (): JudgeVerdict => ({
+      best_candidate_id: strongNodeId,
+      relation: 'contradict',
+      magnitude: 0.1, // HOLD band vs resistance=0.72
+    });
+    const judge = new MockJudge([holdVerdict(), holdVerdict(), holdVerdict()]);
+    const extractor = new MockClaimExtractor([{ type: 'fact', value: contradictingValue }]);
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+    );
+
+    // Three episodes from three distinct sessions (all provenance-eligible)
+    for (let i = 1; i <= 3; i++) {
+      h.episodes.append({
+        content: `contradiction from session ${i}`,
+        origin: 'observed',
+        salience: 0.8,
+        hard_keep: 0,
+        role: 'user',
+        session_id: `session-force-${i}`,
+        source_inference_id: null,
+      });
+    }
+
+    await consolidator.consolidate();
+
+    // After N=3 distinct sessions: force-destabilize → old node tombstoned
+    const oldNode = h.store.getNode(strongNodeId)!;
+    expect(oldNode.tombstoned).toBe(1);
+
+    // New current node with the contradicting value must exist
+    const allNodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    const newCurrentNodes = allNodes.filter(n => n.value === contradictingValue && n.tombstoned === 0);
+    expect(newCurrentNodes).toHaveLength(1);
+
+    // New node carries prev_value = superseded value (same as band reconcile)
+    expect(newCurrentNodes[0]!.prev_value).toBe(strongValue);
+  });
+
+  it('criterion 3 control: N contradictions sharing ONE session_id do NOT force-destabilize', async () => {
+    // One chatty session repeating the same contradiction N times cannot reach N distinct.
+    const strongNodeId = newId();
+    h.store.upsertNode({
+      id: strongNodeId, type: 'fact', value: 'chatty test belief',
+      origin: 'observed', s: 0.9, c: 0.8,
+    });
+    const sameEmbedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmbedder.embed(['chatty test belief']);
+    h.store.setEmbedding(strongNodeId, vec!);
+
+    const holdVerdict = (): JudgeVerdict => ({
+      best_candidate_id: strongNodeId,
+      relation: 'contradict',
+      magnitude: 0.1,
+    });
+    const judge = new MockJudge([holdVerdict(), holdVerdict(), holdVerdict()]);
+    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'chatty contradiction' }]);
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+    );
+
+    // Three episodes ALL from the SAME session_id
+    for (let i = 0; i < 3; i++) {
+      h.episodes.append({
+        content: 'same session contradiction',
+        origin: 'observed',
+        salience: 0.8,
+        hard_keep: 0,
+        role: 'user',
+        session_id: 'session-same', // same session every time
+        source_inference_id: null,
+      });
+    }
+
+    await consolidator.consolidate();
+
+    // Distinct sessions = 1 < contradictionN=3 → NOT force-destabilized
+    const node = h.store.getNode(strongNodeId)!;
+    expect(node.tombstoned).toBe(0);
+
+    // pending_contradictions has 3 entries but all same session
+    const contradictions = JSON.parse(node.pending_contradictions) as PendingContradiction[];
+    expect(contradictions).toHaveLength(3);
+    expect(contradictions.every(c => c.session_id === 'session-same')).toBe(true);
+  });
+
+  // ── ROADMAP Criterion 5: oscillation through two real reconciles ──────────
+  //
+  // Two successive consolidate() passes:
+  //   Pass 1 — mid-band contradict → reconcile: 'engineer' tombstoned, 'manager' minted
+  //            carrying prev_value='engineer'.
+  //   Pass 2 — mid-band contradict → reconcile attempt → isOscillation('engineer','engineer')
+  //            → escalate to append-new: 'manager' stays current, new 'engineer' appended.
+  //
+  // A SINGLE pass false-fails because the new 'manager' node minted in pass 1 is not embedded
+  // (embedded_hash IS NULL) until pass 1's Phase C reembedDirty() runs; only then is 'manager'
+  // nominatable by pass 2's topk. Two separate consolidate() calls enforce this ordering.
+
+  it('criterion 5: flip-back to carried prev_value escalates to append-new (no tombstone-cycle)', async () => {
+    const sameEmbedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+
+    // Seed 'engineer' node (s=0.5, c=0.7)
+    const engineerNodeId = newId();
+    const engineerValue = 'engineer';
+    h.store.upsertNode({
+      id: engineerNodeId, type: 'fact', value: engineerValue,
+      origin: 'observed', s: 0.5, c: 0.7,
+    });
+    const [engVec] = await sameEmbedder.embed([engineerValue]);
+    h.store.setEmbedding(engineerNodeId, engVec!);
+
+    // ── PASS 1: 'manager' claim contradicts 'engineer' node → reconcile ──
+    // resistance = 0.5 * 0.7 = 0.35; magnitude=0.5 → ratio≈1.43 → reconcile
+    // isOscillation('manager', null) → false → tombstone 'engineer', mint 'manager'
+    // 'manager' node carries prev_value='engineer'
+    const pass1Verdict: JudgeVerdict = {
+      best_candidate_id: engineerNodeId,
+      relation: 'contradict',
+      magnitude: 0.5, // mid-band reconcile
+    };
+    const pass1Consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder,
+      new MockJudge([pass1Verdict]),
+      new MockClaimExtractor([{ type: 'fact', value: 'manager' }]),
+      h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'role changed to manager',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-osc-1',
+      source_inference_id: null,
+    });
+
+    await pass1Consolidator.consolidate();
+
+    // Verify pass 1 outcome: 'engineer' tombstoned, 'manager' exists with prev_value='engineer'
+    const engineerNodeAfterPass1 = h.store.getNode(engineerNodeId)!;
+    expect(engineerNodeAfterPass1.tombstoned).toBe(1);
+
+    const allNodesAfterPass1 = h.db.prepare('SELECT id, value, prev_value, tombstoned FROM node').all() as NodeRow[];
+    const managerNode = allNodesAfterPass1.find(n => n.value === 'manager' && n.tombstoned === 0)!;
+    expect(managerNode).toBeDefined();
+    expect(managerNode.prev_value).toBe('engineer'); // one-deep breadcrumb carried
+
+    const managerNodeId = managerNode.id;
+
+    // ── PASS 2: 'engineer' claim contradicts 'manager' node → oscillation ──
+    // After pass 1's Phase C, 'manager' node is now embedded (nominatable).
+    // 'manager' node defaults: s=0.1, c=0.5 → resistance=0.05
+    // magnitude=0.06 → ratio=1.2 → 'reconcile' (mid-band)
+    // isOscillation('engineer', 'engineer') → true → escalate to APPEND-NEW
+    const pass2Verdict: JudgeVerdict = {
+      best_candidate_id: managerNodeId,
+      relation: 'contradict',
+      magnitude: 0.06, // mid-band vs resistance=0.05; triggers oscillation guard
+    };
+    const pass2Consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder,
+      new MockJudge([pass2Verdict]),
+      new MockClaimExtractor([{ type: 'fact', value: 'engineer' }]),
+      h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'actually back to engineer',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-osc-2',
+      source_inference_id: null,
+    });
+
+    await pass2Consolidator.consolidate();
+
+    // 'manager' node must NOT be tombstoned by the flip-back (oscillation guard fires)
+    const managerNodeAfterPass2 = h.store.getNode(managerNodeId)!;
+    expect(managerNodeAfterPass2.tombstoned).toBe(0);
+    expect(managerNodeAfterPass2.value).toBe('manager');
+
+    // A new 'engineer' node must have been appended as standalone (append-new)
+    const allNodesAfterPass2 = h.db.prepare('SELECT id, value, tombstoned FROM node').all() as NodeRow[];
+    const currentEngineerNodes = allNodesAfterPass2.filter(n => n.value === 'engineer' && n.tombstoned === 0);
+    expect(currentEngineerNodes).toHaveLength(1); // new standalone 'engineer', not the tombstoned original
+
+    // Both 'manager' and 'engineer' now coexist as current nodes (no tombstone cycle)
+    const currentNodes = allNodesAfterPass2.filter(n => n.tombstoned === 0);
+    expect(currentNodes.length).toBe(2); // manager + new engineer
+
+    // The original engineerNodeId remains tombstoned (it was tombstoned in pass 1)
+    expect(allNodesAfterPass2.find(n => n.id === engineerNodeId)!.tombstoned).toBe(1);
   });
 });
