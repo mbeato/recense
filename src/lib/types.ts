@@ -6,6 +6,17 @@
 /** Origin of a node or episode — immutable and propagating (spec §1). */
 export type Origin = 'observed' | 'asserted_by_user' | 'inferred';
 
+/**
+ * One provenance-distinct contradiction record stored in node.pending_contradictions.
+ * Carries session_id + origin so force-destabilization can count distinct sessions
+ * while excluding inferred-origin entries (D-19, mirrors the strengthen() origin-guard).
+ */
+export interface PendingContradiction {
+  episode_id: string;
+  session_id: string;
+  origin: Origin;
+}
+
 /** Semantic node classification (spec §1). */
 export type NodeType = 'entity' | 'fact' | 'schema';
 
@@ -40,7 +51,7 @@ export interface NodeRow {
   prev_value: string | null;
   /** Timestamp (ms) when prev_value was the current value. */
   prev_ts: number | null;
-  /** JSON array of episode IDs that contain contradicting claims. */
+  /** JSON array of PendingContradiction records (was bare episode-id strings in Phase 1). */
   pending_contradictions: string;
   /** SQLite bool: 1 if superseded (decays faster, excluded from eviction guard). */
   tombstoned: number;
@@ -109,4 +120,12 @@ export interface UpsertNodeParams {
   tombstoned?: boolean;
   /** last_access timestamp (ms). Always updated to clock.nowMs() if omitted. */
   last_access?: number;
+  /**
+   * Explicit one-deep superseded value. When supplied on a NEW-id upsert, it is written
+   * to the new node's prev_value column so a tombstone-and-replace flow (Plan 03 reconcile)
+   * can carry flip-back history across the tombstone boundary (D-20).
+   * When OMITTED, the existing in-place value-change carry is unchanged —
+   * do NOT regress STORE-02 / Phase-1.
+   */
+  prev_value?: string | null;
 }

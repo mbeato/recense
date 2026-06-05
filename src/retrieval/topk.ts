@@ -30,18 +30,22 @@ export function cosineSimF32(a: Float32Array, b: Float32Array): number {
 }
 
 /**
- * Brute-force cosine top-k retrieval over all nodes with non-null embeddings.
+ * Brute-force cosine top-k retrieval over embedded, non-tombstoned nodes (STORE-03).
  *
- * Only nodes with `embedding IS NOT NULL` are scored — dirty nodes (embedded_hash IS NULL)
- * do not appear in results, which is correct: they have no valid embedding to compare.
+ * Only nodes with `embedding IS NOT NULL AND tombstoned = 0` are scored.
+ * - Dirty nodes (embedded_hash IS NULL) are excluded because they have no valid embedding.
+ * - Tombstoned nodes are excluded because tombstone() sets tombstoned = 1 but does NOT null
+ *   the embedding; without this filter a stale superseded node remains nominable and could be
+ *   re-judged or re-confirmed (T-02-STALE). Exclusion is correct for both the Phase-2
+ *   consolidator and Phase-3 retrieval since they share this primitive.
  */
 export class CandidateRetriever {
   private readonly stmtSelectEmbedded: Database.Statement;
 
   constructor(db: Database.Database) {
-    // Select only nodes that have been embedded (embedding column is NOT NULL)
+    // Select only nodes that have been embedded AND are not tombstoned (T-02-STALE)
     this.stmtSelectEmbedded = db.prepare(
-      'SELECT id, embedding FROM node WHERE embedding IS NOT NULL'
+      'SELECT id, embedding FROM node WHERE embedding IS NOT NULL AND tombstoned = 0'
     );
   }
 

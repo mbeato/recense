@@ -13,16 +13,24 @@
  *    AnthropicClaimExtractor never calls console.log with the client or key.
  */
 import Anthropic from '@anthropic-ai/sdk';
-import type { NodeType } from '../lib/types';
+import type { NodeType, Origin } from '../lib/types';
 
 /**
  * A single extracted knowledge unit from a document.
  * links = wikilink target values found in the same claim's context (D-05).
+ *
+ * origin is OPTIONAL here: the real/mock extractors need not populate it.
+ * The consolidator stamps each claim with its source episode's origin after
+ * extraction (Plan 02-02: `claim.origin = episode.origin`) so the
+ * confirm→strengthen path can enforce the inferred origin-guard (correctness
+ * constraint: self-confirmation loop must be closed at the strengthen call site).
  */
 export type ExtractedClaim = {
   type: NodeType;
   value: string;
   links?: string[];
+  /** Stamped by the consolidator from the source episode's origin (optional here). */
+  origin?: Origin;
 };
 
 /** Narrow extraction seam — the only contract the seeder depends on. */
