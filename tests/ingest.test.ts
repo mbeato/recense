@@ -159,3 +159,78 @@ describe('INGEST-01: EpisodicStore unconditional append', () => {
     expect(store.getEpisode('does-not-exist')).toBeNull();
   });
 });
+
+// ─── INGEST-02: AllocationGate ────────────────────────────────────────────────
+
+import { AllocationGate } from '../src/gate/allocation-gate';
+
+describe('INGEST-02: AllocationGate honest salience + hard-keep', () => {
+  let gate: AllocationGate;
+
+  beforeEach(() => {
+    gate = new AllocationGate(testConfig);
+  });
+
+  it('score returns salience in [0,1] for every role and content combination', () => {
+    const inputs: Array<[string, 'user' | 'assistant' | 'tool']> = [
+      ['hello', 'user'],
+      ['always remember this', 'user'],
+      ['actually that is wrong', 'assistant'],
+      ['{"result": "ok"}', 'tool'],
+      ['a'.repeat(500), 'tool'],
+      ['never do this again', 'user'],
+    ];
+    for (const [content, role] of inputs) {
+      const { salience } = gate.score(content, role);
+      expect(salience).toBeGreaterThanOrEqual(0);
+      expect(salience).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('directive pattern with user role produces hardKeep=true', () => {
+    expect(gate.score('always commit on green', 'user').hardKeep).toBe(true);
+    expect(gate.score('never use var', 'user').hardKeep).toBe(true);
+    expect(gate.score('remember to run tests first', 'user').hardKeep).toBe(true);
+    expect(gate.score('I prefer TypeScript over JavaScript', 'user').hardKeep).toBe(true);
+  });
+
+  it('correction marker with user role produces hardKeep=true', () => {
+    expect(gate.score('actually that is not right', 'user').hardKeep).toBe(true);
+    expect(gate.score("no, that's wrong — it should be different", 'user').hardKeep).toBe(true);
+  });
+
+  it('directive pattern with tool role produces hardKeep=false (D-02)', () => {
+    expect(gate.score('always commit on green', 'tool').hardKeep).toBe(false);
+    expect(gate.score('never use var', 'tool').hardKeep).toBe(false);
+    expect(gate.score('actually that is not right', 'tool').hardKeep).toBe(false);
+  });
+
+  it('salience is NOT forced to 1.0 when hardKeep=true (D-03 independence)', () => {
+    const { salience, hardKeep } = gate.score('always commit on green', 'user');
+    expect(hardKeep).toBe(true);
+    expect(salience).toBeLessThan(1.0);
+    expect(salience).toBeGreaterThan(0);
+  });
+
+  it('tool messages produce lower salience than equivalent user messages', () => {
+    const userSal = gate.score('a simple message', 'user').salience;
+    const toolSal = gate.score('a simple message', 'tool').salience;
+    expect(userSal).toBeGreaterThan(toolSal);
+  });
+
+  it('longer content produces higher length signal than single-word content', () => {
+    const short = gate.score('hi', 'user').salience;
+    const long = gate.score('word '.repeat(50), 'user').salience;
+    expect(long).toBeGreaterThan(short);
+  });
+
+  it('non-matching content with assistant role returns hardKeep=false', () => {
+    expect(gate.score('the weather looks good today', 'assistant').hardKeep).toBe(false);
+  });
+
+  it('content with no patterns produces modest non-zero salience', () => {
+    const { salience } = gate.score('hello world', 'user');
+    expect(salience).toBeGreaterThan(0);
+    expect(salience).toBeLessThan(0.5); // modest — no directive/correction match
+  });
+});
