@@ -11,6 +11,7 @@ import { CandidateRetriever, cosineSimF32 } from '../src/retrieval/topk';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import { sha256 } from '../src/lib/hash';
+import type { PendingContradiction } from '../src/lib/types';
 import { makeSyntheticVectors } from './fixtures/synthetic-embeddings';
 
 const testConfig = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
@@ -225,22 +226,82 @@ describe('SemanticStore', () => {
   // ── recordContradiction ─────────────────────────────────────────────────
 
   describe('recordContradiction', () => {
-    it('appends episodeId to pending_contradictions (append-only)', () => {
+    it('appends PendingContradiction entries (append-only, D-19)', () => {
       store.upsertNode({ id: 'n1', type: 'fact', value: 'v', origin: 'observed' });
-      store.recordContradiction('n1', 'ep_001');
-      store.recordContradiction('n1', 'ep_002');
-      const contradictions = JSON.parse(store.getNode('n1')!.pending_contradictions) as string[];
-      expect(contradictions).toContain('ep_001');
-      expect(contradictions).toContain('ep_002');
+      store.recordContradiction('n1', { episode_id: 'ep_001', session_id: 'sess_a', origin: 'observed' });
+      store.recordContradiction('n1', { episode_id: 'ep_002', session_id: 'sess_b', origin: 'asserted_by_user' });
+      const contradictions = JSON.parse(store.getNode('n1')!.pending_contradictions) as PendingContradiction[];
       expect(contradictions).toHaveLength(2);
+      expect(contradictions[0]!.episode_id).toBe('ep_001');
+      expect(contradictions[0]!.session_id).toBe('sess_a');
+      expect(contradictions[0]!.origin).toBe('observed');
+      expect(contradictions[1]!.episode_id).toBe('ep_002');
     });
 
     it('pending_contradictions survives a same-value upsertNode (no spurious reset)', () => {
       store.upsertNode({ id: 'n1', type: 'fact', value: 'v', origin: 'observed' });
-      store.recordContradiction('n1', 'ep_001');
+      store.recordContradiction('n1', { episode_id: 'ep_001', session_id: 'sess_a', origin: 'observed' });
       store.upsertNode({ id: 'n1', type: 'fact', value: 'v', origin: 'observed' });
-      const contradictions = JSON.parse(store.getNode('n1')!.pending_contradictions) as string[];
-      expect(contradictions).toContain('ep_001');
+      const contradictions = JSON.parse(store.getNode('n1')!.pending_contradictions) as PendingContradiction[];
+      expect(contradictions[0]!.episode_id).toBe('ep_001');
+    });
+  });
+
+  // ── explicit prev_value carry (D-20) ─────────────────────────────────────
+
+  describe('explicit prev_value carry (D-20)', () => {
+    it('upsertNode with prev_value on a NEW id writes it to the node', () => {
+      store.upsertNode({
+        id: 'n-new',
+        type: 'fact',
+        value: 'current-value',
+        origin: 'observed',
+        prev_value: 'old-x',
+      });
+      expect(store.getNode('n-new')!.prev_value).toBe('old-x');
+    });
+
+    it('REGRESSION: upsertNode WITHOUT prev_value still carries the old value into prev_value on value change (STORE-02)', () => {
+      // Insert initial node
+      store.upsertNode({ id: 'n-reg', type: 'fact', value: 'first-value', origin: 'observed' });
+      expect(store.getNode('n-reg')!.prev_value).toBeNull(); // new node, no prev
+
+      // Change value without supplying prev_value — store should carry 'first-value' into prev_value
+      store.upsertNode({ id: 'n-reg', type: 'fact', value: 'second-value', origin: 'observed' });
+      expect(store.getNode('n-reg')!.prev_value).toBe('first-value');
+      expect(store.getNode('n-reg')!.value).toBe('second-value');
+    });
+  });
+
+  // ── tombstoned exclusion from topk (T-02-STALE) ──────────────────────────
+
+  describe('tombstoned exclusion from topk', () => {
+    it('tombstoned node is not returned by topk even though its embedding column is non-null', () => {
+      const db2 = new Database(':memory:');
+      initSchema(db2);
+      const clock2 = new FakeClock(Date.UTC(2026, 0, 1));
+      const store2 = new SemanticStore(db2, clock2, testConfig);
+      const retriever2 = new CandidateRetriever(db2);
+
+      const vec = new Float32Array([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+      store2.upsertNode({ id: 'live', type: 'fact', value: 'live node', origin: 'observed' });
+      store2.setEmbedding('live', vec);
+
+      store2.upsertNode({ id: 'dead', type: 'fact', value: 'tombstoned node', origin: 'observed' });
+      store2.setEmbedding('dead', vec);
+      store2.tombstone('dead');
+
+      // Verify embedding column is non-null for tombstoned node (would be nominated without filter)
+      const deadRow = db2.prepare('SELECT embedding FROM node WHERE id = ?').get('dead') as { embedding: Buffer | null };
+      expect(deadRow.embedding).not.toBeNull();
+
+      const results = retriever2.topk(vec, 10);
+      const ids = results.map(r => r.id);
+      expect(ids).toContain('live');
+      expect(ids).not.toContain('dead');
+
+      db2.close();
     });
   });
 

@@ -22,6 +22,7 @@ export type {
   EpisodeRow,
   MetaRow,
   UpsertNodeParams,
+  PendingContradiction,
 } from './lib/types';
 
 // ── Hash utilities ────────────────────────────────────────────────────────────
@@ -35,3 +36,14 @@ export { SemanticStore } from './db/semantic-store';
 
 // ── Retrieval seam (STORE-03) ─────────────────────────────────────────────────
 export { CandidateRetriever, cosineSimF32 } from './retrieval/topk';
+
+// ── Embedder seam (Phase 2, D-21/D-22) ───────────────────────────────────────
+export type { Embedder } from './model/embedder';
+export { OpenAIEmbedder, MockEmbedder } from './model/embedder';
+
+// ── Judge seam (Phase 2, D-18/D-15) ──────────────────────────────────────────
+export type { Judge, JudgeVerdict, JudgeRelation } from './model/judge';
+export { AnthropicJudge, MockJudge } from './model/judge';
+
+// ── Consolidation utilities (Phase 2) ────────────────────────────────────────
+export { normalizeValue } from './consolidation/normalize';

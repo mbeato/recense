@@ -17,7 +17,7 @@ import Database from 'better-sqlite3';
 import { sha256 } from '../lib/hash';
 import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
-import type { NodeRow, UpsertNodeParams, EdgeKind } from '../lib/types';
+import type { NodeRow, UpsertNodeParams, EdgeKind, PendingContradiction } from '../lib/types';
 
 export class SemanticStore {
   private readonly db: Database.Database;
@@ -135,8 +135,11 @@ export class SemanticStore {
         s,
         c,
         last_access: lastAccess,
-        // One-deep superseded pointer — carry old value when value changes
-        prev_value: becomesDirty ? (existing?.value ?? null) : (existing?.prev_value ?? null),
+        // One-deep superseded pointer: explicit prev_value wins (D-20 tombstone-and-replace carry);
+        // when omitted, carry old value on value-change or preserve prev_value if unchanged.
+        prev_value: params.prev_value !== undefined
+          ? params.prev_value
+          : (becomesDirty ? (existing?.value ?? null) : (existing?.prev_value ?? null)),
         prev_ts: becomesDirty ? (existing?.last_access ?? null) : (existing?.prev_ts ?? null),
         // Preserve pending_contradictions — managed exclusively by recordContradiction
         pending_contradictions: existing?.pending_contradictions ?? '[]',
@@ -185,14 +188,17 @@ export class SemanticStore {
   }
 
   /**
-   * Append a provenance-distinct contradiction episode ID.
-   * Append-only; no threshold logic (that belongs to Phase 2 consolidation).
+   * Append a provenance-distinct contradiction record.
+   * Append-only; no threshold/destabilization logic (that belongs to Phase 2 consolidation).
+   * The entry carries episode_id, session_id, and origin so the consolidator can count
+   * distinct sessions while excluding inferred-origin entries (D-19).
+   * Writes via stmtUpdateContradictions bound-parameter prepared statement (T-02-SQL).
    */
-  recordContradiction(nodeId: string, episodeId: string): void {
+  recordContradiction(nodeId: string, entry: PendingContradiction): void {
     const node = this.stmtGetNode.get(nodeId) as NodeRow | undefined;
     if (!node) return;
-    const contradictions = JSON.parse(node.pending_contradictions) as string[];
-    contradictions.push(episodeId);
+    const contradictions = JSON.parse(node.pending_contradictions) as PendingContradiction[];
+    contradictions.push(entry);
     this.stmtUpdateContradictions.run(JSON.stringify(contradictions), nodeId);
   }
 
