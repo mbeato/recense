@@ -21,6 +21,12 @@
  *  - T-02-DOUBLE: consolidated=1 set inside per-episode transaction (resume test).
  *  - T-02-SELFCONF: confirm passes inherited episode origin into strengthen() — the
  *    origin guard in StrengthDecayManager blocks `inferred` (inferred-echo test).
+ *  - T-02-SELFCONF2: contradict HOLD only records provenance-eligible episodes
+ *    (claimOrigin !== 'inferred' && source_inference_id === null); inferred echoes
+ *    cannot inflate the force-destabilization count (D-19, Plan 03).
+ *  - T-02-OSC: D-20 oscillation guard escalates a flip-back reconcile to append-new
+ *    before tombstone-cycling; prev_value is carried explicitly on the new node so the
+ *    guard is functional in the real flow even across tombstone-always boundaries.
  */
 import Database from 'better-sqlite3';
 import { realClock, type Clock } from '../lib/clock';
@@ -32,9 +38,10 @@ import type { CandidateRetriever } from '../retrieval/topk';
 import type { Embedder } from '../model/embedder';
 import type { Judge, JudgeRelation } from '../model/judge';
 import type { ClaimExtractor } from '../model/claim-extractor';
-import type { Origin } from '../lib/types';
+import type { Origin, PendingContradiction } from '../lib/types';
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
+import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
 
 // ---------------------------------------------------------------------------
 // Internal types — collect Phase A results into plain arrays before any DB write
@@ -47,11 +54,10 @@ interface ClaimDecision {
   relation: JudgeRelation;
   bestCandidateId: string | null;
   episodeSessionId: string;
-}
-
-interface EpisodeDecisionGroup {
-  episodeId: string;
-  decisions: ClaimDecision[];
+  /** Judge-emitted PE severity [0,1]; meaningful only for 'contradict' verdicts (D-15). */
+  magnitude: number;
+  /** Episode's source_inference_id — null means provenance-eligible for D-19 recording. */
+  episodeSourceInferenceId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +165,7 @@ export class Consolidator {
 
         let relation: JudgeRelation;
         let bestCandidateId: string | null = null;
+        let magnitude = 0; // only meaningful for 'contradict' (D-15)
 
         // D-17: zero-inference fast path — normalized exact-match → confirm, no judge call
         const fastPathCandidate = candidates.find(
@@ -183,6 +190,7 @@ export class Consolidator {
           const verdict = await this.judge.judge(claim.value, candidatesWithValues);
           relation = verdict.relation;
           bestCandidateId = verdict.best_candidate_id;
+          magnitude = verdict.magnitude;
         }
 
         decisions.push({
@@ -192,6 +200,8 @@ export class Consolidator {
           relation,
           bestCandidateId,
           episodeSessionId: episode.session_id,
+          magnitude,
+          episodeSourceInferenceId: episode.source_inference_id,
         });
       }
 
@@ -215,7 +225,7 @@ export class Consolidator {
 
   // ── Private: apply a single claim decision within a transaction ──────────
 
-  private applyDecision(decision: ClaimDecision, _episodeId: string): void {
+  private applyDecision(decision: ClaimDecision, episodeId: string): void {
     switch (decision.relation) {
       case 'confirm': {
         if (decision.bestCandidateId) {
@@ -264,14 +274,108 @@ export class Consolidator {
       }
 
       case 'contradict': {
-        // HOLD — band routing (reconcile / append-new / force-destabilize) is Plan 03.
-        // Record provenance-distinct contradiction entry on the candidate.
-        if (decision.bestCandidateId) {
-          this.store.recordContradiction(decision.bestCandidateId, {
-            episode_id: _episodeId,
-            session_id: decision.episodeSessionId,
+        if (!decision.bestCandidateId) break;
+
+        // Read the candidate node and compute D-16 resistance = effective_s * c.
+        // effectiveStrength() is a pure function on StrengthDecayManager — no DB write.
+        const node = this.store.getNode(decision.bestCandidateId);
+        if (!node) break;
+
+        const effectiveS = this.strength.effectiveStrength(
+          node.s, node.last_access, this.clock.nowMs(), this.config.lambda,
+        );
+        const resistance = effectiveS * node.c; // D-16
+
+        // Route by PE magnitude / resistance (spec §4 step 3, D-15/D-16)
+        const action = routeContradiction(decision.magnitude, resistance, this.config);
+
+        if (action === 'reconcile') {
+          // D-20 oscillation guard: if the new value normalizes to the superseded prev_value,
+          // escalate to append-new so both values coexist rather than tombstone-cycling.
+          if (isOscillation(decision.claimValue, node.prev_value)) {
+            // Flip-back detected — append standalone (no prev_value; genuine ambiguity)
+            this.store.upsertNode({
+              id: newId(),
+              type: decision.claimType as 'entity' | 'fact' | 'schema',
+              value: decision.claimValue,
+              origin: decision.claimOrigin,
+            });
+          } else {
+            // Mid-band reconcile (UPDATE-04 tombstone-always, no in-place rewrite):
+            //   1. Tombstone the superseded node.
+            //   2. Mint a brand-new id for the new current value, carrying the superseded
+            //      node's CURRENT value as prev_value — this is the one-deep oscillation
+            //      breadcrumb. Without this explicit carry, the new node would have
+            //      prev_value=null (txUpsertNode only auto-carries on existing-id updates)
+            //      and isOscillation() would always be false on the next contradiction (D-20).
+            this.store.tombstone(decision.bestCandidateId);
+            this.store.upsertNode({
+              id: newId(),
+              type: decision.claimType as 'entity' | 'fact' | 'schema',
+              value: decision.claimValue,
+              origin: decision.claimOrigin,
+              prev_value: node.value, // explicit carry across tombstone-always boundary (D-20)
+            });
+          }
+        } else if (action === 'append-new') {
+          // Extreme / categorical: genuine divergence — both values coexist (no tombstone)
+          this.store.upsertNode({
+            id: newId(),
+            type: decision.claimType as 'entity' | 'fact' | 'schema',
+            value: decision.claimValue,
             origin: decision.claimOrigin,
           });
+        } else {
+          // action === 'hold'
+          // D-19: record ONLY if the episode is provenance-eligible.
+          // Drop: (a) inferred-origin claims (mirrors the strengthen() origin-guard) AND
+          //       (b) episodes with source_inference_id set (echoes of prior inferred output).
+          // An inferred echo can neither strengthen nor destabilize a fact.
+          if (
+            decision.claimOrigin !== 'inferred' &&
+            decision.episodeSourceInferenceId === null
+          ) {
+            this.store.recordContradiction(decision.bestCandidateId, {
+              episode_id: episodeId,
+              session_id: decision.episodeSessionId,
+              origin: decision.claimOrigin,
+            } satisfies PendingContradiction);
+
+            // Re-read node to get the freshly-appended pending_contradictions
+            const updatedNode = this.store.getNode(decision.bestCandidateId);
+            if (updatedNode) {
+              const entries = JSON.parse(
+                updatedNode.pending_contradictions,
+              ) as PendingContradiction[];
+              const distinctCount = countDistinctProvenance(entries);
+
+              // Force-destabilize when N distinct independent sessions have contradicted
+              // this node (Chen-2020 lock-in fix, D-19 / UPDATE-05 criterion 3).
+              if (distinctCount >= this.config.contradictionN) {
+                // Apply same D-20 oscillation guard to the forced reconcile
+                if (isOscillation(decision.claimValue, updatedNode.prev_value)) {
+                  // Flip-back via force-destabilize — append standalone (both coexist)
+                  this.store.upsertNode({
+                    id: newId(),
+                    type: decision.claimType as 'entity' | 'fact' | 'schema',
+                    value: decision.claimValue,
+                    origin: decision.claimOrigin,
+                  });
+                } else {
+                  // Force-reconcile: tombstone old + set new current carrying prev_value (D-20)
+                  this.store.tombstone(decision.bestCandidateId);
+                  this.store.upsertNode({
+                    id: newId(),
+                    type: decision.claimType as 'entity' | 'fact' | 'schema',
+                    value: decision.claimValue,
+                    origin: decision.claimOrigin,
+                    prev_value: updatedNode.value, // carry breadcrumb (same as band reconcile)
+                  });
+                }
+              }
+            }
+          }
+          // If not provenance-eligible: drop silently — no recordContradiction call.
         }
         break;
       }
