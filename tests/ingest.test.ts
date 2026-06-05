@@ -124,6 +124,16 @@ describe('INGEST-01: EpisodicStore unconditional append', () => {
   });
 
   it('getEpisode round-trips all fields', () => {
+    // source_inference_id has an FK REFERENCES episode(id) — insert the parent first
+    const parent = store.append({
+      content: 'parent inference episode',
+      origin: 'inferred',
+      salience: 0.1,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'sess-rt',
+      source_inference_id: null,
+    });
     const appended = store.append({
       content: 'round-trip test',
       origin: 'inferred',
@@ -131,7 +141,7 @@ describe('INGEST-01: EpisodicStore unconditional append', () => {
       hard_keep: 0,
       role: 'assistant',
       session_id: 'sess-rt',
-      source_inference_id: 'src-ep-001',
+      source_inference_id: parent.id,
     });
     const retrieved = store.getEpisode(appended.id);
     expect(retrieved).not.toBeNull();
@@ -141,7 +151,7 @@ describe('INGEST-01: EpisodicStore unconditional append', () => {
     expect(retrieved!.salience).toBeCloseTo(0.42);
     expect(retrieved!.role).toBe('assistant');
     expect(retrieved!.session_id).toBe('sess-rt');
-    expect(retrieved!.source_inference_id).toBe('src-ep-001');
+    expect(retrieved!.source_inference_id).toBe(parent.id);
     expect(retrieved!.consolidated).toBe(0);
   });
 
