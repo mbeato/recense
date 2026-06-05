@@ -7,9 +7,11 @@ import Database from 'better-sqlite3';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
 import { SemanticStore } from '../src/db/semantic-store';
+import { CandidateRetriever, cosineSimF32 } from '../src/retrieval/topk';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import { sha256 } from '../src/lib/hash';
+import { makeSyntheticVectors } from './fixtures/synthetic-embeddings';
 
 const testConfig = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
 
@@ -277,5 +279,95 @@ describe('SemanticStore', () => {
       store.setMeta('key', 'v2');
       expect(store.getMeta('key')).toBe('v2');
     });
+  });
+});
+
+// ─── STORE-03: cosineSimF32 + CandidateRetriever.topk ─────────────────────
+
+describe('cosineSimF32 (STORE-03)', () => {
+  it('returns 1.0 for identical unit vectors', () => {
+    const a = new Float32Array([1, 0, 0, 0]);
+    expect(cosineSimF32(a, a)).toBeCloseTo(1.0, 5);
+  });
+
+  it('returns 0.0 for orthogonal unit vectors', () => {
+    const a = new Float32Array([1, 0, 0, 0]);
+    const b = new Float32Array([0, 1, 0, 0]);
+    expect(cosineSimF32(a, b)).toBeCloseTo(0.0, 5);
+  });
+
+  it('returns 0.0 when either norm is zero (denom guard)', () => {
+    const zero = new Float32Array([0, 0, 0, 0]);
+    const a = new Float32Array([1, 0, 0, 0]);
+    expect(cosineSimF32(zero, a)).toBe(0);
+    expect(cosineSimF32(a, zero)).toBe(0);
+  });
+});
+
+describe('CandidateRetriever.topk (STORE-03)', () => {
+  let db: Database.Database;
+  let clock: FakeClock;
+  let store: SemanticStore;
+  let retriever: CandidateRetriever;
+  const testConfig = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initSchema(db);
+    clock = new FakeClock(Date.UTC(2026, 0, 1));
+    store = new SemanticStore(db, clock, testConfig);
+    retriever = new CandidateRetriever(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('returns exactly k results sorted by cosine score descending', () => {
+    const { vectors, groundTruth } = makeSyntheticVectors();
+    for (let i = 0; i < vectors.length; i++) {
+      store.upsertNode({ id: `vec${i}`, type: 'fact', value: `value ${i}`, origin: 'observed' });
+      store.setEmbedding(`vec${i}`, vectors[i]!);
+    }
+    const k = 3;
+    const results = retriever.topk(vectors[0]!, k);
+    expect(results).toHaveLength(k);
+    // Top hit must be the self-similar vector
+    expect(results[0]!.id).toBe(`vec${groundTruth[0]}`);
+    expect(results[0]!.score).toBeCloseTo(1.0, 5);
+    // Scores must be non-increasing
+    for (let i = 1; i < results.length; i++) {
+      expect(results[i - 1]!.score).toBeGreaterThanOrEqual(results[i]!.score);
+    }
+  });
+
+  it('top-k ranking matches ground truth for every query vector', () => {
+    const { vectors, groundTruth } = makeSyntheticVectors();
+    for (let i = 0; i < vectors.length; i++) {
+      store.upsertNode({ id: `vec${i}`, type: 'fact', value: `value ${i}`, origin: 'observed' });
+      store.setEmbedding(`vec${i}`, vectors[i]!);
+    }
+    for (let i = 0; i < vectors.length; i++) {
+      const results = retriever.topk(vectors[i]!, 1);
+      expect(results[0]!.id).toBe(`vec${groundTruth[i]}`);
+    }
+  });
+
+  it('excludes nodes with null embedding (dirty nodes not retrieval candidates)', () => {
+    const vec = new Float32Array([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    store.upsertNode({ id: 'embedded', type: 'fact', value: 'embedded', origin: 'observed' });
+    store.setEmbedding('embedded', vec);
+    store.upsertNode({ id: 'dirty', type: 'fact', value: 'dirty node', origin: 'observed' });
+    // dirty has no embedding — should not appear in results
+    const results = retriever.topk(vec, 10);
+    const ids = results.map(r => r.id);
+    expect(ids).toContain('embedded');
+    expect(ids).not.toContain('dirty');
+  });
+
+  it('returns empty array when no nodes have embeddings', () => {
+    store.upsertNode({ id: 'n1', type: 'fact', value: 'no embed', origin: 'observed' });
+    const results = retriever.topk(new Float32Array(16), 5);
+    expect(results).toHaveLength(0);
   });
 });
