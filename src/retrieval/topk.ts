@@ -1,17 +1,67 @@
-// STUB — implementation in feat(01-01) GREEN commit (Task 4)
-import type Database from 'better-sqlite3';
+/**
+ * CandidateRetriever — brute-force cosine top-k over non-null node embeddings (STORE-03).
+ *
+ * Design decisions:
+ *  - Read-only: never writes the embedding column (graph is source of truth; vector is derived).
+ *  - Brute-force: exact cosine scan is sub-ms at v1 scale (≤1k nodes × 1536 dims ≈ 1-3ms).
+ *  - Seam: swap to sqlite-vec/HNSW only when measured latency hurts (v1.3 roadmap).
+ *  - Pitfall 5: Float32Array decoded with byteOffset + length (Buffer slices may have nonzero byteOffset).
+ */
+import Database from 'better-sqlite3';
 
-export function cosineSimF32(_a: Float32Array, _b: Float32Array): number {
-  throw new Error('cosineSimF32: not implemented');
+/**
+ * Compute cosine similarity between two Float32Array vectors.
+ * Returns 0 when either vector's norm is 0 (denom guard prevents NaN/Infinity).
+ *
+ * noUncheckedIndexedAccess: indices use non-null assertion (!) — safe because
+ * both arrays have identical, known length `a.length`.
+ */
+export function cosineSimF32(a: Float32Array, b: Float32Array): number {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i]! * b[i]!;
+    normA += a[i]! * a[i]!;
+    normB += b[i]! * b[i]!;
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
 }
 
+/**
+ * Brute-force cosine top-k retrieval over all nodes with non-null embeddings.
+ *
+ * Only nodes with `embedding IS NOT NULL` are scored — dirty nodes (embedded_hash IS NULL)
+ * do not appear in results, which is correct: they have no valid embedding to compare.
+ */
 export class CandidateRetriever {
-  // Constructor is a no-op stub so tests can create instances
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  constructor(_db: Database.Database) {}
+  private readonly stmtSelectEmbedded: Database.Statement;
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  topk(_queryVec: Float32Array, _k: number): Array<{ id: string; score: number }> {
-    throw new Error('topk: not implemented');
+  constructor(db: Database.Database) {
+    // Select only nodes that have been embedded (embedding column is NOT NULL)
+    this.stmtSelectEmbedded = db.prepare(
+      'SELECT id, embedding FROM node WHERE embedding IS NOT NULL'
+    );
+  }
+
+  /**
+   * Return the top-k nodes by cosine similarity to `queryVec`, sorted descending.
+   * Nodes with null embedding are excluded (read-only on the graph).
+   */
+  topk(queryVec: Float32Array, k: number): Array<{ id: string; score: number }> {
+    const rows = this.stmtSelectEmbedded.all() as Array<{ id: string; embedding: Buffer }>;
+
+    return rows
+      .map(row => ({
+        id: row.id,
+        // Pitfall 5: pass byteOffset + length to handle Buffer slices correctly
+        score: cosineSimF32(
+          queryVec,
+          new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4)
+        ),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, k);
   }
 }
