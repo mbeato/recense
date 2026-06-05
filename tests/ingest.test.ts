@@ -234,3 +234,87 @@ describe('INGEST-02: AllocationGate honest salience + hard-keep', () => {
     expect(salience).toBeLessThan(0.5); // modest — no directive/correction match
   });
 });
+
+// ─── IngestionPipeline: end-to-end vertical slice ────────────────────────────
+
+import { IngestionPipeline } from '../src/ingest/pipeline';
+
+describe('IngestionPipeline: recordEvent end-to-end slice', () => {
+  let db: Database.Database;
+  let clock: FakeClock;
+  let store: EpisodicStore;
+  let gate: AllocationGate;
+  let pipeline: IngestionPipeline;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initSchema(db);
+    clock = new FakeClock(2_000_000);
+    store = new EpisodicStore(db, clock, testConfig);
+    gate = new AllocationGate(testConfig);
+    pipeline = new IngestionPipeline(gate, store);
+  });
+
+  it('recordEvent persists gate salience unchanged (honest, D-03)', () => {
+    const content = 'always run tests before committing';
+    const { salience: expectedSalience } = gate.score(content, 'user');
+    const row = pipeline.recordEvent({
+      content,
+      role: 'user',
+      origin: 'observed',
+      sessionId: 'sess-1',
+    });
+    expect(row.salience).toBeCloseTo(expectedSalience, 10);
+  });
+
+  it('directive user event stores hard_keep=1 and salience > 0', () => {
+    const row = pipeline.recordEvent({
+      content: 'always commit on green',
+      role: 'user',
+      origin: 'observed',
+      sessionId: 'sess-1',
+    });
+    expect(row.hard_keep).toBe(1);
+    expect(row.salience).toBeGreaterThan(0);
+  });
+
+  it('tool event is stored (not dropped) with hard_keep=0', () => {
+    const before = store.listUnconsolidated().length;
+    const row = pipeline.recordEvent({
+      content: 'always commit on green',
+      role: 'tool',
+      origin: 'observed',
+      sessionId: 'sess-1',
+    });
+    const after = store.listUnconsolidated().length;
+    expect(after).toBe(before + 1); // row was appended
+    expect(row.hard_keep).toBe(0);  // tool output never hard-kept (D-02)
+  });
+
+  it('50 mixed events are all stored — gate never drops (INGEST-01)', () => {
+    for (let i = 0; i < 50; i++) {
+      const role = i % 3 === 0 ? 'user' as const : i % 3 === 1 ? 'assistant' as const : 'tool' as const;
+      pipeline.recordEvent({
+        content: `event number ${i}`,
+        role,
+        origin: 'observed',
+        sessionId: 'sess-bulk',
+      });
+    }
+    expect(store.listUnconsolidated()).toHaveLength(50);
+  });
+
+  it('retrieved row has correct role and origin from recordEvent params', () => {
+    const row = pipeline.recordEvent({
+      content: 'the sky is blue',
+      role: 'assistant',
+      origin: 'inferred',
+      sessionId: 'sess-check',
+    });
+    const retrieved = store.getEpisode(row.id);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.role).toBe('assistant');
+    expect(retrieved!.origin).toBe('inferred');
+    expect(retrieved!.session_id).toBe('sess-check');
+  });
+});
