@@ -10,7 +10,7 @@
  * Threat mitigations:
  *  - T-02-KEY: OpenAI SDK reads OPENAI_API_KEY from process.env by default.
  *    The key is never passed as a literal, never logged, and never committed.
- *    OpenAIEmbedder never calls console.log with the client or key.
+ *    OpenAIEmbedder never prints or exposes the client or key to any output stream.
  */
 import OpenAI from 'openai';
 
