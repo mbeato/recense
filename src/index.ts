@@ -47,3 +47,4 @@ export { AnthropicJudge, MockJudge } from './model/judge';
 
 // ── Consolidation utilities (Phase 2) ────────────────────────────────────────
 export { normalizeValue } from './consolidation/normalize';
+export { Consolidator } from './consolidation/consolidator';

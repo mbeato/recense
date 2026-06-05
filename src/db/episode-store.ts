@@ -58,6 +58,12 @@ export class EpisodicStore {
   private readonly stmtInsert: Database.Statement;
   private readonly stmtListUnconsolidated: Database.Statement;
   private readonly stmtGetById: Database.Statement;
+  /**
+   * The sleep pass is the sole writer of episode.consolidated (CONSOL-02/03).
+   * Called inside the per-episode transaction so a killed/restarted pass never
+   * double-applies strength increments (resumable checkpoint).
+   */
+  private readonly stmtMarkConsolidated: Database.Statement;
 
   constructor(db: Database.Database, clock: Clock, config: EngineConfig) {
     this.db = db;
@@ -82,6 +88,11 @@ export class EpisodicStore {
     );
 
     this.stmtGetById = db.prepare('SELECT * FROM episode WHERE id = ?');
+
+    // CONSOL-02/03: sole writer of episode.consolidated; called inside each episode's transaction
+    this.stmtMarkConsolidated = db.prepare(
+      'UPDATE episode SET consolidated = 1 WHERE id = ?'
+    );
   }
 
   /**
@@ -126,5 +137,15 @@ export class EpisodicStore {
   getEpisode(id: string): EpisodeRow | null {
     const row = this.stmtGetById.get(id) as EpisodeRow | undefined;
     return row ?? null;
+  }
+
+  /**
+   * Mark an episode as consolidated (consolidated = 1).
+   * SOLE WRITER of episode.consolidated — only the sleep pass calls this (CONSOL-02/03).
+   * Must be called inside the same db.transaction as the episode's strength/graph effects
+   * so a killed/restarted pass never double-applies a strength increment.
+   */
+  markConsolidated(id: string): void {
+    this.stmtMarkConsolidated.run(id);
   }
 }
