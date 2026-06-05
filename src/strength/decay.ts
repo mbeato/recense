@@ -69,8 +69,8 @@ export class StrengthDecayManager {
     nowMs: number,
     lambda: number
   ): number {
-    // STUB — intentionally wrong so TDD RED tests fail
-    return -1;
+    const deltaDays = (nowMs - lastAccessMs) / 86_400_000;
+    return s * Math.exp(-lambda * deltaDays);
   }
 
   /**
@@ -81,7 +81,11 @@ export class StrengthDecayManager {
    * Must be called BEFORE any mutation so there is no double-counting.
    */
   materializeDecay(nodeId: string): void {
-    // STUB — no-op
+    const row = this.stmtGetNode.get(nodeId) as NodeRow | undefined;
+    if (!row) return;
+    const nowMs = this.clock.nowMs();
+    const effective = this.effectiveStrength(row.s, row.last_access, nowMs, this.config.lambda);
+    this.stmtUpdateDecay.run({ id: nodeId, s: effective, last_access: nowMs });
   }
 
   /**
@@ -94,7 +98,23 @@ export class StrengthDecayManager {
    *  4. Apply self-limiting confidence increment: c ← c + β(1−c) (D-14, STR-02).
    */
   strengthen(nodeId: string, claimOrigin: Origin): void {
-    // STUB — no-op
+    // T-03-SELFCONF: inferred output must never strengthen a fact (CLAUDE.md correctness guard)
+    if (claimOrigin === 'inferred') return;
+
+    // STR-01: materialize decay FIRST — no double-count, no unpaired strengthening
+    this.materializeDecay(nodeId);
+
+    // Re-read the now-decayed row
+    const row = this.stmtGetNode.get(nodeId) as NodeRow | undefined;
+    if (!row) return;
+
+    const nowMs = this.clock.nowMs();
+    // Self-limiting Hebbian increment: s ← s + η(1−s)
+    const newS = row.s + this.config.eta * (1 - row.s);
+    // Self-limiting confidence increment (D-14): c ← c + β(1−c) — bounded, never reaches 1
+    const newC = row.c + this.config.beta * (1 - row.c);
+
+    this.stmtUpdateIncrement.run({ id: nodeId, s: newS, c: newC, last_access: nowMs });
   }
 
   /**
