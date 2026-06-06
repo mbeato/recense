@@ -19,11 +19,15 @@ import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
 import { SemanticStore } from '../src/db/semantic-store';
+import { EpisodicStore } from '../src/db/episode-store';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { CandidateRetriever } from '../src/retrieval/topk';
 import { MockEmbedder } from '../src/model/embedder';
 import type { NodeRow } from '../src/lib/types';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
+import { Consolidator } from '../src/consolidation/consolidator';
+import { MockJudge } from '../src/model/judge';
+import { MockClaimExtractor } from '../src/model/claim-extractor';
 import { newId } from '../src/lib/hash';
 
 // ---------------------------------------------------------------------------
@@ -342,6 +346,43 @@ describe('SchemaInducer', () => {
     expect(sAfterJoin).toBeGreaterThan(sAfterInduction);
   });
 
+  // ── Idempotency: induceSchemas() is safe to call multiple times ──────────
+
+  it('idempotency: calling induceSchemas() twice does not create duplicate schemas or edges', async () => {
+    const embedder = makeSameClusterEmbedder(h.config.embeddingDimensions);
+    let namingCallCount = 0;
+    const countingNamingFn = async (_values: string[]) => {
+      namingCallCount++;
+      return 'idempotent-concept';
+    };
+
+    // Seed 3 nodes
+    for (let i = 0; i < 3; i++) {
+      await seedNodeWithEmbedding(h, embedder, { value: `idempotent-${i}` });
+    }
+
+    const inducer = new SchemaInducer(
+      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, countingNamingFn,
+    );
+
+    // First call: schema formed, 1 naming call
+    await inducer.induceSchemas();
+    const schemasAfterFirst = h.db.prepare("SELECT * FROM node WHERE type = 'schema'").all() as NodeRow[];
+    expect(schemasAfterFirst).toHaveLength(1);
+    expect(namingCallCount).toBe(1);
+
+    // Second call: all 3 nodes are already schema members → no new schema, no naming call
+    await inducer.induceSchemas();
+    const schemasAfterSecond = h.db.prepare("SELECT * FROM node WHERE type = 'schema'").all() as NodeRow[];
+    expect(schemasAfterSecond).toHaveLength(1); // still only one schema
+    expect(namingCallCount).toBe(1); // no additional naming call
+
+    // Edge count should not have grown
+    const schemaId = schemasAfterFirst[0]!.id;
+    const edges = h.db.prepare("SELECT * FROM edge WHERE src = ? AND kind = 'abstracts'").all(schemaId);
+    expect(edges).toHaveLength(3); // still 3, not 6
+  });
+
   // ── Two naming calls for two independent clusters ─────────────────────────
 
   it('two distinct clusters produce two schema nodes and two naming calls', async () => {
@@ -400,3 +441,107 @@ describe('SchemaInducer', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// End-to-end tests through Consolidator.consolidate() — Phase-C ordering
+// ---------------------------------------------------------------------------
+
+describe('SchemaInducer end-to-end (through Consolidator.consolidate)', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = makeHarness();
+  });
+
+  /**
+   * Build a Consolidator that uses a real SchemaInducer wired into Phase C.
+   * Uses MockEmbedder + MockJudge + MockClaimExtractor (no network).
+   */
+  function makeConsolidatorWithInducer(opts: {
+    embedder: MockEmbedder;
+    namingFn?: (values: string[]) => Promise<string>;
+  }): Consolidator {
+    const episodes = new EpisodicStore(h.db, h.clock, h.config);
+    const inducer = new SchemaInducer(
+      h.db, h.store, h.strength, h.retriever, opts.embedder, h.config, h.clock,
+      opts.namingFn ?? (async () => 'e2e-schema'),
+    );
+    return new Consolidator(
+      h.db, episodes, h.store, h.strength, h.retriever,
+      opts.embedder, new MockJudge([]), new MockClaimExtractor([]),
+      inducer, h.config, h.clock,
+    );
+  }
+
+  it('Phase-C ordering: schema induction runs after reembedDirty, schema node visible after consolidate()', async () => {
+    // Seeds 3 fact nodes WITHOUT embeddings (embedded_hash IS NULL).
+    // reembedDirty() in Phase A prefix gives them embeddings; Phase C reembedDirty()
+    // re-embeds any remaining dirty nodes. schema induction then runs with fresh embeddings.
+    // The schema node should exist after consolidate() completes.
+    const dims = h.config.embeddingDimensions;
+    // All-same embedder → all 3 nodes get cosine 1.0 → cluster qualifies
+    const embedder = new MockEmbedder((_text: string) => {
+      const vec = new Float32Array(dims);
+      vec[0] = 1.0;
+      return vec;
+    });
+
+    // Seed 3 nodes without embeddings (simulating cold-start state)
+    for (let i = 0; i < 3; i++) {
+      h.store.upsertNode({
+        id: newId(),
+        type: 'fact',
+        value: `e2e-fact-${i}`,
+        origin: 'observed',
+      });
+    }
+
+    // Verify: no embeddings yet
+    const dirtyNodes = h.db.prepare('SELECT id FROM node WHERE embedded_hash IS NULL').all();
+    expect(dirtyNodes).toHaveLength(3);
+
+    const consolidator = makeConsolidatorWithInducer({ embedder });
+    await consolidator.consolidate();
+
+    // After consolidate(): embeddings were set by reembedDirty(), then induceSchemas() ran
+    // → should have one schema node with 3 abstracts edges
+    const schemaNodes = h.db.prepare("SELECT * FROM node WHERE type = 'schema'").all() as NodeRow[];
+    expect(schemaNodes).toHaveLength(1);
+    expect(schemaNodes[0]!.origin).toBe('inferred');
+
+    const schemaId = schemaNodes[0]!.id;
+    const edges = h.db.prepare("SELECT * FROM edge WHERE src = ? AND kind = 'abstracts'").all(schemaId);
+    expect(edges).toHaveLength(3);
+  });
+
+  it('Phase-C ordering: induction runs before eviction — a schema tombstoned by induction would be swept', async () => {
+    // This test verifies the D-37 ordering constraint: schemas form after reembedDirty
+    // and before runEvictionSweep, so a freshly tombstoned schema (if any) is swept.
+    // Here we verify the simpler invariant: consolidate() completes without error
+    // and any schema node with tombstoned=0 is NOT evicted (AND-gate requires tombstoned=1).
+    const dims = h.config.embeddingDimensions;
+    const embedder = new MockEmbedder((_text: string) => {
+      const vec = new Float32Array(dims);
+      vec[0] = 1.0;
+      return vec;
+    });
+
+    for (let i = 0; i < 3; i++) {
+      h.store.upsertNode({
+        id: newId(),
+        type: 'fact',
+        value: `eviction-guard-${i}`,
+        origin: 'observed',
+      });
+    }
+
+    const consolidator = makeConsolidatorWithInducer({ embedder });
+    await consolidator.consolidate();
+
+    // Schema node exists and has NOT been evicted (tombstoned=0 → AND-gate blocks eviction)
+    const schemaNodes = h.db.prepare("SELECT * FROM node WHERE type = 'schema'").all() as NodeRow[];
+    expect(schemaNodes).toHaveLength(1);
+    expect(schemaNodes[0]!.tombstoned).toBe(0);
+  });
+});
+

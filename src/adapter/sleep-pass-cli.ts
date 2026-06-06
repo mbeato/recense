@@ -31,6 +31,7 @@ import { OpenAIEmbedder } from '../model/embedder';
 import { AnthropicJudge } from '../model/judge';
 import { AnthropicClaimExtractor } from '../model/claim-extractor';
 import { Consolidator } from '../consolidation/consolidator';
+import { SchemaInducer } from '../consolidation/schema-induction';
 import { acquireLock, releaseLock } from './lockfile';
 
 const LOG_PATH = '/tmp/brain-memory-sleep.log';
@@ -85,6 +86,11 @@ async function main(): Promise<void> {
     const judge = new AnthropicJudge(config);
     const extractor = new AnthropicClaimExtractor(config);
 
+    const inducer = new SchemaInducer(
+      db, store, strength, retriever, embedder, config, realClock,
+      // No namingFn supplied — defaults to createAnthropicClient (T-04-01-K)
+    );
+
     const consolidator = new Consolidator(
       db,
       episodes,
@@ -94,6 +100,7 @@ async function main(): Promise<void> {
       embedder,
       judge,
       extractor,
+      inducer,
       config,
       realClock,
     );
