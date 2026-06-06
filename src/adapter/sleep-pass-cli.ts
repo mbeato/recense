@@ -82,8 +82,8 @@ async function main(): Promise<void> {
 
     // Production model impls — keys read from process.env by SDK (T-03-2-E)
     const embedder = new OpenAIEmbedder(config.openaiEmbedModel, config.embeddingDimensions);
-    const judge = new AnthropicJudge(config.anthropicModel);
-    const extractor = new AnthropicClaimExtractor(config.anthropicModel);
+    const judge = new AnthropicJudge(config);
+    const extractor = new AnthropicClaimExtractor(config);
 
     const consolidator = new Consolidator(
       db,

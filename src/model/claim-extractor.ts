@@ -14,6 +14,8 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import type { NodeType, Origin } from '../lib/types';
+import type { EngineConfig } from '../lib/config';
+import { createAnthropicClient, type AnthropicLike } from './anthropic-client';
 
 /**
  * A single extracted knowledge unit from a document.
@@ -65,14 +67,16 @@ Document type: `;
 // ---------------------------------------------------------------------------
 
 export class AnthropicClaimExtractor implements ClaimExtractor {
-  private readonly client: Anthropic;
+  private readonly client: AnthropicLike;
   private readonly model: string;
 
-  constructor(model: string) {
-    // T-04-KEY: Anthropic() reads ANTHROPIC_API_KEY from process.env automatically.
-    // Do not pass the key as a literal argument.
-    // Do not log this.client or any key-bearing value.
-    this.client = new Anthropic();
+  constructor(config: EngineConfig) {
+    // T-04-KEY / T-99b-KEY: createAnthropicClient routes to the direct Anthropic SDK
+    // (reads ANTHROPIC_API_KEY from process.env) or AnthropicVertex (authenticates via
+    // GCP Application Default Credentials) based on config.modelProvider.
+    // Credentials are never passed as literals, never logged, and never committed.
+    const { client, model } = createAnthropicClient(config);
+    this.client = client;
     this.model = model;
   }
 
