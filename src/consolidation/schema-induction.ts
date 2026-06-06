@@ -62,6 +62,11 @@ interface SchemaNodeRow {
   value: string;
 }
 
+interface AllSchemaRow {
+  id: string;
+  tombstoned: number;
+}
+
 interface ClusterableNode {
   id: string;
   value: string;
@@ -108,6 +113,8 @@ export class SchemaInducer {
   private readonly stmtGetClusterableNodes: Database.Statement;
   private readonly stmtGetSchemaMembers: Database.Statement;
   private readonly stmtGetSchemaNodes: Database.Statement;
+  private readonly stmtGetAllSchemaNodes: Database.Statement;
+  private readonly stmtDeleteAbstractsEdges: Database.Statement;
 
   constructor(
     db: Database.Database,
@@ -145,167 +152,194 @@ export class SchemaInducer {
     this.stmtGetSchemaNodes = db.prepare(
       "SELECT id, value FROM node WHERE type = 'schema' AND tombstoned = 0"
     );
+
+    // All schema nodes (including tombstoned) — for D-39 falsification scan every pass
+    this.stmtGetAllSchemaNodes = db.prepare(
+      "SELECT id, tombstoned FROM node WHERE type = 'schema'"
+    );
+
+    // Abstracts-edge cleanup: scoped WHERE src = ? AND kind = 'abstracts' (T-04-02-T, T-01-SQL)
+    this.stmtDeleteAbstractsEdges = db.prepare(
+      "DELETE FROM edge WHERE src = ? AND kind = 'abstracts'"
+    );
   }
 
   // ── Public API ───────────────────────────────────────────────────────────
 
   /**
    * Induce schema nodes from clusterable instances (LEARN-01, D-35/36/38).
+   * Also runs a falsification stage every pass (D-39, ROADMAP criterion 4):
+   *   (1) Erosion: tombstone schemas whose surviving non-inferred member count < schemaMinSupport.
+   *   (2) Cleanup: delete all outgoing abstracts edges from every tombstoned schema —
+   *       whether tombstoned by erosion (this pass) or by the consolidator's applyDecision
+   *       contradict → reconcile path (prior pass).
    *
    * Phase A: ALL async work (embedding, LLM naming) → plain arrays.
    * Phase B: synchronous DB writes — no await inside db.transaction (T-02-ASYNC).
+   *
+   * NOTE: the falsification stage runs even when clusterableRows is empty —
+   * tombstoned schemas must always be cleaned up, regardless of cluster activity.
+   *
+   * Threat mitigations:
+   *  - T-04-02-T: stmtDeleteAbstractsEdges scoped to WHERE src=? AND kind='abstracts'
+   *    (prepared once in constructor, bound ? — no string interpolation).
+   *  - T-04-02-I: post-condition: zero abstracts edges point at a tombstoned schema.
+   *  - T-04-02-DEL: only edges deleted — member nodes themselves are never deleted.
    */
   async induceSchemas(): Promise<void> {
     // ── Phase A: async ──────────────────────────────────────────────────────
 
-    // 1. Fetch all clusterable nodes (non-inferred, non-tombstoned fact/entity with embedding)
+    // 1. Fetch all clusterable nodes (non-inferred, non-tombstoned fact/entity with embedding).
+    // No early return: the falsification stage in Phase B must run every pass.
     const clusterableRows = this.stmtGetClusterableNodes.all() as ClusterableNodeRow[];
-    if (clusterableRows.length === 0) return;
 
-    // 2. Decode embeddings (Pitfall 5: byteOffset + byteLength / 4)
-    const clusterableNodes: ClusterableNode[] = clusterableRows.map(row => ({
-      id: row.id,
-      value: row.value,
-      origin: row.origin as Origin,
-      vec: new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4),
-    }));
-
-    // 3. Load existing schemas and compute their centroids from persisted member embeddings
-    //    Centroid is recomputed-from-members each pass (NOT stored on node — no DB migration)
-    const schemaNodeRows = this.stmtGetSchemaNodes.all() as SchemaNodeRow[];
-    const existingSchemas: SchemaWithCentroid[] = [];
-
-    for (const schemaRow of schemaNodeRows) {
-      const memberRows = this.stmtGetSchemaMembers.all(schemaRow.id) as { dst: string }[];
-      const memberIds = new Set(memberRows.map(r => r.dst));
-
-      const memberVecs: Float32Array[] = [];
-      for (const memberId of memberIds) {
-        const node = this.store.getNode(memberId);
-        if (!node || !node.embedding || node.tombstoned === 1 || node.origin === 'inferred') continue;
-        memberVecs.push(new Float32Array(
-          node.embedding.buffer, node.embedding.byteOffset, node.embedding.byteLength / 4,
-        ));
-      }
-
-      if (memberVecs.length === 0) {
-        existingSchemas.push({ id: schemaRow.id, centroid: null, memberIds });
-        continue;
-      }
-
-      // Compute mean centroid
-      const dims = memberVecs[0]!.length;
-      const centroid = new Float32Array(dims);
-      for (const vec of memberVecs) {
-        for (let i = 0; i < dims; i++) {
-          centroid[i]! += vec[i]!;
-        }
-      }
-      for (let i = 0; i < dims; i++) {
-        centroid[i]! /= memberVecs.length;
-      }
-
-      existingSchemas.push({ id: schemaRow.id, centroid, memberIds });
-    }
-
-    // 4. Assign each clusterable node: JOIN existing schema or hold in candidate bucket
-    //    D-35: leader/centroid incremental clustering
-
-    // Build a global set of node IDs already indexed under any existing schema.
-    // Nodes already in a schema are skipped from JOIN/candidate processing:
-    //  - They don't need to re-join (would produce duplicate edges + redundant strengthens).
-    //  - Without this guard, existing members fall into candidate buckets and form spurious
-    //    duplicate schemas on subsequent passes (correctness guard, not just optimisation).
-    const alreadyInSchema = new Set<string>();
-    for (const schema of existingSchemas) {
-      for (const memberId of schema.memberIds) {
-        alreadyInSchema.add(memberId);
-      }
-    }
-
+    // Collect ops into plain arrays before the synchronous transaction (T-02-ASYNC).
     const joinOps: JoinOp[] = [];
-    const candidateBuckets: CandidateBucket[] = [];
-
-    for (const node of clusterableNodes) {
-      // Skip nodes already indexed under any schema (they're already linked)
-      if (alreadyInSchema.has(node.id)) continue;
-
-      // Find nearest existing schema centroid
-      let bestSchemaId: string | null = null;
-      let bestSim = -1;
-
-      for (const schema of existingSchemas) {
-        if (!schema.centroid) continue;
-        const sim = cosineSimF32(node.vec, schema.centroid);
-        if (sim > bestSim) {
-          bestSim = sim;
-          bestSchemaId = schema.id;
-        }
-      }
-
-      if (bestSim >= this.config.schemaJoinCentroidThreshold && bestSchemaId !== null) {
-        // JOIN existing schema
-        joinOps.push({ schemaId: bestSchemaId, node });
-        // Track the new join so subsequent nodes in this pass don't double-join
-        const schema = existingSchemas.find(s => s.id === bestSchemaId)!;
-        schema.memberIds.add(node.id);
-        alreadyInSchema.add(node.id);
-      } else {
-        // Seed a candidate bucket or join an existing one
-        // Leader clustering: join the first bucket whose centroid cosine >= cohesion threshold
-        let joinedBucket = false;
-        for (const bucket of candidateBuckets) {
-          const sim = cosineSimF32(node.vec, bucket.centroid);
-          if (sim >= this.config.schemaCohesionThreshold) {
-            // Update running centroid (incremental mean)
-            const n = bucket.members.length + 1;
-            for (let i = 0; i < bucket.centroid.length; i++) {
-              bucket.centroid[i] = (bucket.centroid[i]! * (n - 1) + node.vec[i]!) / n;
-            }
-            bucket.members.push(node);
-            joinedBucket = true;
-            break;
-          }
-        }
-        if (!joinedBucket) {
-          candidateBuckets.push({ members: [node], centroid: node.vec.slice() });
-        }
-      }
-    }
-
-    // 5. Name qualifying buckets — ONE LLM call per new schema (D-36)
     const newSchemaOps: NewSchemaOp[] = [];
 
-    for (const bucket of candidateBuckets) {
-      if (bucket.members.length < this.config.schemaMinSupport) continue;
+    if (clusterableRows.length > 0) {
+      // 2. Decode embeddings (Pitfall 5: byteOffset + byteLength / 4)
+      const clusterableNodes: ClusterableNode[] = clusterableRows.map(row => ({
+        id: row.id,
+        value: row.value,
+        origin: row.origin as Origin,
+        vec: new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4),
+      }));
 
-      // Check intra-cluster cohesion (mean pairwise cosine, D-36)
-      const vecs = bucket.members.map(m => m.vec);
-      let totalSim = 0;
-      let pairs = 0;
-      for (let i = 0; i < vecs.length; i++) {
-        for (let j = i + 1; j < vecs.length; j++) {
-          totalSim += cosineSimF32(vecs[i]!, vecs[j]!);
-          pairs++;
+      // 3. Load existing schemas and compute their centroids from persisted member embeddings
+      //    Centroid is recomputed-from-members each pass (NOT stored on node — no DB migration)
+      const schemaNodeRows = this.stmtGetSchemaNodes.all() as SchemaNodeRow[];
+      const existingSchemas: SchemaWithCentroid[] = [];
+
+      for (const schemaRow of schemaNodeRows) {
+        const memberRows = this.stmtGetSchemaMembers.all(schemaRow.id) as { dst: string }[];
+        const memberIds = new Set(memberRows.map(r => r.dst));
+
+        const memberVecs: Float32Array[] = [];
+        for (const memberId of memberIds) {
+          const node = this.store.getNode(memberId);
+          if (!node || !node.embedding || node.tombstoned === 1 || node.origin === 'inferred') continue;
+          memberVecs.push(new Float32Array(
+            node.embedding.buffer, node.embedding.byteOffset, node.embedding.byteLength / 4,
+          ));
+        }
+
+        if (memberVecs.length === 0) {
+          existingSchemas.push({ id: schemaRow.id, centroid: null, memberIds });
+          continue;
+        }
+
+        // Compute mean centroid
+        const dims = memberVecs[0]!.length;
+        const centroid = new Float32Array(dims);
+        for (const vec of memberVecs) {
+          for (let i = 0; i < dims; i++) {
+            centroid[i]! += vec[i]!;
+          }
+        }
+        for (let i = 0; i < dims; i++) {
+          centroid[i]! /= memberVecs.length;
+        }
+
+        existingSchemas.push({ id: schemaRow.id, centroid, memberIds });
+      }
+
+      // 4. Assign each clusterable node: JOIN existing schema or hold in candidate bucket
+      //    D-35: leader/centroid incremental clustering
+
+      // Build a global set of node IDs already indexed under any existing schema.
+      // Nodes already in a schema are skipped from JOIN/candidate processing:
+      //  - They don't need to re-join (would produce duplicate edges + redundant strengthens).
+      //  - Without this guard, existing members fall into candidate buckets and form spurious
+      //    duplicate schemas on subsequent passes (correctness guard, not just optimisation).
+      const alreadyInSchema = new Set<string>();
+      for (const schema of existingSchemas) {
+        for (const memberId of schema.memberIds) {
+          alreadyInSchema.add(memberId);
         }
       }
-      const cohesion = pairs > 0 ? totalSim / pairs : 1.0;
-      if (cohesion < this.config.schemaCohesionThreshold) continue;
 
-      // One naming call per qualifying bucket (T-02-PARSE: safe fallback on error)
-      const memberValues = bucket.members.map(m => m.value);
-      let name: string;
-      try {
-        name = await this.namingFn(memberValues);
-        // Length-bound the label (T-04-01-P: treated as untrusted label only)
-        name = String(name).trim().slice(0, 200) || this.fallbackName(bucket.members);
-      } catch {
-        // T-02-PARSE safe fallback: deterministic placeholder from most-central member
-        name = this.fallbackName(bucket.members);
+      const candidateBuckets: CandidateBucket[] = [];
+
+      for (const node of clusterableNodes) {
+        // Skip nodes already indexed under any schema (they're already linked)
+        if (alreadyInSchema.has(node.id)) continue;
+
+        // Find nearest existing schema centroid
+        let bestSchemaId: string | null = null;
+        let bestSim = -1;
+
+        for (const schema of existingSchemas) {
+          if (!schema.centroid) continue;
+          const sim = cosineSimF32(node.vec, schema.centroid);
+          if (sim > bestSim) {
+            bestSim = sim;
+            bestSchemaId = schema.id;
+          }
+        }
+
+        if (bestSim >= this.config.schemaJoinCentroidThreshold && bestSchemaId !== null) {
+          // JOIN existing schema
+          joinOps.push({ schemaId: bestSchemaId, node });
+          // Track the new join so subsequent nodes in this pass don't double-join
+          const schema = existingSchemas.find(s => s.id === bestSchemaId)!;
+          schema.memberIds.add(node.id);
+          alreadyInSchema.add(node.id);
+        } else {
+          // Seed a candidate bucket or join an existing one
+          // Leader clustering: join the first bucket whose centroid cosine >= cohesion threshold
+          let joinedBucket = false;
+          for (const bucket of candidateBuckets) {
+            const sim = cosineSimF32(node.vec, bucket.centroid);
+            if (sim >= this.config.schemaCohesionThreshold) {
+              // Update running centroid (incremental mean)
+              const n = bucket.members.length + 1;
+              for (let i = 0; i < bucket.centroid.length; i++) {
+                bucket.centroid[i] = (bucket.centroid[i]! * (n - 1) + node.vec[i]!) / n;
+              }
+              bucket.members.push(node);
+              joinedBucket = true;
+              break;
+            }
+          }
+          if (!joinedBucket) {
+            candidateBuckets.push({ members: [node], centroid: node.vec.slice() });
+          }
+        }
       }
 
-      newSchemaOps.push({ name, members: bucket.members });
-    }
+      // 5. Name qualifying buckets — ONE LLM call per new schema (D-36)
+      for (const bucket of candidateBuckets) {
+        if (bucket.members.length < this.config.schemaMinSupport) continue;
+
+        // Check intra-cluster cohesion (mean pairwise cosine, D-36)
+        const vecs = bucket.members.map(m => m.vec);
+        let totalSim = 0;
+        let pairs = 0;
+        for (let i = 0; i < vecs.length; i++) {
+          for (let j = i + 1; j < vecs.length; j++) {
+            totalSim += cosineSimF32(vecs[i]!, vecs[j]!);
+            pairs++;
+          }
+        }
+        const cohesion = pairs > 0 ? totalSim / pairs : 1.0;
+        if (cohesion < this.config.schemaCohesionThreshold) continue;
+
+        // One naming call per qualifying bucket (T-02-PARSE: safe fallback on error)
+        const memberValues = bucket.members.map(m => m.value);
+        let name: string;
+        try {
+          name = await this.namingFn(memberValues);
+          // Length-bound the label (T-04-01-P: treated as untrusted label only)
+          name = String(name).trim().slice(0, 200) || this.fallbackName(bucket.members);
+        } catch {
+          // T-02-PARSE safe fallback: deterministic placeholder from most-central member
+          name = this.fallbackName(bucket.members);
+        }
+
+        newSchemaOps.push({ name, members: bucket.members });
+      }
+    } // end if (clusterableRows.length > 0)
 
     // ── Phase B: synchronous DB writes — NO await inside transaction (T-02-ASYNC) ──
     this.db.transaction(() => {
@@ -351,6 +385,45 @@ export class SchemaInducer {
           // D-38: pass member's non-inferred origin to strengthen()
           // decay.ts:102 would no-op if we accidentally passed 'inferred'
           this.strength.strengthen(schemaId, member.origin);
+        }
+      }
+
+      // ── Falsification stage (D-39) — runs every pass ──────────────────────
+      //
+      // (1) Erosion: for each non-tombstoned schema, count surviving non-tombstoned
+      //     non-inferred members. If count < schemaMinSupport, tombstone the schema.
+      // (2) Cleanup invariant: for EVERY tombstoned schema (erosion this pass, OR
+      //     tombstoned by the consolidator's contradict route on a prior applyDecision),
+      //     delete all outgoing abstracts edges so no edge dangles to a dead schema.
+      //
+      // No `await` here — all reads and writes are synchronous better-sqlite3 ops (T-02-ASYNC).
+      // stmtDeleteAbstractsEdges uses a bound `?` (T-04-02-T, T-01-SQL).
+      const allSchemas = this.stmtGetAllSchemaNodes.all() as AllSchemaRow[];
+      const newlyTombstoned = new Set<string>();
+
+      // Step 1: erosion scan (non-tombstoned schemas only)
+      for (const schema of allSchemas) {
+        if (schema.tombstoned === 0) {
+          const memberRows = this.stmtGetSchemaMembers.all(schema.id) as Array<{ dst: string }>;
+          let surviveCount = 0;
+          for (const row of memberRows) {
+            const member = this.store.getNode(row.dst);
+            if (member && member.tombstoned === 0 && member.origin !== 'inferred') {
+              surviveCount++;
+            }
+          }
+          if (surviveCount < this.config.schemaMinSupport) {
+            this.store.tombstone(schema.id);
+            newlyTombstoned.add(schema.id);
+          }
+        }
+      }
+
+      // Step 2: cleanup — delete abstracts edges from all tombstoned schemas
+      // (both schemas already tombstoned before this transaction and those eroded above)
+      for (const schema of allSchemas) {
+        if (schema.tombstoned === 1 || newlyTombstoned.has(schema.id)) {
+          this.stmtDeleteAbstractsEdges.run(schema.id);
         }
       }
     })();
