@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brain-memory.sleep-pass</string>
+
+    <!--
+        ProgramArguments: absolute node binary + compiled sleep-pass entry point.
+        Placeholders substituted by scripts/setup-dogfood.sh:
+          __NODE__          → absolute path to node binary (command -v node)
+          __SLEEP_PASS_JS__ → absolute path to dist/src/adapter/sleep-pass-cli.js
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE__</string>
+        <string>__SLEEP_PASS_JS__</string>
+    </array>
+
+    <!--
+        EnvironmentVariables: pass DB path into the detached process.
+        __DB__ → absolute path to the brain-memory SQLite DB (BRAIN_MEMORY_DB).
+        The sleep-pass-cli reads BRAIN_MEMORY_DB first, then falls back to --db argv.
+    -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BRAIN_MEMORY_DB</key>
+        <string>__DB__</string>
+    </dict>
+
+    <!--
+        StartCalendarInterval: run once per hour (at :00) after any wake.
+        launchd catches missed runs after sleep — unlike cron.
+        Minute=0 only (no Hour key) means: fire at the top of every hour.
+    -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- RunAtLoad false: do not fire immediately on launchctl load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Redirect stdout/stderr to log files — sleep-pass-cli also writes here -->
+    <key>StandardOutPath</key>
+    <string>/tmp/brain-memory-sleep.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/brain-memory-sleep-err.log</string>
+</dict>
+</plist>
