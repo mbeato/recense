@@ -1,12 +1,17 @@
 /**
  * Echo-detection tests (LEARN-03, D-44/D-45).
  *
- * Covers:
+ * Four cases:
  *   1. EpisodicStore primitives — listRecentInferred + backfillSourceInferenceId
  *   2. Backfill — a turn echoing a recent inferred episode has source_inference_id set
  *      after consolidate()
- *
- * Extends in Task 2 with guard-exclusion, recency-window, and non-echo control cases.
+ *   3. Guard exclusion — because source_inference_id is backfilled, the existing
+ *      consolidator guard (episodeSourceInferenceId === null) prevents both
+ *      recordContradiction and strengthen — the echo can neither destabilize nor
+ *      strengthen a fact
+ *   4. Recency window — inferred episodes outside echoRecencyWindowMs are ignored;
+ *      the later turn is processed normally (not backfilled)
+ *   5. Non-echo control — a turn whose embedding is unrelated (cosine 0) is never backfilled
  */
 
 import Database from 'better-sqlite3';
@@ -20,8 +25,10 @@ import { EpisodicStore } from '../src/db/episode-store';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { CandidateRetriever } from '../src/retrieval/topk';
 import { MockEmbedder } from '../src/model/embedder';
+import type { JudgeVerdict } from '../src/model/judge';
 import { MockJudge } from '../src/model/judge';
 import { MockClaimExtractor } from '../src/model/claim-extractor';
+import type { PendingContradiction } from '../src/lib/types';
 import { Consolidator } from '../src/consolidation/consolidator';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
 
@@ -64,9 +71,11 @@ function makeHarness(): Harness {
   const config: EngineConfig = {
     ...DEFAULT_CONFIG,
     dbPath: ':memory:',
-    // Process all episodes regardless of salience (no skip noise in these tests)
+    // Process all user/tool episodes; skip low-salience assistant episodes.
+    // Inferred episodes use role='assistant' with salience=0 → skipped automatically,
+    // so they never pollute the test by going through claim extraction.
     consolSkipThreshold: 0.0,
-    consolSkipThresholdAssistant: 0.0,
+    consolSkipThresholdAssistant: 0.5,
     echoSimilarityThreshold: 0.85,
     echoRecencyWindowMs: 86_400_000, // 24 h
     unrelatedSimilarityThreshold: 0.3,
@@ -89,10 +98,18 @@ function makeNoOpSchemaInducer(h: Harness): SchemaInducer {
   );
 }
 
-function makeConsolidator(h: Harness, embedder: MockEmbedder): Consolidator {
-  // Claims that reference a nonexistent node → auto-unrelated (no judge call needed)
-  const extractor = new MockClaimExtractor([]);
-  const judge = new MockJudge([]);
+/** Build a Consolidator with an optional custom judge and extractor. */
+function makeConsolidator(
+  h: Harness,
+  embedder: MockEmbedder,
+  opts: {
+    judge?: MockJudge;
+    extractor?: MockClaimExtractor;
+  } = {},
+): Consolidator {
+  // Defaults: no claims → no judge calls needed
+  const extractor = opts.extractor ?? new MockClaimExtractor([]);
+  const judge = opts.judge ?? new MockJudge([]);
   return new Consolidator(
     h.db, h.episodes, h.store, h.strength, h.retriever,
     embedder, judge, extractor,
@@ -230,5 +247,149 @@ describe('echo detection via consolidate()', () => {
 
     const updated = h.episodes.getEpisode(echoTurn.id);
     expect(updated?.source_inference_id).toBe(inferredEp.id);
+  });
+
+  it('Guard exclusion: echo turn cannot record a contradiction or strengthen a fact', async () => {
+    // Seed a fact node (dirty — reembedDirty() will embed it during consolidate())
+    const factNodeId = 'fact-node-guard-test';
+    h.store.upsertNode({
+      id: factNodeId,
+      type: 'fact',
+      value: 'I use Python for data work',  // different from the claim below → judge needed
+      origin: 'observed',
+      s: 0.1,  // resistance = s × c = 0.05
+      c: 0.5,
+    });
+
+    // Prior inferred episode (within the recency window)
+    const inferredEp = h.episodes.append({
+      content: 'I use TypeScript for data work',
+      origin: 'inferred',
+      salience: 0,
+      hard_keep: 0,
+      role: 'assistant',        // salience 0 + assistant → skipped by consolSkipThresholdAssistant
+      session_id: 'session-inf',
+    });
+
+    h.clock.advanceMs(1_000);
+
+    // The echo turn: observed, restates the inference content
+    const echoTurn = h.episodes.append({
+      content: 'I use TypeScript for data work',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 1,
+      role: 'user',
+      session_id: 'session-echo',
+    });
+
+    // All embeddings → [1,0,...]:
+    //   - echo detection: cosine(echo turn, inferred ep) = 1.0 ≥ 0.85 → backfill
+    //   - topk: cosine(claim vec, fact node vec) = 1.0 > 0.3 → escalate to judge
+    const embedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+
+    // Extractor returns a claim that contradicts the fact node (different text → no D-17 fast path)
+    const extractor = new MockClaimExtractor([
+      { type: 'fact', value: 'I use TypeScript for data work' },
+    ]);
+
+    // Judge returns contradict with tiny magnitude → routeContradiction → 'hold'
+    // resistance = 0.1 * 0.5 = 0.05; ratio = 0.01/0.05 = 0.2 < peReconcileBandLow (0.8) → hold
+    const judgeVerdicts: JudgeVerdict[] = [
+      { relation: 'contradict', magnitude: 0.01, best_candidate_id: factNodeId },
+    ];
+    const judge = new MockJudge(judgeVerdicts);
+
+    const consolidator = makeConsolidator(h, embedder, { judge, extractor });
+
+    const factBefore = h.store.getNode(factNodeId)!;
+    const sBefore = factBefore.s;
+
+    await consolidator.consolidate();
+
+    // The echo turn's source_inference_id must be backfilled (guard precondition confirmed)
+    const updatedEcho = h.episodes.getEpisode(echoTurn.id);
+    expect(updatedEcho?.source_inference_id).toBe(inferredEp.id);
+
+    const updatedFact = h.store.getNode(factNodeId)!;
+
+    // No pending_contradiction recorded — guard fired because episodeSourceInferenceId !== null
+    const pending = JSON.parse(updatedFact.pending_contradictions) as PendingContradiction[];
+    expect(pending).toHaveLength(0);
+
+    // Strength unchanged — echo can neither strengthen (no confirm) nor destabilize (guard)
+    expect(updatedFact.s).toBe(sBefore);
+  });
+
+  it('Recency window: out-of-window inferred episode is ignored and turn is not backfilled', async () => {
+    // Append an inferred episode at t=0
+    h.episodes.append({
+      content: 'Max uses Rust',
+      origin: 'inferred',
+      salience: 0,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-inf',
+    });
+
+    // Advance clock by echoRecencyWindowMs + 1 ms — the inferred episode is now outside the window
+    h.clock.advanceMs(h.config.echoRecencyWindowMs + 1);
+
+    // Append the echo turn — same content but now the inferred episode is stale
+    const echoTurn = h.episodes.append({
+      content: 'Max uses Rust',    // would match, but inferred ep is outside the window
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 1,
+      role: 'user',
+      session_id: 'session-echo',
+    });
+
+    // makeAlwaysSameEmbedder: vectors would match (cosine 1.0), but recency window precludes it
+    const embedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const consolidator = makeConsolidator(h, embedder);
+
+    await consolidator.consolidate();
+
+    // source_inference_id remains null — the inferred episode was outside the recency window
+    const updated = h.episodes.getEpisode(echoTurn.id);
+    expect(updated?.source_inference_id).toBeNull();
+
+    // The echo turn WAS processed normally (consolidated=1)
+    expect(updated?.consolidated).toBe(1);
+  });
+
+  it('Non-echo control: an unrelated turn (cosine 0) is never backfilled', async () => {
+    // Append a prior inferred episode
+    h.episodes.append({
+      content: 'Max works on a memory engine',
+      origin: 'inferred',
+      salience: 0,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-inf',
+    });
+
+    h.clock.advanceMs(1_000);
+
+    // An unrelated turn
+    const unrelatedTurn = h.episodes.append({
+      content: 'Completely different topic',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 1,
+      role: 'user',
+      session_id: 'session-unrelated',
+    });
+
+    // makeZeroEmbedder: all texts → [0,...] → cosineSimF32([0,...],[0,...]) = 0 < 0.85 → no echo
+    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
+    const consolidator = makeConsolidator(h, embedder);
+
+    await consolidator.consolidate();
+
+    // source_inference_id is still null — cosine was below echoSimilarityThreshold
+    const updated = h.episodes.getEpisode(unrelatedTurn.id);
+    expect(updated?.source_inference_id).toBeNull();
   });
 });
