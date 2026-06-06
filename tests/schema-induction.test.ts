@@ -383,6 +383,71 @@ describe('SchemaInducer', () => {
     expect(edges).toHaveLength(3); // still 3, not 6
   });
 
+  // ── Fix-1: isValidSchemaName — refusal/question names fall back to deterministic name ──
+
+  it('Fix-1: namingFn returning a refusal string falls back to schema: deterministic name', async () => {
+    const embedder = makeSameClusterEmbedder(h.config.embeddingDimensions);
+    // Simulate an LLM that returns a refusal/clarifying-question instead of a label
+    const refusalFn = async (_values: string[]) =>
+      "I don't have access to the content of those memory facts. Could you please share what LEARN-01 contains?";
+
+    for (let i = 0; i < 3; i++) {
+      await seedNodeWithEmbedding(h, embedder, { value: `ml-fact-${i}` });
+    }
+
+    const inducer = new SchemaInducer(
+      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, refusalFn,
+    );
+
+    await inducer.induceSchemas();
+
+    const schemaNodes = h.db.prepare("SELECT * FROM node WHERE type = 'schema'").all() as NodeRow[];
+    expect(schemaNodes).toHaveLength(1);
+    // Should NOT contain the refusal text; value must be the schema: fallback
+    expect(schemaNodes[0]!.value).toMatch(/^schema:/);
+    expect(schemaNodes[0]!.value).not.toContain("I don't have access");
+    expect(schemaNodes[0]!.value).not.toContain('?');
+  });
+
+  it('Fix-1: namingFn returning a question-only string falls back to schema: deterministic name', async () => {
+    const embedder = makeSameClusterEmbedder(h.config.embeddingDimensions);
+    const questionFn = async (_values: string[]) => 'Could you please clarify?';
+
+    for (let i = 0; i < 3; i++) {
+      await seedNodeWithEmbedding(h, embedder, { value: `q-fact-${i}` });
+    }
+
+    const inducer = new SchemaInducer(
+      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, questionFn,
+    );
+
+    await inducer.induceSchemas();
+
+    const schemaNodes = h.db.prepare("SELECT * FROM node WHERE type = 'schema'").all() as NodeRow[];
+    expect(schemaNodes).toHaveLength(1);
+    expect(schemaNodes[0]!.value).toMatch(/^schema:/);
+    expect(schemaNodes[0]!.value).not.toContain('?');
+  });
+
+  it('Fix-1: namingFn returning a valid short label stores that label verbatim', async () => {
+    const embedder = makeSameClusterEmbedder(h.config.embeddingDimensions);
+    const validFn = async (_values: string[]) => 'machine learning basics';
+
+    for (let i = 0; i < 3; i++) {
+      await seedNodeWithEmbedding(h, embedder, { value: `ml-${i}` });
+    }
+
+    const inducer = new SchemaInducer(
+      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, validFn,
+    );
+
+    await inducer.induceSchemas();
+
+    const schemaNodes = h.db.prepare("SELECT * FROM node WHERE type = 'schema'").all() as NodeRow[];
+    expect(schemaNodes).toHaveLength(1);
+    expect(schemaNodes[0]!.value).toBe('machine learning basics');
+  });
+
   // ── Two naming calls for two independent clusters ─────────────────────────
 
   it('two distinct clusters produce two schema nodes and two naming calls', async () => {
