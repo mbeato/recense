@@ -37,6 +37,10 @@ export { SemanticStore } from './db/semantic-store';
 // ── Retrieval seam (STORE-03) ─────────────────────────────────────────────────
 export { CandidateRetriever, cosineSimF32 } from './retrieval/topk';
 
+// ── Retrieval engine (Phase 3, RET-01/RET-02) ────────────────────────────────
+export type { RetrieveResult, RetrieveStatus } from './retrieval/engine';
+export { RetrievalEngine } from './retrieval/engine';
+
 // ── Embedder seam (Phase 2, D-21/D-22) ───────────────────────────────────────
 export type { Embedder } from './model/embedder';
 export { OpenAIEmbedder, MockEmbedder } from './model/embedder';

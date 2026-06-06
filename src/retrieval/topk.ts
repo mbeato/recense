@@ -41,11 +41,17 @@ export function cosineSimF32(a: Float32Array, b: Float32Array): number {
  */
 export class CandidateRetriever {
   private readonly stmtSelectEmbedded: Database.Statement;
+  // D-29: second scan includes tombstoned nodes (their embeddings are NOT nulled by tombstone())
+  private readonly stmtSelectTombstoned: Database.Statement;
 
   constructor(db: Database.Database) {
     // Select only nodes that have been embedded AND are not tombstoned (T-02-STALE)
     this.stmtSelectEmbedded = db.prepare(
       'SELECT id, embedding FROM node WHERE embedding IS NOT NULL AND tombstoned = 0'
+    );
+    // tombstone() does NOT null the embedding — tombstoned nodes remain cosine-scannable (D-29)
+    this.stmtSelectTombstoned = db.prepare(
+      'SELECT id, embedding FROM node WHERE embedding IS NOT NULL AND tombstoned = 1'
     );
   }
 
@@ -60,6 +66,27 @@ export class CandidateRetriever {
       .map(row => ({
         id: row.id,
         // Pitfall 5: pass byteOffset + length to handle Buffer slices correctly
+        score: cosineSimF32(
+          queryVec,
+          new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4)
+        ),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, k);
+  }
+
+  /**
+   * Return the top-k TOMBSTONED nodes by cosine similarity to `queryVec`, sorted descending.
+   * Used for the 'deleted' classification second scan (D-29/RET-02).
+   * Mirrors topk() exactly — same Float32Array decode (Pitfall 5), same sort+slice.
+   */
+  topkTombstoned(queryVec: Float32Array, k: number): Array<{ id: string; score: number }> {
+    const rows = this.stmtSelectTombstoned.all() as Array<{ id: string; embedding: Buffer }>;
+
+    return rows
+      .map(row => ({
+        id: row.id,
+        // Pitfall 5: byteOffset + length (Buffer slices may have nonzero byteOffset)
         score: cosineSimF32(
           queryVec,
           new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4)
