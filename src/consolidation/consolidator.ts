@@ -35,10 +35,11 @@ import type { EpisodicStore } from '../db/episode-store';
 import type { SemanticStore } from '../db/semantic-store';
 import type { StrengthDecayManager } from '../strength/decay';
 import type { CandidateRetriever } from '../retrieval/topk';
+import { cosineSimF32 } from '../retrieval/topk';
 import type { Embedder } from '../model/embedder';
 import type { Judge, JudgeRelation } from '../model/judge';
 import type { ClaimExtractor } from '../model/claim-extractor';
-import type { Origin, PendingContradiction } from '../lib/types';
+import type { Origin, PendingContradiction, EpisodeRow } from '../lib/types';
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
 import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
@@ -127,6 +128,55 @@ export class Consolidator {
     }
   }
 
+  // ── Private helper: echo detection ──────────────────────────────────────
+
+  /**
+   * Echo-detection step for the offline sleep pass (D-44/D-45).
+   *
+   * Checks whether a replayed turn merely echoes a prior inferred episode: embeds the
+   * turn content and all recent inferred episodes (within echoRecencyWindowMs), computes
+   * cosine similarity, and returns the id of the best inferred episode when the highest
+   * cosine >= echoSimilarityThreshold; otherwise returns null.
+   *
+   * Phase A only — awaits the embedder fully before any DB write (T-02-ASYNC).
+   * Cost is offline; per-turn capture remains LLM-free (D-44 constraint).
+   *
+   * Skips inferred-origin episodes (an inference is never an echo of itself).
+   */
+  private async detectEcho(episode: EpisodeRow): Promise<string | null> {
+    // An inferred episode is never classified as an echo of itself (D-44)
+    if (episode.origin === 'inferred') return null;
+
+    const sinceMs = this.clock.nowMs() - this.config.echoRecencyWindowMs;
+    const recent = this.episodes.listRecentInferred(sinceMs);
+    if (recent.length === 0) return null;
+
+    // Batch-embed [turn, ...recent inferred] in one call (offline cost, T-02-ASYNC Phase A)
+    const texts = [episode.content, ...recent.map(r => r.content)];
+    const vecs = await this.embedder.embed(texts);
+
+    const episodeVec = vecs[0];
+    if (!episodeVec) return null;
+
+    let bestId: string | null = null;
+    let bestSim = -1;
+
+    for (let i = 0; i < recent.length; i++) {
+      const recentEp = recent[i]!;
+      const recentVec = vecs[i + 1];
+      if (!recentVec) continue;
+      // Safety: skip if the same id appears (shouldn't happen — inferred vs non-inferred)
+      if (recentEp.id === episode.id) continue;
+      const sim = cosineSimF32(episodeVec, recentVec);
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestId = recentEp.id;
+      }
+    }
+
+    return bestSim >= this.config.echoSimilarityThreshold ? bestId : null;
+  }
+
   // ── Public interface ─────────────────────────────────────────────────────
 
   /**
@@ -150,7 +200,7 @@ export class Consolidator {
     // individually so a crash between episodes never double-applies (CONSOL-02).
     const unconsolidated = this.episodes.listUnconsolidated();
 
-    for (const episode of unconsolidated) {
+    for (let episode of unconsolidated) {
       // CONSOL-01: per-role skip — assistant turns have a higher threshold because they
       // average 4.5× the length of user turns and are mostly restatement (D-13).
       // consolSkipThreshold (0.2) remains the default for user/tool roles.
@@ -159,6 +209,20 @@ export class Consolidator {
         : this.config.consolSkipThreshold;
       if (episode.salience < skipThreshold && episode.hard_keep === 0) {
         continue;
+      }
+
+      // ── Echo detection (D-44/D-45): backfill source_inference_id BEFORE claim processing ──
+      // A replayed turn whose embedding cosines >= echoSimilarityThreshold against a recent
+      // inferred episode (within echoRecencyWindowMs) has its source_inference_id backfilled.
+      // The existing guard at ~line 354 (episodeSourceInferenceId === null) then excludes the
+      // echo from both strengthen and contradiction recording — for free; no guard change needed.
+      // Phase A only: detectEcho awaits the embedder fully before any db.transaction (T-02-ASYNC).
+      const echoSourceId = await this.detectEcho(episode);
+      if (echoSourceId !== null) {
+        this.episodes.backfillSourceInferenceId(episode.id, echoSourceId);
+        // Refresh in-memory copy so the ClaimDecision built at ~line 221 carries the
+        // backfilled source_inference_id and the existing guard fires correctly.
+        episode = { ...episode, source_inference_id: echoSourceId };
       }
 
       // ── Per-episode Phase A: all async work into plain array ───────────
