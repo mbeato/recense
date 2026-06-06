@@ -65,32 +65,41 @@ function resolveQuery(): string | undefined {
 const SAFE_NULL_RESULT = JSON.stringify({ inference: null, episodeId: null, origin: 'inferred' });
 
 async function main(): Promise<void> {
-  // ── 1. Lock guard (single-writer for episode append, D-43) ──────────────
+  // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──
+  // process.exit() inside a try/finally does NOT unwind the stack, so exiting
+  // while the lock is held leaks it for up to LOCK_STALE_MS (5 min). Validate
+  // here — before acquireLock() — so these exits are always lock-free.
+  // WR-03: every early exit writes SAFE_NULL_RESULT to stdout first so callers
+  // doing JSON.parse(stdout) always receive parseable JSON, never an empty string.
+  const dbPath = resolveDbPath();
+  if (!dbPath) {
+    log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
+    process.stdout.write(SAFE_NULL_RESULT);
+    process.exit(0);
+  }
+
+  const query = resolveQuery();
+  if (!query) {
+    log('No --query supplied — exiting');
+    process.stdout.write(SAFE_NULL_RESULT);
+    process.exit(0);
+  }
+
+  // ── 2. Lock guard (single-writer for episode append, D-43) ──────────────
   if (!acquireLock()) {
     log('Lock held by another process — exiting');
+    // WR-03: lock-held is a normal runtime condition; always emit JSON so callers
+    // can JSON.parse(stdout) without throwing on an empty string.
+    process.stdout.write(SAFE_NULL_RESULT);
     process.exit(0);
   }
 
   try {
-    // ── 2. Resolve DB path ─────────────────────────────────────────────────
-    const dbPath = resolveDbPath();
-    if (!dbPath) {
-      log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
-      process.exit(0);
-    }
-
-    // ── 3. Resolve query string ────────────────────────────────────────────
-    const query = resolveQuery();
-    if (!query) {
-      log('No --query supplied — exiting');
-      process.exit(0);
-    }
-
-    // ── 4. Open DB and initialize schema ──────────────────────────────────
+    // ── 3. Open DB and initialize schema ──────────────────────────────────
     const db = new Database(dbPath);
     initSchema(db);
 
-    // ── 5. Instantiate the full RecallEngine dependency graph ─────────────
+    // ── 4. Instantiate the full RecallEngine dependency graph ─────────────
     const config = { ...DEFAULT_CONFIG, dbPath };
 
     const episodes = new EpisodicStore(db, realClock, config);
@@ -106,7 +115,7 @@ async function main(): Promise<void> {
       // No anthropicFactory supplied — defaults to createAnthropicClient
     );
 
-    // ── 6. Run recall and emit JSON to stdout ─────────────────────────────
+    // ── 5. Run recall and emit JSON to stdout ─────────────────────────────
     const result = await engine.recall(query, 'recall-session');
     process.stdout.write(JSON.stringify(result));
 
@@ -116,7 +125,7 @@ async function main(): Promise<void> {
     // Error discipline: safe null JSON to stdout — never a raw error (would corrupt JSON)
     process.stdout.write(SAFE_NULL_RESULT);
   } finally {
-    // ── 7. Always release the lock ─────────────────────────────────────────
+    // ── 6. Always release the lock ─────────────────────────────────────────
     releaseLock();
   }
 }

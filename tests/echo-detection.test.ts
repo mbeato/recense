@@ -321,6 +321,117 @@ describe('echo detection via consolidate()', () => {
     expect(updatedFact.s).toBe(sBefore);
   });
 
+  it('confirm path: echo turn fast-path-confirms a fact but s and c stay unchanged', async () => {
+    // CR-01 RED test: before the fix, the echo turn's claim routes through the D-17 fast path
+    // (exact normalized match → confirm) and calls strengthen(), incrementing s and c.
+    // After the fix, the episode is short-circuited before claim processing and s/c stay unchanged.
+
+    const factNodeId = 'fact-echo-confirm-test';
+    const factValue = 'Max uses TypeScript';
+
+    // Seed the fact node; reembedDirty() will embed it during consolidate()
+    h.store.upsertNode({
+      id: factNodeId,
+      type: 'fact',
+      value: factValue,
+      origin: 'observed',
+      s: 0.3,
+      c: 0.7,
+    });
+
+    // Prior inferred episode (within recency window)
+    h.episodes.append({
+      content: factValue,
+      origin: 'inferred',
+      salience: 0,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-inf',
+    });
+
+    h.clock.advanceMs(1_000);
+
+    // Echo turn — same value, so D-17 fast path will confirm the fact node
+    h.episodes.append({
+      content: factValue,
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 1,
+      role: 'user',
+      session_id: 'session-echo',
+    });
+
+    // makeAlwaysSameEmbedder: cosine 1.0 for echo detection AND for D-17 fast path lookup
+    const embedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+
+    // Extractor returns a claim whose value exactly matches the fact node (triggers D-17 fast path)
+    const extractor = new MockClaimExtractor([
+      { type: 'fact', value: factValue },
+    ]);
+
+    const consolidator = makeConsolidator(h, embedder, { extractor });
+
+    const factBefore = h.store.getNode(factNodeId)!;
+    const sBefore = factBefore.s;
+    const cBefore = factBefore.c;
+
+    await consolidator.consolidate();
+
+    const factAfter = h.store.getNode(factNodeId)!;
+    // Guard must prevent strengthen — s and c must be unchanged (CR-01 self-confirmation guard)
+    expect(factAfter.s).toBe(sBefore);
+    expect(factAfter.c).toBe(cBefore);
+  });
+
+  it('unrelated path: echo turn classified unrelated mints no new node', async () => {
+    // CR-01 RED test: before the fix, the echo turn's claim auto-routes to unrelated
+    // (no graph nodes → topk returns [] → candidates.length === 0) and calls upsertNode,
+    // minting a new node. After the fix, the episode is short-circuited before processing.
+
+    // No existing nodes — topk returns 0 candidates → auto-unrelated (no judge call needed)
+
+    // Prior inferred episode
+    h.episodes.append({
+      content: 'Max is a great developer',
+      origin: 'inferred',
+      salience: 0,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-inf',
+    });
+
+    h.clock.advanceMs(1_000);
+
+    // Echo turn — same content as inferred episode
+    h.episodes.append({
+      content: 'Max is a great developer',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 1,
+      role: 'user',
+      session_id: 'session-echo',
+    });
+
+    // makeAlwaysSameEmbedder: cosine 1.0 for echo detection; no graph nodes → topk returns []
+    const embedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+
+    // Extractor returns a claim that would mint a new node if processing is not short-circuited
+    const extractor = new MockClaimExtractor([
+      { type: 'fact', value: 'Max is a great developer' },
+    ]);
+
+    const consolidator = makeConsolidator(h, embedder, { extractor });
+
+    const nodesBefore = h.db.prepare('SELECT COUNT(*) as count FROM node').get() as { count: number };
+    expect(nodesBefore.count).toBe(0);
+
+    await consolidator.consolidate();
+
+    // Echo guard must prevent node minting — no new node should exist (CR-01)
+    const nodesAfter = h.db.prepare('SELECT COUNT(*) as count FROM node').get() as { count: number };
+    expect(nodesAfter.count).toBe(0);
+  });
+
   it('Recency window: out-of-window inferred episode is ignored and turn is not backfilled', async () => {
     // Append an inferred episode at t=0
     h.episodes.append({
