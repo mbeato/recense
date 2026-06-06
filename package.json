@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "tsx src/index.ts",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "smoke:dogfood": "tsx scripts/smoke-dogfood.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
