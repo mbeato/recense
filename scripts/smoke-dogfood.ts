@@ -27,6 +27,7 @@ import { AllocationGate } from '../src/gate/allocation-gate';
 import { RetrievalEngine } from '../src/retrieval/engine';
 import { EpisodicStore, IngestionPipeline } from '../src/ingest/pipeline';
 import { Consolidator } from '../src/consolidation/consolidator';
+import { SchemaInducer } from '../src/consolidation/schema-induction';
 import { MockEmbedder } from '../src/model/embedder';
 import { MockJudge } from '../src/model/judge';
 import { MockClaimExtractor } from '../src/model/claim-extractor';
@@ -88,8 +89,14 @@ async function main(): Promise<void> {
   const extractor = new MockClaimExtractor([{ type: 'fact', value: FACT_VALUE }]);
   const judge     = new MockJudge([{ best_candidate_id: null, relation: 'unrelated', magnitude: 0 }]);
 
+  // No-op inducer (stub naming fn): smoke-dogfood has only 1 node → below schemaMinSupport
+  const inducer = new SchemaInducer(
+    db, store, strength, retriever, embedder, config, clock,
+    async () => 'no-op-schema',
+  );
+
   const consolidator = new Consolidator(
-    db, episodes, store, strength, retriever, embedder, judge, extractor, config, clock,
+    db, episodes, store, strength, retriever, embedder, judge, extractor, inducer, config, clock,
   );
   await consolidator.consolidate();
   console.log('[smoke-dogfood] consolidation complete');

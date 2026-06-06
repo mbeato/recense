@@ -30,7 +30,25 @@ import { MockClaimExtractor } from '../src/model/claim-extractor';
 import type { ExtractedClaim } from '../src/model/claim-extractor';
 import type { NodeRow, PendingContradiction } from '../src/lib/types';
 import { Consolidator } from '../src/consolidation/consolidator';
+import { SchemaInducer } from '../src/consolidation/schema-induction';
 import { newId } from '../src/lib/hash';
+
+// ---------------------------------------------------------------------------
+// SchemaInducer stub for consolidation tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a no-op SchemaInducer for consolidation tests.
+ * Uses a zero-vector embedder (no clustering) and a stub naming function.
+ * Schema induction is exercised separately in tests/schema-induction.test.ts.
+ */
+function makeNoOpSchemaInducer(h: Harness): SchemaInducer {
+  const noOpEmbedder = new MockEmbedder((_text: string) => new Float32Array(h.config.embeddingDimensions));
+  return new SchemaInducer(
+    h.db, h.store, h.strength, h.retriever, noOpEmbedder, h.config, h.clock,
+    async (_values: string[]) => 'no-op-schema',
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,7 +134,7 @@ describe('Consolidator', () => {
     const judge = new MockJudge([]);
     const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -144,7 +162,7 @@ describe('Consolidator', () => {
     const judge = new MockJudge([]);
     const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -183,7 +201,7 @@ describe('Consolidator', () => {
     const judge = new MockJudge([]); // should not be called
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -216,7 +234,7 @@ describe('Consolidator', () => {
     const judge = new MockJudge([]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Episode with origin='inferred' — claim inherits this origin
@@ -257,7 +275,7 @@ describe('Consolidator', () => {
     const extractor = new MockClaimExtractor([{ type: 'fact', value: 'completely unrelated claim' }]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, zeroEmbedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, zeroEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -299,7 +317,7 @@ describe('Consolidator', () => {
     const extractor = new MockClaimExtractor([{ type: 'fact', value: 'extension of base node' }]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -344,7 +362,7 @@ describe('Consolidator', () => {
     const extractor = new MockClaimExtractor([{ type: 'fact', value: 'truly unrelated new claim' }]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -389,7 +407,7 @@ describe('Consolidator', () => {
     const extractor = new MockClaimExtractor([{ type: 'fact', value: 'contradicting claim here' }]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Provenance-eligible episode: origin='observed', source_inference_id=null
@@ -435,7 +453,7 @@ describe('Consolidator', () => {
     const extractor = new MockClaimExtractor([{ type: 'fact', value: 'inferred-origin contradiction' }]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Episode with origin='inferred' → claimOrigin is 'inferred' → NOT provenance-eligible (D-19)
@@ -478,7 +496,7 @@ describe('Consolidator', () => {
     const extractor = new MockClaimExtractor([]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // No episodes to consolidate — but reembedDirty should still run
@@ -510,7 +528,7 @@ describe('Consolidator', () => {
     const judge = new MockJudge([]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -584,7 +602,7 @@ describe('Consolidator', () => {
 
     const judge = new MockJudge([]);
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, throwingExtractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, throwingExtractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // First pass — throws on second episode
@@ -601,7 +619,7 @@ describe('Consolidator', () => {
     // Now resume with a normal extractor for the second episode only
     const resumeExtractor = new MockClaimExtractor([{ type: 'fact', value: val2 }]);
     const consolidator2 = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, new MockJudge([]), resumeExtractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, new MockJudge([]), resumeExtractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     await consolidator2.consolidate();
@@ -640,7 +658,7 @@ describe('Consolidator', () => {
     const extractor = new MockClaimExtractor([{ type: 'fact', value: newValue }]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -706,7 +724,7 @@ describe('Consolidator', () => {
     const extractor = new MockClaimExtractor([{ type: 'fact', value: contradictingValue }]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Three episodes from three distinct sessions (all provenance-eligible)
@@ -757,7 +775,7 @@ describe('Consolidator', () => {
     const extractor = new MockClaimExtractor([{ type: 'fact', value: 'chatty contradiction' }]);
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Three episodes ALL from the SAME session_id
@@ -793,7 +811,7 @@ describe('Consolidator', () => {
     const embedder = makeZeroEmbedder(h.config.embeddingDimensions); // auto-unrelated
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, h.config, h.clock,
+      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -818,7 +836,7 @@ describe('Consolidator', () => {
     const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, h.config, h.clock,
+      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -843,7 +861,7 @@ describe('Consolidator', () => {
     const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, h.config, h.clock,
+      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -868,7 +886,7 @@ describe('Consolidator', () => {
     const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, h.config, h.clock,
+      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -894,7 +912,7 @@ describe('Consolidator', () => {
     const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, reversibleConfig, h.clock,
+      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), reversibleConfig, h.clock,
     );
 
     h.episodes.append({
@@ -945,7 +963,7 @@ describe('Consolidator', () => {
 
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever, countingEmbedder,
-      new MockJudge([]), extractor, h.config, h.clock,
+      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -982,7 +1000,7 @@ describe('Consolidator', () => {
 
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever, countingEmbedder,
-      new MockJudge([]), new MockClaimExtractor([]), h.config, h.clock,
+      new MockJudge([]), new MockClaimExtractor([]), makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -1040,7 +1058,7 @@ describe('Consolidator', () => {
       h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder,
       new MockJudge([pass1Verdict]),
       new MockClaimExtractor([{ type: 'fact', value: 'manager' }]),
-      h.config, h.clock,
+      makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -1080,7 +1098,7 @@ describe('Consolidator', () => {
       h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder,
       new MockJudge([pass2Verdict]),
       new MockClaimExtractor([{ type: 'fact', value: 'engineer' }]),
-      h.config, h.clock,
+      makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({

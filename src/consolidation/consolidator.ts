@@ -42,6 +42,7 @@ import type { Origin, PendingContradiction } from '../lib/types';
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
 import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
+import type { SchemaInducer } from './schema-induction';
 
 // ---------------------------------------------------------------------------
 // Internal types — collect Phase A results into plain arrays before any DB write
@@ -73,6 +74,7 @@ export class Consolidator {
   private readonly embedder: Embedder;
   private readonly judge: Judge;
   private readonly extractor: ClaimExtractor;
+  private readonly inducer: SchemaInducer;
   private readonly config: EngineConfig;
   private readonly clock: Clock;
 
@@ -85,6 +87,7 @@ export class Consolidator {
     embedder: Embedder,
     judge: Judge,
     extractor: ClaimExtractor,
+    inducer: SchemaInducer,
     config: EngineConfig,
     clock: Clock = realClock,
   ) {
@@ -96,6 +99,7 @@ export class Consolidator {
     this.embedder = embedder;
     this.judge = judge;
     this.extractor = extractor;
+    this.inducer = inducer;
     this.config = config;
     this.clock = clock;
   }
@@ -233,6 +237,9 @@ export class Consolidator {
 
     // ── Phase C: Re-embed nodes dirtied by this pass, then eviction sweep ──
     await this.reembedDirty();
+    // D-37: schema induction after Phase C reembedDirty(), before eviction.
+    // Schemas depend on fresh embeddings; tombstoned schemas must be swept in the same pass.
+    await this.inducer.induceSchemas();
     this.strength.runEvictionSweep();
   }
 
