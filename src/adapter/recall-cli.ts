@@ -69,21 +69,28 @@ async function main(): Promise<void> {
   // process.exit() inside a try/finally does NOT unwind the stack, so exiting
   // while the lock is held leaks it for up to LOCK_STALE_MS (5 min). Validate
   // here — before acquireLock() — so these exits are always lock-free.
+  // WR-03: every early exit writes SAFE_NULL_RESULT to stdout first so callers
+  // doing JSON.parse(stdout) always receive parseable JSON, never an empty string.
   const dbPath = resolveDbPath();
   if (!dbPath) {
     log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
+    process.stdout.write(SAFE_NULL_RESULT);
     process.exit(0);
   }
 
   const query = resolveQuery();
   if (!query) {
     log('No --query supplied — exiting');
+    process.stdout.write(SAFE_NULL_RESULT);
     process.exit(0);
   }
 
   // ── 2. Lock guard (single-writer for episode append, D-43) ──────────────
   if (!acquireLock()) {
     log('Lock held by another process — exiting');
+    // WR-03: lock-held is a normal runtime condition; always emit JSON so callers
+    // can JSON.parse(stdout) without throwing on an empty string.
+    process.stdout.write(SAFE_NULL_RESULT);
     process.exit(0);
   }
 
