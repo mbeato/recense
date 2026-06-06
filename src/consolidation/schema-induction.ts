@@ -36,6 +36,52 @@ import { newId } from '../lib/hash';
 import { createAnthropicClient } from '../model/anthropic-client';
 
 // ---------------------------------------------------------------------------
+// Schema name validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns false when the candidate schema name looks like an LLM refusal, clarifying
+ * question, or sentence (not a 2-5 word label). Protects against naming calls that
+ * return meta-commentary instead of a concise concept label.
+ *
+ * Rejects when ANY of:
+ *  - empty after trim
+ *  - contains '?' (questions / refusals)
+ *  - word count > 8 (the prompt asks for 2-5 words; allow slack but reject sentences)
+ *  - case-insensitively matches any known refusal / meta-commentary prefix
+ */
+function isValidSchemaName(name: string): boolean {
+  if (!name) return false;
+  if (name.includes('?')) return false;
+  if (name.split(/\s+/).filter(Boolean).length > 8) return false;
+  const lower = name.toLowerCase();
+  const refusalPatterns = [
+    "i don't",
+    "i do not",
+    "i cannot",
+    "i can't",
+    "i'm not",
+    "i am not",
+    "i'm unable",
+    "i am unable",
+    "i'm sorry",
+    "i apologize",
+    "could you",
+    "please share",
+    "please provide",
+    "as an ai",
+    "i don't have access",
+    "does not contain",
+    "no shared",
+    "unable to",
+  ];
+  for (const pattern of refusalPatterns) {
+    if (lower.includes(pattern)) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -330,8 +376,10 @@ export class SchemaInducer {
         let name: string;
         try {
           name = await this.namingFn(memberValues);
-          // Length-bound the label (T-04-01-P: treated as untrusted label only)
-          name = String(name).trim().slice(0, 200) || this.fallbackName(bucket.members);
+          // Length-bound the label (T-04-01-P: treated as untrusted label only),
+          // then validate: reject refusals, questions, and sentence-length responses.
+          const candidate = String(name).trim().slice(0, 200);
+          name = isValidSchemaName(candidate) ? candidate : this.fallbackName(bucket.members);
         } catch {
           // T-02-PARSE safe fallback: deterministic placeholder from most-central member
           name = this.fallbackName(bucket.members);

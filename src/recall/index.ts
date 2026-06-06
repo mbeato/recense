@@ -7,10 +7,11 @@
  * Design:
  *  - Online embed via Embedder seam (D-41): one call per recall, off the hot path.
  *  - 1-hop neighborhood from bestMatch.getOutEdges (D-42): budget-capped, tombstoned excluded.
- *  - Schema identification: if the topk best match is a schema node, it IS the prior;
- *    otherwise any neighbor reached via an 'abstracts' edge with type='schema' is used.
- *    (Current schema-induction creates schema→member edges; if the query best matches the
- *    schema, the schema node is the top match and its members form the neighborhood.)
+ *  - Schema identification: if the topk best match is a schema node, use it directly
+ *    (Case A). Otherwise walk INCOMING edges of bestMatch — any edge with kind='abstracts'
+ *    whose src is a live schema node resolves the prior (Case B, reverse-lookup).
+ *    Schema-induction creates schema→member edges; most queries match members, so
+ *    Case B is the common path (Fix-2, LEARN-02).
  *  - LLM compose via createAnthropicClient (D-43, T-02-PARSE safe fallback).
  *  - Episode append: ONLY write in this path — origin='inferred', role='assistant', salience=0.
  *
@@ -128,25 +129,49 @@ export class RecallEngine {
 
     // ── (3) Identify schema and assemble bounded 1-hop neighborhood (D-42) ───
     //
-    // Schema identification strategy (two cases, both covered here):
+    // Schema identification strategy (two cases):
     //  A) bestMatch IS a schema node → use it directly as the prior.
-    //     This is the primary case with current schema-induction (schema→member edges):
-    //     a query that matches the schema's topic has the schema as the top cosine match.
-    //  B) bestMatch has an outgoing 'abstracts' edge to a schema node → use that schema.
-    //     Handles future reverse-edge scenarios without code change.
+    //     This fires when a query directly matches the schema's topic embedding.
+    //  B) bestMatch is a member/fact/entity → walk INCOMING edges looking for a
+    //     schema that abstracts this node via an 'abstracts' edge (schema→member).
+    //     This is the common case: schema-induction creates schema→member edges,
+    //     so member nodes are best cosine matches for specific queries. Without
+    //     this reverse lookup, recall returns NULL for most natural queries.
+    //
+    // Neighborhood is assembled from the RESOLVED schemaNode's OUTGOING edges
+    // (i.e. the schema's members) regardless of which case resolved it, so
+    // context is consistent and complete whether the query hit the schema or a member.
     const bestMatchNode = this.store.getNode(bestMatch.id);
     if (!bestMatchNode || bestMatchNode.tombstoned === 1) return NULL_RESULT;
 
     let schemaNode: { id: string; value: string } | null = null;
 
-    // Case A: best match is a schema node
+    // Case A: best match is a schema node → use directly
     if (bestMatchNode.type === 'schema') {
       schemaNode = { id: bestMatchNode.id, value: bestMatchNode.value };
     }
 
-    // Assemble neighborhood from outgoing edges of bestMatch
+    // Case B: reverse-lookup via incoming 'abstracts' edges (Fix-2, LEARN-02)
+    // schema-induction creates schema→member edges; bestMatch is typically a member.
+    if (!schemaNode) {
+      const inEdges = this.store.getInEdges(bestMatch.id);
+      for (const inEdge of inEdges) {
+        if (inEdge.kind !== 'abstracts') continue;
+        const srcNode = this.store.getNode(inEdge.src);
+        if (!srcNode || srcNode.tombstoned === 1 || srcNode.type !== 'schema') continue;
+        schemaNode = { id: srcNode.id, value: srcNode.value };
+        break; // take the first non-tombstoned schema parent
+      }
+    }
+
+    // No schema reachable → no fabricated inference (D-42)
+    if (!schemaNode) return NULL_RESULT;
+
+    // Assemble bounded 1-hop neighborhood from the RESOLVED schema's outgoing edges.
+    // Using schemaNode.id (not bestMatch.id) ensures the same neighborhood whether
+    // the query matched the schema itself or one of its members.
     const neighborhood: Array<{ id: string; value: string }> = [];
-    const edges = this.store.getOutEdges(bestMatch.id);
+    const edges = this.store.getOutEdges(schemaNode.id);
     let nodeCount = 0;
 
     for (const edge of edges) {
@@ -156,15 +181,7 @@ export class RecallEngine {
 
       neighborhood.push({ id: neighbor.id, value: neighbor.value });
       nodeCount++;
-
-      // Case B: abstracts edge from non-schema bestMatch to a schema neighbor
-      if (!schemaNode && edge.kind === 'abstracts' && neighbor.type === 'schema') {
-        schemaNode = { id: neighbor.id, value: neighbor.value };
-      }
     }
-
-    // No schema reachable → no fabricated inference (D-42)
-    if (!schemaNode) return NULL_RESULT;
 
     // ── (4) Compose inference via schema-prior (T-04-03-P safe fallback) ─────
     let inferenceText: string | null = null;
