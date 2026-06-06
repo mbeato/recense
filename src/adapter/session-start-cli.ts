@@ -109,7 +109,12 @@ async function main(): Promise<void> {
   const budgetChars = config.injectionTokenBudget * 4;
   const maxChars = Math.min(budgetChars, HARD_CAP);
   if (text.length > maxChars) {
-    text = text.slice(0, maxChars);
+    const clipped = text.slice(0, maxChars);
+    // Cut back to the last complete line so a node value is never injected
+    // mid-string (e.g. "com.brain-mem"). Fall back to the raw slice only when a
+    // single line already exceeds the cap, preserving the hard char bound.
+    const lastNewline = clipped.lastIndexOf('\n');
+    text = lastNewline > 0 ? clipped.slice(0, lastNewline) : clipped;
   }
 
   db.close();

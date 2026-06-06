@@ -151,4 +151,28 @@ describe('session-start-cli (ADAPT-01)', () => {
     expect(status).toBe(0);
     expect(additionalContext).toBe('');
   });
+
+  it('(e) budget cap truncates at a clean line boundary — never mid-value', () => {
+    // Each value is exactly "fact NN: " + 250 x's. With the over-budget set, the
+    // 2000-char cap must drop the last partial line rather than slice a value
+    // mid-string (the "com.brain-mem" dogfood bug).
+    const { status, additionalContext } = runCLI(store => {
+      for (let i = 0; i < 20; i++) {
+        store.upsertNode({
+          id: newId(),
+          type: 'fact',
+          value: `fact ${i.toString().padStart(2, '0')}: ${'x'.repeat(250)}`,
+          origin: 'observed',
+          s: 0.5 + i * 0.01,
+        });
+      }
+    });
+    expect(status).toBe(0);
+    // Truncation occurred (output < full set) but every injected line is complete.
+    expect(additionalContext.length).toBeLessThanOrEqual(DEFAULT_CONFIG.injectionTokenBudget * 4);
+    expect(additionalContext.length).toBeGreaterThan(0);
+    for (const line of additionalContext.split('\n')) {
+      expect(line).toMatch(/^fact \d{2}: x{250}$/);
+    }
+  });
 });
