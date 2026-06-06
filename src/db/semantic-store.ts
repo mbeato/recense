@@ -34,6 +34,7 @@ export class SemanticStore {
   private readonly stmtSetMeta: Database.Statement;
   private readonly stmtUpsertEdge: Database.Statement;
   private readonly stmtGetOutEdges: Database.Statement;
+  private readonly stmtGetInEdges: Database.Statement;
 
   // Transaction-wrapped upsertNode body (defined in constructor, called in upsertNode)
   private readonly txUpsertNode: (params: UpsertNodeParams) => void;
@@ -106,6 +107,14 @@ export class SemanticStore {
     // T-01-SQL: bound ? param, no string interpolation
     this.stmtGetOutEdges = db.prepare(
       'SELECT dst, w, kind FROM edge WHERE src = ?'
+    );
+
+    // Reverse-edge read for schema reverse-lookup (Phase 4 LEARN-02, Fix-2).
+    // Mirrors stmtGetOutEdges but queries by dst — lets recall find schemas that
+    // abstract the matched member node via incoming 'abstracts' edges.
+    // T-01-SQL: bound ? param, no string interpolation
+    this.stmtGetInEdges = db.prepare(
+      'SELECT src, w, kind FROM edge WHERE dst = ?'
     );
 
     // ── Transaction — defined once, called in upsertNode ─────────────────────
@@ -242,6 +251,16 @@ export class SemanticStore {
   /** Read all outgoing edges from a node. Returns empty array if none. */
   getOutEdges(nodeId: string): Array<{ dst: string; w: number; kind: string }> {
     return this.stmtGetOutEdges.all(nodeId) as Array<{ dst: string; w: number; kind: string }>;
+  }
+
+  /**
+   * Read all incoming edges to a node (WHERE dst = nodeId).
+   * Mirrors getOutEdges but queries by destination. Used by RecallEngine to resolve
+   * schemas that abstract a matched member via incoming 'abstracts' edges (Fix-2, LEARN-02).
+   * Returns empty array if none.
+   */
+  getInEdges(nodeId: string): Array<{ src: string; w: number; kind: string }> {
+    return this.stmtGetInEdges.all(nodeId) as Array<{ src: string; w: number; kind: string }>;
   }
 
   /** Read a meta value by key. Returns null if not found. */

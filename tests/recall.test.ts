@@ -399,6 +399,85 @@ describe('RecallEngine', () => {
     expect(result.episodeId).toBeNull();
   });
 
+  // ── Fix-2: reverse-lookup — member best-match resolves schema via incoming abstracts edge ──
+
+  it('Fix-2: when bestMatch is a member node with incoming abstracts edge, recall resolves schema and returns inference', async () => {
+    // Member node at dim 0 → cosine 1.0 with query → best topk match
+    const memberId = await seedNodeWithEmbedding(h, {
+      value: 'TypeScript is strongly typed',
+      type: 'fact',
+      vectorDim: 0, // same dim as default embedder → best match
+    });
+    // Schema node at dim 1 → cosine 0 with query → NOT the best match
+    const schemaId = await seedNodeWithEmbedding(h, {
+      value: 'TypeScript development patterns',
+      type: 'schema',
+      origin: 'inferred',
+      vectorDim: 1,
+    });
+    // Directed schema→member edge (the direction schema-induction creates)
+    h.store.upsertEdge({ src: schemaId, dst: memberId, rel: 'abstracts', w: 0.8, kind: 'abstracts' });
+
+    const nodeBefore = (h.db.prepare('SELECT count(*) as c FROM node').get() as { c: number }).c;
+    const edgeBefore = (h.db.prepare('SELECT count(*) as c FROM edge').get() as { c: number }).c;
+
+    const engine = makeEngine(h, makeStubAnthropicFactory('TypeScript suits large codebases'));
+    const result: RecallResult = await engine.recall('What do I know about TypeScript?', 'test-session');
+
+    // Recall must resolve the schema via reverse (incoming abstracts) lookup
+    expect(result.origin).toBe('inferred');
+    expect(result.inference).toBe('TypeScript suits large codebases');
+    expect(result.episodeId).not.toBeNull();
+
+    // Inferred episode must be appended
+    const rows = h.db.prepare("SELECT * FROM episode WHERE origin = 'inferred'").all() as EpisodeRow[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.role).toBe('assistant');
+
+    // Ephemeral-as-fact guarantee: node and edge counts must be unchanged
+    const nodeAfter = (h.db.prepare('SELECT count(*) as c FROM node').get() as { c: number }).c;
+    const edgeAfter = (h.db.prepare('SELECT count(*) as c FROM edge').get() as { c: number }).c;
+    expect(nodeAfter).toBe(nodeBefore);
+    expect(edgeAfter).toBe(edgeBefore);
+  });
+
+  // ── Fix-2: neighborhood assembled from schema's members (not bestMatch's out-edges) ──
+
+  it('Fix-2: neighborhood in prompt comes from schema members when bestMatch is a member', async () => {
+    // Three member nodes — only two are connected to the schema
+    // Member-0 at dim 0 → best match
+    const member0Id = await seedNodeWithEmbedding(h, {
+      value: 'fact about TypeScript interfaces',
+      type: 'fact',
+      vectorDim: 0,
+    });
+    // Member-1 at dim 1 → connected to schema
+    const member1Id = await seedNodeWithEmbedding(h, {
+      value: 'fact about TypeScript generics',
+      type: 'fact',
+      vectorDim: 1,
+    });
+    // Schema at dim 2
+    const schemaId = await seedNodeWithEmbedding(h, {
+      value: 'TypeScript type system',
+      type: 'schema',
+      origin: 'inferred',
+      vectorDim: 2,
+    });
+    // Schema→member-0 and schema→member-1 edges
+    h.store.upsertEdge({ src: schemaId, dst: member0Id, rel: 'abstracts', w: 0.8, kind: 'abstracts' });
+    h.store.upsertEdge({ src: schemaId, dst: member1Id, rel: 'abstracts', w: 0.8, kind: 'abstracts' });
+
+    let capturedPrompt = '';
+    const engine = makeEngine(h, makeCapturingFactory((p) => { capturedPrompt = p; }));
+    await engine.recall('TypeScript types', 'test-session');
+
+    // Prompt must include the schema label and both members' values
+    expect(capturedPrompt).toContain('TypeScript type system');
+    expect(capturedPrompt).toContain('fact about TypeScript interfaces');
+    expect(capturedPrompt).toContain('fact about TypeScript generics');
+  });
+
   // ── Single embed call (D-41) ──────────────────────────────────────────────
 
   it('D-41: embeds the query cue exactly once', async () => {
