@@ -112,12 +112,28 @@ export class MockClaimExtractor implements ClaimExtractor {
 }
 
 // ---------------------------------------------------------------------------
-// Internal JSON parser
+// JSON parser (exported for regression tests — must handle real model output)
 // ---------------------------------------------------------------------------
 
-function parseClaims(text: string): ExtractedClaim[] {
+/**
+ * Isolate the outermost JSON array span from a model response. Models routinely
+ * wrap the array in ```json fences or add preamble despite being told not to
+ * (observed with claude-haiku-4-5); JSON.parse on the raw text then throws and
+ * every claim is silently dropped. Slicing first '[' … last ']' recovers the
+ * array regardless of surrounding fences/prose. Returns null if no array span.
+ */
+function extractJsonArray(text: string): string | null {
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start === -1 || end === -1 || end < start) return null;
+  return text.slice(start, end + 1);
+}
+
+export function parseClaims(text: string): ExtractedClaim[] {
+  const json = extractJsonArray(text);
+  if (json === null) return [];
   try {
-    const raw = JSON.parse(text) as unknown;
+    const raw = JSON.parse(json) as unknown;
     if (!Array.isArray(raw)) return [];
 
     return raw.flatMap((item): ExtractedClaim[] => {
