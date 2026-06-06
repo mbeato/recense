@@ -23,6 +23,7 @@ import { EpisodicStore } from '../src/db/episode-store';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { CandidateRetriever } from '../src/retrieval/topk';
 import { MockEmbedder } from '../src/model/embedder';
+import type { Embedder } from '../src/model/embedder';
 import { MockJudge } from '../src/model/judge';
 import type { JudgeVerdict } from '../src/model/judge';
 import { MockClaimExtractor } from '../src/model/claim-extractor';
@@ -782,6 +783,223 @@ describe('Consolidator', () => {
     const contradictions = JSON.parse(node.pending_contradictions) as PendingContradiction[];
     expect(contradictions).toHaveLength(3);
     expect(contradictions.every(c => c.session_id === 'session-same')).toBe(true);
+  });
+
+  // ── Per-role skip threshold (consolSkipThresholdAssistant) ──────────────────
+
+  it('per-role skip: user episode salience 0.3 is still processed (user threshold unchanged at 0.2)', async () => {
+    // 0.3 >= consolSkipThreshold(0.2) → processed for user role
+    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'user low-salience claim' }]);
+    const embedder = makeZeroEmbedder(h.config.embeddingDimensions); // auto-unrelated
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
+      new MockJudge([]), extractor, h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'user episode salience 0.3',
+      origin: 'observed',
+      salience: 0.3,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-role-user',
+      source_inference_id: null,
+    });
+
+    await consolidator.consolidate();
+
+    const nodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    expect(nodes.length).toBeGreaterThanOrEqual(1); // claim extracted, node minted
+  });
+
+  it('per-role skip: assistant episode salience 0.3 is SKIPPED under the 0.5 assistant threshold', async () => {
+    // 0.3 < consolSkipThresholdAssistant(0.5) and hard_keep=0 → skipped
+    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'should be skipped for assistant' }]);
+    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
+      new MockJudge([]), extractor, h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'assistant episode salience 0.3',
+      origin: 'observed',
+      salience: 0.3,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-role-assistant-skip',
+      source_inference_id: null,
+    });
+
+    await consolidator.consolidate();
+
+    const nodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    expect(nodes).toHaveLength(0); // episode skipped → no claims, no nodes
+  });
+
+  it('per-role skip: assistant episode salience 0.6 is processed (above assistant threshold)', async () => {
+    // 0.6 >= consolSkipThresholdAssistant(0.5) → processed
+    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'high-salience assistant claim' }]);
+    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
+      new MockJudge([]), extractor, h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'assistant episode salience 0.6',
+      origin: 'observed',
+      salience: 0.6,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-role-assistant-high',
+      source_inference_id: null,
+    });
+
+    await consolidator.consolidate();
+
+    const nodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    expect(nodes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('per-role skip: assistant episode salience 0.05 with hard_keep=1 is processed (hard_keep bypass)', async () => {
+    // 0.05 < consolSkipThresholdAssistant(0.5) but hard_keep=1 → processed via bypass
+    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'force-kept assistant claim' }]);
+    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
+      new MockJudge([]), extractor, h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'assistant episode salience 0.05 hard_keep=1',
+      origin: 'observed',
+      salience: 0.05,
+      hard_keep: 1,
+      role: 'assistant',
+      session_id: 'session-role-assistant-hk',
+      source_inference_id: null,
+    });
+
+    await consolidator.consolidate();
+
+    const nodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    expect(nodes.length).toBeGreaterThanOrEqual(1); // hard_keep bypasses skip
+  });
+
+  it('per-role skip: consolSkipThresholdAssistant=0.2 restores prior behavior (reversibility)', async () => {
+    // Setting consolSkipThresholdAssistant=0.2 means the assistant 0.3 episode is now processed
+    const reversibleConfig: EngineConfig = { ...h.config, consolSkipThresholdAssistant: 0.2 };
+    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'reversibility claim' }]);
+    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
+      new MockJudge([]), extractor, reversibleConfig, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'assistant episode salience 0.3 reversible',
+      origin: 'observed',
+      salience: 0.3,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-reversibility',
+      source_inference_id: null,
+    });
+
+    await consolidator.consolidate();
+
+    // With assistant threshold lowered to 0.2, 0.3 >= 0.2 → processed
+    const nodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    expect(nodes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Batch per-claim embeddings (T-02-ASYNC: Phase A, before db.transaction) ─
+
+  it('per-episode claims are embedded in a single batch call (3 claims → 1 embed call)', async () => {
+    // Pre-seed + pre-embed 3 nodes so all 3 claims fast-path confirm (D-17 → no new dirty nodes)
+    // This means Phase A prefix = 0 embed calls, Phase C = 0 embed calls.
+    // Only embed call is the single batch per-claim query-vector embed.
+    const dims = h.config.embeddingDimensions;
+    const synth = makeSyntheticEmbedder(dims);
+
+    const claimValues = ['batch claim alpha', 'batch claim beta', 'batch claim gamma'];
+    for (const val of claimValues) {
+      const id = newId();
+      h.store.upsertNode({ id, type: 'fact', value: val, origin: 'observed' });
+      const [vec] = await synth.embed([val]);
+      h.store.setEmbedding(id, vec!);
+    }
+
+    let embedCallCount = 0;
+    const countingEmbedder: Embedder = {
+      async embed(texts: string[]): Promise<Float32Array[]> {
+        embedCallCount++;
+        return synth.embed(texts);
+      },
+    };
+
+    const extractor = new MockClaimExtractor(
+      claimValues.map(v => ({ type: 'fact' as const, value: v })),
+    );
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, countingEmbedder,
+      new MockJudge([]), extractor, h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'episode with 3 claims for batch embed test',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-batch-embed',
+      source_inference_id: null,
+    });
+
+    await consolidator.consolidate();
+
+    // Exactly 1 embed call: the batch per-claim query-vector embed
+    // Phase A prefix: 0 (no dirty nodes — all pre-embedded)
+    // Per-claim: 1 call with ['batch claim alpha', 'batch claim beta', 'batch claim gamma']
+    // Phase C: 0 (all confirms → no new dirty nodes)
+    expect(embedCallCount).toBe(1);
+  });
+
+  it('zero-claims episode makes no per-claim embed call', async () => {
+    // extractor returns [] → the batch guard (claimValues.length > 0) prevents any embed call
+    const dims = h.config.embeddingDimensions;
+    const synth = makeSyntheticEmbedder(dims);
+
+    let embedCallCount = 0;
+    const countingEmbedder: Embedder = {
+      async embed(texts: string[]): Promise<Float32Array[]> {
+        embedCallCount++;
+        return synth.embed(texts);
+      },
+    };
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, countingEmbedder,
+      new MockJudge([]), new MockClaimExtractor([]), h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'episode that yields zero claims',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-zero-claims',
+      source_inference_id: null,
+    });
+
+    await consolidator.consolidate();
+
+    // No embed calls at all:
+    // Phase A prefix: 0 (no dirty nodes), Per-claim: 0 (zero claims), Phase C: 0 (no new nodes)
+    expect(embedCallCount).toBe(0);
   });
 
   // ── ROADMAP Criterion 5: oscillation through two real reconciles ──────────

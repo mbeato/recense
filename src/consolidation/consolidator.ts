@@ -147,8 +147,13 @@ export class Consolidator {
     const unconsolidated = this.episodes.listUnconsolidated();
 
     for (const episode of unconsolidated) {
-      // CONSOL-01: skip low-salience non-hard-keep episodes
-      if (episode.salience < this.config.consolSkipThreshold && episode.hard_keep === 0) {
+      // CONSOL-01: per-role skip — assistant turns have a higher threshold because they
+      // average 4.5× the length of user turns and are mostly restatement (D-13).
+      // consolSkipThreshold (0.2) remains the default for user/tool roles.
+      const skipThreshold = episode.role === 'assistant'
+        ? this.config.consolSkipThresholdAssistant
+        : this.config.consolSkipThreshold;
+      if (episode.salience < skipThreshold && episode.hard_keep === 0) {
         continue;
       }
 
@@ -157,8 +162,16 @@ export class Consolidator {
       const claims = await this.extractor.extract(episode.content, episode.role);
       const decisions: ClaimDecision[] = [];
 
-      for (const claim of claims) {
-        const [queryVec] = await this.embedder.embed([claim.value]);
+      // Batch-embed all claim query vectors in ONE call (T-02-ASYNC: Phase A, before any
+      // db.transaction). Empty-claims episodes make zero embed calls.
+      const claimValues = claims.map(c => c.value);
+      const claimVecs = claimValues.length > 0
+        ? await this.embedder.embed(claimValues)
+        : [];
+
+      for (let claimIdx = 0; claimIdx < claims.length; claimIdx++) {
+        const claim = claims[claimIdx]!;
+        const queryVec = claimVecs[claimIdx];
         if (!queryVec) continue;
 
         const candidates = this.retriever.topk(queryVec, this.config.candidateK);
