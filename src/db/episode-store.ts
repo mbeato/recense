@@ -64,6 +64,14 @@ export class EpisodicStore {
    * double-applies strength increments (resumable checkpoint).
    */
   private readonly stmtMarkConsolidated: Database.Statement;
+  /**
+   * Echo-detection primitives (D-44/D-45) — offline-pass-only.
+   * backfillSourceInferenceId is the sole post-capture writer of source_inference_id;
+   * the consolidator calls it BEFORE building ClaimDecision so the existing guard
+   * (consolidator.ts episodeSourceInferenceId === null) excludes echoes for free.
+   */
+  private readonly stmtListRecentInferred: Database.Statement;
+  private readonly stmtBackfillSourceInferenceId: Database.Statement;
 
   constructor(db: Database.Database, clock: Clock, config: EngineConfig) {
     this.db = db;
@@ -92,6 +100,19 @@ export class EpisodicStore {
     // CONSOL-02/03: sole writer of episode.consolidated; called inside each episode's transaction
     this.stmtMarkConsolidated = db.prepare(
       'UPDATE episode SET consolidated = 1 WHERE id = ?'
+    );
+
+    // D-44/D-45: echo-detection primitives — offline pass only (T-02-SQL: bound ? params)
+    // listRecentInferred: sorted newest-first so the consolidator's linear scan finds the
+    // best match from the freshest inferences, consistent with the recency-window intent.
+    this.stmtListRecentInferred = db.prepare(
+      "SELECT * FROM episode WHERE origin = 'inferred' AND ts >= ? ORDER BY ts DESC",
+    );
+    // backfillSourceInferenceId: safe UPDATE — no-op if id does not exist (single-writer,
+    // offline-pass-only; this is the only post-capture writer of source_inference_id).
+    // Reinterprets the Phase-3 capture-time null as a consolidation-time backfill (D-44).
+    this.stmtBackfillSourceInferenceId = db.prepare(
+      'UPDATE episode SET source_inference_id = ? WHERE id = ?',
     );
   }
 
@@ -147,5 +168,28 @@ export class EpisodicStore {
    */
   markConsolidated(id: string): void {
     this.stmtMarkConsolidated.run(id);
+  }
+
+  /**
+   * Return all inferred-origin episodes with ts >= sinceMs, newest first.
+   * Used by the consolidator's echo-detection step (D-44/D-45) to find recent
+   * inferences within the echoRecencyWindowMs.
+   */
+  listRecentInferred(sinceMs: number): EpisodeRow[] {
+    return this.stmtListRecentInferred.all(sinceMs) as EpisodeRow[];
+  }
+
+  /**
+   * Backfill source_inference_id on an existing episode.
+   *
+   * OFFLINE-PASS-ONLY — the Consolidator's detectEcho step is the sole caller (D-44).
+   * Reinterprets the Phase-3 capture-time null as a consolidation-time backfill:
+   * the inference is logged as an inferred-origin episode at recall time (D-43), and
+   * echoes are recognised only during the next sleep pass (D-44) — intentional, not a bug.
+   *
+   * Safe UPDATE: if episodeId does not exist, 0 rows are affected (no-op).
+   */
+  backfillSourceInferenceId(episodeId: string, sourceId: string): void {
+    this.stmtBackfillSourceInferenceId.run(sourceId, episodeId);
   }
 }
