@@ -163,6 +163,15 @@ export interface EngineConfig {
   consolSkipThreshold: number;
 
   /**
+   * D-13: assistant turns average 4.5× the length of user turns and are mostly restatement;
+   * roughly half fall below 0.5 salience. Skipping them cuts the dominant Haiku extract cost
+   * (one call per non-skipped episode) while keeping high-salience assistant decisions and
+   * preserving the user/default consolSkipThreshold at 0.2 — all user turns still processed.
+   * Reversibility: setting this to 0.2 fully restores the old per-role behaviour.
+   */
+  consolSkipThresholdAssistant: number;
+
+  /**
    * Best-candidate cosine similarity below which a claim auto-classifies as `unrelated`
    * with no judge call; above it the claim escalates to the judge (UPDATE-02).
    * 0.3 is conservative: only extremely dissimilar claims skip the judge.
@@ -274,6 +283,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   embeddingDimensions: 1536,
   candidateK: 5,
   consolSkipThreshold: 0.2,
+  consolSkipThresholdAssistant: 0.5,
   unrelatedSimilarityThreshold: 0.3,
   peReconcileBandLow: 0.8,
   peReconcileBandHigh: 2.0,

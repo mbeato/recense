@@ -4,8 +4,9 @@
  * Invariants:
  *  - salience is a genuine heuristic value in [0,1] — never pinned to 1.0 (D-03).
  *  - hard_keep is computed independently of salience (D-03).
- *  - hard_keep is ONLY set for user/assistant matching directive or correction
- *    patterns — tool output is never hard-kept (D-02).
+ *  - hard_keep is ONLY set for user-role messages matching directive or correction
+ *    patterns (INGEST-02: imperative SELF-statements are the user's own directives,
+ *    not Claude restating them). Tool output is never hard-kept (D-02).
  *  - All regex patterns are compiled once at construction, never per call
  *    (anti-pattern guard: see RESEARCH anti-patterns).
  *  - No LLM, no embedding, no network, no Date.now() (D-01, D-12).
@@ -73,9 +74,10 @@ export class AllocationGate {
       1.0,
     );
 
-    // ── Hard-keep flag: role + pattern combo (D-02) ───────────────────────────
-    // Tool output is never hard-kept — even if it contains directive text.
-    const hardKeep = role !== 'tool' && (matchesDirective || matchesCorrection);
+    // ── Hard-keep flag: user-role only (D-02, INGEST-02) ────────────────────────
+    // Only the user's own imperatives/corrections are force-kept.
+    // Assistant restating a directive does not set hard_keep (stops over-firing).
+    const hardKeep = role === 'user' && (matchesDirective || matchesCorrection);
 
     return { salience, hardKeep };
   }

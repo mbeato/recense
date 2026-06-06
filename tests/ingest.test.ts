@@ -233,6 +233,27 @@ describe('INGEST-02: AllocationGate honest salience + hard-keep', () => {
     expect(salience).toBeGreaterThan(0);
     expect(salience).toBeLessThan(0.5); // modest — no directive/correction match
   });
+
+  it('directive/correction with assistant role produces hardKeep=false (force-keep restricted to user)', () => {
+    // NEW per INGEST-02: only the user's own imperatives/corrections are hard-kept;
+    // assistant restating a directive does not set hard_keep — stops over-firing
+    expect(gate.score('always commit on green', 'assistant').hardKeep).toBe(false);
+    expect(gate.score('never use var', 'assistant').hardKeep).toBe(false);
+    expect(gate.score('actually that is not right', 'assistant').hardKeep).toBe(false);
+  });
+
+  it('assistant directive still computes non-zero salience (D-03 independence preserved)', () => {
+    // Force-keep restricted to user; salience is still scored honestly — D-03 independence
+    const { salience, hardKeep } = gate.score('always commit on green', 'assistant');
+    expect(hardKeep).toBe(false);
+    expect(salience).toBeGreaterThan(0);
+    expect(salience).toBeLessThan(1.0);
+  });
+
+  it('consolSkipThresholdAssistant=0.5 and consolSkipThreshold=0.2 in DEFAULT_CONFIG', () => {
+    expect(DEFAULT_CONFIG.consolSkipThresholdAssistant).toBe(0.5);
+    expect(DEFAULT_CONFIG.consolSkipThreshold).toBe(0.2); // user threshold unchanged
+  });
 });
 
 // ─── IngestionPipeline: end-to-end vertical slice ────────────────────────────
