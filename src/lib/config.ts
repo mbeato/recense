@@ -106,10 +106,33 @@ export interface EngineConfig {
   // --- Model APIs ---
 
   /**
+   * Selects the transport for the Judge/ClaimExtractor seams ONLY.
+   * Default 'anthropic' = ZERO behavior change.
+   * Faithfulness note: narrow transport seam, NOT the Phase 5 SEAM-01 ModelProvider abstraction.
+   */
+  modelProvider: 'anthropic' | 'vertex';
+
+  /**
    * Anthropic model for cold-start LLM extraction (D-05).
    * Must be a current, non-deprecated model ID — see DEFAULT_CONFIG note.
    */
   anthropicModel: string;
+
+  /**
+   * GCP project for Vertex. Default '' → the vertex SDK reads ANTHROPIC_VERTEX_PROJECT_ID
+   * from env natively (keeps nothing secret in config).
+   */
+  vertexProjectId: string;
+
+  /**
+   * GCP region (e.g. 'us-east5'). Default '' → SDK reads CLOUD_ML_REGION from env natively.
+   */
+  vertexRegion: string;
+
+  /**
+   * Vertex requires the @-version Haiku id; keep anthropicModel untouched for the direct path.
+   */
+  vertexModel: string;
 
   /**
    * OpenAI embedding model — Phase 2+ only.
@@ -242,7 +265,11 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   salience: DEFAULT_SALIENCE_CONFIG,
   coldStartMemoryDir: '$HOME/.claude/projects/-Users-you-resume/memory',
   coldStartClaudeFile: '$HOME/.claude/CLAUDE.md',
+  modelProvider: 'anthropic',
   anthropicModel: 'claude-haiku-4-5-20251001',
+  vertexProjectId: '',
+  vertexRegion: '',
+  vertexModel: 'claude-haiku-4-5@20251001',
   openaiEmbedModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
   candidateK: 5,

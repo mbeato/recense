@@ -16,6 +16,7 @@
   "dependencies": {
     "better-sqlite3": "^12.10.0",
     "@anthropic-ai/sdk": "^0.100.1",
+    "@anthropic-ai/vertex-sdk": "^0.17.0",
     "openai": "^4.103.0"
   },
   "devDependencies": {
