@@ -159,6 +159,44 @@ export interface EngineConfig {
    * Between peReconcileBandLow and peReconcileBandHigh → tombstone-and-replace reconcile.
    */
   peReconcileBandHigh: number;
+
+  // --- Phase 3: retrieval tunables (D-24/25/27/29) ---
+
+  /**
+   * Weight of effective_s in cue-less rank score. Default: 1.0.
+   * score = w_s·effective_s + w_r·recency(last_access).
+   * Calibration placeholder — tune against real MEMORY.md session cadence (D-13).
+   */
+  rankWeightS: number;
+
+  /**
+   * Weight of separate recency term in rank score. Default: 0.0.
+   * CAUTION: effective_s = s·exp(−λ·Δt since last_access) already encodes recency.
+   * Setting w_r > 0 double-counts the same Δt signal; start at 0.0 and raise
+   * only if dogfood shows effective_s alone misses fresh-session recall (D-24 caveat).
+   */
+  rankWeightR: number;
+
+  /**
+   * Max tokens to inject at SessionStart. Default: 500.
+   * Matches the existing vault-briefing hook budget (session-start-context.ts
+   * TOKEN_BUDGET = 500) for comparability during dogfood. Char proxy: budget × 4.
+   */
+  injectionTokenBudget: number;
+
+  /**
+   * Activation boost decay factor for 1-hop spreading activation (D-27).
+   * boost = seed_score × edge_w × spreadDecay. Default: 0.5.
+   * Calibration placeholder — lower if activation drowns high-strength seeds.
+   */
+  spreadDecay: number;
+
+  /**
+   * Min cosine similarity for the tombstone scan to classify 'deleted' (D-29).
+   * Default: 0.7 — intentionally high to avoid false 'deleted' on weak matches.
+   * A cue that matches a tombstoned node below this threshold → 'unreachable'.
+   */
+  deletedSimilarityThreshold: number;
 }
 
 /** Default salience weights for the Allocation Gate. Calibrate against real transcripts. */
@@ -212,4 +250,9 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   unrelatedSimilarityThreshold: 0.3,
   peReconcileBandLow: 0.8,
   peReconcileBandHigh: 2.0,
+  rankWeightS: 1.0,
+  rankWeightR: 0.0,
+  injectionTokenBudget: 500,
+  spreadDecay: 0.5,
+  deletedSimilarityThreshold: 0.7,
 };

@@ -33,6 +33,7 @@ export class SemanticStore {
   private readonly stmtGetMeta: Database.Statement;
   private readonly stmtSetMeta: Database.Statement;
   private readonly stmtUpsertEdge: Database.Statement;
+  private readonly stmtGetOutEdges: Database.Statement;
 
   // Transaction-wrapped upsertNode body (defined in constructor, called in upsertNode)
   private readonly txUpsertNode: (params: UpsertNodeParams) => void;
@@ -98,6 +99,14 @@ export class SemanticStore {
         last_access = excluded.last_access,
         kind        = excluded.kind
     `);
+
+    // Edge read for spreading activation (Phase 3 RET-01, D-26/27)
+    // Excludes tombstoned neighbors at the application layer (RetrievalEngine checks
+    // getNode(edge.dst)?.tombstoned — avoids JOIN complexity on a small table)
+    // T-01-SQL: bound ? param, no string interpolation
+    this.stmtGetOutEdges = db.prepare(
+      'SELECT dst, w, kind FROM edge WHERE src = ?'
+    );
 
     // ── Transaction — defined once, called in upsertNode ─────────────────────
     // IMPORTANT: no async/await inside; better-sqlite3 transactions are synchronous.
@@ -228,6 +237,11 @@ export class SemanticStore {
       kind: params.kind,
       last_access: params.last_access ?? this.clock.nowMs(),
     });
+  }
+
+  /** Read all outgoing edges from a node. Returns empty array if none. */
+  getOutEdges(nodeId: string): Array<{ dst: string; w: number; kind: string }> {
+    return this.stmtGetOutEdges.all(nodeId) as Array<{ dst: string; w: number; kind: string }>;
   }
 
   /** Read a meta value by key. Returns null if not found. */
