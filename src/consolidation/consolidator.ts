@@ -213,16 +213,29 @@ export class Consolidator {
 
       // ── Echo detection (D-44/D-45): backfill source_inference_id BEFORE claim processing ──
       // A replayed turn whose embedding cosines >= echoSimilarityThreshold against a recent
-      // inferred episode (within echoRecencyWindowMs) has its source_inference_id backfilled.
-      // The existing guard at ~line 354 (episodeSourceInferenceId === null) then excludes the
-      // echo from both strengthen and contradiction recording — for free; no guard change needed.
+      // inferred episode (within echoRecencyWindowMs) has its source_inference_id backfilled
+      // for audit. The structural guard below then short-circuits the episode before claims
+      // are extracted, preventing any graph effects regardless of the verdict branch taken.
       // Phase A only: detectEcho awaits the embedder fully before any db.transaction (T-02-ASYNC).
       const echoSourceId = await this.detectEcho(episode);
       if (echoSourceId !== null) {
         this.episodes.backfillSourceInferenceId(episode.id, echoSourceId);
-        // Refresh in-memory copy so the ClaimDecision built at ~line 221 carries the
-        // backfilled source_inference_id and the existing guard fires correctly.
+        // Refresh the in-memory copy so the guard below reads the backfilled source_inference_id.
         episode = { ...episode, source_inference_id: echoSourceId };
+      }
+
+      // ── WR-01 / CR-01: hard stop — no graph effects for inferred or echo episodes ─────────
+      // WR-01: inferred-origin episodes are ephemeral; they must NEVER produce graph effects
+      //        (LEARN-02 ephemeral-as-fact guarantee). The salience skip above is a tunable
+      //        performance heuristic; this is the hard structural correctness guard.
+      // CR-01: an echo of a prior inference (echoSourceId !== null) carries no independent
+      //        evidence — allowing it to strengthen a fact or mint a node is self-confirmation
+      //        (LEARN-03, correctness invariant). The contradict→HOLD guard at applyDecision
+      //        was the only branch that previously blocked this; confirm/extend/unrelated did not.
+      // Backfill persists above for the audit trail; no claims are extracted for either class.
+      if (episode.origin === 'inferred' || echoSourceId !== null) {
+        this.db.transaction(() => this.episodes.markConsolidated(episode.id))();
+        continue;
       }
 
       // ── Per-episode Phase A: all async work into plain array ───────────
