@@ -229,6 +229,54 @@ export interface EngineConfig {
    * A cue that matches a tombstoned node below this threshold → 'unreachable'.
    */
   deletedSimilarityThreshold: number;
+
+  // --- Phase 4: learning layer tunables (D-35/36/42/45) ---
+
+  /**
+   * Min distinct non-inferred supporting instances for a candidate cluster to become
+   * a named schema (D-36). N=3 balances noise (too few → spurious schemas) vs.
+   * latency (too high → schemas never form on sparse MEMORY.md cadence).
+   * Tune against real brain.db — start conservative.
+   */
+  schemaMinSupport: number;
+
+  /**
+   * Intra-cluster cohesion τ: mean pairwise cosine among cluster members must reach
+   * this threshold before the cluster earns a name (D-36). 0.7 rejects loose, catch-all
+   * clusters that would produce vague schema labels.
+   */
+  schemaCohesionThreshold: number;
+
+  /**
+   * Join-centroid cosine τ (D-35): a candidate instance joins the nearest existing
+   * schema if cosine(instance.embedding, schema.centroid) >= this value; else seeds
+   * a new candidate cluster. 0.75 is tighter than unrelatedSimilarityThreshold (0.3) —
+   * schema membership requires genuine semantic alignment, not just rough proximity.
+   */
+  schemaJoinCentroidThreshold: number;
+
+  /**
+   * Max node count for the bounded 1-hop recall neighborhood (D-42).
+   * 20 nodes: enough context for the schema-prior LLM compose without blowing the
+   * prompt budget. Increase if 1-hop inference proves too shallow in dogfood.
+   */
+  recallNeighborhoodBudget: number;
+
+  /**
+   * Cosine similarity threshold for echo detection (D-45).
+   * A replayed turn embedding with cosine >= this to a recent inferred episode is
+   * classified as an echo and has source_inference_id backfilled. 0.85 is high to
+   * catch paraphrases without flagging thematically-related but independent observations.
+   */
+  echoSimilarityThreshold: number;
+
+  /**
+   * Recency window (ms) for echo-detection candidates (D-45).
+   * 24h (86_400_000 ms): inferred episodes older than this are not echo candidates —
+   * a user revisiting an inference topic after a day is likely adding genuine new
+   * information, not echoing. Tune if same-session echoes dominate in dogfood.
+   */
+  echoRecencyWindowMs: number;
 }
 
 /** Default salience weights for the Allocation Gate. Calibrate against real transcripts. */
@@ -292,4 +340,10 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   injectionTokenBudget: 500,
   spreadDecay: 0.5,
   deletedSimilarityThreshold: 0.7,
+  schemaMinSupport: 3,
+  schemaCohesionThreshold: 0.7,
+  schemaJoinCentroidThreshold: 0.75,
+  recallNeighborhoodBudget: 20,
+  echoSimilarityThreshold: 0.85,
+  echoRecencyWindowMs: 86_400_000,
 };
