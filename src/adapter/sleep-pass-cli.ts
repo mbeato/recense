@@ -53,7 +53,17 @@ function resolveDbPath(): string | undefined {
 }
 
 async function main(): Promise<void> {
-  // ── 1. Lock guard ───────────────────────────────────────────────────────────
+  // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──
+  // process.exit() inside a try/finally does NOT unwind the stack, so exiting
+  // while the lock is held leaks it for up to LOCK_STALE_MS (5 min). Validate
+  // here — before acquireLock() — so this exit is always lock-free.
+  const dbPath = resolveDbPath();
+  if (!dbPath) {
+    log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
+    process.exit(0);
+  }
+
+  // ── 2. Lock guard ───────────────────────────────────────────────────────────
   if (!acquireLock()) {
     log('Lock held by another process — exiting');
     process.exit(0);
@@ -61,13 +71,6 @@ async function main(): Promise<void> {
 
   try {
     log('Sleep pass starting');
-
-    // ── 2. Resolve DB path ───────────────────────────────────────────────────
-    const dbPath = resolveDbPath();
-    if (!dbPath) {
-      log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
-      process.exit(0);
-    }
 
     // ── 3. Open DB and initialize schema ────────────────────────────────────
     const db = new Database(dbPath);
