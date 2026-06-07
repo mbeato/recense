@@ -8,12 +8,16 @@
  * Credential discipline (extends T-02-KEY / T-04-KEY):
  *  - Direct path: Anthropic() reads ANTHROPIC_API_KEY from process.env automatically.
  *  - Vertex path: AnthropicVertex authenticates via GCP Application Default Credentials (ADC).
+ *  - Local path: Ollama needs no real key; a dummy 'ollama' api key is used. The OpenAI
+ *    client is wrapped in OllamaClient and never logged or exposed.
  *  - Credentials are NEVER passed as literals, NEVER logged, and NEVER committed.
  *  - The client object is never exposed to any output stream.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { AnthropicVertex } from '@anthropic-ai/vertex-sdk';
+import OpenAI from 'openai';
 import type { EngineConfig } from '../lib/config';
+import { OllamaClient } from './ollama-client';
 
 /**
  * Minimal structural type satisfied by both Anthropic and AnthropicVertex clients.
@@ -32,7 +36,9 @@ export type AnthropicLike = {
  * No client construction; safe to call in tests without credentials.
  */
 export function resolveModelId(config: EngineConfig): string {
-  return config.modelProvider === 'vertex' ? config.vertexModel : config.anthropicModel;
+  if (config.modelProvider === 'vertex') return config.vertexModel;
+  if (config.modelProvider === 'local') return config.localModel;
+  return config.anthropicModel;
 }
 
 /**
@@ -55,6 +61,14 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
     if (config.vertexProjectId) opts.projectId = config.vertexProjectId;
     if (config.vertexRegion) opts.region = config.vertexRegion;
     const client = new AnthropicVertex(opts);
+    return { client, model };
+  }
+
+  if (config.modelProvider === 'local') {
+    // Local path: OpenAI-compatible Ollama endpoint. Dummy api key 'ollama' (Ollama
+    // ignores it); never log the client. Wrapped in OllamaClient to satisfy AnthropicLike.
+    const openai = new OpenAI({ baseURL: config.localBaseUrl, apiKey: 'ollama' });
+    const client = new OllamaClient(openai);
     return { client, model };
   }
 

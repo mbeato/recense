@@ -108,9 +108,11 @@ export interface EngineConfig {
   /**
    * Selects the transport for the Judge/ClaimExtractor seams ONLY.
    * Default 'anthropic' = ZERO behavior change.
+   * 'local' routes ALL Anthropic-family calls (judge/extractor/schema-naming/recall-compose)
+   * to a local Ollama OpenAI-compatible endpoint (see localBaseUrl/localModel).
    * Faithfulness note: narrow transport seam, NOT the Phase 5 SEAM-01 ModelProvider abstraction.
    */
-  modelProvider: 'anthropic' | 'vertex';
+  modelProvider: 'anthropic' | 'vertex' | 'local';
 
   /**
    * Anthropic model for cold-start LLM extraction (D-05).
@@ -133,6 +135,18 @@ export interface EngineConfig {
    * Vertex requires the @-version Haiku id; keep anthropicModel untouched for the direct path.
    */
   vertexModel: string;
+
+  /**
+   * OpenAI-compatible base URL for the local provider (Ollama). Used only when
+   * modelProvider === 'local'. Default targets a local Ollama instance.
+   */
+  localBaseUrl: string;
+
+  /**
+   * Local model id served by Ollama (e.g. a Qwen reasoning model). Used only when
+   * modelProvider === 'local'.
+   */
+  localModel: string;
 
   /**
    * OpenAI embedding model — Phase 2+ only.
@@ -327,6 +341,8 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   vertexProjectId: '',
   vertexRegion: '',
   vertexModel: 'claude-haiku-4-5@20251001',
+  localBaseUrl: 'http://localhost:11434/v1',
+  localModel: 'qwen3.6:35b-a3b',
   openaiEmbedModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
   candidateK: 5,
