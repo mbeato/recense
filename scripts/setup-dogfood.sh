@@ -167,6 +167,10 @@ echo "    plutil -lint: OK"
 # gui/<uid> domain, so surface the exact manual command instead of failing hard.
 LAUNCHD_DOMAIN="gui/$(id -u)"
 launchctl bootout "$LAUNCHD_DOMAIN/$PLIST_LABEL" 2>/dev/null || true
+# Clear any stale disabled override — a prior `launchctl unload`/`disable` leaves the
+# label flagged disabled in the per-user override DB, which makes bootstrap fail with
+# errno 5 (Input/output error) even though the plist is valid. `enable` clears it.
+launchctl enable "$LAUNCHD_DOMAIN/$PLIST_LABEL" 2>/dev/null || true
 if launchctl bootstrap "$LAUNCHD_DOMAIN" "$PLIST_DST" 2>/dev/null; then
     echo "    Loaded: $PLIST_LABEL"
     echo "    Verify: launchctl print $LAUNCHD_DOMAIN/$PLIST_LABEL | grep state"
