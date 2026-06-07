@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "dev": "tsx src/index.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "smoke:dogfood": "tsx scripts/smoke-dogfood.ts"
+    "smoke:dogfood": "tsx scripts/smoke-dogfood.ts",
+    "eval:judge": "node scripts/eval/judge-eval-runner.cjs --eval scripts/eval/judge-eval-set.json"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

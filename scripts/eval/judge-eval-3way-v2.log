@@ -1,0 +1,45 @@
+Eval set: 48 cases | labeled: 48 | unlabeled (skipped): 0
+
+Running haiku:claude-haiku-4-5 on 48 cases(node:61063) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+................................................
+Running ollama:qwen3.6:27b on 48 cases................................................
+Running ollama:qwen3.6:35b-a3b on 48 cases................................................
+
+========================= JUDGE EVAL =========================
+provider  |  rel-acc  |  best-id-acc  |  mag-MAE(contradict)  |  parse-fail  |  errors
+haiku:claude-haiku-4-5  |  47.9%  |  74.2%  |  0.150 (n=1)  |  0 (+48 salvaged)  |  0
+ollama:qwen3.6:27b  |  58.3%  |  93.5%  |  0.850 (n=1)  |  0  |  0
+ollama:qwen3.6:35b-a3b  |  64.6%  |  90.3%  |  0.850 (n=1)  |  0  |  0
+
+--- dangerous errors (graph-corrupting misclassifications) ---
+haiku:claude-haiku-4-5: 10 total — spurious-link=10
+ollama:qwen3.6:27b: 11 total — spurious-link=10, strengthened-a-conflict=1
+ollama:qwen3.6:35b-a3b: 10 total — spurious-link=9, strengthened-a-conflict=1
+
+--- confusion matrices (rows=label, cols=prediction) ---
+
+haiku:claude-haiku-4-5
+                confirm   extend contradi unrelate
+confirm              8        3        0        0
+extend              11        7        1        0
+contradict           0        0        1        0
+unrelated            3        6        1        7
+
+ollama:qwen3.6:27b
+                confirm   extend contradi unrelate
+confirm             11        0        0        0
+extend               9       10        0        0
+contradict           0        1        0        0
+unrelated            3        7        0        7
+
+ollama:qwen3.6:35b-a3b
+                confirm   extend contradi unrelate
+confirm              8        3        0        0
+extend               3       15        0        1
+contradict           0        1        0        0
+unrelated            3        6        0        8
+
+Per-case detail (incl. raw model output) → /tmp/judge-eval-results.json
+
+Note: Ollama calls run at temperature 0 (greedy) for stable comparison; Haiku uses default sampling.
