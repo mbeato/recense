@@ -161,11 +161,20 @@ if ! plutil -lint "$PLIST_DST" > /dev/null 2>&1; then
 fi
 echo "    plutil -lint: OK"
 
-# Unload first (idempotent — exits 0 even if the agent was not loaded)
-launchctl unload "$PLIST_DST" 2>/dev/null || true
-launchctl load "$PLIST_DST"
-echo "    Loaded: $PLIST_LABEL"
-echo "    Verify: launchctl list | grep brain-memory"
+# Load via the modern per-user domain API. The legacy `launchctl load`/`unload`
+# is deprecated and fails with "Input/output error" (errno 5) on current macOS —
+# and from any non-GUI context (SSH, sandbox, CI) bootstrap also can't reach the
+# gui/<uid> domain, so surface the exact manual command instead of failing hard.
+LAUNCHD_DOMAIN="gui/$(id -u)"
+launchctl bootout "$LAUNCHD_DOMAIN/$PLIST_LABEL" 2>/dev/null || true
+if launchctl bootstrap "$LAUNCHD_DOMAIN" "$PLIST_DST" 2>/dev/null; then
+    echo "    Loaded: $PLIST_LABEL"
+    echo "    Verify: launchctl print $LAUNCHD_DOMAIN/$PLIST_LABEL | grep state"
+else
+    echo "    ⚠ Could not load from this context (need a GUI login session — not SSH/sandbox)." >&2
+    echo "      Run this in your own terminal:" >&2
+    echo "        launchctl bootstrap $LAUNCHD_DOMAIN $PLIST_DST" >&2
+fi
 
 # ── Step 4: Print settings.json hook snippet ──────────────────────────────────
 echo ""
