@@ -60,3 +60,80 @@ describe('resolveProviderOverlay (sleep-pass provider resolution)', () => {
     expect(overlay.localModel).toBeUndefined();
   });
 });
+
+describe('resolveProviderOverlay (per-role provider routing)', () => {
+  it('role key set → wins over base BRAIN_MEMORY_MODEL_PROVIDER', () => {
+    const overlay = resolveProviderOverlay(
+      { BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'local', BRAIN_MEMORY_MODEL_PROVIDER: 'vertex' },
+      'BRAIN_MEMORY_EXTRACTOR_PROVIDER',
+    );
+    expect(overlay.modelProvider).toBe('local');
+  });
+
+  it('role key unset but base set → uses base', () => {
+    const overlay = resolveProviderOverlay(
+      { BRAIN_MEMORY_MODEL_PROVIDER: 'vertex' },
+      'BRAIN_MEMORY_JUDGE_PROVIDER',
+    );
+    expect(overlay.modelProvider).toBe('vertex');
+  });
+
+  it('neither role nor base set → DEFAULT_CONFIG provider', () => {
+    const overlay = resolveProviderOverlay({}, 'BRAIN_MEMORY_JUDGE_PROVIDER');
+    expect(overlay.modelProvider).toBe(DEFAULT_CONFIG.modelProvider);
+    expect(overlay.modelProvider).toBe('anthropic');
+  });
+
+  it('unknown role value → falls back to base', () => {
+    const overlay = resolveProviderOverlay(
+      { BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'gpt5-turbo', BRAIN_MEMORY_MODEL_PROVIDER: 'vertex' },
+      'BRAIN_MEMORY_EXTRACTOR_PROVIDER',
+    );
+    expect(overlay.modelProvider).toBe('vertex');
+  });
+
+  it('unknown role value AND no base → falls back to DEFAULT_CONFIG', () => {
+    const overlay = resolveProviderOverlay(
+      { BRAIN_MEMORY_JUDGE_PROVIDER: 'gpt5-turbo' },
+      'BRAIN_MEMORY_JUDGE_PROVIDER',
+    );
+    expect(overlay.modelProvider).toBe(DEFAULT_CONFIG.modelProvider);
+  });
+
+  it('role resolves to local → local-model overlay applies', () => {
+    const overlay = resolveProviderOverlay(
+      {
+        BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'local',
+        BRAIN_MEMORY_LOCAL_MODEL: 'qwen2.5:7b-instruct',
+        BRAIN_MEMORY_LOCAL_BASE_URL: 'http://localhost:11434/v1',
+      },
+      'BRAIN_MEMORY_EXTRACTOR_PROVIDER',
+    );
+    expect(overlay.modelProvider).toBe('local');
+    expect(overlay.localModel).toBe('qwen2.5:7b-instruct');
+    expect(overlay.localBaseUrl).toBe('http://localhost:11434/v1');
+  });
+
+  it('role resolves to non-local → local-model overlay ignored', () => {
+    const overlay = resolveProviderOverlay(
+      { BRAIN_MEMORY_JUDGE_PROVIDER: 'anthropic', BRAIN_MEMORY_LOCAL_MODEL: 'qwen2.5:7b-instruct' },
+      'BRAIN_MEMORY_JUDGE_PROVIDER',
+    );
+    expect(overlay.modelProvider).toBe('anthropic');
+    expect(overlay.localModel).toBeUndefined();
+  });
+
+  it('split routing: extractor=local, judge=anthropic from one env', () => {
+    const env = {
+      BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'local',
+      BRAIN_MEMORY_JUDGE_PROVIDER: 'anthropic',
+      BRAIN_MEMORY_LOCAL_MODEL: 'qwen2.5:7b-instruct',
+    };
+    const extractor = resolveProviderOverlay(env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER');
+    const judge = resolveProviderOverlay(env, 'BRAIN_MEMORY_JUDGE_PROVIDER');
+    expect(extractor.modelProvider).toBe('local');
+    expect(extractor.localModel).toBe('qwen2.5:7b-instruct');
+    expect(judge.modelProvider).toBe('anthropic');
+    expect(judge.localModel).toBeUndefined();
+  });
+});

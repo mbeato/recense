@@ -65,18 +65,30 @@ export interface ProviderOverlay {
 
 /**
  * Resolve the model-provider overlay from env, FAIL-SAFE:
- *  - BRAIN_MEMORY_MODEL_PROVIDER → modelProvider, validated against the union.
- *    Unset OR unknown value → DEFAULT_CONFIG.modelProvider (default unchanged).
+ *  - Provider precedence: env[roleEnvKey] (if set+valid) →
+ *    BRAIN_MEMORY_MODEL_PROVIDER (if set+valid) → DEFAULT_CONFIG.modelProvider.
+ *    Unknown/empty values at any tier are skipped (fail-safe, default unchanged).
  *  - When (and only when) the resolved provider is 'local', optional
  *    BRAIN_MEMORY_LOCAL_MODEL / BRAIN_MEMORY_LOCAL_BASE_URL overlay localModel /
  *    localBaseUrl; absent → DEFAULT_CONFIG values are kept.
+ *  - roleEnvKey is optional: calling with no role key behaves EXACTLY as the
+ *    original single-overlay resolver (backward-compatible — bc2 tests).
  * Pure (env passed in) and network-free so it is unit-testable.
  */
-export function resolveProviderOverlay(env: NodeJS.ProcessEnv): ProviderOverlay {
-  const raw = env['BRAIN_MEMORY_MODEL_PROVIDER'];
-  const provider: ModelProvider = (VALID_PROVIDERS as readonly string[]).includes(raw ?? '')
-    ? (raw as ModelProvider)
-    : DEFAULT_CONFIG.modelProvider;
+export function resolveProviderOverlay(
+  env: NodeJS.ProcessEnv,
+  roleEnvKey?: string,
+): ProviderOverlay {
+  const isValid = (v: string | undefined): v is ModelProvider =>
+    (VALID_PROVIDERS as readonly string[]).includes(v ?? '');
+
+  const roleRaw = roleEnvKey ? env[roleEnvKey] : undefined;
+  const baseRaw = env['BRAIN_MEMORY_MODEL_PROVIDER'];
+  const provider: ModelProvider = isValid(roleRaw)
+    ? roleRaw
+    : isValid(baseRaw)
+      ? baseRaw
+      : DEFAULT_CONFIG.modelProvider;
 
   const overlay: ProviderOverlay = { modelProvider: provider };
 
@@ -115,10 +127,15 @@ async function main(): Promise<void> {
     initSchema(db);
 
     // ── 4. Instantiate the full Consolidator dependency graph ────────────────
-    // Overlay env-derived provider (fail-safe: unset/unknown → DEFAULT_CONFIG).
-    const overlay = resolveProviderOverlay(process.env);
-    const config = { ...DEFAULT_CONFIG, dbPath, ...overlay };
-    log(`provider: ${config.modelProvider}`); // resolved provider only — never secrets
+    // Base config (no model-provider overlay — stores/retriever are LLM-free).
+    const config = { ...DEFAULT_CONFIG, dbPath };
+    // Per-role provider routing in the SAME process (fail-safe overlay each):
+    //  - judgeConfig    → AnthropicJudge + SchemaInducer default namingFn.
+    //  - extractorConfig → AnthropicClaimExtractor.
+    const judgeConfig = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_JUDGE_PROVIDER') };
+    const extractorConfig = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER') };
+    // resolved providers only — never secrets/keys
+    log(`extractor: ${extractorConfig.modelProvider} | judge: ${judgeConfig.modelProvider}`);
 
     const episodes = new EpisodicStore(db, realClock, config);
     const store = new SemanticStore(db, realClock, config);
@@ -127,11 +144,12 @@ async function main(): Promise<void> {
 
     // Production model impls — keys read from process.env by SDK (T-03-2-E)
     const embedder = new OpenAIEmbedder(config.openaiEmbedModel, config.embeddingDimensions);
-    const judge = new AnthropicJudge(config);
-    const extractor = new AnthropicClaimExtractor(config);
+    const judge = new AnthropicJudge(judgeConfig);
+    const extractor = new AnthropicClaimExtractor(extractorConfig);
 
     const inducer = new SchemaInducer(
-      db, store, strength, retriever, embedder, config, realClock,
+      // schema-naming routes to the judge provider (reasoning-ish, low volume)
+      db, store, strength, retriever, embedder, judgeConfig, realClock,
       // No namingFn supplied — defaults to createAnthropicClient (T-04-01-K)
     );
 
