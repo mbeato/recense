@@ -140,3 +140,30 @@ is justified** as the next step.
    opposing values; the mined gray-zone case Qwen flubbed was a subtle near-paraphrase. So
    this is *necessary, not sufficient*: it proves parity on clear value-conflicts (the common
    belief-update case), not on subtle/ambiguous ones.
+
+## `--no-think` experiment (REJECTED) — `judge-eval-contradiction-nothink.log`
+
+The local sleep pass at 35b-a3b-with-thinking runs ~11 min/episode (multiple judge/extract calls,
+each spending the 8192-token think budget) — too slow for the recurring pass. Hypothesis: disable
+Qwen's reasoning pass (`--no-think` appends the `/no_think` soft switch, drops `max_tokens` to 1024,
+and omits `response_format` to mirror the production OllamaClient) for a large speedup. Tested on the
+17-case contradiction set:
+
+| config (qwen3.6:35b-a3b) | rel-acc | contradiction detection | parse-fail | throughput |
+| ------------------------ | ------- | ----------------------- | ---------- | ---------- |
+| think (baseline)         | 100%    | 13/13                   | 0          | ~33s/case  |
+| **--no-think**           | 17.6%   | **2/13** (11 missed)    | **14/17**  | ~32s/case  |
+
+**Rejected on both axes:**
+1. **No speedup** — ~32s/case, identical to thinking. The latency is dominated by prompt processing
+   of the candidate list + model base cost, NOT think-token generation. So no-think can't fix throughput.
+2. **Accuracy collapses** — on the hard judge task the model *ignores* `/no_think` and reasons anyway,
+   then truncates mid-think at the 1024 cap → **13/17 empty outputs** → SAFE_VERDICT `unrelated` →
+   11/13 contradictions MISSED (the graph-corrupting direction). The 3 that returned were correct.
+   Raising max_tokens back to 8192 just reproduces think mode.
+
+**Conclusion:** the think pass is load-bearing AND is not the speed bottleneck. There is no
+fast-no-think config for this model/task. Throughput must be solved another way — **split-routing**
+(small fast model for high-volume extraction; keep 35b-a3b *with thinking* for the judge) is the
+highest-value path and aligns with the Phase 5 ModelProvider split. Alternatives: accept the
+hourly-launchd grind, or keep the judge on Haiku (reintroduces spend).

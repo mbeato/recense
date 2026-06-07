@@ -1,0 +1,30 @@
+Eval set: 17 cases | labeled: 17 | unlabeled (skipped): 0
+
+⚡ --no-think: Qwen reasoning pass disabled (/no_think, max_tokens 1024)
+
+Running ollama:qwen3.6:35b-a3b on 17 cases(node:83620) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+.................
+
+========================= JUDGE EVAL =========================
+provider  |  rel-acc  |  best-id-acc  |  mag-MAE(contradict)  |  parse-fail  |  errors
+ollama:qwen3.6:35b-a3b  |  17.6%  |  17.6%  |  0.588 (n=13)  |  14  |  0
+
+--- throughput (wall-clock per provider) ---
+ollama:qwen3.6:35b-a3b: 543.8s total, 32.0s/case
+
+--- dangerous errors (graph-corrupting misclassifications) ---
+ollama:qwen3.6:35b-a3b: 12 total — missed-relation=12
+
+--- confusion matrices (rows=label, cols=prediction) ---
+
+ollama:qwen3.6:35b-a3b
+                confirm   extend contradi unrelate
+confirm              1        0        0        1
+extend               0        0        0        2
+contradict           0        0        2       11
+unrelated            0        0        0        0
+
+Per-case detail (incl. raw model output) → scripts/eval/judge-eval-contradiction-results-nothink.json
+
+Note: Ollama calls run at temperature 0 (greedy) for stable comparison; Haiku uses default sampling.

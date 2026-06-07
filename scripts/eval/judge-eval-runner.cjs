@@ -24,6 +24,9 @@ const HAIKU = arg('--haiku', 'claude-haiku-4-5');          // pass --haiku "" to
 const OLLAMA_MODELS = (arg('--ollama', 'qwen3.6:27b,qwen3.6:35b-a3b') || '').split(',').map(s => s.trim()).filter(Boolean);
 const OLLAMA_URL = arg('--ollama-url', 'http://localhost:11434/v1');
 const OUT = arg('--out', 'scripts/eval/judge-eval-results.json');
+// --no-think: disable Qwen's reasoning pass (append the /no_think soft switch + drop max_tokens).
+// Tests whether throughput-friendly no-think judging holds contradiction detection vs the think baseline.
+const NO_THINK = process.argv.includes('--no-think');
 const RELATIONS = ['confirm', 'extend', 'contradict', 'unrelated'];
 
 // ---- faithful copy of the engine's judge prompt (src/model/judge.ts) -------
@@ -74,11 +77,18 @@ async function callHaiku(client, prompt) {
   return msg.content.filter(b => b.type === 'text').map(b => b.text).join('');
 }
 async function callOllama(client, model, prompt) {
-  const r = await client.chat.completions.create({
-    model, temperature: 0, max_tokens: 8192,   // Qwen 3.6 are reasoning models — leave room for the think pass + JSON (256 truncated mid-thought → empty content)
-    response_format: { type: 'json_object' },   // Ollama JSON mode — matches production's format constraint
-    messages: [{ role: 'user', content: prompt }],
-  });
+  // --no-think: append the /no_think soft switch and drop max_tokens. ALSO drop response_format:
+  // json_object overrides /no_think (the reasoning template runs anyway → truncates mid-think →
+  // empty content), and the production OllamaClient adapter sets no response_format either. This
+  // mirrors production: rely on the prompt + the engine's salvage parser.
+  // think mode: keep max_tokens ≥ 8192 (256 truncated mid-thought → empty content) + json_object.
+  const content = NO_THINK ? `${prompt}\n\n/no_think` : prompt;
+  const params = {
+    model, temperature: 0, max_tokens: NO_THINK ? 1024 : 8192,
+    messages: [{ role: 'user', content }],
+  };
+  if (!NO_THINK) params.response_format = { type: 'json_object' };   // Ollama JSON mode — matches production's think-path constraint
+  const r = await client.chat.completions.create(params);
   return r.choices?.[0]?.message?.content ?? '';
 }
 
@@ -151,10 +161,12 @@ function score(rows) {
   }
   if (!providers.length) { console.log('No providers to test.'); process.exit(1); }
 
+  if (NO_THINK) console.log('\n⚡ --no-think: Qwen reasoning pass disabled (/no_think, max_tokens 1024)');
   const results = {};
   for (const prov of providers) {
     process.stdout.write(`\nRunning ${prov.name} on ${labeled.length} cases`);
     const rows = [];
+    const tStart = Date.now();
     for (const c of labeled) {
       const prompt = buildPrompt(c);
       try {
@@ -165,7 +177,8 @@ function score(rows) {
       }
       process.stdout.write('.');
     }
-    results[prov.name] = { rows, score: score(rows) };
+    const elapsedMs = Date.now() - tStart;
+    results[prov.name] = { rows, score: score(rows), elapsedMs, perCaseMs: Math.round(elapsedMs / labeled.length) };
   }
 
   // ---- report ----
@@ -181,6 +194,11 @@ function score(rows) {
       `${s.parseFail}${s.salvaged ? ` (+${s.salvaged} salvaged)` : ''}`,
       String(s.errors),
     ].join('  |  '));
+  }
+
+  console.log('\n--- throughput (wall-clock per provider) ---');
+  for (const [name, r] of Object.entries(results)) {
+    if (r.elapsedMs != null) console.log(`${name}: ${(r.elapsedMs / 1000).toFixed(1)}s total, ${(r.perCaseMs / 1000).toFixed(1)}s/case`);
   }
 
   console.log('\n--- dangerous errors (graph-corrupting misclassifications) ---');
