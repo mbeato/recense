@@ -167,3 +167,35 @@ fast-no-think config for this model/task. Throughput must be solved another way 
 (small fast model for high-volume extraction; keep 35b-a3b *with thinking* for the judge) is the
 highest-value path and aligns with the Phase 5 ModelProvider split. Alternatives: accept the
 hourly-launchd grind, or keep the judge on Haiku (reintroduces spend).
+
+## Extraction model bake-off — `extract-bakeoff.cjs` / `extract-bakeoff.log`
+
+Extraction is the high-volume sleep-pass step and is *forgiving* (safe-fallback parsing — bad output
+drops claims, never corrupts the graph), so the goal is the fastest model that clears a "good enough"
+bar. `extract-bakeoff.cjs` runs the engine's REAL extraction prompt + parser through each candidate on
+K real episodes, measuring latency + parse-success + claim count, then scores each output for
+faithfulness+coverage (1–5) with Haiku as reference judge. (5 episodes, 2026-06-07:)
+
+| model (local unless noted)      | avg latency | avg claims | parse-fail | quality (1–5) |
+| ------------------------------- | ----------- | ---------- | ---------- | ------------- |
+| haiku:claude-haiku-4-5 (API)    | 3.2s        | 12.6       | 0          | 4.80          |
+| **qwen2.5:7b-instruct**         | **7.9s** (~4s warm) | 8.8 | 0          | **4.20**      |
+| qwen2.5:3b-instruct             | 5.3s        | 14.0       | 0          | 2.80 ❌       |
+| qwen3-vl:8b-instruct-q8_0       | 24.3s       | 21.0       | 0          | 5.00          |
+
+**Winner for local extraction: `qwen2.5:7b-instruct`** — faithful (q4.20, no hallucinations), ~4s/episode
+warm, non-reasoning (no think-pass tax), free. Comparable speed to Haiku's API call, at $0.
+
+- **qwen2.5:3b — DISQUALIFIED.** Fast but q2.80: it intermittently **regurgitates the prompt's few-shot
+  examples as if extracted** (the judge caught `"Jane Doe is the founder"` / `"Never inflate metrics"`
+  — both prompt examples, absent from the source — on 2 of 5 episodes). A graph-writing path can't inject
+  hallucinated facts. Smaller-than-7B is a false economy here.
+- **qwen3-vl:8b — best quality (q5.0) but too slow (24s, over-extracts).** Not worth 3× the latency.
+
+### Implication for split-routing
+Fast local extraction is now *solved* (7b). But the per-claim **judge** on local 35b-a3b-with-thinking
+remains the dominant sleep-pass cost (judge calls scale with claim count, each ~30s). So the viable
+configs both need per-call-type routing (= the Phase 5 ModelProvider split):
+- **All-local ($0):** extraction→qwen2.5:7b, judge→qwen3.6:35b-a3b — accept the offline/overnight grind.
+- **Cost-optimized (fast):** extraction→qwen2.5:7b (free), judge→Haiku (fast, strong, small spend; judge
+  outputs are tiny). Best latency; reintroduces minor judge spend.

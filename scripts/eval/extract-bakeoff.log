@@ -1,0 +1,47 @@
+Bake-off on 5 episodes from ./brain.db (roles: assistant, assistant, user, assistant, user)
+
+Running haiku:claude-haiku-4-5(node:86313) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+.....
+Running ollama:qwen2.5:3b-instruct.....
+Running ollama:qwen2.5:7b-instruct.....
+Running ollama:qwen3-vl:8b-instruct-q8_0.....
+
+Scoring quality....................
+
+===================== EXTRACTION BAKE-OFF =====================
+provider  |  avg-latency  |  avg-claims  |  parse-fail  |  avg-quality(1-5)
+haiku:claude-haiku-4-5  |  3.2s  |  12.6  |  0  |  4.80
+ollama:qwen2.5:3b-instruct  |  5.3s  |  14.0  |  0  |  2.80
+ollama:qwen2.5:7b-instruct  |  7.9s  |  8.8  |  0  |  4.20
+ollama:qwen3-vl:8b-instruct-q8_0  |  24.3s  |  21.0  |  0  |  5.00
+
+--- per-episode detail (claims count @ latency, quality) ---
+
+haiku:claude-haiku-4-5
+  ep fe7cf46c-b425-4d6c-b695-b712daeeb643 (assistant): 12 claims @ 3.9s q=5 (All claims are directly supported by the source. Entities ar)
+  ep fdf061d7-3550-4b39-8942-7bdff3a49c05 (assistant): 23 claims @ 5.2s q=4 (Highly accurate extraction with strong coverage of key entit)
+  ep fcbc1644-0a32-4615-a051-278eb5365563 (user): 11 claims @ 2.2s q=5 (Claims are accurate and faithful to source content. All key )
+  ep fbbd6fba-75c8-4193-aade-d2402c0055e0 (assistant): 7 claims @ 1.9s q=5 (All claims are accurate and directly supported by source tex)
+  ep f9e56aaa-43a1-4a8f-a8ea-ff73bd93649d (user): 10 claims @ 3.0s q=5 (Claims accurately reflect all key instructions from the sour)
+
+ollama:qwen2.5:3b-instruct
+  ep fe7cf46c-b425-4d6c-b695-b712daeeb643 (assistant): 12 claims @ 12.2s q=2 (Captures some correct entities (BannerHeroAdapter, contexts,)
+  ep fdf061d7-3550-4b39-8942-7bdff3a49c05 (assistant): 35 claims @ 7.8s q=2 (Critical hallucination: 'Jane Doe is the founder' appears n)
+  ep fcbc1644-0a32-4615-a051-278eb5365563 (user): 9 claims @ 2.6s q=4 (Highly faithful extraction with accurate claims covering the)
+  ep fbbd6fba-75c8-4193-aade-d2402c0055e0 (assistant): 5 claims @ 1.1s q=2 (Major hallucination: 'Never inflate metrics' appears nowhere)
+  ep f9e56aaa-43a1-4a8f-a8ea-ff73bd93649d (user): 9 claims @ 2.6s q=4 (Highly faithful extraction covering all major facts and inst)
+
+ollama:qwen2.5:7b-instruct
+  ep fe7cf46c-b425-4d6c-b695-b712daeeb643 (assistant): 19 claims @ 23.6s q=5 (All claims are directly sourced from the document with high )
+  ep fdf061d7-3550-4b39-8942-7bdff3a49c05 (assistant): 8 claims @ 6.1s q=4 (Extraction is accurate and captures key entities (cloud prov)
+  ep fcbc1644-0a32-4615-a051-278eb5365563 (user): 5 claims @ 3.7s q=4 (Extraction is highly accurate and captures the key procedura)
+  ep fbbd6fba-75c8-4193-aade-d2402c0055e0 (assistant): 7 claims @ 2.5s q=4 (Accurate extraction of key entities and facts with good cove)
+  ep f9e56aaa-43a1-4a8f-a8ea-ff73bd93649d (user): 5 claims @ 3.7s q=4 (Faithful extraction of key facts and entities with accurate )
+
+ollama:qwen3-vl:8b-instruct-q8_0
+  ep fe7cf46c-b425-4d6c-b695-b712daeeb643 (assistant): 41 claims @ 51.5s q=5 (Extraction is comprehensive and accurate. Captures all key f)
+  ep fdf061d7-3550-4b39-8942-7bdff3a49c05 (assistant): 43 claims @ 45.9s q=5 (Extraction is highly faithful and comprehensive. All major c)
+  ep fcbc1644-0a32-4615-a051-278eb5365563 (user): 6 claims @ 7.9s q=5 (Claims accurately reflect all key procedural facts from sour)
+  ep fbbd6fba-75c8-4193-aade-d2402c0055e0 (assistant): 9 claims @ 8.5s q=5 (All claims are accurate and directly supported by source tex)
+  ep f9e56aaa-43a1-4a8f-a8ea-ff73bd93649d (user): 6 claims @ 7.9s q=5 (All major facts and entities accurately extracted with corre)
