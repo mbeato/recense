@@ -48,10 +48,27 @@ const SAFE_VERDICT: JudgeVerdict = { best_candidate_id: null, relation: 'unrelat
 
 const VALID_RELATIONS = new Set<string>(['confirm', 'extend', 'contradict', 'unrelated']);
 
+/**
+ * Isolate the outermost JSON object span from a model response. Models routinely
+ * wrap the object in ```json fences or add preamble despite being told not to
+ * (observed with claude-haiku-4-5); JSON.parse on the raw text then throws and
+ * the verdict silently falls back to SAFE_VERDICT. Slicing first '{' … last '}'
+ * recovers the object regardless of surrounding fences/prose. Returns null if no
+ * object span is found. Mirrors extractJsonArray in claim-extractor.ts.
+ */
+function extractJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) return null;
+  return text.slice(start, end + 1);
+}
+
 /** Parse and validate an LLM JSON response into a JudgeVerdict. T-02-PARSE. */
 function parseVerdict(text: string): JudgeVerdict {
   try {
-    const raw = JSON.parse(text) as unknown;
+    const json = extractJsonObject(text);
+    if (json === null) return SAFE_VERDICT;
+    const raw = JSON.parse(json) as unknown;
     if (typeof raw !== 'object' || raw === null) return SAFE_VERDICT;
 
     const obj = raw as Record<string, unknown>;
