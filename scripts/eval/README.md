@@ -79,9 +79,64 @@ Dangerous (graph-corrupting) errors: Haiku 10 (all spurious-link); qwen3.6:27b 1
 (10 spurious-link, 1 strengthened-a-conflict); qwen3.6:35b-a3b 10 (9 spurious-link,
 1 strengthened-a-conflict).
 
-### Known gap
+### Known gap (closed below)
 
-The **contradiction** dimension is undertested: the set has only **n=1** contradict case,
+The **contradiction** dimension was undertested: the set had only **n=1** contradict case,
 and both Qwen models called it `extend` (the one strengthened-a-conflict each). `mag-MAE`
-is therefore a single-point number, not a distribution. Building out contradiction coverage
-is a follow-up task — treat the current contradict/magnitude results as not yet conclusive.
+was therefore a single-point number, not a distribution. Closed by the contradiction-focused
+set below.
+
+## Contradiction-focused set (`judge-eval-contradiction-set.json`, 17 cases)
+
+Contradictions can't be mined from the cosine gray-zone (conflicting values on the same
+subject don't sit in the mid-cosine band — that's why the set above had n=1). They're
+**constructed** instead by `judge-eval-contradiction-build.cjs`: each case takes a real
+`brain.db` node as the stored belief (candidate) and pairs it with a hand-authored claim
+stating an opposing value on the same subject, plus near-miss `confirm`/`extend` controls.
+Candidates = target + its real top-cosine neighbors; target placed at varied slots.
+
+- 13 contradictions, magnitudes calibrated 0.3 (mild numeric drift) → 0.9 (categorical reversal)
+- 2 `confirm` + 2 `extend` controls (so the set isn't gameable by always answering "contradict")
+
+Build + run:
+
+```bash
+node scripts/eval/judge-eval-contradiction-build.cjs ./brain.db
+NODE_PATH=$(pwd)/node_modules node scripts/eval/judge-eval-runner.cjs \
+  --eval scripts/eval/judge-eval-contradiction-set.json \
+  --out scripts/eval/judge-eval-contradiction-results.json \
+  --ollama "qwen3.6:27b,qwen3.6:35b-a3b" --haiku claude-haiku-4-5
+```
+
+### Result (`judge-eval-contradiction-3way.log`)
+
+| provider               | rel-acc | best-id-acc | mag-MAE (contradict) | dangerous errs |
+| ---------------------- | ------- | ----------- | -------------------- | -------------- |
+| haiku:claude-haiku-4-5 | 100.0%  | 94.1%       | 0.250 (n=13)         | 0              |
+| ollama:qwen3.6:27b     | 100.0%  | 100.0%      | 0.342 (n=13)         | 0              |
+| ollama:qwen3.6:35b-a3b | 100.0%  | 100.0%      | 0.350 (n=13)         | 0              |
+
+All three caught **13/13** contradictions as `contradict` and all 4 controls correctly
+(`confirm`/`extend`) — **zero** strengthened-a-conflict errors. Both Qwen models matched or
+beat Haiku on candidate selection (100% vs 94.1%).
+
+### Decision: GREEN-light local judge on contradiction *detection*
+
+The load-bearing direction — never reinforcing a stale fact by calling a conflict
+`extend`/`confirm` — is handled by `qwen3.6:35b-a3b` identically to Haiku on this set. This
+closes the gap that blocked trusting local on the judge. Combined with local's accuracy +
+candidate-selection edge on the mined set, **split-routing (local extraction + local judge)
+is justified** as the next step.
+
+**Two caveats (do not drop):**
+
+1. **Magnitude is poorly calibrated by *every* model — including Haiku.** None differentiate
+   mild from severe: Haiku saturates predictions to ~0.85–0.95, both Qwen to ~1.0, even on
+   the true-0.3 mild-drift case (#13). MAE (0.25 / 0.34 / 0.35) is "comparable" only in that
+   all three are poor. The PE-gated reconsolidation design must treat `magnitude` as a coarse
+   "conflict present → high" signal, **not** a precise 0–1 severity dial — and this is not a
+   local-vs-Haiku discriminator.
+2. **Constructed cases are clearer than the hardest real conflicts.** These state directly
+   opposing values; the mined gray-zone case Qwen flubbed was a subtle near-paraphrase. So
+   this is *necessary, not sufficient*: it proves parity on clear value-conflicts (the common
+   belief-update case), not on subtle/ambiguous ones.

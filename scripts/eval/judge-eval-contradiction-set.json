@@ -1,0 +1,563 @@
+[
+  {
+    "case_id": 1,
+    "claim": "HTTP 431 is returned when the server times out waiting for the client to finish sending its request.",
+    "candidates": [
+      {
+        "id": "fcc5f181-ac87-4f1e-9931-e2362b6975cf",
+        "value": "HTTP 431 means 'Request Header Fields Too Large' — server rejected the request because headers sent were too big",
+        "cosine": 1
+      },
+      {
+        "id": "3e687fdd-5f11-48f0-9160-f0cd7020d1b9",
+        "value": "HTTP 431",
+        "cosine": 0.771
+      },
+      {
+        "id": "180a9ebb-c92d-4517-a6c9-716570ea8445",
+        "value": "Cookies bloat request headers and can trigger HTTP 431 errors",
+        "cosine": 0.659
+      },
+      {
+        "id": "c908f322-36ef-4bb6-8e67-ebdd61f3613b",
+        "value": "Cookie header overflow causes 431 blank response when Cookie header exceeds server limit",
+        "cosine": 0.634
+      }
+    ],
+    "top_cosine": 0.771,
+    "band": null,
+    "label": {
+      "best_candidate_index": 0,
+      "relation": "contradict",
+      "magnitude": 0.9
+    }
+  },
+  {
+    "case_id": 2,
+    "claim": "OpenAI text-embedding vectors are the same dimensionality as Vertex's, so we can switch embedding providers without re-embedding the graph.",
+    "candidates": [
+      {
+        "id": "cf5f631f-5343-4308-a6f2-79c8abcc8be6",
+        "value": "OpenAI text-embedding-3-small",
+        "cosine": 0.627
+      },
+      {
+        "id": "506d82f6-041b-4e12-bdb1-a070b62430a1",
+        "value": "OpenAI text-embedding models cannot be switched to Vertex without re-embedding the entire knowledge graph due to different vector dimensions",
+        "cosine": 1
+      },
+      {
+        "id": "b13eb621-8005-467d-8758-db08c012d417",
+        "value": "OpenAI text-embedding-3-small costs ~$0.02 per 1M tokens",
+        "cosine": 0.551
+      },
+      {
+        "id": "8abb9ecf-621a-4e21-afca-f516be43cf90",
+        "value": "OpenAIEmbedder",
+        "cosine": 0.54
+      }
+    ],
+    "top_cosine": 0.627,
+    "band": null,
+    "label": {
+      "best_candidate_index": 1,
+      "relation": "contradict",
+      "magnitude": 0.85
+    }
+  },
+  {
+    "case_id": 3,
+    "claim": "brain-memory runs as a multi-tenant production service handling concurrent traffic from many users.",
+    "candidates": [
+      {
+        "id": "90d83cb5-b9b8-46ea-b673-cf4b2b1fc159",
+        "value": "Single-developer personal tool with one user; no multi-tenant or production traffic and no near-term scaling plans",
+        "cosine": 1
+      },
+      {
+        "id": "8d9be319-0954-4b3e-9c82-5e3bf5aca6b2",
+        "value": "Application is internal developer tooling for a single developer's Claude Code workflow, not consumer-facing",
+        "cosine": 0.598
+      },
+      {
+        "id": "b92f1cb1-fb8f-44dc-a53f-253d53ecf206",
+        "value": "Internal developer tooling with no consumer exposure is the lowest-risk use case for API access forms",
+        "cosine": 0.572
+      },
+      {
+        "id": "29821891-14d6-4e6d-a00d-52c1ef57a7b9",
+        "value": "GitHub Models is recommended for offline sleep pass batch work due to 150 requests/day fitting one-user dogfood at zero credit burn",
+        "cosine": 0.435
+      }
+    ],
+    "top_cosine": 0.598,
+    "band": null,
+    "label": {
+      "best_candidate_index": 0,
+      "relation": "contradict",
+      "magnitude": 0.9
+    }
+  },
+  {
+    "case_id": 4,
+    "claim": "launchd is what triggers consolidation directly; the Stop hook is only the belt-and-suspenders fallback for unclean exits.",
+    "candidates": [
+      {
+        "id": "deac0fb7-f83f-4d31-9ff0-a4fa9ac2d7b2",
+        "value": "Stop hook consolidates session data into the database",
+        "cosine": 0.599
+      },
+      {
+        "id": "3294b3e8-0490-485b-9acc-44ced024fa3d",
+        "value": "Stop hooks handle cleanup and vault updates",
+        "cosine": 0.584
+      },
+      {
+        "id": "1219aa5b-cf66-49c1-8bf6-37c1f42bf239",
+        "value": "Stop hook triggers consolidation directly, launchd is belt-and-suspenders fallback for unclean session exits",
+        "cosine": 1
+      },
+      {
+        "id": "f0617c56-1e1d-4106-a139-7cfe1975f26d",
+        "value": "Stop hook",
+        "cosine": 0.58
+      }
+    ],
+    "top_cosine": 0.599,
+    "band": null,
+    "label": {
+      "best_candidate_index": 2,
+      "relation": "contradict",
+      "magnitude": 0.7
+    }
+  },
+  {
+    "case_id": 5,
+    "claim": "To fix the cross-project bleed, move the three hooks out of brain-memory/.claude/settings.json and back into the global ~/.claude/settings.json.",
+    "candidates": [
+      {
+        "id": "f37355ad-283c-421f-bcf6-1ea6baf57855",
+        "value": "Cross-project bleed: hooks are global, so every session in every project writes to/reads from one brain.db",
+        "cosine": 0.683
+      },
+      {
+        "id": "92efa003-c757-447d-9353-57be637ff1c6",
+        "value": "Fast mitigation for cross-project bleed: move three hooks from ~/.claude/settings.json to brain-memory/.claude/settings.json",
+        "cosine": 1
+      },
+      {
+        "id": "d97ca3e9-41c9-4bd9-8791-10aeb6d66522",
+        "value": "~/.claude/settings.json",
+        "cosine": 0.582
+      },
+      {
+        "id": "1fd158d4-5474-4b35-854e-c8f4dc0a0701",
+        "value": "Cross-project bleed detected with spot-card-spot-visits-paging-design appearing in brain-memory injection",
+        "cosine": 0.553
+      }
+    ],
+    "top_cosine": 0.683,
+    "band": null,
+    "label": {
+      "best_candidate_index": 1,
+      "relation": "contradict",
+      "magnitude": 0.6
+    }
+  },
+  {
+    "case_id": 6,
+    "claim": "Claude-on-Vertex is billed under the same SKU as GenAI App Builder.",
+    "candidates": [
+      {
+        "id": "35726db1-fbce-4622-a269-4338b7a98b8d",
+        "value": "Claude-on-Vertex is billed as Model Garden partner-model inference, a different billing SKU than GenAI App Builder",
+        "cosine": 1
+      },
+      {
+        "id": "e21566d7-a4aa-4005-8dbc-ec807c5091b4",
+        "value": "Trial credit for GenAI App Builder is scoped to Vertex AI Agent Builder and Vertex AI Search SKUs only",
+        "cosine": 0.634
+      },
+      {
+        "id": "92142e6d-f6b1-4a7c-94fe-ffb6baf2b449",
+        "value": "Claude Haiku runs on Google Vertex AI and AWS Bedrock with same model and weights as Anthropic direct API",
+        "cosine": 0.605
+      },
+      {
+        "id": "f35a3499-ca2a-4129-bfe8-285862ed5524",
+        "value": "GCP credits apply to Claude through Vertex AI",
+        "cosine": 0.603
+      }
+    ],
+    "top_cosine": 0.634,
+    "band": null,
+    "label": {
+      "best_candidate_index": 0,
+      "relation": "contradict",
+      "magnitude": 0.55
+    }
+  },
+  {
+    "case_id": 7,
+    "claim": "adaptive-thinking.log is being written continuously — the classifier has been active the entire time.",
+    "candidates": [
+      {
+        "id": "d48d10d5-056a-43df-91eb-d6c0327aa399",
+        "value": "adaptive-thinking.log",
+        "cosine": 0.625
+      },
+      {
+        "id": "da0cd109-6515-495f-9170-2ee611fcdd38",
+        "value": "adaptive-thinking.log has not been touched since Apr 16, indicating the classifier has been inactive for approximately 7 weeks",
+        "cosine": 1
+      },
+      {
+        "id": "274dae8c-d441-4b4a-9374-520539326d31",
+        "value": "adaptive-thinking hook file does not exist and nothing references it",
+        "cosine": 0.466
+      },
+      {
+        "id": "425e0923-8537-4e1f-aaff-1a06cd8e04c6",
+        "value": "CI, Eval Suite (push-triggered), and Log Purge (weekly, no LLM) workflows remain active",
+        "cosine": 0.443
+      }
+    ],
+    "top_cosine": 0.625,
+    "band": null,
+    "label": {
+      "best_candidate_index": 1,
+      "relation": "contradict",
+      "magnitude": 0.7
+    }
+  },
+  {
+    "case_id": 8,
+    "claim": "Azure for Students gives a $100 credit but enforces strict hard RPM limits on chat and embeddings.",
+    "candidates": [
+      {
+        "id": "55b73fc6-8512-41fd-b0fd-f07a4f8f30f1",
+        "value": "Azure for Students provides $100 credit with no hard RPM limits, covering chat and embeddings in one credit pool",
+        "cosine": 1
+      },
+      {
+        "id": "77057677-2199-4cf8-b7ae-936d180a74b7",
+        "value": "Azure for Students",
+        "cosine": 0.731
+      },
+      {
+        "id": "da5bf01f-7a87-47ea-a0d6-d4da10919b29",
+        "value": "Azure for Students should be kept as backup for when rate limits pinch or faster interactive recall is needed",
+        "cosine": 0.659
+      },
+      {
+        "id": "b54a30d5-6212-4e5e-8431-8d48174e3d4b",
+        "value": "Google Cloud Trial Credits",
+        "cosine": 0.49
+      }
+    ],
+    "top_cosine": 0.731,
+    "band": null,
+    "label": {
+      "best_candidate_index": 0,
+      "relation": "contradict",
+      "magnitude": 0.5
+    }
+  },
+  {
+    "case_id": 9,
+    "claim": "fusion was the weakest, least on-brand icon concept and got dropped from the shortlist.",
+    "candidates": [
+      {
+        "id": "6c030234-eeb7-4daf-a034-1626474c701f",
+        "value": "fusion is the variant that actually says urby with the spot-in-spot put-on idea",
+        "cosine": 0.516
+      },
+      {
+        "id": "b0d9d654-62a2-4076-9f12-4232be07ba18",
+        "value": "map-grid-pin-gstreet",
+        "cosine": 0.465
+      },
+      {
+        "id": "3e91f2e6-3a7f-4753-94f0-d2f41fed5457",
+        "value": "fusion: pin on faint street grid with small dot center, ship (4.5), most on-brand storytelling, represents spot-in-spot put-on chain",
+        "cosine": 1
+      },
+      {
+        "id": "d20aa11b-31d8-4a09-8053-aefbf0761f01",
+        "value": "map-grid-pin-gstreet: redo status, correct concept but pin renders as blob and collapses at 40px",
+        "cosine": 0.46
+      }
+    ],
+    "top_cosine": 0.516,
+    "band": null,
+    "label": {
+      "best_candidate_index": 2,
+      "relation": "contradict",
+      "magnitude": 0.7
+    }
+  },
+  {
+    "case_id": 10,
+    "claim": "For the single-user dogfood, request a large quota upfront rather than starting at rock-bottom.",
+    "candidates": [
+      {
+        "id": "b095cae8-8768-468f-9bab-c83f2d75d585",
+        "value": "Recommended quota starting point is 50k / 20k / 30",
+        "cosine": 0.492
+      },
+      {
+        "id": "9b0821cd-cbc4-4b6c-b56a-6299f934f7de",
+        "value": "For single-user dogfood testing, start with rock-bottom quota to get unblocked today, then re-up when limits are hit",
+        "cosine": 1
+      },
+      {
+        "id": "df0ae1ab-126b-4982-bcd9-075db191e653",
+        "value": "Alternative minimum input token quota of 50000 still comfortably covers a one-user pass",
+        "cosine": 0.489
+      },
+      {
+        "id": "15cdfd3b-dca3-4724-b012-8d77bfc35128",
+        "value": "Validate quota works end-to-end on real brain.db before raising limits",
+        "cosine": 0.488
+      }
+    ],
+    "top_cosine": 0.492,
+    "band": null,
+    "label": {
+      "best_candidate_index": 1,
+      "relation": "contradict",
+      "magnitude": 0.5
+    }
+  },
+  {
+    "case_id": 11,
+    "claim": "createAnthropicClient only routes the judge call; the claim-extractor and schema-naming use a separate hardcoded Anthropic client.",
+    "candidates": [
+      {
+        "id": "72579938-a99a-46cc-8642-301ed6048500",
+        "value": "createAnthropicClient routes all LLM calls including judge, claim-extractor, schema-naming, and recall-compose through the configured provider",
+        "cosine": 1
+      },
+      {
+        "id": "68707b84-36fa-4cec-862f-4fe25c642cc4",
+        "value": "createAnthropicClient()",
+        "cosine": 0.589
+      },
+      {
+        "id": "97db69ab-ec8b-4c39-8fe3-82a76706e93f",
+        "value": "modelProvider config flag controls routing between Anthropic and Vertex providers",
+        "cosine": 0.506
+      },
+      {
+        "id": "704ff955-578d-4d01-9903-cb7420d964ff",
+        "value": "src/model/anthropic-client.ts",
+        "cosine": 0.478
+      }
+    ],
+    "top_cosine": 0.589,
+    "band": null,
+    "label": {
+      "best_candidate_index": 0,
+      "relation": "contradict",
+      "magnitude": 0.6
+    }
+  },
+  {
+    "case_id": 12,
+    "claim": "The anthropic-claude-haiku-4-5 requests/min quota should be requested in us-central1.",
+    "candidates": [
+      {
+        "id": "5e69ebd3-dc2b-4226-960a-c7bfb7816bd2",
+        "value": "Must request quota bump for online_prediction_requests_per_minute_per_base_model metric",
+        "cosine": 0.698
+      },
+      {
+        "id": "13ede445-59a0-4dad-84cc-92096e77fe90",
+        "value": "Must request online_prediction_requests_per_minute_per_base_model quota of approximately 60 requests/min for anthropic-claude-haiku-4-5 in us-east5",
+        "cosine": 1
+      },
+      {
+        "id": "bc2f48db-8e2d-4066-9c16-95706acb2381",
+        "value": "Must request quota bump for online_prediction_input_tokens_per_minute_per_base_model metric",
+        "cosine": 0.646
+      },
+      {
+        "id": "12b5669a-f376-4a91-975f-a24d91463b12",
+        "value": "Regional online prediction requests per base model per minute quota for Agent Platform API requires approval from service provider if value above 0",
+        "cosine": 0.628
+      }
+    ],
+    "top_cosine": 0.698,
+    "band": null,
+    "label": {
+      "best_candidate_index": 1,
+      "relation": "contradict",
+      "magnitude": 0.45
+    }
+  },
+  {
+    "case_id": 13,
+    "claim": "The engine's brain.db now holds roughly 1,300 live nodes.",
+    "candidates": [
+      {
+        "id": "4eafd839-65e8-44d4-a725-c16c8d7126fe",
+        "value": "brain.db holds 149 live nodes from sessions with engine ranking and injecting top ~2000 chars",
+        "cosine": 1
+      },
+      {
+        "id": "19873adb-07f1-4799-b515-9a465b8adefd",
+        "value": "brain.db",
+        "cosine": 0.691
+      },
+      {
+        "id": "180f0c82-3a76-4d5c-a5eb-f002c259c2d2",
+        "value": "brain.db holds 66 induced schema nodes",
+        "cosine": 0.672
+      },
+      {
+        "id": "0b01b4de-2f06-40f5-af9c-f11c0819f9b6",
+        "value": "brain.db starts empty and fills as conversation progresses",
+        "cosine": 0.648
+      }
+    ],
+    "top_cosine": 0.691,
+    "band": null,
+    "label": {
+      "best_candidate_index": 0,
+      "relation": "contradict",
+      "magnitude": 0.3
+    }
+  },
+  {
+    "case_id": 14,
+    "claim": "HTTP 431 'Request Header Fields Too Large' is returned when the request headers are too big.",
+    "candidates": [
+      {
+        "id": "fcc5f181-ac87-4f1e-9931-e2362b6975cf",
+        "value": "HTTP 431 means 'Request Header Fields Too Large' — server rejected the request because headers sent were too big",
+        "cosine": 1
+      },
+      {
+        "id": "3e687fdd-5f11-48f0-9160-f0cd7020d1b9",
+        "value": "HTTP 431",
+        "cosine": 0.771
+      },
+      {
+        "id": "180a9ebb-c92d-4517-a6c9-716570ea8445",
+        "value": "Cookies bloat request headers and can trigger HTTP 431 errors",
+        "cosine": 0.659
+      },
+      {
+        "id": "c908f322-36ef-4bb6-8e67-ebdd61f3613b",
+        "value": "Cookie header overflow causes 431 blank response when Cookie header exceeds server limit",
+        "cosine": 0.634
+      }
+    ],
+    "top_cosine": 0.771,
+    "band": null,
+    "label": {
+      "best_candidate_index": 0,
+      "relation": "confirm",
+      "magnitude": 0
+    }
+  },
+  {
+    "case_id": 15,
+    "claim": "This is a single-developer personal tool with one user and no production traffic or near-term scaling plans.",
+    "candidates": [
+      {
+        "id": "8d9be319-0954-4b3e-9c82-5e3bf5aca6b2",
+        "value": "Application is internal developer tooling for a single developer's Claude Code workflow, not consumer-facing",
+        "cosine": 0.598
+      },
+      {
+        "id": "90d83cb5-b9b8-46ea-b673-cf4b2b1fc159",
+        "value": "Single-developer personal tool with one user; no multi-tenant or production traffic and no near-term scaling plans",
+        "cosine": 1
+      },
+      {
+        "id": "b92f1cb1-fb8f-44dc-a53f-253d53ecf206",
+        "value": "Internal developer tooling with no consumer exposure is the lowest-risk use case for API access forms",
+        "cosine": 0.572
+      },
+      {
+        "id": "29821891-14d6-4e6d-a00d-52c1ef57a7b9",
+        "value": "GitHub Models is recommended for offline sleep pass batch work due to 150 requests/day fitting one-user dogfood at zero credit burn",
+        "cosine": 0.435
+      }
+    ],
+    "top_cosine": 0.598,
+    "band": null,
+    "label": {
+      "best_candidate_index": 1,
+      "relation": "confirm",
+      "magnitude": 0
+    }
+  },
+  {
+    "case_id": 16,
+    "claim": "The Stop hook's consolidation runs the offline sleep pass, which calls Haiku once per episode.",
+    "candidates": [
+      {
+        "id": "1219aa5b-cf66-49c1-8bf6-37c1f42bf239",
+        "value": "Stop hook triggers consolidation directly, launchd is belt-and-suspenders fallback for unclean session exits",
+        "cosine": 1
+      },
+      {
+        "id": "deac0fb7-f83f-4d31-9ff0-a4fa9ac2d7b2",
+        "value": "Stop hook consolidates session data into the database",
+        "cosine": 0.599
+      },
+      {
+        "id": "3294b3e8-0490-485b-9acc-44ced024fa3d",
+        "value": "Stop hooks handle cleanup and vault updates",
+        "cosine": 0.584
+      },
+      {
+        "id": "f0617c56-1e1d-4106-a139-7cfe1975f26d",
+        "value": "Stop hook",
+        "cosine": 0.58
+      }
+    ],
+    "top_cosine": 0.599,
+    "band": null,
+    "label": {
+      "best_candidate_index": 0,
+      "relation": "extend",
+      "magnitude": 0
+    }
+  },
+  {
+    "case_id": 17,
+    "claim": "The us-east5 haiku quota request should also document the single-user dogfood usage to speed approval.",
+    "candidates": [
+      {
+        "id": "5e69ebd3-dc2b-4226-960a-c7bfb7816bd2",
+        "value": "Must request quota bump for online_prediction_requests_per_minute_per_base_model metric",
+        "cosine": 0.698
+      },
+      {
+        "id": "13ede445-59a0-4dad-84cc-92096e77fe90",
+        "value": "Must request online_prediction_requests_per_minute_per_base_model quota of approximately 60 requests/min for anthropic-claude-haiku-4-5 in us-east5",
+        "cosine": 1
+      },
+      {
+        "id": "bc2f48db-8e2d-4066-9c16-95706acb2381",
+        "value": "Must request quota bump for online_prediction_input_tokens_per_minute_per_base_model metric",
+        "cosine": 0.646
+      },
+      {
+        "id": "12b5669a-f376-4a91-975f-a24d91463b12",
+        "value": "Regional online prediction requests per base model per minute quota for Agent Platform API requires approval from service provider if value above 0",
+        "cosine": 0.628
+      }
+    ],
+    "top_cosine": 0.698,
+    "band": null,
+    "label": {
+      "best_candidate_index": 1,
+      "relation": "extend",
+      "magnitude": 0
+    }
+  }
+]

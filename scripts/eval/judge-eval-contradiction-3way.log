@@ -1,0 +1,45 @@
+Eval set: 17 cases | labeled: 17 | unlabeled (skipped): 0
+
+Running haiku:claude-haiku-4-5 on 17 cases(node:74396) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+.................
+Running ollama:qwen3.6:27b on 17 cases.................
+Running ollama:qwen3.6:35b-a3b on 17 cases.................
+
+========================= JUDGE EVAL =========================
+provider  |  rel-acc  |  best-id-acc  |  mag-MAE(contradict)  |  parse-fail  |  errors
+haiku:claude-haiku-4-5  |  100.0%  |  94.1%  |  0.250 (n=13)  |  0 (+17 salvaged)  |  0
+ollama:qwen3.6:27b  |  100.0%  |  100.0%  |  0.342 (n=13)  |  0  |  0
+ollama:qwen3.6:35b-a3b  |  100.0%  |  100.0%  |  0.350 (n=13)  |  0  |  0
+
+--- dangerous errors (graph-corrupting misclassifications) ---
+haiku:claude-haiku-4-5: 0 total
+ollama:qwen3.6:27b: 0 total
+ollama:qwen3.6:35b-a3b: 0 total
+
+--- confusion matrices (rows=label, cols=prediction) ---
+
+haiku:claude-haiku-4-5
+                confirm   extend contradi unrelate
+confirm              2        0        0        0
+extend               0        2        0        0
+contradict           0        0       13        0
+unrelated            0        0        0        0
+
+ollama:qwen3.6:27b
+                confirm   extend contradi unrelate
+confirm              2        0        0        0
+extend               0        2        0        0
+contradict           0        0       13        0
+unrelated            0        0        0        0
+
+ollama:qwen3.6:35b-a3b
+                confirm   extend contradi unrelate
+confirm              2        0        0        0
+extend               0        2        0        0
+contradict           0        0       13        0
+unrelated            0        0        0        0
+
+Per-case detail (incl. raw model output) → scripts/eval/judge-eval-contradiction-results.json
+
+Note: Ollama calls run at temperature 0 (greedy) for stable comparison; Haiku uses default sampling.
