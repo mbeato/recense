@@ -123,6 +123,39 @@ describe('parseVerdict (via exported test helper)', () => {
   });
 });
 
+// ── parseVerdict: JSON code-fence handling (regression for claude-haiku-4-5) ──
+
+describe('parseVerdict code-fence handling', () => {
+  it('(a) parses a realistic fenced JSON response (triple-backtick json ... triple-backtick)', () => {
+    // Build the fenced string explicitly to avoid invisible/zero-width characters.
+    const backtick = '\x60';
+    const fence = backtick + backtick + backtick;
+    const fenced =
+      fence + 'json\n' +
+      '{ "best_candidate_id": "abc", "relation": "confirm", "magnitude": 0.0 }\n' +
+      fence;
+    const result = parseVerdictForTest(fenced);
+    expect(result).toEqual({ best_candidate_id: 'abc', relation: 'confirm', magnitude: 0 });
+  });
+
+  it('(b) parses preamble text followed by a JSON object', () => {
+    const text = 'Sure, here is the verdict:\n{ "best_candidate_id": "xyz", "relation": "extend", "magnitude": 0.5 }';
+    const result = parseVerdictForTest(text);
+    expect(result).toEqual({ best_candidate_id: 'xyz', relation: 'extend', magnitude: 0.5 });
+  });
+
+  it('(c) bare JSON object (no fence) still parses — no regression', () => {
+    const text = '{ "best_candidate_id": "n1", "relation": "contradict", "magnitude": 0.8 }';
+    const result = parseVerdictForTest(text);
+    expect(result).toEqual({ best_candidate_id: 'n1', relation: 'contradict', magnitude: 0.8 });
+  });
+
+  it('(d) a string containing no JSON object returns SAFE_VERDICT', () => {
+    const result = parseVerdictForTest('no json here at all');
+    expect(result).toEqual({ best_candidate_id: null, relation: 'unrelated', magnitude: 0 });
+  });
+});
+
 // ── EngineConfig: five new Phase-2 tunables ───────────────────────────────────
 
 describe('EngineConfig: Phase-2 tunables present in DEFAULT_CONFIG', () => {
