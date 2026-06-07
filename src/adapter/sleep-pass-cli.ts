@@ -52,6 +52,44 @@ function resolveDbPath(): string | undefined {
   return process.env['BRAIN_MEMORY_DB'];
 }
 
+/** Provider values accepted by EngineConfig.modelProvider (the validation union). */
+const VALID_PROVIDERS = ['anthropic', 'vertex', 'local'] as const;
+type ModelProvider = (typeof VALID_PROVIDERS)[number];
+
+/** Env-derived overlay applied on top of DEFAULT_CONFIG for the sleep pass. */
+export interface ProviderOverlay {
+  modelProvider: ModelProvider;
+  localModel?: string;
+  localBaseUrl?: string;
+}
+
+/**
+ * Resolve the model-provider overlay from env, FAIL-SAFE:
+ *  - BRAIN_MEMORY_MODEL_PROVIDER → modelProvider, validated against the union.
+ *    Unset OR unknown value → DEFAULT_CONFIG.modelProvider (default unchanged).
+ *  - When (and only when) the resolved provider is 'local', optional
+ *    BRAIN_MEMORY_LOCAL_MODEL / BRAIN_MEMORY_LOCAL_BASE_URL overlay localModel /
+ *    localBaseUrl; absent → DEFAULT_CONFIG values are kept.
+ * Pure (env passed in) and network-free so it is unit-testable.
+ */
+export function resolveProviderOverlay(env: NodeJS.ProcessEnv): ProviderOverlay {
+  const raw = env['BRAIN_MEMORY_MODEL_PROVIDER'];
+  const provider: ModelProvider = (VALID_PROVIDERS as readonly string[]).includes(raw ?? '')
+    ? (raw as ModelProvider)
+    : DEFAULT_CONFIG.modelProvider;
+
+  const overlay: ProviderOverlay = { modelProvider: provider };
+
+  if (provider === 'local') {
+    const localModel = env['BRAIN_MEMORY_LOCAL_MODEL'];
+    const localBaseUrl = env['BRAIN_MEMORY_LOCAL_BASE_URL'];
+    if (localModel) overlay.localModel = localModel;
+    if (localBaseUrl) overlay.localBaseUrl = localBaseUrl;
+  }
+
+  return overlay;
+}
+
 async function main(): Promise<void> {
   // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──
   // process.exit() inside a try/finally does NOT unwind the stack, so exiting
@@ -77,7 +115,10 @@ async function main(): Promise<void> {
     initSchema(db);
 
     // ── 4. Instantiate the full Consolidator dependency graph ────────────────
-    const config = { ...DEFAULT_CONFIG, dbPath };
+    // Overlay env-derived provider (fail-safe: unset/unknown → DEFAULT_CONFIG).
+    const overlay = resolveProviderOverlay(process.env);
+    const config = { ...DEFAULT_CONFIG, dbPath, ...overlay };
+    log(`provider: ${config.modelProvider}`); // resolved provider only — never secrets
 
     const episodes = new EpisodicStore(db, realClock, config);
     const store = new SemanticStore(db, realClock, config);
@@ -120,9 +161,13 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(err => {
-  // Fatal: something went wrong before the try/finally could run
-  appendFileSync(LOG_PATH, `[${new Date().toISOString()}] sleep-pass FATAL: ${err}\n`);
-  releaseLock(); // best-effort cleanup
-  process.exit(1);
-});
+// Only run when invoked as the entry point (launchd / stop-cli spawn), NOT when
+// imported by a unit test of the exported helpers above.
+if (require.main === module) {
+  main().catch(err => {
+    // Fatal: something went wrong before the try/finally could run
+    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] sleep-pass FATAL: ${err}\n`);
+    releaseLock(); // best-effort cleanup
+    process.exit(1);
+  });
+}

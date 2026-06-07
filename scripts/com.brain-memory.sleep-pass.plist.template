@@ -19,14 +19,20 @@
     </array>
 
     <!--
-        EnvironmentVariables: pass DB path into the detached process.
-        __DB__ → absolute path to the brain-memory SQLite DB (BRAIN_MEMORY_DB).
-        The sleep-pass-cli reads BRAIN_MEMORY_DB first, then falls back to --db argv.
+        EnvironmentVariables: pass DB path + model provider into the detached process.
+        __DB__             → absolute path to the brain-memory SQLite DB (BRAIN_MEMORY_DB).
+        __MODEL_PROVIDER__ → modelProvider override (anthropic|vertex|local), substituted
+                             by scripts/setup-dogfood.sh from ${BRAIN_MEMORY_MODEL_PROVIDER:-anthropic}.
+        The sleep-pass-cli reads BRAIN_MEMORY_DB first, then falls back to --db argv;
+        BRAIN_MEMORY_MODEL_PROVIDER is validated against the union and falls back to the
+        config default (anthropic) on any unknown value.
     -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>BRAIN_MEMORY_DB</key>
         <string>__DB__</string>
+        <key>BRAIN_MEMORY_MODEL_PROVIDER</key>
+        <string>__MODEL_PROVIDER__</string>
     </dict>
 
     <!--

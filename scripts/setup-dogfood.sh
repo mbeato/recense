@@ -42,6 +42,10 @@ SLEEP_PASS_CLI="$DIST_ADAPTER/sleep-pass-cli.js"
 # DB path: env var takes precedence; fall back to project default
 DB_PATH="${BRAIN_MEMORY_DB:-$PROJECT_ROOT/brain.db}"
 
+# Model provider for the detached sleep pass: env var takes precedence; default
+# anthropic (zero behavior change). Validated again at runtime by sleep-pass-cli.
+MODEL_PROVIDER="${BRAIN_MEMORY_MODEL_PROVIDER:-anthropic}"
+
 # launchd plist locations
 PLIST_TEMPLATE="$SCRIPT_DIR/com.brain-memory.sleep-pass.plist.template"
 LAUNCHAGENTS_DIR="$HOME/Library/LaunchAgents"
@@ -80,6 +84,7 @@ sed \
     -e "s|__NODE__|$NODE_BIN|g" \
     -e "s|__SLEEP_PASS_JS__|$SLEEP_PASS_CLI|g" \
     -e "s|__DB__|$DB_PATH|g" \
+    -e "s|__MODEL_PROVIDER__|$MODEL_PROVIDER|g" \
     "$PLIST_TEMPLATE" > "$PLIST_DST"
 echo "    Plist written: $PLIST_DST"
 
