@@ -69,6 +69,14 @@ export const DDL = `
   CREATE INDEX IF NOT EXISTS idx_episode_unconsolidated
     ON episode(consolidated, salience DESC);
 
+  CREATE TABLE IF NOT EXISTS eval_snapshot (
+    id              TEXT    PRIMARY KEY,
+    ts              INTEGER NOT NULL,
+    query           TEXT    NOT NULL,
+    expected_answer TEXT    NOT NULL,
+    created_session TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_node_dirty
     ON node(embedded_hash) WHERE embedded_hash IS NULL;
 
