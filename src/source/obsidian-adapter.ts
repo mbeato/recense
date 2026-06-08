@@ -8,7 +8,7 @@
  * contradiction machinery) unlike the one-shot seeder.
  *
  * Design decisions locked here:
- *  D-56: The cold-start seeder is NOT shared or imported here. The seeder is a one-shot
+ *  D-56: The seeder (src/seeder/) is NOT shared or imported here. The seeder is a one-shot
  *        graph-writer (direct node/edge writes, `seeded` flag); the Obsidian adapter is a
  *        recurring episodic-producer (returns NormalizedRecords, no graph write).
  *        The adapter mirrors the seeder's path-guard pattern but is an independent file.
@@ -199,7 +199,7 @@ export interface MetaCursor {
  *  5. Advances cursor:obsidian to max mtimeMs seen.
  *
  * Read-only on the vault — ONLY readdirSync/readFileSync/statSync (T-06-23).
- * NEVER writes the graph (CONSOL-03). NEVER imports the cold-start seeder (D-56).
+ * NEVER writes the graph (CONSOL-03). NEVER imports the seeder module (D-56).
  */
 export class ObsidianAdapter implements SourceAdapter {
   readonly source = 'obsidian';
@@ -231,9 +231,13 @@ export class ObsidianAdapter implements SourceAdapter {
       return []; // vault dir doesn't exist or is not accessible
     }
 
-    // Read cursor — ms timestamp; default 0 (ingest everything on first run).
+    // Read cursor — ms timestamp (may have sub-ms fractional component); default 0.
+    // parseFloat preserves fractional ms so that `mtime <= cursor` correctly skips
+    // files whose mtime exactly equals the last-seen max (parseInt would truncate,
+    // leaving a fractional mtime just above the truncated cursor and re-ingesting
+    // the file on every pull — Rule 1 correctness requirement).
     const cursorRaw = this.meta.getMeta('cursor:obsidian');
-    const cursor = cursorRaw !== null ? parseInt(cursorRaw, 10) : 0;
+    const cursor = cursorRaw !== null ? parseFloat(cursorRaw) : 0;
 
     const records: NormalizedRecord[] = [];
     let maxMtime = cursor;

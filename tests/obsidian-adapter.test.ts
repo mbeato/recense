@@ -9,6 +9,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { DEFAULT_CONFIG } from '../src/lib/config';
+import type { EngineConfig } from '../src/lib/config';
+import { ObsidianAdapter } from '../src/source/obsidian-adapter';
+import type { MetaCursor } from '../src/source/obsidian-adapter';
+
 import {
   chunkNote,
   noteTitle,
@@ -198,5 +203,213 @@ describe('normalizeObsidianNote — NormalizedRecord construction', () => {
     // No graph properties — a NormalizedRecord is just a plain data object
     expect(record).not.toHaveProperty('nodeId');
     expect(record).not.toHaveProperty('edgeId');
+  });
+});
+
+// ─── ObsidianAdapter — recursive vault walk (D-67/T-04-PATH) ─────────────────
+
+/** In-memory MetaCursor implementation for tests. */
+function makeMockMeta(): MetaCursor & { store: Map<string, string> } {
+  const store = new Map<string, string>();
+  return {
+    store,
+    getMeta: (key) => store.get(key) ?? null,
+    setMeta: (key, value) => { store.set(key, value); },
+  };
+}
+
+/** Build a minimal EngineConfig with the given obsidian.dir override. */
+function makeConfig(obsidianDir: string): EngineConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    dbPath: ':memory:',
+    obsidian: { dir: obsidianDir },
+  };
+}
+
+describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vault-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  // ── Empty dir config → no records ─────────────────────────────────────────
+
+  it('returns [] immediately when config.obsidian.dir is empty string (fail-safe disabled)', async () => {
+    const adapter = new ObsidianAdapter(makeConfig(''), makeMockMeta());
+    const records = await adapter.pull();
+    expect(records).toHaveLength(0);
+  });
+
+  it('readonly source identifier is "obsidian"', () => {
+    const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
+    expect(adapter.source).toBe('obsidian');
+  });
+
+  // ── Flat walk ─────────────────────────────────────────────────────────────
+
+  it('returns one record per .md file in a flat vault', async () => {
+    fs.writeFileSync(path.join(tempDir, 'alpha.md'), 'Content of alpha [[Beta]].');
+    fs.writeFileSync(path.join(tempDir, 'beta.md'), 'Content of beta.');
+
+    const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
+    const records = await adapter.pull();
+    expect(records).toHaveLength(2);
+    expect(records.some(r => r.external_id.startsWith('alpha.md'))).toBe(true);
+    expect(records.some(r => r.external_id.startsWith('beta.md'))).toBe(true);
+  });
+
+  // ── Recursive walk ────────────────────────────────────────────────────────
+
+  it('returns records from nested subdirectories (recursive walk)', async () => {
+    const sub1 = path.join(tempDir, 'projects');
+    const sub2 = path.join(tempDir, 'projects', 'brain-memory');
+    fs.mkdirSync(sub2, { recursive: true });
+    fs.writeFileSync(path.join(tempDir, 'root-note.md'), 'Root level note.');
+    fs.writeFileSync(path.join(sub1, 'project-note.md'), 'Project note.');
+    fs.writeFileSync(path.join(sub2, 'deep-note.md'), 'Deep nested note.');
+
+    const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
+    const records = await adapter.pull();
+    expect(records).toHaveLength(3);
+    const externalIds = records.map(r => r.external_id);
+    expect(externalIds.some(id => id.includes('root-note.md'))).toBe(true);
+    expect(externalIds.some(id => id.includes('project-note.md'))).toBe(true);
+    expect(externalIds.some(id => id.includes('deep-note.md'))).toBe(true);
+  });
+
+  // ── .obsidian dir skipped ─────────────────────────────────────────────────
+
+  it('skips .obsidian/ config directory entirely', async () => {
+    const obsidianDir = path.join(tempDir, '.obsidian');
+    fs.mkdirSync(obsidianDir);
+    fs.writeFileSync(path.join(obsidianDir, 'workspace.json'), '{}');
+    fs.writeFileSync(path.join(obsidianDir, 'plugins.md'), 'Plugin note — should be skipped.');
+    fs.writeFileSync(path.join(tempDir, 'real-note.md'), 'This is a real vault note.');
+
+    const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
+    const records = await adapter.pull();
+    expect(records).toHaveLength(1);
+    expect(records[0]!.external_id).toContain('real-note.md');
+    expect(records.every(r => !r.external_id.includes('.obsidian'))).toBe(true);
+  });
+
+  // ── Oversized note splits into multiple records ───────────────────────────
+
+  it('oversized note with headings → multiple section records', async () => {
+    const oversized = `## Section One\n${'a'.repeat(5_000)}\n## Section Two\n${'b'.repeat(5_000)}`;
+    fs.writeFileSync(path.join(tempDir, 'big-note.md'), oversized);
+
+    const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
+    const records = await adapter.pull();
+    // Should produce 2+ records (one per section)
+    expect(records.length).toBeGreaterThanOrEqual(2);
+    // All records belong to big-note.md but with different section indices
+    const bigNoteRecords = records.filter(r => r.external_id.startsWith('big-note.md'));
+    expect(bigNoteRecords.length).toBeGreaterThanOrEqual(2);
+    // Section indices are distinct
+    const indices = bigNoteRecords.map(r => r.external_id.split('#')[1]);
+    const unique = new Set(indices);
+    expect(unique.size).toBe(bigNoteRecords.length);
+  });
+
+  it('all records from an oversized split note are asserted_by_user', async () => {
+    const oversized = `## A\n${'a'.repeat(5_000)}\n## B\n${'b'.repeat(5_000)}`;
+    fs.writeFileSync(path.join(tempDir, 'note.md'), oversized);
+
+    const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
+    const records = await adapter.pull();
+    expect(records.every(r => r.origin === 'asserted_by_user')).toBe(true);
+    expect(records.every(r => r.source === 'obsidian')).toBe(true);
+  });
+
+  // ── Symlink escape skipped (T-04-PATH / T-06-20) ──────────────────────────
+
+  it('skips a symlink that resolves outside the vault root (T-04-PATH)', async () => {
+    // Create a target file outside the vault
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outside-'));
+    const outsideFile = path.join(outsideDir, 'secret.md');
+    fs.writeFileSync(outsideFile, 'Outside-vault secret content.');
+
+    // Create a symlink inside the vault that points to the outside file
+    const symlinkInVault = path.join(tempDir, 'escape-link.md');
+    fs.symlinkSync(outsideFile, symlinkInVault);
+
+    // Also create a legitimate note inside the vault
+    fs.writeFileSync(path.join(tempDir, 'legit.md'), 'Legitimate vault note.');
+
+    try {
+      const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
+      const records = await adapter.pull();
+      // Only the legitimate note should be returned — symlink escape is skipped
+      expect(records).toHaveLength(1);
+      expect(records[0]!.external_id).toContain('legit.md');
+      expect(records.every(r => !r.external_id.includes('escape-link'))).toBe(true);
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  // ── Cursor advancement + skip on second pull (D-67) ──────────────────────
+
+  it('writes cursor:obsidian after pull and skips unchanged notes on second pull', async () => {
+    const notePath = path.join(tempDir, 'note.md');
+    fs.writeFileSync(notePath, 'Initial content.');
+
+    const meta = makeMockMeta();
+    const adapter = new ObsidianAdapter(makeConfig(tempDir), meta);
+
+    // First pull — cursor is 0, should return the note
+    const first = await adapter.pull();
+    expect(first).toHaveLength(1);
+
+    // cursor:obsidian should be set to the note's mtime
+    const cursorAfterFirst = meta.store.get('cursor:obsidian');
+    expect(cursorAfterFirst).toBeDefined();
+    expect(parseInt(cursorAfterFirst!, 10)).toBeGreaterThan(0);
+
+    // Second pull with same meta (cursor is now set) — note mtime unchanged
+    const adapter2 = new ObsidianAdapter(makeConfig(tempDir), meta);
+    const second = await adapter2.pull();
+    expect(second).toHaveLength(0); // unchanged note is skipped
+  });
+
+  it('cursor advances to max mtime seen', async () => {
+    // Write two notes; bump b.md mtime 2 seconds ahead to make it deterministically latest.
+    fs.writeFileSync(path.join(tempDir, 'a.md'), 'Note A');
+    fs.writeFileSync(path.join(tempDir, 'b.md'), 'Note B');
+
+    // Advance b.md mtime by 2 s and re-stat to get the actual post-utimes mtime.
+    const beforeStat = fs.statSync(path.join(tempDir, 'b.md'));
+    const laterTime = new Date(Math.floor(beforeStat.mtimeMs) + 2_000);
+    fs.utimesSync(path.join(tempDir, 'b.md'), laterTime, laterTime);
+    const actualBStat = fs.statSync(path.join(tempDir, 'b.md')); // re-stat after utimes
+
+    const meta = makeMockMeta();
+    const adapter = new ObsidianAdapter(makeConfig(tempDir), meta);
+    await adapter.pull();
+
+    // cursor should be >= b.md's actual mtime after the mtime bump
+    const cursor = parseFloat(meta.store.get('cursor:obsidian')!);
+    expect(cursor).toBeGreaterThanOrEqual(actualBStat.mtimeMs);
+  });
+
+  // ── Non-.md files are ignored ─────────────────────────────────────────────
+
+  it('ignores non-.md files (images, JSON, txt)', async () => {
+    fs.writeFileSync(path.join(tempDir, 'image.png'), 'fake png');
+    fs.writeFileSync(path.join(tempDir, 'data.json'), '{}');
+    fs.writeFileSync(path.join(tempDir, 'transcript.txt'), 'Some text.');
+    fs.writeFileSync(path.join(tempDir, 'real.md'), 'Real note.');
+
+    const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
+    const records = await adapter.pull();
+    expect(records).toHaveLength(1);
+    expect(records[0]!.external_id).toContain('real.md');
   });
 });
