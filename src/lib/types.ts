@@ -93,6 +93,10 @@ export interface EpisodeRow {
   role: EpisodeRole;
   /** Session identifier for debugging and Phase 3 adapter (D-10). */
   session_id: string;
+  /** Channel that produced this episode — D-57 (where-from; defaults to 'claude-code'). */
+  source: string;
+  /** Per-source dedup key — D-59 (NULL for legacy claude-code episodes; each NULL is distinct). */
+  external_id: string | null;
 }
 
 /**
