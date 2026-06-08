@@ -32,6 +32,7 @@ import type { CandidateRetriever } from '../retrieval/topk';
 import type { ModelProvider } from '../model/provider';
 import { cosineSimF32 } from '../retrieval/topk';
 import { newId } from '../lib/hash';
+import { NoopConsolidationSink, type ConsolidationSink } from './sink';
 
 // ---------------------------------------------------------------------------
 // Schema name validation
@@ -159,6 +160,7 @@ export class SchemaInducer {
   private readonly stmtGetSchemaNodes: Database.Statement;
   private readonly stmtGetAllSchemaNodes: Database.Statement;
   private readonly stmtDeleteAbstractsEdges: Database.Statement;
+  private readonly sink: ConsolidationSink;
 
   constructor(
     db: Database.Database,
@@ -169,6 +171,7 @@ export class SchemaInducer {
     config: EngineConfig,
     clock: Clock,
     namingFn?: NamingFn,
+    sink: ConsolidationSink = new NoopConsolidationSink(),
   ) {
     this.db = db;
     this.store = store;
@@ -178,6 +181,7 @@ export class SchemaInducer {
     this.config = config;
     this.clock = clock;
     this.namingFn = namingFn ?? ((values) => this.callLlmNaming(values));
+    this.sink = sink;
 
     // T-04-01-E: filter tombstoned=0, origin!='inferred', type IN ('fact','entity'),
     // embedding IS NOT NULL — an inferred node can never launder into a schema (D-37)
@@ -432,6 +436,13 @@ export class SchemaInducer {
           // decay.ts:102 would no-op if we accidentally passed 'inferred'
           this.strength.strengthen(schemaId, member.origin);
         }
+        // SEAM-02 D-49: new schema node emitted — inside the existing transaction (D-48)
+        this.sink.emit({
+          event_type: 'schema_emitted',
+          node_id: schemaId,
+          value: op.name,
+          origin: 'inferred',
+        });
       }
 
       // ── Falsification stage (D-39) — runs every pass ──────────────────────
@@ -461,6 +472,12 @@ export class SchemaInducer {
           if (surviveCount < this.config.schemaMinSupport) {
             this.store.tombstone(schema.id);
             newlyTombstoned.add(schema.id);
+            // SEAM-02 D-49: schema falsified by erosion — inside the existing transaction (D-48)
+            this.sink.emit({
+              event_type: 'schema_falsified',
+              node_id: schema.id,
+              origin: 'inferred',
+            });
           }
         }
       }

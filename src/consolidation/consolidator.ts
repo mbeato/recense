@@ -44,6 +44,7 @@ import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
 import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
 import type { SchemaInducer } from './schema-induction';
+import { NoopConsolidationSink, type ConsolidationSink } from './sink';
 
 // ---------------------------------------------------------------------------
 // Internal types — collect Phase A results into plain arrays before any DB write
@@ -76,6 +77,7 @@ export class Consolidator {
   private readonly inducer: SchemaInducer;
   private readonly config: EngineConfig;
   private readonly clock: Clock;
+  private readonly sink: ConsolidationSink;
 
   constructor(
     db: Database.Database,
@@ -87,6 +89,7 @@ export class Consolidator {
     inducer: SchemaInducer,
     config: EngineConfig,
     clock: Clock = realClock,
+    sink: ConsolidationSink = new NoopConsolidationSink(),
   ) {
     this.db = db;
     this.episodes = episodes;
@@ -97,6 +100,7 @@ export class Consolidator {
     this.inducer = inducer;
     this.config = config;
     this.clock = clock;
+    this.sink = sink;
   }
 
   // ── Private helper: re-embed dirty nodes in batch ───────────────────────
@@ -328,6 +332,16 @@ export class Consolidator {
         if (decision.bestCandidateId) {
           // Pass inherited episode origin — StrengthDecayManager blocks 'inferred' (T-02-SELFCONF)
           this.strength.strengthen(decision.bestCandidateId, decision.claimOrigin);
+          // SEAM-02 D-49: emit inside the existing transaction (D-48 in-transaction)
+          this.sink.emit({
+            event_type: 'confirm',
+            node_id: decision.bestCandidateId,
+            candidate_id: decision.bestCandidateId,
+            episode_id: episodeId,
+            value: decision.claimValue,
+            origin: decision.claimOrigin,
+            magnitude: decision.magnitude,
+          });
         }
         break;
       }
@@ -348,24 +362,56 @@ export class Consolidator {
             w: 0.1,
             kind: 'relation',
           });
+          // SEAM-02 D-49: new node_id + bestCandidateId as candidate_id
+          this.sink.emit({
+            event_type: 'extend',
+            node_id: newId_,
+            candidate_id: decision.bestCandidateId,
+            episode_id: episodeId,
+            value: decision.claimValue,
+            origin: decision.claimOrigin,
+            magnitude: decision.magnitude,
+          });
         } else {
           // extend with no candidate → treat as standalone (defensive)
+          const standaloneId = newId();
           this.store.upsertNode({
-            id: newId(),
+            id: standaloneId,
             type: decision.claimType as 'entity' | 'fact' | 'schema',
             value: decision.claimValue,
             origin: decision.claimOrigin,
+          });
+          // SEAM-02 D-49: defensive standalone counts as extend (no candidate_id)
+          this.sink.emit({
+            event_type: 'extend',
+            node_id: standaloneId,
+            candidate_id: null,
+            episode_id: episodeId,
+            value: decision.claimValue,
+            origin: decision.claimOrigin,
+            magnitude: decision.magnitude,
           });
         }
         break;
       }
 
       case 'unrelated': {
+        const unrelatedId = newId();
         this.store.upsertNode({
-          id: newId(),
+          id: unrelatedId,
           type: decision.claimType as 'entity' | 'fact' | 'schema',
           value: decision.claimValue,
           origin: decision.claimOrigin,
+        });
+        // SEAM-02 D-49: standalone new node
+        this.sink.emit({
+          event_type: 'unrelated',
+          node_id: unrelatedId,
+          candidate_id: null,
+          episode_id: episodeId,
+          value: decision.claimValue,
+          origin: decision.claimOrigin,
+          magnitude: decision.magnitude,
         });
         break;
       }
@@ -391,11 +437,22 @@ export class Consolidator {
           // escalate to append-new so both values coexist rather than tombstone-cycling.
           if (isOscillation(decision.claimValue, node.prev_value)) {
             // Flip-back detected — append standalone (no prev_value; genuine ambiguity)
+            const oscId = newId();
             this.store.upsertNode({
-              id: newId(),
+              id: oscId,
               type: decision.claimType as 'entity' | 'fact' | 'schema',
               value: decision.claimValue,
               origin: decision.claimOrigin,
+            });
+            // SEAM-02 D-49: oscillation escalated from reconcile → 'contradict_oscillation'
+            this.sink.emit({
+              event_type: 'contradict_oscillation',
+              node_id: oscId,
+              candidate_id: decision.bestCandidateId,
+              episode_id: episodeId,
+              value: decision.claimValue,
+              origin: decision.claimOrigin,
+              magnitude: decision.magnitude,
             });
           } else {
             // Mid-band reconcile (UPDATE-04 tombstone-always, no in-place rewrite):
@@ -406,21 +463,43 @@ export class Consolidator {
             //      prev_value=null (txUpsertNode only auto-carries on existing-id updates)
             //      and isOscillation() would always be false on the next contradiction (D-20).
             this.store.tombstone(decision.bestCandidateId);
+            const reconciledId = newId();
             this.store.upsertNode({
-              id: newId(),
+              id: reconciledId,
               type: decision.claimType as 'entity' | 'fact' | 'schema',
               value: decision.claimValue,
               origin: decision.claimOrigin,
               prev_value: node.value, // explicit carry across tombstone-always boundary (D-20)
             });
+            // SEAM-02 D-49: tombstone-and-replace → 'contradict_reconcile'
+            this.sink.emit({
+              event_type: 'contradict_reconcile',
+              node_id: reconciledId,
+              candidate_id: decision.bestCandidateId,
+              episode_id: episodeId,
+              value: decision.claimValue,
+              origin: decision.claimOrigin,
+              magnitude: decision.magnitude,
+            });
           }
         } else if (action === 'append-new') {
           // Extreme / categorical: genuine divergence — both values coexist (no tombstone)
+          const appendNewId = newId();
           this.store.upsertNode({
-            id: newId(),
+            id: appendNewId,
             type: decision.claimType as 'entity' | 'fact' | 'schema',
             value: decision.claimValue,
             origin: decision.claimOrigin,
+          });
+          // SEAM-02 D-49: extreme divergence → 'contradict_append_new'
+          this.sink.emit({
+            event_type: 'contradict_append_new',
+            node_id: appendNewId,
+            candidate_id: decision.bestCandidateId,
+            episode_id: episodeId,
+            value: decision.claimValue,
+            origin: decision.claimOrigin,
+            magnitude: decision.magnitude,
           });
         } else {
           // action === 'hold'
@@ -452,27 +531,61 @@ export class Consolidator {
                 // Apply same D-20 oscillation guard to the forced reconcile
                 if (isOscillation(decision.claimValue, updatedNode.prev_value)) {
                   // Flip-back via force-destabilize — append standalone (both coexist)
+                  const fdOscId = newId();
                   this.store.upsertNode({
-                    id: newId(),
+                    id: fdOscId,
                     type: decision.claimType as 'entity' | 'fact' | 'schema',
                     value: decision.claimValue,
                     origin: decision.claimOrigin,
                   });
+                  // SEAM-02 D-49: force-destabilize (oscillation variant) → still 'contradict_force_destabilize'
+                  this.sink.emit({
+                    event_type: 'contradict_force_destabilize',
+                    node_id: fdOscId,
+                    candidate_id: decision.bestCandidateId,
+                    episode_id: episodeId,
+                    value: decision.claimValue,
+                    origin: decision.claimOrigin,
+                    magnitude: decision.magnitude,
+                  });
                 } else {
                   // Force-reconcile: tombstone old + set new current carrying prev_value (D-20)
                   this.store.tombstone(decision.bestCandidateId);
+                  const fdId = newId();
                   this.store.upsertNode({
-                    id: newId(),
+                    id: fdId,
                     type: decision.claimType as 'entity' | 'fact' | 'schema',
                     value: decision.claimValue,
                     origin: decision.claimOrigin,
                     prev_value: updatedNode.value, // carry breadcrumb (same as band reconcile)
                   });
+                  // SEAM-02 D-49: N-distinct force-destabilize → 'contradict_force_destabilize'
+                  this.sink.emit({
+                    event_type: 'contradict_force_destabilize',
+                    node_id: fdId,
+                    candidate_id: decision.bestCandidateId,
+                    episode_id: episodeId,
+                    value: decision.claimValue,
+                    origin: decision.claimOrigin,
+                    magnitude: decision.magnitude,
+                  });
                 }
+              } else {
+                // Hold only (distinctCount < contradictionN) → 'contradict_hold'
+                // SEAM-02 D-49: hold recorded, not yet force-destabilized
+                this.sink.emit({
+                  event_type: 'contradict_hold',
+                  node_id: decision.bestCandidateId,
+                  candidate_id: decision.bestCandidateId,
+                  episode_id: episodeId,
+                  value: decision.claimValue,
+                  origin: decision.claimOrigin,
+                  magnitude: decision.magnitude,
+                });
               }
             }
           }
-          // If not provenance-eligible: drop silently — no recordContradiction call.
+          // If not provenance-eligible: drop silently — no recordContradiction call, no emit.
         }
         break;
       }

@@ -32,6 +32,7 @@ import type { ModelProvider } from '../src/model/provider';
 import type { NodeRow, PendingContradiction } from '../src/lib/types';
 import { Consolidator } from '../src/consolidation/consolidator';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
+import { MockConsolidationSink } from '../src/consolidation/sink';
 import { newId } from '../src/lib/hash';
 
 // ---------------------------------------------------------------------------
@@ -1230,5 +1231,289 @@ describe('Consolidator', () => {
 
     // The original engineerNodeId remains tombstoned (it was tombstoned in pass 1)
     expect(allNodesAfterPass2.find(n => n.id === engineerNodeId)!.tombstoned).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEAM-02: sink event_type sequence per applyDecision branch (D-49)
+// Each applyDecision branch must emit exactly one sink event whose event_type
+// matches the branch taken (per-decision granularity, D-49).
+// ---------------------------------------------------------------------------
+
+describe('Consolidator sink events per applyDecision branch (SEAM-02, D-49)', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = makeHarness();
+  });
+
+  function makeConsolidatorWithSink(
+    provider: ModelProvider,
+    sink: MockConsolidationSink,
+  ): Consolidator {
+    return new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+      sink,
+    );
+  }
+
+  // ── confirm ───────────────────────────────────────────────────────────────
+
+  it('confirm branch emits exactly one confirm event', async () => {
+    const nodeId = newId();
+    const value = 'sink-confirm node';
+    h.store.upsertNode({ id: nodeId, type: 'fact', value, origin: 'observed', s: 0.3, c: 0.6 });
+    const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
+    const [vec] = await embedder.embed([value]);
+    h.store.setEmbedding(nodeId, vec!);
+
+    const provider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value }])],  // D-17 fast-path confirm
+      judgeScript: [],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = makeConsolidatorWithSink(provider, sink);
+
+    h.episodes.append({ content: 'confirm episode', origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-sink-confirm' });
+    await consolidator.consolidate();
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]!.event_type).toBe('confirm');
+    expect(sink.events[0]!.node_id).toBe(nodeId);
+  });
+
+  // ── extend ────────────────────────────────────────────────────────────────
+
+  it('extend branch emits exactly one extend event (new node_id, candidate_id = bestCandidateId)', async () => {
+    const candidateId = newId();
+    const candidateValue = 'sink-extend base';
+    h.store.upsertNode({ id: candidateId, type: 'fact', value: candidateValue, origin: 'observed', s: 0.3, c: 0.6 });
+    const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmb.embed([candidateValue]);
+    h.store.setEmbedding(candidateId, vec!);
+
+    const extendVerdict: JudgeVerdict = { best_candidate_id: candidateId, relation: 'extend', magnitude: 0 };
+    const provider = new MockModelProvider({
+      embedFn: sameEmb.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'extension of base' }])],
+      judgeScript: [extendVerdict],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = makeConsolidatorWithSink(provider, sink);
+
+    h.episodes.append({ content: 'extend episode', origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-sink-extend' });
+    await consolidator.consolidate();
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]!.event_type).toBe('extend');
+    expect(sink.events[0]!.candidate_id).toBe(candidateId);
+    // node_id must differ from candidateId (new node minted)
+    expect(sink.events[0]!.node_id).not.toBe(candidateId);
+  });
+
+  // ── unrelated ─────────────────────────────────────────────────────────────
+
+  it('unrelated branch emits exactly one unrelated event', async () => {
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),  // auto-unrelated
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'standalone unrelated claim' }])],
+      judgeScript: [],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = makeConsolidatorWithSink(provider, sink);
+
+    h.episodes.append({ content: 'unrelated episode', origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-sink-unrelated' });
+    await consolidator.consolidate();
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]!.event_type).toBe('unrelated');
+  });
+
+  // ── contradict_hold ───────────────────────────────────────────────────────
+
+  it('contradict HOLD branch emits contradict_hold', async () => {
+    // s=0.5, c=0.7 → resistance=0.35; magnitude=0.1 → ratio≈0.29 → HOLD
+    const candidateId = newId();
+    h.store.upsertNode({ id: candidateId, type: 'fact', value: 'hold fact', origin: 'observed', s: 0.5, c: 0.7 });
+    const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmb.embed(['hold fact']);
+    h.store.setEmbedding(candidateId, vec!);
+
+    const holdVerdict: JudgeVerdict = { best_candidate_id: candidateId, relation: 'contradict', magnitude: 0.1 };
+    const provider = new MockModelProvider({
+      embedFn: sameEmb.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'contradicting hold' }])],
+      judgeScript: [holdVerdict],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = makeConsolidatorWithSink(provider, sink);
+
+    h.episodes.append({ content: 'hold episode', origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-sink-hold', source_inference_id: null });
+    await consolidator.consolidate();
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]!.event_type).toBe('contradict_hold');
+    expect(sink.events[0]!.node_id).toBe(candidateId);
+  });
+
+  // ── contradict_reconcile ──────────────────────────────────────────────────
+
+  it('contradict reconcile branch emits contradict_reconcile', async () => {
+    // s=0.5, c=0.7 → resistance=0.35; magnitude=0.5 → ratio≈1.43 → reconcile
+    const candidateId = newId();
+    h.store.upsertNode({ id: candidateId, type: 'fact', value: 'reconcile-fact-original', origin: 'observed', s: 0.5, c: 0.7 });
+    const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmb.embed(['reconcile-fact-original']);
+    h.store.setEmbedding(candidateId, vec!);
+
+    const reconcileVerdict: JudgeVerdict = { best_candidate_id: candidateId, relation: 'contradict', magnitude: 0.5 };
+    const provider = new MockModelProvider({
+      embedFn: sameEmb.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'reconcile-fact-new' }])],
+      judgeScript: [reconcileVerdict],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = makeConsolidatorWithSink(provider, sink);
+
+    h.episodes.append({ content: 'reconcile episode', origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-sink-reconcile', source_inference_id: null });
+    await consolidator.consolidate();
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]!.event_type).toBe('contradict_reconcile');
+  });
+
+  // ── contradict_oscillation ────────────────────────────────────────────────
+
+  it('contradict oscillation (flip-back to prev_value) emits contradict_oscillation', async () => {
+    // Node with prev_value='flip-back-orig', current value='flip-back-new'.
+    // Claim = 'flip-back-orig' → isOscillation → 'contradict_oscillation'
+    const candidateId = newId();
+    // Seed with prev_value already set (simulating a prior reconcile)
+    h.store.upsertNode({
+      id: candidateId, type: 'fact', value: 'flip-back-new',
+      origin: 'observed', s: 0.1, c: 0.5,
+      prev_value: 'flip-back-orig',
+    });
+    const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmb.embed(['flip-back-new']);
+    h.store.setEmbedding(candidateId, vec!);
+
+    // s=0.1, c=0.5 → resistance=0.05; magnitude=0.06 → ratio=1.2, in reconcile band (0.8-2.0)
+    // isOscillation('flip-back-orig', 'flip-back-orig') → true → escalate to 'contradict_oscillation'
+    const oscVerdict: JudgeVerdict = { best_candidate_id: candidateId, relation: 'contradict', magnitude: 0.06 };
+    const provider = new MockModelProvider({
+      embedFn: sameEmb.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'flip-back-orig' }])],  // flip back
+      judgeScript: [oscVerdict],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = makeConsolidatorWithSink(provider, sink);
+
+    h.episodes.append({ content: 'oscillation episode', origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-sink-osc', source_inference_id: null });
+    await consolidator.consolidate();
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]!.event_type).toBe('contradict_oscillation');
+  });
+
+  // ── contradict_append_new ─────────────────────────────────────────────────
+
+  it('contradict append-new branch emits contradict_append_new', async () => {
+    // s=0.1, c=0.5 → resistance=0.05; magnitude=0.9 → ratio=18 > 2.0 → append-new
+    const candidateId = newId();
+    h.store.upsertNode({ id: candidateId, type: 'fact', value: 'append-new-original', origin: 'observed', s: 0.1, c: 0.5 });
+    const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmb.embed(['append-new-original']);
+    h.store.setEmbedding(candidateId, vec!);
+
+    const appendVerdict: JudgeVerdict = { best_candidate_id: candidateId, relation: 'contradict', magnitude: 0.9 };
+    const provider = new MockModelProvider({
+      embedFn: sameEmb.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'append-new-value' }])],
+      judgeScript: [appendVerdict],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = makeConsolidatorWithSink(provider, sink);
+
+    h.episodes.append({ content: 'append-new episode', origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-sink-append-new' });
+    await consolidator.consolidate();
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]!.event_type).toBe('contradict_append_new');
+  });
+
+  // ── contradict_force_destabilize ──────────────────────────────────────────
+
+  it('force-destabilize at contradictionN distinct emits contradict_force_destabilize', async () => {
+    // N=3 distinct sessions HOLD → force-destabilize on the 3rd
+    // The 3rd episode's applyDecision emits 'contradict_force_destabilize'
+    const candidateId = newId();
+    h.store.upsertNode({ id: candidateId, type: 'fact', value: 'force-dest-node', origin: 'observed', s: 0.9, c: 0.8 });
+    const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmb.embed(['force-dest-node']);
+    h.store.setEmbedding(candidateId, vec!);
+
+    const holdVerdict = (): JudgeVerdict => ({ best_candidate_id: candidateId, relation: 'contradict', magnitude: 0.1 });
+    const provider = new MockModelProvider({
+      embedFn: sameEmb.fn,
+      generateScript: [
+        JSON.stringify([{ type: 'fact', value: 'destabilize-new' }]),
+        JSON.stringify([{ type: 'fact', value: 'destabilize-new' }]),
+        JSON.stringify([{ type: 'fact', value: 'destabilize-new' }]),
+      ],
+      judgeScript: [holdVerdict(), holdVerdict(), holdVerdict()],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = makeConsolidatorWithSink(provider, sink);
+
+    for (let i = 1; i <= 3; i++) {
+      h.episodes.append({ content: `force-dest ep ${i}`, origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: `sess-fd-${i}`, source_inference_id: null });
+    }
+    await consolidator.consolidate();
+
+    // 3 decisions were processed:
+    //  ep1 → hold → emit 'contradict_hold'
+    //  ep2 → hold → emit 'contradict_hold'
+    //  ep3 → hold + force-destabilize → emit 'contradict_force_destabilize'
+    expect(sink.events).toHaveLength(3);
+    expect(sink.events[0]!.event_type).toBe('contradict_hold');
+    expect(sink.events[1]!.event_type).toBe('contradict_hold');
+    expect(sink.events[2]!.event_type).toBe('contradict_force_destabilize');
+  });
+
+  // ── D-48 in-transaction: no await between mutation and emit ───────────────
+
+  it('D-48: sink.emit is called inside the transaction (Consolidator emits synchronously with graph write)', async () => {
+    // This test uses a sink that verifies the emit happens during the transaction body.
+    // We track whether a node was written by the time emit() fires by reading the DB
+    // inside emit() — if it sees the new node, the emit is co-transactional (D-48).
+    const nodeValue = 'in-tx-node';
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: nodeValue }])],
+      judgeScript: [],
+    });
+
+    let nodeVisibleDuringEmit = false;
+    const coTxSink = {
+      emit(_event: { event_type: string }) {
+        // Inside the transaction, the new node should already be visible to same-connection reads
+        const rows = h.db.prepare('SELECT count(*) as c FROM node WHERE value = ?').get(nodeValue) as { c: number };
+        nodeVisibleDuringEmit = rows.c > 0;
+      },
+    };
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+      coTxSink as any,
+    );
+
+    h.episodes.append({ content: 'in-tx episode', origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-intx' });
+    await consolidator.consolidate();
+
+    expect(nodeVisibleDuringEmit).toBe(true);
   });
 });
