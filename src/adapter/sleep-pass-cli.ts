@@ -21,18 +21,14 @@
 import { appendFileSync } from 'fs';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
-import { DEFAULT_CONFIG } from '../lib/config';
-import { realClock } from '../lib/clock';
-import { EpisodicStore } from '../db/episode-store';
-import { SemanticStore } from '../db/semantic-store';
-import { StrengthDecayManager } from '../strength/decay';
-import { CandidateRetriever } from '../retrieval/topk';
-import { DefaultModelProvider } from '../model/provider';
-import { Consolidator } from '../consolidation/consolidator';
-import { SchemaInducer } from '../consolidation/schema-induction';
-import { EventStore } from '../db/event-store';
-import { SQLiteConsolidationSink } from '../consolidation/sink';
+import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { acquireLock, releaseLock } from './lockfile';
+
+// Back-compat re-exports: resolveProviderOverlay, ProviderOverlay, and VALID_PROVIDERS
+// were originally defined here and are imported by tests/sleep-pass-provider.test.ts.
+// The canonical definitions now live in src/consolidation/run-sleep-pass.ts.
+export type { ProviderOverlay } from '../consolidation/run-sleep-pass';
+export { VALID_PROVIDERS, resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 
 const LOG_PATH = '/tmp/brain-memory-sleep.log';
 
@@ -50,56 +46,6 @@ function resolveDbPath(): string | undefined {
     return process.argv[dbArgIdx + 1];
   }
   return process.env['BRAIN_MEMORY_DB'];
-}
-
-/** Provider values accepted by EngineConfig.modelProvider (the validation union). */
-const VALID_PROVIDERS = ['anthropic', 'vertex', 'local'] as const;
-type ModelProvider = (typeof VALID_PROVIDERS)[number];
-
-/** Env-derived overlay applied on top of DEFAULT_CONFIG for the sleep pass. */
-export interface ProviderOverlay {
-  modelProvider: ModelProvider;
-  localModel?: string;
-  localBaseUrl?: string;
-}
-
-/**
- * Resolve the model-provider overlay from env, FAIL-SAFE:
- *  - Provider precedence: env[roleEnvKey] (if set+valid) →
- *    BRAIN_MEMORY_MODEL_PROVIDER (if set+valid) → DEFAULT_CONFIG.modelProvider.
- *    Unknown/empty values at any tier are skipped (fail-safe, default unchanged).
- *  - When (and only when) the resolved provider is 'local', optional
- *    BRAIN_MEMORY_LOCAL_MODEL / BRAIN_MEMORY_LOCAL_BASE_URL overlay localModel /
- *    localBaseUrl; absent → DEFAULT_CONFIG values are kept.
- *  - roleEnvKey is optional: calling with no role key behaves EXACTLY as the
- *    original single-overlay resolver (backward-compatible — bc2 tests).
- * Pure (env passed in) and network-free so it is unit-testable.
- */
-export function resolveProviderOverlay(
-  env: NodeJS.ProcessEnv,
-  roleEnvKey?: string,
-): ProviderOverlay {
-  const isValid = (v: string | undefined): v is ModelProvider =>
-    (VALID_PROVIDERS as readonly string[]).includes(v ?? '');
-
-  const roleRaw = roleEnvKey ? env[roleEnvKey] : undefined;
-  const baseRaw = env['BRAIN_MEMORY_MODEL_PROVIDER'];
-  const provider: ModelProvider = isValid(roleRaw)
-    ? roleRaw
-    : isValid(baseRaw)
-      ? baseRaw
-      : DEFAULT_CONFIG.modelProvider;
-
-  const overlay: ProviderOverlay = { modelProvider: provider };
-
-  if (provider === 'local') {
-    const localModel = env['BRAIN_MEMORY_LOCAL_MODEL'];
-    const localBaseUrl = env['BRAIN_MEMORY_LOCAL_BASE_URL'];
-    if (localModel) overlay.localModel = localModel;
-    if (localBaseUrl) overlay.localBaseUrl = localBaseUrl;
-  }
-
-  return overlay;
 }
 
 async function main(): Promise<void> {
@@ -126,81 +72,13 @@ async function main(): Promise<void> {
     const db = new Database(dbPath);
     initSchema(db);
 
-    // ── 4. Instantiate the full Consolidator dependency graph ────────────────
-    // Base config (no model-provider overlay — stores/retriever are LLM-free).
-    const config = { ...DEFAULT_CONFIG, dbPath };
-    // Per-role provider routing in the SAME process (fail-safe overlay each):
-    //  - judgeConfig    → AnthropicJudge + SchemaInducer default namingFn.
-    //  - extractorConfig → AnthropicClaimExtractor.
-    const judgeConfig = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_JUDGE_PROVIDER') };
-    const extractorConfig = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER') };
-    // resolved providers only — never secrets/keys
-    log(`extractor: ${extractorConfig.modelProvider} | judge: ${judgeConfig.modelProvider}`);
-
-    const episodes = new EpisodicStore(db, realClock, config);
-    const store = new SemanticStore(db, realClock, config);
-    const strength = new StrengthDecayManager(db, realClock, config);
-    const retriever = new CandidateRetriever(db);
-
-    // Per-role ModelProvider instances (D-47 split routing preserved below the seam):
-    //  - consolidatorProvider: extract head → extractorConfig, judge head → judgeConfig, embed → base config
-    //  - inducerProvider:      generate/judge head → judgeConfig (naming is reasoning-ish, low volume)
-    // Keys read from process.env by SDK inside DefaultModelProvider — never passed here (T-03-2-E, T-05-KEY).
-    const consolidatorProvider = new DefaultModelProvider({
-      generateConfig: extractorConfig,
-      judgeConfig,
-      embedConfig: config,
-    });
-    const inducerProvider = new DefaultModelProvider({
-      generateConfig: judgeConfig,
-      judgeConfig,
-      embedConfig: config,
-    });
-
-    // ── SEAM-02: ConsolidationSink — EventStore + SQLiteConsolidationSink (D-50) ──
-    // Wired here so the live hourly pass appends events to consolidation_event.
-    // PRODUCTION ACTIVATION: this plan writes ONLY to the supplied --db path (a copy).
-    // Live write to the real brain.db is gated behind Plan 05-05 (T-05-SINK-WRITE).
-    const eventStore = new EventStore(db);
-    const sink = new SQLiteConsolidationSink(eventStore, realClock);
-
-    const inducer = new SchemaInducer(
-      // schema-naming routes to the judge provider (reasoning-ish, low volume)
-      db, store, strength, retriever, inducerProvider, judgeConfig, realClock,
-      // No namingFn supplied — defaults to provider.generate() via callLlmNaming
-      undefined, sink,
-    );
-
-    const consolidator = new Consolidator(
-      db,
-      episodes,
-      store,
-      strength,
-      retriever,
-      consolidatorProvider,
-      inducer,
-      config,
-      realClock,
-      sink,
-    );
-
-    // ── 5. Run the sleep pass ────────────────────────────────────────────────
-    await consolidator.consolidate();
-
-    // ── 6. Log SEAM-02 event summary (counts/types only — T-05-SINK-KEY) ────
-    const evtSummary = db
-      .prepare('SELECT event_type, count(*) c FROM consolidation_event GROUP BY event_type')
-      .all() as Array<{ event_type: string; c: number }>;
-    if (evtSummary.length > 0) {
-      const summary = evtSummary.map(r => `${r.event_type}:${r.c}`).join(' ');
-      log(`SEAM-02 events: ${summary}`);
-    }
-
-    log('Sleep pass complete');
+    // ── 4+5+6. Run the full Consolidator dependency graph ───────────────────
+    // (wiring, consolidate(), SEAM-02 event summary — shared with ingest-cli)
+    await runConsolidation(db, dbPath, process.env, log);
   } catch (err) {
     log(`Sleep pass error: ${err}`);
   } finally {
-    // ── 6. Always release the lock ───────────────────────────────────────────
+    // ── 7. Always release the lock ───────────────────────────────────────────
     releaseLock();
   }
 }
