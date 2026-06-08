@@ -8,11 +8,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
 import { ObsidianAdapter } from '../src/source/obsidian-adapter';
 import type { MetaCursor } from '../src/source/obsidian-adapter';
+import { initSchema } from '../src/db/schema';
+import { EpisodicStore } from '../src/db/episode-store';
 
 import {
   chunkNote,
@@ -136,16 +139,23 @@ describe('normalizeObsidianNote — NormalizedRecord construction', () => {
     expect(record.role).toBe('user');
   });
 
-  it('sets external_id = <relPath>#<sectionIdx>', () => {
+  it('external_id is content-addressed: <relPath>#<16-hex-hash> (CR-01)', () => {
     const record = normalizeObsidianNote(plainSection, 'My Note', 2, 'folder/My Note.md');
-    expect(record.external_id).toBe('folder/My Note.md#2');
+    expect(record.external_id).toMatch(/^folder\/My Note\.md#[0-9a-f]{16}$/);
   });
 
-  it('external_id increments correctly per section index', () => {
-    const r0 = normalizeObsidianNote(plainSection, 'Note', 0, 'n.md');
-    const r1 = normalizeObsidianNote(plainSection, 'Note', 1, 'n.md');
-    expect(r0.external_id).toBe('n.md#0');
-    expect(r1.external_id).toBe('n.md#1');
+  it('different section content → different external_id; same content → same external_id (CR-01)', () => {
+    const sectionA: NoteSection = { heading: null, text: 'Content of section A.' };
+    const sectionB: NoteSection = { heading: null, text: 'Content of section B — different text.' };
+    const r0 = normalizeObsidianNote(sectionA, 'Note', 0, 'n.md');
+    const r1 = normalizeObsidianNote(sectionB, 'Note', 1, 'n.md');
+    // Different content → different external_id
+    expect(r0.external_id).not.toBe(r1.external_id);
+    expect(r0.external_id).toMatch(/^n\.md#[0-9a-f]{16}$/);
+    expect(r1.external_id).toMatch(/^n\.md#[0-9a-f]{16}$/);
+    // Same content + same relPath → same external_id (idempotent dedup)
+    const r0b = normalizeObsidianNote(sectionA, 'Note', 0, 'n.md');
+    expect(r0b.external_id).toBe(r0.external_id);
   });
 
   it('keeps [[wikilinks]] inline — not extracted as edges (CONSOL-03)', () => {
@@ -411,5 +421,91 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
     const records = await adapter.pull();
     expect(records).toHaveLength(1);
     expect(records[0]!.external_id).toContain('real.md');
+  });
+});
+
+// ─── normalizeObsidianNote — content-addressed external_id (CR-01) ─────────────
+
+describe('normalizeObsidianNote — content-addressed external_id (CR-01)', () => {
+  it('edited section text → different external_id (edit must re-ingest)', () => {
+    const original: NoteSection = { heading: null, text: 'Original note text.' };
+    const edited: NoteSection = { heading: null, text: 'Edited note text — fact changed.' };
+    const r1 = normalizeObsidianNote(original, 'Note', 0, 'note.md');
+    const r2 = normalizeObsidianNote(edited, 'Note', 0, 'note.md');
+    // Different content → different hash → different external_id
+    expect(r1.external_id).not.toBe(r2.external_id);
+  });
+
+  it('identical section text → same external_id (idempotent dedup)', () => {
+    const section: NoteSection = { heading: null, text: 'Stable content, never changes.' };
+    const r1 = normalizeObsidianNote(section, 'Note', 0, 'note.md');
+    const r2 = normalizeObsidianNote(section, 'Note', 0, 'note.md');
+    // Same content → same hash → same external_id (dedup fires)
+    expect(r1.external_id).toBe(r2.external_id);
+  });
+});
+
+// ─── EpisodicStore + ObsidianAdapter E2E: edit re-ingests, unchanged dedupes ──
+
+describe('EpisodicStore + ObsidianAdapter E2E: edit re-ingests, unchanged dedupes (CR-01)', () => {
+  let e2eTmpDir: string;
+
+  beforeEach(() => {
+    e2eTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-cr01-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(e2eTmpDir, { recursive: true, force: true });
+  });
+
+  it('edited file content creates a new episode; re-read of unchanged content is deduped', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const store = new EpisodicStore(db, { nowMs: () => Date.now() }, { ...DEFAULT_CONFIG, dbPath: ':memory:' });
+    const meta = makeMockMeta();
+    const config = makeConfig(e2eTmpDir);
+    const adapter = new ObsidianAdapter(config, meta);
+
+    const notePath = path.join(e2eTmpDir, 'fact.md');
+    const countEpisodes = () =>
+      (db.prepare('SELECT COUNT(*) as n FROM episode').get() as { n: number }).n;
+
+    const appendRecord = (rec: { content: string; source: string; external_id: string; origin: string; role: string }) =>
+      store.append({
+        content: rec.content,
+        origin: rec.origin as 'observed' | 'asserted_by_user' | 'inferred',
+        role: rec.role as 'user' | 'assistant' | 'tool',
+        source: rec.source,
+        external_id: rec.external_id,
+        salience: 0.5,
+        hard_keep: 0,
+        session_id: 'test-session',
+      });
+
+    // ── Step 1: initial ingest ───────────────────────────────────────────────
+    fs.writeFileSync(notePath, 'Jane runs Acme coaching.');
+    const records1 = await adapter.pull();
+    expect(records1).toHaveLength(1);
+    appendRecord(records1[0]!);
+    expect(countEpisodes()).toBe(1);
+
+    // ── Step 2: edit the note ───────────────────────────────────────────────
+    fs.writeFileSync(notePath, 'Jane runs Acme coaching — updated 2026.');
+    meta.store.set('cursor:obsidian', '0'); // reset cursor so the file is re-read
+    const records2 = await adapter.pull();
+    expect(records2).toHaveLength(1);
+
+    // Content-addressed: edit → different hash → different external_id → NOT deduped
+    expect(records2[0]!.external_id).not.toBe(records1[0]!.external_id);
+    appendRecord(records2[0]!);
+    expect(countEpisodes()).toBe(2); // new episode created
+
+    // ── Step 3: re-read unchanged file → same external_id → deduped ────────
+    meta.store.set('cursor:obsidian', '0');
+    const records3 = await adapter.pull();
+    expect(records3).toHaveLength(1);
+    expect(records3[0]!.external_id).toBe(records2[0]!.external_id); // unchanged content
+    appendRecord(records3[0]!);
+    expect(countEpisodes()).toBe(2); // no new episode — deduped
   });
 });

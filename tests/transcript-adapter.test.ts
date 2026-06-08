@@ -173,13 +173,30 @@ describe('normalizeTranscriptTurn', () => {
     expect(record.role).toBe('user');
   });
 
-  it('sets external_id as <fileRelPath>#<turnIdx>', () => {
+  it('external_id is content-addressed: <fileRelPath>#<16-hex-hash> (CR-01)', () => {
     const turn = { speaker: 'Max', text: 'hi' };
     const record = normalizeTranscriptTurn(turn, 'meeting.txt', 0, 'meeting.txt');
-    expect(record.external_id).toBe('meeting.txt#0');
+    expect(record.external_id).toMatch(/^meeting\.txt#[0-9a-f]{16}$/);
 
     const record2 = normalizeTranscriptTurn(turn, 'meeting.txt', 5, 'sub/meeting.txt');
-    expect(record2.external_id).toBe('sub/meeting.txt#5');
+    expect(record2.external_id).toMatch(/^sub\/meeting\.txt#[0-9a-f]{16}$/);
+  });
+
+  it('edited turn text → different external_id (edit must re-ingest, CR-01)', () => {
+    const original = { speaker: 'Max', text: 'The project is on track.' };
+    const edited = { speaker: 'Max', text: 'The project is behind schedule.' };
+    const r1 = normalizeTranscriptTurn(original, 'meeting.txt', 0, 'meeting.txt');
+    const r2 = normalizeTranscriptTurn(edited, 'meeting.txt', 0, 'meeting.txt');
+    // Different content → different hash → different external_id
+    expect(r1.external_id).not.toBe(r2.external_id);
+  });
+
+  it('identical turn text → same external_id (idempotent dedup, CR-01)', () => {
+    const turn = { speaker: 'Max', text: 'Stable statement.' };
+    const r1 = normalizeTranscriptTurn(turn, 'meeting.txt', 0, 'meeting.txt');
+    const r2 = normalizeTranscriptTurn(turn, 'meeting.txt', 0, 'meeting.txt');
+    // Same content → same hash → same external_id (dedup fires)
+    expect(r1.external_id).toBe(r2.external_id);
   });
 
   it('redacts GitHub token in turn content while preserving speaker name (D-63/T-06-19)', () => {
@@ -257,9 +274,11 @@ describe('TranscriptAdapter', () => {
     const [r0, r1, r2] = records;
     expect(r0!.source).toBe('granola');
     expect(r0!.origin).toBe('observed');
-    expect(r0!.external_id).toBe('meeting.txt#0');
-    expect(r1!.external_id).toBe('meeting.txt#1');
-    expect(r2!.external_id).toBe('meeting.txt#2');
+    // Content-addressed external_ids: each turn has different text → different hash
+    expect(r0!.external_id).toMatch(/^meeting\.txt#[0-9a-f]{16}$/);
+    expect(r1!.external_id).toMatch(/^meeting\.txt#[0-9a-f]{16}$/);
+    expect(r2!.external_id).toMatch(/^meeting\.txt#[0-9a-f]{16}$/);
+    expect(new Set([r0!.external_id, r1!.external_id, r2!.external_id]).size).toBe(3);
   });
 
   it('recursively walks nested subdirectories and returns turns from all levels', async () => {
@@ -280,9 +299,10 @@ describe('TranscriptAdapter', () => {
     // 2 turns from top.txt + 1 turn from subdir/call.vtt
     expect(records).toHaveLength(3);
     const ids = records.map(r => r.external_id);
-    expect(ids).toContain('top.txt#0');
-    expect(ids).toContain('top.txt#1');
-    expect(ids).toContain('subdir/call.vtt#0');
+    // Content-addressed: check path prefix and hash format rather than positional indices
+    expect(ids.filter(id => id.startsWith('top.txt#')).length).toBe(2);
+    expect(ids.filter(id => id.startsWith('subdir/call.vtt#')).length).toBe(1);
+    expect(ids.every(id => /^[^#]+#[0-9a-f]{16}$/.test(id))).toBe(true);
   });
 
   it('skips a symlink pointing outside the watched dir (T-04-PATH/T-06-16)', async () => {
@@ -298,7 +318,7 @@ describe('TranscriptAdapter', () => {
     const records = await adapter.pull();
     // Only the legitimate file should produce records; symlink is skipped
     expect(records).toHaveLength(1);
-    expect(records[0]!.external_id).toBe('legit.txt#0');
+    expect(records[0]!.external_id).toMatch(/^legit\.txt#[0-9a-f]{16}$/);
     expect(records[0]!.content).toContain('legitimate');
   });
 
@@ -349,7 +369,7 @@ describe('TranscriptAdapter', () => {
     const records = await adapter.pull();
     // Only the .txt file should be processed
     expect(records).toHaveLength(1);
-    expect(records[0]!.external_id).toBe('meeting.txt#0');
+    expect(records[0]!.external_id).toMatch(/^meeting\.txt#[0-9a-f]{16}$/);
   });
 
   it('source property is granola', () => {
