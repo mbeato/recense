@@ -30,6 +30,10 @@ export interface AppendEventParams {
   role: EpisodeRole;
   session_id: string;
   source_inference_id?: string | null;
+  /** Channel that produced this episode — D-57. Defaults to 'claude-code' (back-compat). */
+  source?: string;
+  /** Per-source dedup key — D-59. Null means no dedup (each append is distinct). Defaults to null. */
+  external_id?: string | null;
 }
 
 /** Truncation marker appended when content exceeds maxContentBytes (D-09). */
@@ -72,6 +76,11 @@ export class EpisodicStore {
    */
   private readonly stmtListRecentInferred: Database.Statement;
   private readonly stmtBackfillSourceInferenceId: Database.Statement;
+  /**
+   * Dedup backstop (D-59): look up an existing row by (source, external_id).
+   * Called only when INSERT OR IGNORE reports 0 changes (non-null external_id dedup hit).
+   */
+  private readonly stmtGetBySourceExternal: Database.Statement;
 
   constructor(db: Database.Database, clock: Clock, config: EngineConfig) {
     this.db = db;
@@ -80,13 +89,19 @@ export class EpisodicStore {
 
     // ── Prepared statements (all use ? / @named — T-02-SQL) ──────────────────
 
+    // INSERT OR IGNORE: when external_id is non-null and (source, external_id) already
+    // exists, the UNIQUE index fires → 0 rows inserted → dedup branch in append() (D-59).
+    // When external_id is null, the unique index treats each NULL as distinct, so legacy
+    // claude-code rows always insert (INGEST-01 unconditional append preserved).
     this.stmtInsert = db.prepare(`
-      INSERT INTO episode (
+      INSERT OR IGNORE INTO episode (
         id, ts, content, origin, salience, hard_keep,
-        consolidated, source_inference_id, role, session_id
+        consolidated, source_inference_id, role, session_id,
+        source, external_id
       ) VALUES (
         @id, @ts, @content, @origin, @salience, @hard_keep,
-        0, @source_inference_id, @role, @session_id
+        0, @source_inference_id, @role, @session_id,
+        @source, @external_id
       )
     `);
 
@@ -114,10 +129,19 @@ export class EpisodicStore {
     this.stmtBackfillSourceInferenceId = db.prepare(
       'UPDATE episode SET source_inference_id = ? WHERE id = ?',
     );
+
+    // D-59 dedup backstop: return the pre-existing row when INSERT OR IGNORE fires.
+    // Only reachable when external_id IS NOT NULL — null rows are always distinct.
+    this.stmtGetBySourceExternal = db.prepare(
+      'SELECT * FROM episode WHERE source = ? AND external_id = ?',
+    );
   }
 
   /**
-   * Unconditionally insert one episode row and return it.
+   * Insert one episode row and return it. Idempotent on (source, external_id) when
+   * external_id is non-null — a second call with the same pair returns the original row
+   * without inserting a duplicate (D-59 dedup backstop). When external_id is null (legacy
+   * claude-code episodes) every call inserts unconditionally (INGEST-01 preserved).
    * Content is capped at config.maxContentBytes with a truncation marker (D-09).
    * ts is taken from clock.nowMs() — never Date.now() (D-12).
    */
@@ -125,8 +149,10 @@ export class EpisodicStore {
     const id = newId();
     const ts = this.clock.nowMs();
     const content = capContent(params.content, this.config.maxContentBytes);
+    const source = params.source ?? 'claude-code';
+    const external_id = params.external_id ?? null;
 
-    this.stmtInsert.run({
+    const info = this.stmtInsert.run({
       id,
       ts,
       content,
@@ -136,9 +162,17 @@ export class EpisodicStore {
       source_inference_id: params.source_inference_id ?? null,
       role: params.role,
       session_id: params.session_id,
+      source,
+      external_id,
     });
 
-    // Return the stored row (SELECT is cheaper than trusting the insert params)
+    // Dedup hit: INSERT OR IGNORE fired (0 rows changed) and external_id is non-null.
+    // Return the pre-existing row so the caller receives a valid EpisodeRow (not undefined).
+    if (info.changes === 0 && external_id !== null) {
+      return this.stmtGetBySourceExternal.get(source, external_id) as EpisodeRow;
+    }
+
+    // Normal path: return the freshly inserted row.
     return this.stmtGetById.get(id) as EpisodeRow;
   }
 

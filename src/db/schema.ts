@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -30,7 +30,9 @@ export const DDL = `
     consolidated        INTEGER NOT NULL DEFAULT 0,
     source_inference_id TEXT    REFERENCES episode(id),
     role                TEXT    NOT NULL CHECK(role IN ('user','assistant','tool')),
-    session_id          TEXT    NOT NULL
+    session_id          TEXT    NOT NULL,
+    source              TEXT    NOT NULL DEFAULT 'claude-code',
+    external_id         TEXT
   );
 
   CREATE TABLE IF NOT EXISTS node (
@@ -115,6 +117,32 @@ export function initSchema(db: Database.Database): void {
 
   // DDL runs unconditionally — all statements use IF NOT EXISTS
   db.exec(DDL);
+
+  // v2 migration: add source/external_id to existing DBs.
+  // SQLite ALTER TABLE ADD COLUMN has no IF NOT EXISTS, so guard with PRAGMA table_info.
+  // Fresh DBs already have the columns from DDL above → PRAGMA check skips the ALTER.
+  // Equivalent to: PRAGMA table_info(episode) → Set of column names.
+  const cols = new Set(
+    (db.pragma('table_info(episode)') as Array<{ name: string }>).map(r => r.name)
+  );
+  if (!cols.has('source')) {
+    db.exec("ALTER TABLE episode ADD COLUMN source TEXT NOT NULL DEFAULT 'claude-code'");
+  }
+  if (!cols.has('external_id')) {
+    db.exec('ALTER TABLE episode ADD COLUMN external_id TEXT');
+  }
+
+  // New indexes land here (not in DDL) because the columns may arrive via ALTER above.
+  // idx_episode_source_consolidated: hot path for per-source sleep pass queries.
+  // uq_episode_source_external: the dedup backstop (D-59). NULL external_id rows are
+  // treated as distinct by SQLite's unique index semantics — legacy claude-code episodes
+  // never collide with each other (INGEST-01 preserved).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_episode_source_consolidated
+      ON episode(source, consolidated);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_episode_source_external
+      ON episode(source, external_id);
+  `);
 
   // Stamp or update schema version in the now-guaranteed meta table
   db.prepare(
