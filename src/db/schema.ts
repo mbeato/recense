@@ -82,6 +82,24 @@ export const DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_node_eviction
     ON node(tombstoned, s, c);
+
+  -- SEAM-02: ConsolidationSink event stream (append-only, single-writer: offline pass).
+  -- Each row mirrors one applyDecision branch + schema emitted/falsified (D-49).
+  -- Written atomically inside the same per-episode db.transaction as the graph mutation (D-48).
+  -- schema_version uses SCHEMA_VERSION at emit time so corpus consumers can version-gate (D-49).
+  CREATE TABLE IF NOT EXISTS consolidation_event (
+    id             TEXT    PRIMARY KEY,
+    ts             INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL,
+    event_type     TEXT    NOT NULL,
+    node_id        TEXT,
+    candidate_id   TEXT,
+    episode_id     TEXT,
+    value          TEXT,
+    origin         TEXT,
+    magnitude      REAL,
+    payload        TEXT
+  );
 `;
 
 /**

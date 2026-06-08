@@ -64,3 +64,9 @@ export {
 // ── ModelProvider seam (Phase 5, SEAM-01, D-46) ──────────────────────────────
 export type { ModelProvider } from './model/provider';
 export { DefaultModelProvider, MockModelProvider } from './model/provider';
+
+// ── ConsolidationSink seam (Phase 5, SEAM-02, D-48/D-49) ─────────────────────
+export type { ConsolidationSink, ConsolidationEventType, ConsolidationEventInput } from './consolidation/sink';
+export { SQLiteConsolidationSink, NoopConsolidationSink } from './consolidation/sink';
+export { EventStore } from './db/event-store';
+export { reconstructCorpus } from './consolidation/sink';
