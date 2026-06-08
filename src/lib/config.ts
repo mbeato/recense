@@ -27,6 +27,27 @@ export interface SalienceConfig {
   directivePatterns: string[];
   /** Regex strings for factual correction markers (compiled once at init). */
   correctionPatterns: string[];
+
+  /**
+   * Per-source salience multiplier (D-60).
+   * Applied AFTER the honest composite cap (Math.min(composite, 1.0)) — noisy sources
+   * earn lower salience rather than being pinned or trusted (D-03 never pinned).
+   * 'claude-code': 1.0 → zero behavior change on the existing conversation path.
+   * 'gmail': 0.35 → noisiest channel; must earn confidence through consolidation.
+   * Unknown sources fall back to 'claude-code' weight (1.0) for back-compat.
+   * D-13 calibration placeholders — tune against real channel volume.
+   */
+  sourceWeights: Record<string, number>;
+
+  /**
+   * Per-source consolidation skip threshold (D-60, mirrors consolSkipThresholdAssistant).
+   * Sources not listed fall back to consolSkipThreshold (global 0.2 default).
+   * 'gmail': 0.4 → higher bar; most email is lower-signal than conversation turns.
+   * 'granola': 0.25 → slightly above default; transcripts denser but noisier.
+   * D-13 calibration placeholders — tune against real consolidation cost vs. recall.
+   * Reversibility: remove an entry to restore the global consolSkipThreshold for that source.
+   */
+  consolSkipThresholdBySource: Record<string, number>;
 }
 
 /**
@@ -302,6 +323,51 @@ export interface EngineConfig {
    * real retrieval drift measurements on the founder's brain.db (D-13).
    */
   snapshotMatchThreshold: number;
+
+  // --- Phase 6: multi-channel ingestion tunables (D-60/D-65/D-68/D-69) ---
+
+  /**
+   * Gmail ingestion scope — native Gmail search query string (D-65).
+   * Conservative default: primary inbox, no promotions/social/updates, 90-day window.
+   * Tighten to 'label:brain' for explicit opt-in only. Change without code changes;
+   * narrowing does NOT auto-re-ingest: use brain-ingest --reset-cursor gmail after
+   * query changes that may cause gaps (historyId cursor is query-independent).
+   *
+   * OAuth note (D-68): Gmail refresh token + client ID/secret live EXCLUSIVELY in
+   * ~/.config/brain-memory/sleep.env (chmod 600, gitignored), sourced by the launchd
+   * wrapper — same secret-handling pattern as the LLM keys. Never add a token or
+   * clientSecret field here. Secrets must not appear in config literals.
+   */
+  gmail: { query: string };
+
+  /**
+   * Watched export folder for meeting transcripts (D-69).
+   * Empty string = disabled (fail-safe default — no directory watched unless set).
+   * Set to the directory the founder drops/exports Granola/Otter/Zoom files into;
+   * the adapter walks it on each pull cycle by file mtime.
+   * Supported formats: .md, .txt, .vtt (speaker-turn aware); new formats = new parser.
+   */
+  transcripts: { dir: string };
+
+  /**
+   * Obsidian vault root path (D-56/D-61).
+   * Empty string = disabled (fail-safe default — vault not walked unless set).
+   * Set to the root of the founder's Obsidian vault; the adapter walks recursively,
+   * one episode per note (split on headings when a note exceeds maxContentBytes).
+   * Origin: asserted_by_user (D-61) — the founder's own curated second brain.
+   * WARNING: only the founder's own vault should use this path. A third-party vault
+   * would let external content masquerade as asserted_by_user (D-61 correctness guard).
+   */
+  obsidian: { dir: string };
+
+  /**
+   * List of enabled source adapter names (D-63 discretion, D-66).
+   * Default: [] — all adapters off (fail-safe, mirrors modelProvider default).
+   * Populate per environment, e.g. ['gmail', 'granola'] for the launchd cycle.
+   * Adapters not in this list are skipped even if their config fields are populated,
+   * preventing surprise ingestion when credentials are absent.
+   */
+  enabledSources: string[];
 }
 
 /** Default salience weights for the Allocation Gate. Calibrate against real transcripts. */
@@ -327,6 +393,18 @@ const DEFAULT_SALIENCE_CONFIG: SalienceConfig = {
     '\\bincorrect\\b',
     '\\bnot correct\\b',
   ],
+  // Per-source salience multipliers (D-60 calibration placeholders — tune against real volume, D-13)
+  sourceWeights: {
+    'claude-code': 1.0, // zero behavior change on the existing conversation path
+    obsidian: 0.9,      // founder's own vault — near-trusted; still gated + honest
+    granola: 0.5,       // meeting transcripts — moderate signal; attributed speaker turns
+    gmail: 0.35,        // noisiest channel; must earn confidence through consolidation volume
+  },
+  // Per-source consolidation skip threshold (D-60, mirrors consolSkipThresholdAssistant)
+  consolSkipThresholdBySource: {
+    gmail: 0.4,    // higher bar: email is lower-signal; aggressive skip saves LLM budget
+    granola: 0.25, // slightly above global 0.2; transcripts denser but noisier than conversation
+  },
 };
 
 /**
@@ -374,4 +452,18 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   echoSimilarityThreshold: 0.85,
   echoRecencyWindowMs: 86_400_000,
   snapshotMatchThreshold: 0.85, // TODO calibrate — tighter than deletedSimilarityThreshold (0.7); real drift data pending
+
+  // Phase 6: multi-channel ingestion (D-60/D-65/D-68/D-69)
+  gmail: {
+    // Conservative scope (D-65): primary inbox, no categories, 90-day window.
+    // Tighten to 'label:brain' for strict opt-in; see EngineConfig.gmail for OAuth note (D-68).
+    query: 'in:inbox -category:promotions -category:social -category:updates newer_than:90d',
+  },
+  transcripts: {
+    dir: '', // empty = disabled; set to the folder exports land in (D-69)
+  },
+  obsidian: {
+    dir: '', // empty = disabled; set to vault root — founder's own vault only (D-56/D-61)
+  },
+  enabledSources: [], // default-off fail-safe; populate per environment to activate adapters (D-66)
 };
