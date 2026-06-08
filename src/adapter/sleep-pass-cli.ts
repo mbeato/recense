@@ -30,6 +30,8 @@ import { CandidateRetriever } from '../retrieval/topk';
 import { DefaultModelProvider } from '../model/provider';
 import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
+import { EventStore } from '../db/event-store';
+import { SQLiteConsolidationSink } from '../consolidation/sink';
 import { acquireLock, releaseLock } from './lockfile';
 
 const LOG_PATH = '/tmp/brain-memory-sleep.log';
@@ -155,10 +157,18 @@ async function main(): Promise<void> {
       embedConfig: config,
     });
 
+    // ── SEAM-02: ConsolidationSink — EventStore + SQLiteConsolidationSink (D-50) ──
+    // Wired here so the live hourly pass appends events to consolidation_event.
+    // PRODUCTION ACTIVATION: this plan writes ONLY to the supplied --db path (a copy).
+    // Live write to the real brain.db is gated behind Plan 05-05 (T-05-SINK-WRITE).
+    const eventStore = new EventStore(db);
+    const sink = new SQLiteConsolidationSink(eventStore, realClock);
+
     const inducer = new SchemaInducer(
       // schema-naming routes to the judge provider (reasoning-ish, low volume)
       db, store, strength, retriever, inducerProvider, judgeConfig, realClock,
       // No namingFn supplied — defaults to provider.generate() via callLlmNaming
+      undefined, sink,
     );
 
     const consolidator = new Consolidator(
@@ -171,10 +181,20 @@ async function main(): Promise<void> {
       inducer,
       config,
       realClock,
+      sink,
     );
 
     // ── 5. Run the sleep pass ────────────────────────────────────────────────
     await consolidator.consolidate();
+
+    // ── 6. Log SEAM-02 event summary (counts/types only — T-05-SINK-KEY) ────
+    const evtSummary = db
+      .prepare('SELECT event_type, count(*) c FROM consolidation_event GROUP BY event_type')
+      .all() as Array<{ event_type: string; c: number }>;
+    if (evtSummary.length > 0) {
+      const summary = evtSummary.map(r => `${r.event_type}:${r.c}`).join(' ');
+      log(`SEAM-02 events: ${summary}`);
+    }
 
     log('Sleep pass complete');
   } catch (err) {
