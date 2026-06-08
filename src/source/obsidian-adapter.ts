@@ -16,7 +16,9 @@
  *        top-level headings (^#{1,2} ) when a note exceeds config.maxContentBytes.
  *        No data is invented; oversized headingless notes pass through as one section
  *        and capContent handles the hard byte cap downstream.
- *  D-59: external_id = `<vault-relpath>#<section-idx>` for dedup.
+ *  D-59: external_id = contentExternalId(relPath, content) = `<vault-relpath>#<sha256[:16]>`
+ *        (content-addressed — CR-01 fix: edit → new hash → new episode → consolidator
+ *        reconciles; unchanged re-read → same hash → INSERT OR IGNORE dedups).
  *  D-61: origin='asserted_by_user' — the ONLY adapter that earns this origin.
  *        [[wikilinks]] are kept inline in content (NOT written as edges — CONSOL-03)
  *        so the extraction prompt parses them into claim.links downstream.
@@ -39,6 +41,7 @@ import path from 'node:path';
 import type { EngineConfig } from '../lib/config';
 import type { Clock } from '../lib/clock';
 import type { SourceAdapter, NormalizedRecord } from './source-adapter';
+import { contentExternalId } from './source-adapter';
 import { redactSecrets } from './redact';
 
 // ─── NoteSection ─────────────────────────────────────────────────────────────
@@ -151,7 +154,6 @@ export function noteTitle(relPath: string): string {
 export function normalizeObsidianNote(
   section: NoteSection,
   title: string,
-  sectionIdx: number,
   relPath: string,
 ): NormalizedRecord {
   // Provenance header — [[title]] so the LLM extractor sees note identity.
@@ -169,8 +171,10 @@ export function normalizeObsidianNote(
     // content masquerade as the founder's own assertions (LEARN-03 guard).
     origin: 'asserted_by_user',
     role: 'user',
-    // D-59 stable dedup key: <vault-relpath>#<section-idx>
-    external_id: `${relPath}#${sectionIdx}`,
+    // D-59 content-addressed dedup key (CR-01): <vault-relpath>#<sha256(content)[:16]>
+    // Editing a section changes content → new hash → new external_id → new episode.
+    // Unchanged re-read → same hash → INSERT OR IGNORE dedups (idempotent).
+    external_id: contentExternalId(relPath, content),
   };
 }
 
@@ -333,8 +337,8 @@ export class ObsidianAdapter implements SourceAdapter {
 
         // Chunk + normalize — one record per section.
         const sections = chunkNote(content, this.config.maxContentBytes);
-        for (let i = 0; i < sections.length; i++) {
-          records.push(normalizeObsidianNote(sections[i]!, title, i, relPath));
+        for (const section of sections) {
+          records.push(normalizeObsidianNote(section, title, relPath));
         }
       }
       // Non-.md files (images, PDFs, etc.) are silently skipped.

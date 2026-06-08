@@ -160,14 +160,14 @@ describe('parseTranscript — unknown extension', () => {
 describe('normalizeTranscriptTurn', () => {
   it('builds inline provenance header [basename] speaker:', () => {
     const turn = { speaker: 'Max', text: 'hello world' };
-    const record = normalizeTranscriptTurn(turn, 'meeting.txt', 0, 'meeting.txt');
+    const record = normalizeTranscriptTurn(turn, 'meeting.txt', 'meeting.txt');
     expect(record.content).toContain('[meeting.txt] Max:');
     expect(record.content).toContain('hello world');
   });
 
   it('sets source=granola, origin=observed, role=user', () => {
     const turn = { speaker: 'Alice', text: 'agreed' };
-    const record = normalizeTranscriptTurn(turn, 'call.txt', 1, 'call.txt');
+    const record = normalizeTranscriptTurn(turn, 'call.txt', 'call.txt');
     expect(record.source).toBe('granola');
     expect(record.origin).toBe('observed');
     expect(record.role).toBe('user');
@@ -175,26 +175,26 @@ describe('normalizeTranscriptTurn', () => {
 
   it('external_id is content-addressed: <fileRelPath>#<16-hex-hash> (CR-01)', () => {
     const turn = { speaker: 'Max', text: 'hi' };
-    const record = normalizeTranscriptTurn(turn, 'meeting.txt', 0, 'meeting.txt');
+    const record = normalizeTranscriptTurn(turn, 'meeting.txt', 'meeting.txt');
     expect(record.external_id).toMatch(/^meeting\.txt#[0-9a-f]{16}$/);
 
-    const record2 = normalizeTranscriptTurn(turn, 'meeting.txt', 5, 'sub/meeting.txt');
+    const record2 = normalizeTranscriptTurn(turn, 'meeting.txt', 'sub/meeting.txt');
     expect(record2.external_id).toMatch(/^sub\/meeting\.txt#[0-9a-f]{16}$/);
   });
 
   it('edited turn text → different external_id (edit must re-ingest, CR-01)', () => {
     const original = { speaker: 'Max', text: 'The project is on track.' };
     const edited = { speaker: 'Max', text: 'The project is behind schedule.' };
-    const r1 = normalizeTranscriptTurn(original, 'meeting.txt', 0, 'meeting.txt');
-    const r2 = normalizeTranscriptTurn(edited, 'meeting.txt', 0, 'meeting.txt');
+    const r1 = normalizeTranscriptTurn(original, 'meeting.txt', 'meeting.txt');
+    const r2 = normalizeTranscriptTurn(edited, 'meeting.txt', 'meeting.txt');
     // Different content → different hash → different external_id
     expect(r1.external_id).not.toBe(r2.external_id);
   });
 
   it('identical turn text → same external_id (idempotent dedup, CR-01)', () => {
     const turn = { speaker: 'Max', text: 'Stable statement.' };
-    const r1 = normalizeTranscriptTurn(turn, 'meeting.txt', 0, 'meeting.txt');
-    const r2 = normalizeTranscriptTurn(turn, 'meeting.txt', 0, 'meeting.txt');
+    const r1 = normalizeTranscriptTurn(turn, 'meeting.txt', 'meeting.txt');
+    const r2 = normalizeTranscriptTurn(turn, 'meeting.txt', 'meeting.txt');
     // Same content → same hash → same external_id (dedup fires)
     expect(r1.external_id).toBe(r2.external_id);
   });
@@ -202,7 +202,7 @@ describe('normalizeTranscriptTurn', () => {
   it('redacts GitHub token in turn content while preserving speaker name (D-63/T-06-19)', () => {
     const token = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcd';
     const turn = { speaker: 'Jane Doe', text: `use this token: ${token}` };
-    const record = normalizeTranscriptTurn(turn, 'standup.txt', 0, 'standup.txt');
+    const record = normalizeTranscriptTurn(turn, 'standup.txt', 'standup.txt');
     expect(record.content).not.toContain(token);
     expect(record.content).toContain('[REDACTED:API_KEY]');
     // Speaker name preserved in the header
@@ -211,7 +211,7 @@ describe('normalizeTranscriptTurn', () => {
 
   it('origin is HARD-CODED observed — never asserted_by_user (T-06-18)', () => {
     const turn = { speaker: 'Max', text: 'this is my own words' };
-    const record = normalizeTranscriptTurn(turn, 'notes.txt', 0, 'notes.txt');
+    const record = normalizeTranscriptTurn(turn, 'notes.txt', 'notes.txt');
     expect(record.origin).toBe('observed');
     expect(record.origin).not.toBe('asserted_by_user');
   });

@@ -28,7 +28,35 @@
  *  - No credentials at construction time (constructor is side-effect-free for tests).
  *  - MockSourceAdapter is deterministic (scripted queue), no network.
  */
+import { createHash } from 'node:crypto';
 import type { Origin, EpisodeRole } from '../lib/types';
+
+// ---------------------------------------------------------------------------
+// Content-addressed external_id helper for mutable-file sources (CR-01 / D-59)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a content-addressed external_id for file-based sources (D-59 / CR-01).
+ *
+ * Returns `${relPath}#${sha256(content).slice(0, 16)}` where content is the
+ * REDACTED string placed on the NormalizedRecord (post-redactSecrets).
+ *
+ * Contract:
+ *  - Editing a note/turn changes content → new hash → new external_id →
+ *    a new episode is inserted, letting the consolidator reconcile the change.
+ *  - Re-reading the same file without changes → identical hash → same external_id →
+ *    INSERT OR IGNORE dedups the row (idempotent re-ingest preserved).
+ *  - Two sections/turns with byte-identical content dedup to one episode — intended.
+ *
+ * Used ONLY by file adapters (obsidian, granola/transcript).
+ * Gmail uses immutable message-ids; do NOT apply here.
+ *
+ * @param relPath  Path relative to the adapter's root directory (e.g. 'folder/note.md').
+ * @param content  Post-redaction episode text (the exact NormalizedRecord.content value).
+ */
+export function contentExternalId(relPath: string, content: string): string {
+  return `${relPath}#${createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 16)}`;
+}
 
 // ---------------------------------------------------------------------------
 // Normalized record — the unit emitted by SourceAdapter.pull()
@@ -64,11 +92,18 @@ export interface NormalizedRecord {
   source: string;
 
   /**
-   * Stable dedup key for this record within the source (D-59).
-   * Format examples:
-   *   Gmail:      '<rfc2822-message-id>'
-   *   Granola:    '<filename>#<turn-idx>'
-   *   Obsidian:   '<vault-relative-path>#<section-slug>'
+   * Stable dedup key for this record within the source (D-59 / CR-01).
+   * Format by source type:
+   *   Gmail:       '<rfc2822-message-id>'          (immutable — message-id never changes)
+   *   Granola:     contentExternalId(relPath, content)  = '<relPath>#<sha256[:16]>'
+   *   Obsidian:    contentExternalId(relPath, content)  = '<relPath>#<sha256[:16]>'
+   *
+   * File adapters (granola, obsidian) use content-addressing (CR-01 fix): editing a
+   * note/turn changes the content string → new hash → new external_id → new episode →
+   * consolidator reconciles the update.  Re-reading unchanged content → same hash →
+   * same external_id → INSERT OR IGNORE dedups (idempotent re-ingest preserved).
+   * Gmail uses immutable message-ids and is correct as-is; do NOT change it.
+   *
    * Combined with source in UNIQUE(source, external_id) for idempotent dedup.
    */
   external_id: string;

@@ -14,9 +14,10 @@
  *        the adapter — one NormalizedRecord per speaker turn. The 8KB cap is
  *        applied downstream by capContent; a single over-long turn is one record
  *        (truncated at append), preserving turn granularity.
- *  D-59: external_id = <relPathFromDir>#<turnIdx>; stable across re-runs for
- *        UNIQUE(source, external_id) dedup. Inline provenance header =
- *        "[<basename>] <speaker>:" prepended to every turn.
+ *  D-59: external_id = contentExternalId(relPath, content) = `<relPath>#<sha256[:16]>`
+ *        (content-addressed — CR-01 fix: edit → new hash → new episode → consolidator
+ *        reconciles; unchanged re-read → same hash → INSERT OR IGNORE dedups).
+ *        Inline provenance header = "[<basename>] <speaker>:" prepended to every turn.
  *  D-61: origin HARD-CODED 'observed' — spoken communication, including the
  *        founder's own turns, is observed, not asserted. Must earn confidence
  *        through consolidation. NEVER the founder-curated origin (T-06-18 guard).
@@ -43,6 +44,7 @@ import type { EngineConfig } from '../lib/config';
 import type { Clock } from '../lib/clock';
 import { realClock } from '../lib/clock';
 import type { SourceAdapter, NormalizedRecord } from './source-adapter';
+import { contentExternalId } from './source-adapter';
 import { redactSecrets } from './redact';
 import type { SemanticStore } from '../db/semantic-store';
 
@@ -203,20 +205,18 @@ function parseVtt(content: string): SpeakerTurn[] {
  *  source:      'granola' (canonical transcript source tag, cursor:granola/D-67)
  *  origin:      'observed' (HARD-CODED, D-61/T-06-18)
  *  role:        'user'
- *  external_id: `${fileRelPath}#${turnIdx}` (D-59 stable dedup key)
+ *  external_id: contentExternalId(fileRelPath, content) (D-59 / CR-01 content-addressed key)
  *
  * The 8KB cap is applied downstream by capContent — if a single turn exceeds
  * the cap it is one record (truncated at append), per D-58 turn-granularity.
  *
  * @param turn          Parsed speaker turn.
  * @param fileBasename  Filename without directory (for the provenance header).
- * @param turnIdx       Zero-based index of this turn within the file.
  * @param fileRelPath   Path relative to transcripts.dir root (for external_id).
  */
 export function normalizeTranscriptTurn(
   turn: SpeakerTurn,
   fileBasename: string,
-  turnIdx: number,
   fileRelPath: string,
 ): NormalizedRecord {
   const header = `[${fileBasename}] ${turn.speaker}:`;
@@ -227,7 +227,10 @@ export function normalizeTranscriptTurn(
     source: 'granola',
     origin: 'observed',
     role: 'user',
-    external_id: `${fileRelPath}#${turnIdx}`,
+    // D-59 content-addressed dedup key (CR-01): <relPath>#<sha256(content)[:16]>
+    // Editing a turn changes content → new hash → new external_id → new episode.
+    // Unchanged re-read → same hash → INSERT OR IGNORE dedups (idempotent).
+    external_id: contentExternalId(fileRelPath, content),
   };
 }
 
@@ -354,11 +357,8 @@ export class TranscriptAdapter implements SourceAdapter {
 
           const turns = parseTranscript(content, ext);
           const basename = path.basename(entry);
-          for (let i = 0; i < turns.length; i++) {
-            const turn = turns[i];
-            if (turn !== undefined) {
-              records.push(normalizeTranscriptTurn(turn, basename, i, entryRel));
-            }
+          for (const turn of turns) {
+            records.push(normalizeTranscriptTurn(turn, basename, entryRel));
           }
         }
       }

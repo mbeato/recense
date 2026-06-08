@@ -115,46 +115,46 @@ describe('normalizeObsidianNote — NormalizedRecord construction', () => {
   };
 
   it('builds [[title]] provenance header prefixed in content', () => {
-    const record = normalizeObsidianNote(plainSection, 'My Note', 0, 'folder/My Note.md');
+    const record = normalizeObsidianNote(plainSection, 'My Note', 'folder/My Note.md');
     expect(record.content).toContain('[[My Note]]');
   });
 
   it('content includes section text after the header', () => {
-    const record = normalizeObsidianNote(plainSection, 'My Note', 0, 'folder/My Note.md');
+    const record = normalizeObsidianNote(plainSection, 'My Note', 'folder/My Note.md');
     expect(record.content).toContain('Some content with [[Project X]].');
   });
 
   it('sets source = "obsidian"', () => {
-    const record = normalizeObsidianNote(plainSection, 'My Note', 0, 'folder/My Note.md');
+    const record = normalizeObsidianNote(plainSection, 'My Note', 'folder/My Note.md');
     expect(record.source).toBe('obsidian');
   });
 
   it('sets origin = "asserted_by_user" (D-61 — only adapter with this origin)', () => {
-    const record = normalizeObsidianNote(plainSection, 'My Note', 0, 'folder/My Note.md');
+    const record = normalizeObsidianNote(plainSection, 'My Note', 'folder/My Note.md');
     expect(record.origin).toBe('asserted_by_user');
   });
 
   it('sets role = "user"', () => {
-    const record = normalizeObsidianNote(plainSection, 'My Note', 0, 'folder/My Note.md');
+    const record = normalizeObsidianNote(plainSection, 'My Note', 'folder/My Note.md');
     expect(record.role).toBe('user');
   });
 
   it('external_id is content-addressed: <relPath>#<16-hex-hash> (CR-01)', () => {
-    const record = normalizeObsidianNote(plainSection, 'My Note', 2, 'folder/My Note.md');
+    const record = normalizeObsidianNote(plainSection, 'My Note', 'folder/My Note.md');
     expect(record.external_id).toMatch(/^folder\/My Note\.md#[0-9a-f]{16}$/);
   });
 
   it('different section content → different external_id; same content → same external_id (CR-01)', () => {
     const sectionA: NoteSection = { heading: null, text: 'Content of section A.' };
     const sectionB: NoteSection = { heading: null, text: 'Content of section B — different text.' };
-    const r0 = normalizeObsidianNote(sectionA, 'Note', 0, 'n.md');
-    const r1 = normalizeObsidianNote(sectionB, 'Note', 1, 'n.md');
+    const r0 = normalizeObsidianNote(sectionA, 'Note', 'n.md');
+    const r1 = normalizeObsidianNote(sectionB, 'Note', 'n.md');
     // Different content → different external_id
     expect(r0.external_id).not.toBe(r1.external_id);
     expect(r0.external_id).toMatch(/^n\.md#[0-9a-f]{16}$/);
     expect(r1.external_id).toMatch(/^n\.md#[0-9a-f]{16}$/);
     // Same content + same relPath → same external_id (idempotent dedup)
-    const r0b = normalizeObsidianNote(sectionA, 'Note', 0, 'n.md');
+    const r0b = normalizeObsidianNote(sectionA, 'Note', 'n.md');
     expect(r0b.external_id).toBe(r0.external_id);
   });
 
@@ -163,7 +163,7 @@ describe('normalizeObsidianNote — NormalizedRecord construction', () => {
       heading: null,
       text: 'See [[Project Alpha]] and [[Task B]].',
     };
-    const record = normalizeObsidianNote(wikiSection, 'Notes', 0, 'notes.md');
+    const record = normalizeObsidianNote(wikiSection, 'Notes', 'notes.md');
     expect(record.content).toContain('[[Project Alpha]]');
     expect(record.content).toContain('[[Task B]]');
   });
@@ -174,7 +174,7 @@ describe('normalizeObsidianNote — NormalizedRecord construction', () => {
       // AKIAIOSFODNN7EXAMPLE = valid AKIA[0-9A-Z]{16} format
       text: 'Key: AKIAIOSFODNN7EXAMPLE and see [[Project X]].',
     };
-    const record = normalizeObsidianNote(awsSection, 'Secrets Note', 0, 'secrets.md');
+    const record = normalizeObsidianNote(awsSection, 'Secrets Note', 'secrets.md');
     expect(record.content).not.toContain('AKIAIOSFODNN7EXAMPLE');
     expect(record.content).toContain('[REDACTED:AWS_KEY]');
     expect(record.content).toContain('[[Project X]]');
@@ -185,7 +185,7 @@ describe('normalizeObsidianNote — NormalizedRecord construction', () => {
       heading: null,
       text: 'token=supersecretvalue123',
     };
-    const record = normalizeObsidianNote(secretSection, 'Config', 0, 'config.md');
+    const record = normalizeObsidianNote(secretSection, 'Config', 'config.md');
     expect(record.content).not.toContain('supersecretvalue123');
     expect(record.content).toContain('[REDACTED:SECRET]');
   });
@@ -196,7 +196,7 @@ describe('normalizeObsidianNote — NormalizedRecord construction', () => {
       heading: '## Keys',
       text: '## Keys\nsk-abcdefghijklmnopqrstuvwxyz is my key',
     };
-    const record = normalizeObsidianNote(section, 'Setup', 0, 'setup.md');
+    const record = normalizeObsidianNote(section, 'Setup', 'setup.md');
     expect(record.content).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
     expect(record.content).toContain('[REDACTED:API_KEY]');
   });
@@ -204,7 +204,7 @@ describe('normalizeObsidianNote — NormalizedRecord construction', () => {
   it('no upsertNode or upsertEdge calls in the file (CONSOL-03 — enforced by grep, confirmed by test shape)', () => {
     // This is a design invariant verified by acceptance-criteria grep;
     // the test affirms the function returns a NormalizedRecord with no graph writes.
-    const record = normalizeObsidianNote(plainSection, 'Note', 0, 'note.md');
+    const record = normalizeObsidianNote(plainSection, 'Note', 'note.md');
     expect(record).toHaveProperty('content');
     expect(record).toHaveProperty('source');
     expect(record).toHaveProperty('origin');
@@ -430,16 +430,16 @@ describe('normalizeObsidianNote — content-addressed external_id (CR-01)', () =
   it('edited section text → different external_id (edit must re-ingest)', () => {
     const original: NoteSection = { heading: null, text: 'Original note text.' };
     const edited: NoteSection = { heading: null, text: 'Edited note text — fact changed.' };
-    const r1 = normalizeObsidianNote(original, 'Note', 0, 'note.md');
-    const r2 = normalizeObsidianNote(edited, 'Note', 0, 'note.md');
+    const r1 = normalizeObsidianNote(original, 'Note', 'note.md');
+    const r2 = normalizeObsidianNote(edited, 'Note', 'note.md');
     // Different content → different hash → different external_id
     expect(r1.external_id).not.toBe(r2.external_id);
   });
 
   it('identical section text → same external_id (idempotent dedup)', () => {
     const section: NoteSection = { heading: null, text: 'Stable content, never changes.' };
-    const r1 = normalizeObsidianNote(section, 'Note', 0, 'note.md');
-    const r2 = normalizeObsidianNote(section, 'Note', 0, 'note.md');
+    const r1 = normalizeObsidianNote(section, 'Note', 'note.md');
+    const r2 = normalizeObsidianNote(section, 'Note', 'note.md');
     // Same content → same hash → same external_id (dedup fires)
     expect(r1.external_id).toBe(r2.external_id);
   });
