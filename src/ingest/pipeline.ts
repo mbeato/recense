@@ -29,6 +29,17 @@ export interface RecordEventParams {
   origin: Origin;
   sessionId: string;
   sourceInferenceId?: string;
+  /**
+   * Source adapter name (D-57). Defaults to 'claude-code' — zero behavior change on
+   * existing call sites. Wave 2/3 adapters supply this so gate.score() applies
+   * sourceWeights scoring centrally, keeping per-source salience honest (D-03/D-60).
+   */
+  source?: string;
+  /**
+   * Per-source dedup key (D-59). Null / omitted = no dedup (each append is distinct).
+   * Adapters set this to a stable message/note identifier so re-ingestion is idempotent.
+   */
+  externalId?: string | null;
 }
 
 export class IngestionPipeline {
@@ -40,12 +51,17 @@ export class IngestionPipeline {
   /**
    * Score and unconditionally append a conversation event.
    *
-   * 1. Calls gate.score(content, role) → { salience, hardKeep }
-   * 2. Calls store.append() with the gate's output — always, no conditional.
-   * 3. Returns the stored EpisodeRow (with honest salience persisted, D-03).
+   * 1. Resolves source (default 'claude-code') so gate.score() applies per-source
+   *    sourceWeights centrally — adapters (Wave 2/3) call recordEvent with source
+   *    so scoring stays honest and in one place (D-57/D-60).
+   * 2. Calls gate.score(content, role, source) → { salience, hardKeep }
+   * 3. Calls store.append() with the gate's output — always, no conditional (INGEST-01).
+   * 4. Returns the stored EpisodeRow (honest salience persisted, D-03; dedup-aware, D-59).
    */
   recordEvent(e: RecordEventParams): EpisodeRow {
-    const { salience, hardKeep } = this.gate.score(e.content, e.role);
+    // Resolve source so all callers default to 'claude-code' without code changes
+    const source = e.source ?? 'claude-code';
+    const { salience, hardKeep } = this.gate.score(e.content, e.role, source);
     return this.store.append({
       content: e.content,
       role: e.role,
@@ -54,6 +70,8 @@ export class IngestionPipeline {
       source_inference_id: e.sourceInferenceId ?? null,
       salience,
       hard_keep: hardKeep ? 1 : 0,
+      source,
+      external_id: e.externalId ?? null,
     });
   }
 }

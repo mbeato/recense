@@ -38,7 +38,8 @@ import type { CandidateRetriever } from '../retrieval/topk';
 import { cosineSimF32 } from '../retrieval/topk';
 import type { JudgeRelation } from '../model/judge';
 import type { ModelProvider } from '../model/provider';
-import { parseClaims, EXTRACTION_PROMPT } from '../model/claim-extractor';
+import { parseClaims } from '../model/claim-extractor';
+import { promptForSource } from '../source/extraction-prompts';
 import type { Origin, PendingContradiction, EpisodeRow } from '../lib/types';
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
@@ -199,12 +200,14 @@ export class Consolidator {
     const unconsolidated = this.episodes.listUnconsolidated();
 
     for (let episode of unconsolidated) {
-      // CONSOL-01: per-role skip — assistant turns have a higher threshold because they
-      // average 4.5× the length of user turns and are mostly restatement (D-13).
-      // consolSkipThreshold (0.2) remains the default for user/tool roles.
-      const skipThreshold = episode.role === 'assistant'
-        ? this.config.consolSkipThresholdAssistant
-        : this.config.consolSkipThreshold;
+      // CONSOL-01: per-source + per-role skip threshold (D-60).
+      // Per-source override wins when present (e.g. gmail 0.4); otherwise falls back to
+      // the per-role default (assistant 0.5, all other roles 0.2). LLM-free at the gate.
+      const skipThreshold =
+        this.config.salience.consolSkipThresholdBySource[episode.source] ??
+        (episode.role === 'assistant'
+          ? this.config.consolSkipThresholdAssistant
+          : this.config.consolSkipThreshold);
       if (episode.salience < skipThreshold && episode.hard_keep === 0) {
         continue;
       }
@@ -239,9 +242,10 @@ export class Consolidator {
       // ── Per-episode Phase A: all async work into plain array ───────────
       const claimOrigin: Origin = episode.origin; // inherit episode origin (T-02-SELFCONF)
       // Claim extraction via ModelProvider.generate (SEAM-01, D-46):
-      // EXTRACTION_PROMPT + role forms the full prompt; parseClaims handles the raw response.
+      // promptForSource(source) selects the per-source extraction prefix (D-62);
+      // role + content suffix is identical across every source — zero new extract plumbing.
       const extractText = await this.provider.generate(
-        EXTRACTION_PROMPT + episode.role + '\n\nDocument content:\n' + episode.content,
+        promptForSource(episode.source) + episode.role + '\n\nDocument content:\n' + episode.content,
         { maxTokens: 2048 },
       );
       const claims = parseClaims(extractText);
