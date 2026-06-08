@@ -5,42 +5,41 @@
  * SessionStart and retrieval paths are NOT modified and remain cue-less/LLM-free.
  *
  * Design:
- *  - Online embed via Embedder seam (D-41): one call per recall, off the hot path.
+ *  - Online embed via ModelProvider.embed seam (D-41): one call per recall, off the hot path.
  *  - 1-hop neighborhood from bestMatch.getOutEdges (D-42): budget-capped, tombstoned excluded.
  *  - Schema identification: if the topk best match is a schema node, use it directly
  *    (Case A). Otherwise walk INCOMING edges of bestMatch — any edge with kind='abstracts'
  *    whose src is a live schema node resolves the prior (Case B, reverse-lookup).
  *    Schema-induction creates schema→member edges; most queries match members, so
  *    Case B is the common path (Fix-2, LEARN-02).
- *  - LLM compose via createAnthropicClient (D-43, T-02-PARSE safe fallback).
+ *  - LLM compose via ModelProvider.generate (D-43, T-02-PARSE safe fallback).
  *  - Episode append: ONLY write in this path — origin='inferred', role='assistant', salience=0.
  *
  * Hard invariants:
  *  - NEVER calls store.upsertNode/upsertEdge/tombstone or strength.strengthen.
  *    The inference is NEVER a graph fact (LEARN-02 ephemeral-as-fact guarantee).
  *  - All time reads via this.clock.nowMs() (D-12).
- *  - Keys from process.env via SDK defaults — never literals, never logged (T-04-03-K).
+ *  - Keys from process.env via SDK defaults — never literals, never logged (T-04-03-K, T-05-KEY).
  *  - Query is treated as data (embedded + placed in prompt as content), never executed
  *    or shell-interpolated (T-04-03-I).
  *
  * Threat mitigations:
  *  - T-04-03-I: query length-bounded (MAX_QUERY_BYTES); never shell-interpolated.
  *  - T-04-03-SC: no upsertNode/upsertEdge/strengthen calls. Asserted via source grep.
- *  - T-04-03-K: createAnthropicClient reads ANTHROPIC_API_KEY from env via SDK default.
+ *  - T-04-03-K: ModelProvider reads API keys from env via SDK defaults (DefaultModelProvider).
  *  - T-04-03-P: compose output parsed with safe fallback — null inference on malformed/empty.
  *  - T-04-03-R: SessionStart CLI unchanged; this is the only online-embed path in Phase 4.
  *  - T-04-03-Tlock: acquireLock before DB open in recall-cli (single-writer for D-43 append).
+ *  - T-05-02-KEY: provider names logged, not keys — T-03-2 discipline preserved.
  */
 import Database from 'better-sqlite3';
-import Anthropic from '@anthropic-ai/sdk';
 import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
-import type { Embedder } from '../model/embedder';
+import type { ModelProvider } from '../model/provider';
 import { CandidateRetriever } from '../retrieval/topk';
 import { SemanticStore } from '../db/semantic-store';
 import { StrengthDecayManager } from '../strength/decay';
 import { EpisodicStore } from '../db/episode-store';
-import { createAnthropicClient, type AnthropicLike } from '../model/anthropic-client';
 
 // T-04-03-I: bound query length to cap compose prompt size (4 KB is generous)
 const MAX_QUERY_BYTES = 4_000;
@@ -56,21 +55,11 @@ export interface RecallResult {
 
 const NULL_RESULT: RecallResult = { inference: null, episodeId: null, origin: 'inferred' };
 
-/**
- * Optional injectable factory for the Anthropic client.
- *
- * Production: omit — defaults to createAnthropicClient (reads ANTHROPIC_API_KEY from env).
- * Tests: inject a stub returning deterministic text to avoid any network calls.
- *
- * Mirrors the NamingFn injection pattern from SchemaInducer (04-01).
- */
-export type RecallAnthropicFactory = (config: EngineConfig) => { client: AnthropicLike; model: string };
-
 export class RecallEngine {
   private readonly clock: Clock;
   private readonly config: EngineConfig;
-  /** Online Embedder — used ONLY on this latency-tolerant path (D-41). */
-  private readonly embedder: Embedder;
+  /** ModelProvider — embed head used ONLY on this latency-tolerant path (D-41). */
+  private readonly provider: ModelProvider;
   private readonly retriever: CandidateRetriever;
   private readonly store: SemanticStore;
   /**
@@ -79,29 +68,26 @@ export class RecallEngine {
    */
   private readonly strength: StrengthDecayManager;
   private readonly episodes: EpisodicStore;
-  private readonly anthropicFactory: RecallAnthropicFactory;
 
   constructor(
     db: Database.Database, // part of DI pattern; all reads go through store/retriever
     clock: Clock,
     config: EngineConfig,
-    embedder: Embedder,
+    provider: ModelProvider,
     retriever: CandidateRetriever,
     store: SemanticStore,
     strength: StrengthDecayManager,
     episodes: EpisodicStore,
-    anthropicFactory?: RecallAnthropicFactory,
   ) {
     // Suppress unused-variable lint for the db parameter (held for DI symmetry):
     void db;
     this.clock = clock;
     this.config = config;
-    this.embedder = embedder;
+    this.provider = provider;
     this.retriever = retriever;
     this.store = store;
     this.strength = strength;
     this.episodes = episodes;
-    this.anthropicFactory = anthropicFactory ?? createAnthropicClient;
   }
 
   /**
@@ -119,7 +105,7 @@ export class RecallEngine {
     const boundedQuery = query.slice(0, MAX_QUERY_BYTES);
 
     // ── (1) Online cue embed — the ONLY permitted online embed in Phase 4 (D-41) ──
-    const [cueVec] = await this.embedder.embed([boundedQuery]);
+    const [cueVec] = await this.provider.embed([boundedQuery]);
     if (!cueVec) return NULL_RESULT;
 
     // ── (2) Top match via CandidateRetriever ──────────────────────────────────
@@ -186,8 +172,6 @@ export class RecallEngine {
     // ── (4) Compose inference via schema-prior (T-04-03-P safe fallback) ─────
     let inferenceText: string | null = null;
     try {
-      const { client, model } = this.anthropicFactory(this.config);
-
       // Build neighborhood lines excluding the schema node itself
       const neighborLines = neighborhood
         .filter(n => n.id !== schemaNode!.id)
@@ -203,18 +187,8 @@ export class RecallEngine {
         `Based on the schema and related memories, provide a concise factual inference. ` +
         `If you cannot make a meaningful inference, respond with exactly: null`;
 
-      const msg = await client.messages.create({
-        model,
-        max_tokens: 512,
-        messages: [{ role: 'user', content: prompt }],
-      });
-
-      // Extract text blocks; T-02-PARSE safe fallback on malformed or empty output
-      const text = msg.content
-        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-        .map(b => b.text)
-        .join('')
-        .trim();
+      // T-05-KEY: provider.generate reads API keys from env via SDK (DefaultModelProvider)
+      const text = (await this.provider.generate(prompt, { maxTokens: 512 })).trim();
 
       // null on empty or explicit "null" LLM response (T-02-PARSE)
       if (!text || text.toLowerCase() === 'null') {

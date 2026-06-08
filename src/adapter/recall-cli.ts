@@ -14,8 +14,8 @@
  * Threat mitigations:
  *  - T-04-03-Tlock: acquireLock() before DB open; releaseLock() in finally.
  *  - T-04-03-I: --query argv is passed directly as data; never interpolated in shell.
- *  - T-04-03-K: OpenAIEmbedder reads OPENAI_API_KEY from env; createAnthropicClient reads
- *    ANTHROPIC_API_KEY from env. Neither key is logged, committed, or written to stdout.
+ *  - T-04-03-K / T-05-02-KEY: DefaultModelProvider reads API keys from env via SDK defaults.
+ *    Neither key is logged, committed, or written to stdout.
  *  - T-04-03-R: SessionStart CLI (session-start-cli.ts) is not modified; stays cue-less.
  */
 import { appendFileSync } from 'fs';
@@ -27,7 +27,7 @@ import { EpisodicStore } from '../db/episode-store';
 import { SemanticStore } from '../db/semantic-store';
 import { StrengthDecayManager } from '../strength/decay';
 import { CandidateRetriever } from '../retrieval/topk';
-import { OpenAIEmbedder } from '../model/embedder';
+import { DefaultModelProvider } from '../model/provider';
 import { RecallEngine } from '../recall';
 import { acquireLock, releaseLock } from './lockfile';
 
@@ -107,12 +107,12 @@ async function main(): Promise<void> {
     const strength = new StrengthDecayManager(db, realClock, config);
     const retriever = new CandidateRetriever(db);
 
-    // T-04-03-K: keys read from process.env via SDK defaults
-    const embedder = new OpenAIEmbedder(config.openaiEmbedModel, config.embeddingDimensions);
+    // T-04-03-K / T-05-02-KEY: keys read from process.env by SDK inside DefaultModelProvider.
+    // Resolved provider names are logged by the caller (never secrets).
+    const provider = new DefaultModelProvider({ generateConfig: config, judgeConfig: config, embedConfig: config });
 
     const engine = new RecallEngine(
-      db, realClock, config, embedder, retriever, store, strength, episodes,
-      // No anthropicFactory supplied — defaults to createAnthropicClient
+      db, realClock, config, provider, retriever, store, strength, episodes,
     );
 
     // ── 5. Run recall and emit JSON to stdout ─────────────────────────────

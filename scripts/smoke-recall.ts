@@ -12,7 +12,7 @@
  *   5. Build RecallEngine and run recall("<question the schema should answer>").
  *   6. Print the returned JSON and assert node count is unchanged.
  *
- * Dependencies: OPENAI_API_KEY + ANTHROPIC_API_KEY.
+ * Dependencies: OPENAI_API_KEY (embed) + ANTHROPIC_API_KEY (compose).
  * NOT part of the automated vitest gate — requires real API keys and a populated brain.db
  * that has previously been through the sleep pass (to have schema nodes + embeddings).
  *
@@ -33,7 +33,7 @@ import { EpisodicStore } from '../src/db/episode-store';
 import { SemanticStore } from '../src/db/semantic-store';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { CandidateRetriever } from '../src/retrieval/topk';
-import { OpenAIEmbedder } from '../src/model/embedder';
+import { DefaultModelProvider } from '../src/model/provider';
 import { RecallEngine } from '../src/recall';
 
 /**
@@ -91,11 +91,11 @@ async function main(): Promise<void> {
     const strength = new StrengthDecayManager(db, realClock, config);
     const retriever = new CandidateRetriever(db);
 
-    // T-04-03-K: keys from process.env via SDK default
-    const embedder = new OpenAIEmbedder(config.openaiEmbedModel, config.embeddingDimensions);
+    // T-04-03-K / T-05-02-KEY: keys read from process.env by SDK inside DefaultModelProvider
+    const provider = new DefaultModelProvider({ generateConfig: config, judgeConfig: config, embedConfig: config });
 
     const engine = new RecallEngine(
-      db, realClock, config, embedder, retriever, store, strength, episodes,
+      db, realClock, config, provider, retriever, store, strength, episodes,
     );
 
     // ── 6. Run recall ─────────────────────────────────────────────────────────

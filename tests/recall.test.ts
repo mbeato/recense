@@ -2,7 +2,7 @@
  * Behavioral tests for RecallEngine (on-demand recall, LEARN-02).
  *
  * Harness: in-memory Database, initSchema, FakeClock, DEFAULT_CONFIG,
- * MockEmbedder, no network (AnthropicLike stub). Mirrors schema-induction.test.ts.
+ * ModelProvider mock, no network. Mirrors schema-induction.test.ts.
  *
  * Coverage:
  *   LEARN-02  — recall returns origin:'inferred', non-null episodeId, appends inferred episode
@@ -11,9 +11,11 @@
  *   D-42      — neighborhood respects recallNeighborhoodBudget; tombstoned neighbors excluded
  *   D-43      — inference logged as inferred-origin episode with role:'assistant'
  *   T-02-PARSE — null inference on empty/malformed compose output
+ *
+ * Phase-5 Plan-02 migration: RecallEngine now takes a single ModelProvider instead of
+ * separate Embedder + optional AnthropicFactory. Tests use MockModelProvider.
  */
 import Database from 'better-sqlite3';
-import Anthropic from '@anthropic-ai/sdk';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { initSchema } from '../src/db/schema';
 import { FakeClock } from '../src/lib/clock';
@@ -23,8 +25,8 @@ import { SemanticStore } from '../src/db/semantic-store';
 import { EpisodicStore } from '../src/db/episode-store';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { CandidateRetriever } from '../src/retrieval/topk';
-import { MockEmbedder } from '../src/model/embedder';
-import type { AnthropicLike } from '../src/model/anthropic-client';
+import { MockModelProvider } from '../src/model/provider';
+import type { ModelProvider } from '../src/model/provider';
 import type { EpisodeRow } from '../src/lib/types';
 import { RecallEngine } from '../src/recall';
 import type { RecallResult } from '../src/recall';
@@ -35,60 +37,48 @@ import { newId } from '../src/lib/hash';
 // ---------------------------------------------------------------------------
 
 /**
- * Create an injectable Anthropic factory returning a fixed inference string.
- * Never makes network calls.
+ * Create a MockModelProvider for recall tests.
+ * embed head: unit vector in dim 0 for any text (matches query embedding).
+ * generate head: scripted to return a fixed inference string.
+ * judge head: empty (recall never calls judge).
  */
-function makeStubAnthropicFactory(
-  inference = 'test inference from schema prior'
-): (config: EngineConfig) => { client: AnthropicLike; model: string } {
-  return (_config) => ({
-    client: {
-      messages: {
-        create: async (_params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message> =>
-          ({
-            id: 'msg_test',
-            content: [{ type: 'text' as const, text: inference }],
-            model: 'test-model',
-            role: 'assistant' as const,
-            stop_reason: 'end_turn' as const,
-            stop_sequence: null,
-            type: 'message' as const,
-            usage: { input_tokens: 10, output_tokens: 20 },
-          } as Anthropic.Message),
-      },
+function makeStubProvider(
+  dims: number,
+  inference = 'test inference from schema prior',
+): MockModelProvider {
+  return new MockModelProvider({
+    embedFn: (_text: string) => {
+      const vec = new Float32Array(dims);
+      vec[0] = 1.0;
+      return vec;
     },
-    model: 'test-model',
+    generateScript: [inference],
   });
 }
 
 /**
- * Create a capturing factory that records the prompt string and returns a fixed response.
+ * Create a capturing ModelProvider that records the prompt string and returns a fixed response.
+ * Useful for asserting that specific context appears in the compose prompt.
  */
-function makeCapturingFactory(
+function makeCapturingProvider(
+  dims: number,
   onPrompt: (prompt: string) => void,
-  responseText = 'captured inference'
-): (config: EngineConfig) => { client: AnthropicLike; model: string } {
-  return (_config) => ({
-    client: {
-      messages: {
-        create: async (params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message> => {
-          const content = params.messages[0]?.content;
-          onPrompt(typeof content === 'string' ? content : '');
-          return {
-            id: 'msg_test',
-            content: [{ type: 'text' as const, text: responseText }],
-            model: 'test-model',
-            role: 'assistant' as const,
-            stop_reason: 'end_turn' as const,
-            stop_sequence: null,
-            type: 'message' as const,
-            usage: { input_tokens: 10, output_tokens: 5 },
-          } as Anthropic.Message;
-        },
-      },
+  responseText = 'captured inference',
+): ModelProvider {
+  return {
+    async embed(texts: string[]): Promise<Float32Array[]> {
+      const vec = new Float32Array(dims);
+      vec[0] = 1.0;
+      return texts.map(() => vec.slice());
     },
-    model: 'test-model',
-  });
+    async generate(prompt: string): Promise<string> {
+      onPrompt(prompt);
+      return responseText;
+    },
+    async judge(): Promise<never> {
+      throw new Error('judge should not be called in recall tests');
+    },
+  };
 }
 
 interface Harness {
@@ -99,8 +89,6 @@ interface Harness {
   strength: StrengthDecayManager;
   retriever: CandidateRetriever;
   config: EngineConfig;
-  /** Default MockEmbedder: every text → unit vector in dim 0. Matches query embedding. */
-  embedder: MockEmbedder;
 }
 
 function makeHarness(configOverrides?: Partial<EngineConfig>): Harness {
@@ -112,13 +100,7 @@ function makeHarness(configOverrides?: Partial<EngineConfig>): Harness {
   const episodes = new EpisodicStore(db, clock, config);
   const strength = new StrengthDecayManager(db, clock, config);
   const retriever = new CandidateRetriever(db);
-  // Default: every text → unit vector in dim 0 (matches query embedding)
-  const embedder = new MockEmbedder((_text: string) => {
-    const vec = new Float32Array(config.embeddingDimensions);
-    vec[0] = 1.0;
-    return vec;
-  });
-  return { db, clock, store, episodes, strength, retriever, config, embedder };
+  return { db, clock, store, episodes, strength, retriever, config };
 }
 
 /**
@@ -150,13 +132,25 @@ async function seedNodeWithEmbedding(
   return id;
 }
 
-function makeEngine(
-  h: Harness,
-  factory?: (config: EngineConfig) => { client: AnthropicLike; model: string }
-): RecallEngine {
+/**
+ * Build a RecallEngine with an optional ModelProvider.
+ * Default provider: unit-vector embed (dim 0) + empty generate queue
+ * (throws if called, which is the correct behavior for tests that expect NULL_RESULT).
+ */
+function makeEngine(h: Harness, provider?: ModelProvider): RecallEngine {
+  const defaultProvider = new MockModelProvider({
+    embedFn: (_text: string) => {
+      const vec = new Float32Array(h.config.embeddingDimensions);
+      vec[0] = 1.0;
+      return vec;
+    },
+    generateScript: [],  // throws if generate is unexpectedly called (safety net)
+    judgeScript: [],
+  });
   return new RecallEngine(
-    h.db, h.clock, h.config, h.embedder, h.retriever, h.store, h.strength, h.episodes,
-    factory,
+    h.db, h.clock, h.config,
+    provider ?? defaultProvider,
+    h.retriever, h.store, h.strength, h.episodes,
   );
 }
 
@@ -189,7 +183,7 @@ describe('RecallEngine', () => {
     });
     h.store.upsertEdge({ src: schemaId, dst: memberId, rel: 'abstracts', w: 0.8, kind: 'abstracts' });
 
-    const engine = makeEngine(h, makeStubAnthropicFactory('TypeScript suits large codebases'));
+    const engine = makeEngine(h, makeStubProvider(h.config.embeddingDimensions, 'TypeScript suits large codebases'));
     const result: RecallResult = await engine.recall('What do I know about TypeScript?', 'test-session');
 
     expect(result.origin).toBe('inferred');
@@ -224,7 +218,7 @@ describe('RecallEngine', () => {
     const nodeBefore = (h.db.prepare('SELECT count(*) as c FROM node').get() as { c: number }).c;
     const edgeBefore = (h.db.prepare('SELECT count(*) as c FROM edge').get() as { c: number }).c;
 
-    const engine = makeEngine(h, makeStubAnthropicFactory());
+    const engine = makeEngine(h, makeStubProvider(h.config.embeddingDimensions));
     await engine.recall('any question', 'test-session');
 
     const nodeAfter = (h.db.prepare('SELECT count(*) as c FROM node').get() as { c: number }).c;
@@ -237,11 +231,13 @@ describe('RecallEngine', () => {
   // ── Null result: empty embed (D-41) ─────────────────────────────────────
 
   it('returns null result when embedder returns no vector (empty embed)', async () => {
-    const emptyEmbedder: { embed: (texts: string[]) => Promise<Float32Array[]> } = {
+    const emptyProvider: ModelProvider = {
       embed: async (_texts) => [],
+      generate: async (_prompt) => { throw new Error('generate should not be called'); },
+      judge: async () => { throw new Error('judge should not be called'); },
     };
     const engine = new RecallEngine(
-      h.db, h.clock, h.config, emptyEmbedder, h.retriever, h.store, h.strength, h.episodes,
+      h.db, h.clock, h.config, emptyProvider, h.retriever, h.store, h.strength, h.episodes,
     );
     const result = await engine.recall('any query', 'test-session');
 
@@ -271,7 +267,11 @@ describe('RecallEngine', () => {
       vectorDim: 0, // best match for query
     });
 
-    const engine = makeEngine(h, makeStubAnthropicFactory('this should never appear'));
+    // generate never called (no schema found) → scripted but unconsumed is fine
+    const engine = makeEngine(
+      h,
+      makeStubProvider(h.config.embeddingDimensions, 'this should never appear'),
+    );
     const result = await engine.recall('any query', 'test-session');
 
     expect(result.inference).toBeNull();
@@ -309,7 +309,7 @@ describe('RecallEngine', () => {
     let capturedPrompt = '';
     const engine = makeEngine(
       h,
-      makeCapturingFactory((p) => { capturedPrompt = p; })
+      makeCapturingProvider(h.config.embeddingDimensions, (p) => { capturedPrompt = p; }),
     );
     await engine.recall('test query', 'test-session');
 
@@ -339,10 +339,12 @@ describe('RecallEngine', () => {
     }
 
     let capturedPrompt = '';
-    const factory = makeCapturingFactory((p) => { capturedPrompt = p; });
+    const provider = makeCapturingProvider(
+      h2.config.embeddingDimensions,
+      (p) => { capturedPrompt = p; },
+    );
     const engine = new RecallEngine(
-      h2.db, h2.clock, h2.config, h2.embedder, h2.retriever, h2.store, h2.strength, h2.episodes,
-      factory,
+      h2.db, h2.clock, h2.config, provider, h2.retriever, h2.store, h2.strength, h2.episodes,
     );
     await engine.recall('test query', 'test-session');
 
@@ -366,7 +368,7 @@ describe('RecallEngine', () => {
     });
     h.store.upsertEdge({ src: schemaId, dst: memberId, rel: 'abstracts', w: 0.8, kind: 'abstracts' });
 
-    const engine = makeEngine(h, makeStubAnthropicFactory('null'));
+    const engine = makeEngine(h, makeStubProvider(h.config.embeddingDimensions, 'null'));
     const result = await engine.recall('test', 'test-session');
 
     expect(result.inference).toBeNull();
@@ -392,7 +394,7 @@ describe('RecallEngine', () => {
     });
     h.store.upsertEdge({ src: schemaId, dst: memberId, rel: 'abstracts', w: 0.8, kind: 'abstracts' });
 
-    const engine = makeEngine(h, makeStubAnthropicFactory(''));
+    const engine = makeEngine(h, makeStubProvider(h.config.embeddingDimensions, ''));
     const result = await engine.recall('test', 'test-session');
 
     expect(result.inference).toBeNull();
@@ -421,7 +423,10 @@ describe('RecallEngine', () => {
     const nodeBefore = (h.db.prepare('SELECT count(*) as c FROM node').get() as { c: number }).c;
     const edgeBefore = (h.db.prepare('SELECT count(*) as c FROM edge').get() as { c: number }).c;
 
-    const engine = makeEngine(h, makeStubAnthropicFactory('TypeScript suits large codebases'));
+    const engine = makeEngine(
+      h,
+      makeStubProvider(h.config.embeddingDimensions, 'TypeScript suits large codebases'),
+    );
     const result: RecallResult = await engine.recall('What do I know about TypeScript?', 'test-session');
 
     // Recall must resolve the schema via reverse (incoming abstracts) lookup
@@ -469,7 +474,10 @@ describe('RecallEngine', () => {
     h.store.upsertEdge({ src: schemaId, dst: member1Id, rel: 'abstracts', w: 0.8, kind: 'abstracts' });
 
     let capturedPrompt = '';
-    const engine = makeEngine(h, makeCapturingFactory((p) => { capturedPrompt = p; }));
+    const engine = makeEngine(
+      h,
+      makeCapturingProvider(h.config.embeddingDimensions, (p) => { capturedPrompt = p; }),
+    );
     await engine.recall('TypeScript types', 'test-session');
 
     // Prompt must include the schema label and both members' values
@@ -482,12 +490,18 @@ describe('RecallEngine', () => {
 
   it('D-41: embeds the query cue exactly once', async () => {
     let embedCallCount = 0;
-    const countingEmbedder = {
-      embed: async (texts: string[]): Promise<Float32Array[]> => {
+    const countingProvider: ModelProvider = {
+      async embed(texts: string[]): Promise<Float32Array[]> {
         embedCallCount += texts.length;
         const vec = new Float32Array(h.config.embeddingDimensions);
         vec[0] = 1.0;
-        return texts.map(() => vec);
+        return texts.map(() => vec.slice());
+      },
+      async generate(_prompt: string): Promise<string> {
+        return 'counted inference';
+      },
+      async judge(): Promise<never> {
+        throw new Error('judge should not be called in embed count test');
       },
     };
 
@@ -504,8 +518,7 @@ describe('RecallEngine', () => {
     h.store.upsertEdge({ src: schemaId, dst: memberId, rel: 'abstracts', w: 0.8, kind: 'abstracts' });
 
     const engine = new RecallEngine(
-      h.db, h.clock, h.config, countingEmbedder, h.retriever, h.store, h.strength, h.episodes,
-      makeStubAnthropicFactory(),
+      h.db, h.clock, h.config, countingProvider, h.retriever, h.store, h.strength, h.episodes,
     );
     await engine.recall('test query', 'test-session');
 
