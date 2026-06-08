@@ -10,6 +10,9 @@
  *   Criterion 1 — changed fact reconciles (tombstoned old, new current, excluded from topk)
  *   Criterion 3 — N distinct-session contradictions force-destabilize regardless of strength
  *   Criterion 5 — two real reconciles: flip-back escalates to append-new (oscillation guard)
+ *
+ * Phase-5 Plan-02 migration: Consolidator now takes a single ModelProvider instead of
+ * separate Embedder/Judge/ClaimExtractor. Tests use MockModelProvider.
  */
 
 import Database from 'better-sqlite3';
@@ -23,11 +26,9 @@ import { EpisodicStore } from '../src/db/episode-store';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { CandidateRetriever } from '../src/retrieval/topk';
 import { MockEmbedder } from '../src/model/embedder';
-import type { Embedder } from '../src/model/embedder';
-import { MockJudge } from '../src/model/judge';
 import type { JudgeVerdict } from '../src/model/judge';
-import { MockClaimExtractor } from '../src/model/claim-extractor';
-import type { ExtractedClaim } from '../src/model/claim-extractor';
+import { MockModelProvider } from '../src/model/provider';
+import type { ModelProvider } from '../src/model/provider';
 import type { NodeRow, PendingContradiction } from '../src/lib/types';
 import { Consolidator } from '../src/consolidation/consolidator';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
@@ -39,13 +40,14 @@ import { newId } from '../src/lib/hash';
 
 /**
  * Returns a no-op SchemaInducer for consolidation tests.
- * Uses a zero-vector embedder (no clustering) and a stub naming function.
- * Schema induction is exercised separately in tests/schema-induction.test.ts.
+ * SchemaInducer now takes a ModelProvider — embed head unused in induceSchemas(),
+ * namingFn bypasses generate head. No-op provider suffices.
  */
 function makeNoOpSchemaInducer(h: Harness): SchemaInducer {
-  const noOpEmbedder = new MockEmbedder((_text: string) => new Float32Array(h.config.embeddingDimensions));
   return new SchemaInducer(
-    h.db, h.store, h.strength, h.retriever, noOpEmbedder, h.config, h.clock,
+    h.db, h.store, h.strength, h.retriever,
+    new MockModelProvider(),  // embed/generate heads unused when namingFn is provided
+    h.config, h.clock,
     async (_values: string[]) => 'no-op-schema',
   );
 }
@@ -55,36 +57,48 @@ function makeNoOpSchemaInducer(h: Harness): SchemaInducer {
 // ---------------------------------------------------------------------------
 
 /**
- * Hash-seeded synthetic embedder: maps text to a deterministic Float32Array of
- * config.embeddingDimensions length. Two texts with the same content produce
- * cosine similarity 1.0 (same vector); different texts produce near-zero.
+ * Hash-seeded synthetic embed function: maps text to a deterministic Float32Array.
+ * Two texts with the same content produce cosine similarity 1.0; different texts near-zero.
  */
-function makeSyntheticEmbedder(dims: number): MockEmbedder {
-  return new MockEmbedder((text: string) => {
+function makeSyntheticEmbedFn(dims: number): (text: string) => Float32Array {
+  return (text: string) => {
     const vec = new Float32Array(dims);
-    // Simple hash: use each character code to seed a direction
     let hash = 0;
     for (let i = 0; i < text.length; i++) {
       hash = ((hash << 5) - hash + text.charCodeAt(i)) >>> 0;
     }
-    // Place all weight on the dimension indexed by hash % dims
     vec[hash % dims] = 1.0;
     return vec;
-  });
+  };
 }
 
 /** Returns the same unit vector regardless of text — simulates cosine > threshold. */
-function makeAlwaysSameEmbedder(dims: number): MockEmbedder {
-  return new MockEmbedder((_text: string) => {
+function makeAlwaysSameEmbedFn(dims: number): (text: string) => Float32Array {
+  return (_text: string) => {
     const vec = new Float32Array(dims);
     vec[0] = 1.0;
     return vec;
-  });
+  };
 }
 
 /** Returns a zero-vector — cosine similarity 0. */
+function makeZeroEmbedFn(dims: number): (text: string) => Float32Array {
+  return (_text: string) => new Float32Array(dims);
+}
+
+/**
+ * Hash-seeded synthetic embedder: kept for standalone pre-seeding of node embeddings.
+ */
+function makeSyntheticEmbedder(dims: number): MockEmbedder {
+  return new MockEmbedder(makeSyntheticEmbedFn(dims));
+}
+
+function makeAlwaysSameEmbedder(dims: number): MockEmbedder {
+  return new MockEmbedder(makeAlwaysSameEmbedFn(dims));
+}
+
 function makeZeroEmbedder(dims: number): MockEmbedder {
-  return new MockEmbedder((_text: string) => new Float32Array(dims));
+  return new MockEmbedder(makeZeroEmbedFn(dims));
 }
 
 interface Harness {
@@ -130,11 +144,14 @@ describe('Consolidator', () => {
   // ── CONSOL-01: salience skip ─────────────────────────────────────────────
 
   it('CONSOL-01 skip: low-salience non-hard-keep episode produces no claims or decisions', async () => {
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'should be skipped' }]);
-    const judge = new MockJudge([]);
-    const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
+    // generateScript: non-empty but should never be consumed (episode is skipped)
+    const provider = new MockModelProvider({
+      embedFn: makeSyntheticEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'should be skipped' }])],
+      judgeScript: [],
+    });
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -152,17 +169,17 @@ describe('Consolidator', () => {
     // No nodes should have been appended
     const nodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
     expect(nodes).toHaveLength(0);
-    // Judge queue was never touched (we set it empty; if it were touched it would throw)
+    // Provider generate was never called (if it were, the queue would be consumed but not throw)
   });
 
   it('CONSOL-01 hard_keep override: low-salience hard_keep=1 episode IS processed', async () => {
-    const claim: ExtractedClaim = { type: 'fact', value: 'hard kept claim' };
-    const extractor = new MockClaimExtractor([claim]);
-    // No judge calls needed — no existing nodes, so auto-unrelated
-    const judge = new MockJudge([]);
-    const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
+    const provider = new MockModelProvider({
+      embedFn: makeSyntheticEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'hard kept claim' }])],
+      judgeScript: [],  // no existing nodes → auto-unrelated, no judge call
+    });
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -196,12 +213,15 @@ describe('Consolidator', () => {
     const nodeRowBefore = h.store.getNode(nodeId)!;
     const sBefore = nodeRowBefore.s;
 
-    // Claim with same (normalized) value → fast path confirm
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: nodeValue }]);
-    const judge = new MockJudge([]); // should not be called
+    // Claim with same (normalized) value → fast path confirm, no judge call
+    const provider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: nodeValue }])],
+      judgeScript: [],  // D-17 fast path: exact match → confirm, no judge call
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -230,11 +250,14 @@ describe('Consolidator', () => {
 
     const sBefore = h.store.getNode(nodeId)!.s;
 
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: nodeValue }]);
-    const judge = new MockJudge([]);
+    const provider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: nodeValue }])],
+      judgeScript: [],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Episode with origin='inferred' — claim inherits this origin
@@ -267,15 +290,15 @@ describe('Consolidator', () => {
     h.store.setEmbedding(nodeId, existingVec!);
 
     // The claim will be embedded with the zero embedder — cosine(zero, anything) = 0 < 0.3 threshold
-    const zeroEmbedder = makeZeroEmbedder(h.config.embeddingDimensions);
-
-    // If judge is called, it will throw (queue is exhausted) — proves no judge call
-    const judge = new MockJudge([]);
-
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'completely unrelated claim' }]);
+    // If judge is called, it will throw (queue exhausted) — proves no judge call
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'completely unrelated claim' }])],
+      judgeScript: [],  // empty: if called, throws — proves auto-unrelated path taken
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, zeroEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -313,11 +336,14 @@ describe('Consolidator', () => {
       relation: 'extend',
       magnitude: 0,
     };
-    const judge = new MockJudge([extendVerdict]);
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'extension of base node' }]);
+    const provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'extension of base node' }])],
+      judgeScript: [extendVerdict],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -358,11 +384,14 @@ describe('Consolidator', () => {
       relation: 'unrelated',
       magnitude: 0,
     };
-    const judge = new MockJudge([unrelatedVerdict]);
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'truly unrelated new claim' }]);
+    const provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'truly unrelated new claim' }])],
+      judgeScript: [unrelatedVerdict],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -403,11 +432,14 @@ describe('Consolidator', () => {
       relation: 'contradict',
       magnitude: 0.1, // HOLD band: ratio≈0.29 < 0.8
     };
-    const judge = new MockJudge([contradictVerdict]);
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'contradicting claim here' }]);
+    const provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'contradicting claim here' }])],
+      judgeScript: [contradictVerdict],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Provenance-eligible episode: origin='observed', source_inference_id=null
@@ -448,12 +480,15 @@ describe('Consolidator', () => {
       relation: 'contradict',
       magnitude: 0.1, // HOLD band
     };
-    const judge = new MockJudge([contradictVerdict]);
     // The claim inherits episode.origin='inferred' inside the consolidator
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'inferred-origin contradiction' }]);
+    const provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'inferred-origin contradiction' }])],
+      judgeScript: [contradictVerdict],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Episode with origin='inferred' → claimOrigin is 'inferred' → NOT provenance-eligible (D-19)
@@ -491,12 +526,15 @@ describe('Consolidator', () => {
     expect(h.store.getNode(nodeId1)!.embedded_hash).toBeNull();
     expect(h.store.getNode(nodeId2)!.embedded_hash).toBeNull();
 
-    const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
-    const judge = new MockJudge([]);
-    const extractor = new MockClaimExtractor([]);
+    // No episodes → generate/judge never called; only embed is needed (for reembedDirty)
+    const provider = new MockModelProvider({
+      embedFn: makeSyntheticEmbedFn(h.config.embeddingDimensions),
+      generateScript: [],
+      judgeScript: [],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // No episodes to consolidate — but reembedDirty should still run
@@ -524,11 +562,14 @@ describe('Consolidator', () => {
     h.store.setEmbedding(nodeId, vec!);
 
     // Claim that will fast-path confirm the node
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: nodeValue }]);
-    const judge = new MockJudge([]);
+    const provider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: nodeValue }])],
+      judgeScript: [],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -544,8 +585,17 @@ describe('Consolidator', () => {
     await consolidator.consolidate();
     const sAfterFirst = h.store.getNode(nodeId)!.s;
 
-    // Second run — all episodes are now consolidated=1, should be no-op
-    await consolidator.consolidate();
+    // Second run — all episodes are now consolidated=1, should be a no-op
+    // Need a fresh provider since first run consumed the generate queue
+    const provider2 = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [],  // no unconsolidated episodes → generate never called
+      judgeScript: [],
+    });
+    const consolidator2 = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider2, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+    await consolidator2.consolidate();
     const sAfterSecond = h.store.getNode(nodeId)!.s;
 
     expect(sAfterSecond).toBe(sAfterFirst);
@@ -588,21 +638,30 @@ describe('Consolidator', () => {
       session_id: 'session-resume-2',
     });
 
-    // Build a throwing extractor: returns claims for ep1 fine, but throws on ep2
-    let callCount = 0;
-    const throwingExtractor = {
-      async extract(content: string, _sourceType: string): Promise<ExtractedClaim[]> {
-        callCount++;
-        if (callCount === 1) {
-          return [{ type: 'fact' as const, value: val1 }];
+    // Inline provider: first generate call returns claims for ep1, second call throws (queue exhausted)
+    // MockModelProvider throws "generate queue exhausted" after the 1 scripted response is consumed
+    const throwingProvider: ModelProvider = {
+      async embed(texts: string[]): Promise<Float32Array[]> {
+        return texts.map(embedder.fn);
+      },
+      async generate(_prompt: string): Promise<string> {
+        // Track calls: first returns val1 claims, second throws
+        if ((throwingProvider as any)._generateCalls === undefined) {
+          (throwingProvider as any)._generateCalls = 0;
+        }
+        (throwingProvider as any)._generateCalls++;
+        if ((throwingProvider as any)._generateCalls === 1) {
+          return JSON.stringify([{ type: 'fact', value: val1 }]);
         }
         throw new Error('simulated crash on second episode');
       },
+      async judge(): Promise<never> {
+        throw new Error('judge should not be called');
+      },
     };
 
-    const judge = new MockJudge([]);
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, judge, throwingExtractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, throwingProvider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // First pass — throws on second episode
@@ -616,10 +675,14 @@ describe('Consolidator', () => {
     const s1AfterCrash = h.store.getNode(nodeId1)!.s;
     expect(s1AfterCrash).toBeGreaterThan(0.3);
 
-    // Now resume with a normal extractor for the second episode only
-    const resumeExtractor = new MockClaimExtractor([{ type: 'fact', value: val2 }]);
+    // Now resume with a normal provider for the second episode only
+    const resumeProvider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: val2 }])],
+      judgeScript: [],
+    });
     const consolidator2 = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder, new MockJudge([]), resumeExtractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, resumeProvider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     await consolidator2.consolidate();
@@ -654,11 +717,14 @@ describe('Consolidator', () => {
       relation: 'contradict',
       magnitude: 0.5, // mid-band: ratio ≈ 1.43
     };
-    const judge = new MockJudge([contradictVerdict]);
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: newValue }]);
+    const provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: newValue }])],
+      judgeScript: [contradictVerdict],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -720,11 +786,19 @@ describe('Consolidator', () => {
       relation: 'contradict',
       magnitude: 0.1, // HOLD band vs resistance=0.72
     });
-    const judge = new MockJudge([holdVerdict(), holdVerdict(), holdVerdict()]);
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: contradictingValue }]);
+    const provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      // Three episodes → three generate calls → three entries in script
+      generateScript: [
+        JSON.stringify([{ type: 'fact', value: contradictingValue }]),
+        JSON.stringify([{ type: 'fact', value: contradictingValue }]),
+        JSON.stringify([{ type: 'fact', value: contradictingValue }]),
+      ],
+      judgeScript: [holdVerdict(), holdVerdict(), holdVerdict()],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Three episodes from three distinct sessions (all provenance-eligible)
@@ -771,11 +845,18 @@ describe('Consolidator', () => {
       relation: 'contradict',
       magnitude: 0.1,
     });
-    const judge = new MockJudge([holdVerdict(), holdVerdict(), holdVerdict()]);
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'chatty contradiction' }]);
+    const provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [
+        JSON.stringify([{ type: 'fact', value: 'chatty contradiction' }]),
+        JSON.stringify([{ type: 'fact', value: 'chatty contradiction' }]),
+        JSON.stringify([{ type: 'fact', value: 'chatty contradiction' }]),
+      ],
+      judgeScript: [holdVerdict(), holdVerdict(), holdVerdict()],
+    });
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder, judge, extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     // Three episodes ALL from the SAME session_id
@@ -807,11 +888,13 @@ describe('Consolidator', () => {
 
   it('per-role skip: user episode salience 0.3 is still processed (user threshold unchanged at 0.2)', async () => {
     // 0.3 >= consolSkipThreshold(0.2) → processed for user role
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'user low-salience claim' }]);
-    const embedder = makeZeroEmbedder(h.config.embeddingDimensions); // auto-unrelated
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),  // auto-unrelated
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'user low-salience claim' }])],
+      judgeScript: [],
+    });
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -832,11 +915,13 @@ describe('Consolidator', () => {
 
   it('per-role skip: assistant episode salience 0.3 is SKIPPED under the 0.5 assistant threshold', async () => {
     // 0.3 < consolSkipThresholdAssistant(0.5) and hard_keep=0 → skipped
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'should be skipped for assistant' }]);
-    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'should be skipped for assistant' }])],
+      judgeScript: [],
+    });
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -857,11 +942,13 @@ describe('Consolidator', () => {
 
   it('per-role skip: assistant episode salience 0.6 is processed (above assistant threshold)', async () => {
     // 0.6 >= consolSkipThresholdAssistant(0.5) → processed
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'high-salience assistant claim' }]);
-    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'high-salience assistant claim' }])],
+      judgeScript: [],
+    });
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -882,11 +969,13 @@ describe('Consolidator', () => {
 
   it('per-role skip: assistant episode salience 0.05 with hard_keep=1 is processed (hard_keep bypass)', async () => {
     // 0.05 < consolSkipThresholdAssistant(0.5) but hard_keep=1 → processed via bypass
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'force-kept assistant claim' }]);
-    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'force-kept assistant claim' }])],
+      judgeScript: [],
+    });
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -908,11 +997,13 @@ describe('Consolidator', () => {
   it('per-role skip: consolSkipThresholdAssistant=0.2 restores prior behavior (reversibility)', async () => {
     // Setting consolSkipThresholdAssistant=0.2 means the assistant 0.3 episode is now processed
     const reversibleConfig: EngineConfig = { ...h.config, consolSkipThresholdAssistant: 0.2 };
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'reversibility claim' }]);
-    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'reversibility claim' }])],
+      judgeScript: [],
+    });
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, embedder,
-      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), reversibleConfig, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), reversibleConfig, h.clock,
     );
 
     h.episodes.append({
@@ -950,20 +1041,22 @@ describe('Consolidator', () => {
     }
 
     let embedCallCount = 0;
-    const countingEmbedder: Embedder = {
+    const countingProvider: ModelProvider = {
       async embed(texts: string[]): Promise<Float32Array[]> {
         embedCallCount++;
-        return synth.embed(texts);
+        return texts.map(synth.fn);
+      },
+      async generate(_prompt: string): Promise<string> {
+        return JSON.stringify(claimValues.map(v => ({ type: 'fact', value: v })));
+      },
+      async judge(): Promise<never> {
+        throw new Error('judge should not be called in batch-embed test');
       },
     };
 
-    const extractor = new MockClaimExtractor(
-      claimValues.map(v => ({ type: 'fact' as const, value: v })),
-    );
-
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, countingEmbedder,
-      new MockJudge([]), extractor, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, countingProvider,
+      makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -986,21 +1079,27 @@ describe('Consolidator', () => {
   });
 
   it('zero-claims episode makes no per-claim embed call', async () => {
-    // extractor returns [] → the batch guard (claimValues.length > 0) prevents any embed call
+    // generate returns [] → the batch guard (claimValues.length > 0) prevents any embed call
     const dims = h.config.embeddingDimensions;
     const synth = makeSyntheticEmbedder(dims);
 
     let embedCallCount = 0;
-    const countingEmbedder: Embedder = {
+    const countingProvider: ModelProvider = {
       async embed(texts: string[]): Promise<Float32Array[]> {
         embedCallCount++;
-        return synth.embed(texts);
+        return texts.map(synth.fn);
+      },
+      async generate(): Promise<string> {
+        return '[]';  // empty claims
+      },
+      async judge(): Promise<never> {
+        throw new Error('judge should not be called');
       },
     };
 
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, countingEmbedder,
-      new MockJudge([]), new MockClaimExtractor([]), makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, countingProvider,
+      makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
     h.episodes.append({
@@ -1027,10 +1126,6 @@ describe('Consolidator', () => {
   //            carrying prev_value='engineer'.
   //   Pass 2 — mid-band contradict → reconcile attempt → isOscillation('engineer','engineer')
   //            → escalate to append-new: 'manager' stays current, new 'engineer' appended.
-  //
-  // A SINGLE pass false-fails because the new 'manager' node minted in pass 1 is not embedded
-  // (embedded_hash IS NULL) until pass 1's Phase C reembedDirty() runs; only then is 'manager'
-  // nominatable by pass 2's topk. Two separate consolidate() calls enforce this ordering.
 
   it('criterion 5: flip-back to carried prev_value escalates to append-new (no tombstone-cycle)', async () => {
     const sameEmbedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
@@ -1054,10 +1149,13 @@ describe('Consolidator', () => {
       relation: 'contradict',
       magnitude: 0.5, // mid-band reconcile
     };
+    const pass1Provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'manager' }])],
+      judgeScript: [pass1Verdict],
+    });
     const pass1Consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder,
-      new MockJudge([pass1Verdict]),
-      new MockClaimExtractor([{ type: 'fact', value: 'manager' }]),
+      h.db, h.episodes, h.store, h.strength, h.retriever, pass1Provider,
       makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
@@ -1094,10 +1192,13 @@ describe('Consolidator', () => {
       relation: 'contradict',
       magnitude: 0.06, // mid-band vs resistance=0.05; triggers oscillation guard
     };
+    const pass2Provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'engineer' }])],
+      judgeScript: [pass2Verdict],
+    });
     const pass2Consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, sameEmbedder,
-      new MockJudge([pass2Verdict]),
-      new MockClaimExtractor([{ type: 'fact', value: 'engineer' }]),
+      h.db, h.episodes, h.store, h.strength, h.retriever, pass2Provider,
       makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 

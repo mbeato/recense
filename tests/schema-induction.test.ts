@@ -26,8 +26,7 @@ import { MockEmbedder } from '../src/model/embedder';
 import type { NodeRow } from '../src/lib/types';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
 import { Consolidator } from '../src/consolidation/consolidator';
-import { MockJudge } from '../src/model/judge';
-import { MockClaimExtractor } from '../src/model/claim-extractor';
+import { MockModelProvider } from '../src/model/provider';
 import { newId } from '../src/lib/hash';
 
 // ---------------------------------------------------------------------------
@@ -143,7 +142,7 @@ describe('SchemaInducer', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, namingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, namingFn,
     );
 
     await inducer.induceSchemas();
@@ -177,7 +176,7 @@ describe('SchemaInducer', () => {
     const inferredId = await seedNodeWithEmbedding(h, embedder, { value: 'inferred-node', origin: 'inferred' });
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, namingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, namingFn,
     );
 
     await inducer.induceSchemas();
@@ -203,7 +202,7 @@ describe('SchemaInducer', () => {
     const tombId = await seedNodeWithEmbedding(h, embedder, { value: 'tombstoned-node', tombstoned: true });
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, namingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, namingFn,
     );
 
     await inducer.induceSchemas();
@@ -233,7 +232,7 @@ describe('SchemaInducer', () => {
     await seedNodeWithEmbedding(h, embedder, { value: 'b' });
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, countingNamingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, countingNamingFn,
     );
 
     await inducer.induceSchemas();
@@ -255,7 +254,7 @@ describe('SchemaInducer', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, namingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, namingFn,
     );
 
     await inducer.induceSchemas();
@@ -296,7 +295,7 @@ describe('SchemaInducer', () => {
     const namingFn = makeStubNamingFn('should-not-run');
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, namingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, namingFn,
     );
 
     await expect(inducer.induceSchemas()).resolves.toBeUndefined();
@@ -315,7 +314,7 @@ describe('SchemaInducer', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, namingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, namingFn,
     );
 
     await inducer.induceSchemas();
@@ -362,7 +361,7 @@ describe('SchemaInducer', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, countingNamingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, countingNamingFn,
     );
 
     // First call: schema formed, 1 naming call
@@ -396,7 +395,7 @@ describe('SchemaInducer', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, refusalFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, refusalFn,
     );
 
     await inducer.induceSchemas();
@@ -418,7 +417,7 @@ describe('SchemaInducer', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, questionFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, questionFn,
     );
 
     await inducer.induceSchemas();
@@ -438,7 +437,7 @@ describe('SchemaInducer', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, validFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, validFn,
     );
 
     await inducer.induceSchemas();
@@ -487,7 +486,7 @@ describe('SchemaInducer', () => {
     };
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, twoGroupEmbedder, h.config, h.clock, countingNamingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, countingNamingFn,
     );
 
     await inducer.induceSchemas();
@@ -527,14 +526,20 @@ describe('SchemaInducer end-to-end (through Consolidator.consolidate)', () => {
     namingFn?: (values: string[]) => Promise<string>;
   }): Consolidator {
     const episodes = new EpisodicStore(h.db, h.clock, h.config);
+    // Shared provider: embed head used by Consolidator (reembedDirty); generate/judge heads unused
+    // (no episodes appended in these e2e tests — only schema induction via Phase C is exercised)
+    const provider = new MockModelProvider({
+      embedFn: opts.embedder.fn,
+      generateScript: [],  // no episodes to consolidate in these tests
+      judgeScript: [],
+    });
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, opts.embedder, h.config, h.clock,
+      h.db, h.store, h.strength, h.retriever, provider, h.config, h.clock,
       opts.namingFn ?? (async () => 'e2e-schema'),
     );
     return new Consolidator(
       h.db, episodes, h.store, h.strength, h.retriever,
-      opts.embedder, new MockJudge([]), new MockClaimExtractor([]),
-      inducer, h.config, h.clock,
+      provider, inducer, h.config, h.clock,
     );
   }
 

@@ -61,7 +61,8 @@ export class OpenAIEmbedder implements Embedder {
 
 /** Deterministic mock for unit tests — maps each text to a Float32Array via the provided fn. */
 export class MockEmbedder implements Embedder {
-  constructor(private readonly fn: (t: string) => Float32Array) {}
+  /** Public so tests can bridge to MockModelProvider.embedFn (Plan 05-02 SEAM-01 wiring). */
+  constructor(readonly fn: (t: string) => Float32Array) {}
 
   async embed(texts: string[]): Promise<Float32Array[]> {
     return texts.map(this.fn);

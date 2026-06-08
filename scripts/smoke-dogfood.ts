@@ -28,9 +28,7 @@ import { RetrievalEngine } from '../src/retrieval/engine';
 import { EpisodicStore, IngestionPipeline } from '../src/ingest/pipeline';
 import { Consolidator } from '../src/consolidation/consolidator';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
-import { MockEmbedder } from '../src/model/embedder';
-import { MockJudge } from '../src/model/judge';
-import { MockClaimExtractor } from '../src/model/claim-extractor';
+import { MockModelProvider } from '../src/model/provider';
 
 /**
  * The fact value that the MockClaimExtractor will extract from the episode.
@@ -39,17 +37,20 @@ import { MockClaimExtractor } from '../src/model/claim-extractor';
 const FACT_VALUE = 'brain-memory stores memories using SQLite and TypeScript';
 
 /**
- * Deterministic mock embedder: returns a unit vector in dimension 0 for any text.
- * Valid Float32Array of embeddingDimensions — topk and setEmbedding work correctly.
- * All texts get the same vector (cosine = 1.0 between any two) which is fine here:
- * the smoke only tests the store→consolidate→retrieve loop, not retrieval ranking.
+ * Deterministic mock provider: returns a unit vector in dimension 0 for any text.
+ * generateScript returns FACT_VALUE as the single extracted claim.
+ * judgeScript is empty (auto-unrelated path taken; no existing nodes at consolidation time).
  */
-function makeMockEmbedder(): MockEmbedder {
+function makeMockProvider(): MockModelProvider {
   const dims = DEFAULT_CONFIG.embeddingDimensions;
-  return new MockEmbedder((_text: string) => {
-    const vec = new Float32Array(dims);
-    vec[0] = 1.0; // unit vector in dimension 0 — cosine similarity is well-defined
-    return vec;
+  return new MockModelProvider({
+    embedFn: (_text: string) => {
+      const vec = new Float32Array(dims);
+      vec[0] = 1.0; // unit vector in dimension 0 — cosine similarity is well-defined
+      return vec;
+    },
+    generateScript: [JSON.stringify([{ type: 'fact', value: FACT_VALUE }])],
+    judgeScript: [], // no existing nodes at consolidation time → auto-unrelated, no judge call
   });
 }
 
@@ -81,22 +82,20 @@ async function main(): Promise<void> {
   });
   console.log(`[smoke-dogfood] episode recorded: "${FACT_VALUE}"`);
 
-  // ── 4. Consolidate: sleep pass with Mock model impls (LLM-free) ────────────
-  // MockClaimExtractor → extracts FACT_VALUE regardless of episode content.
-  // MockJudge         → scripted 'unrelated' (not called: no candidates in empty DB).
-  // MockEmbedder      → deterministic unit vector for claim embedding + re-embed dirty.
-  const embedder  = makeMockEmbedder();
-  const extractor = new MockClaimExtractor([{ type: 'fact', value: FACT_VALUE }]);
-  const judge     = new MockJudge([{ best_candidate_id: null, relation: 'unrelated', magnitude: 0 }]);
+  // ── 4. Consolidate: sleep pass with MockModelProvider (LLM-free) ────────────
+  // generate head → scripted to extract FACT_VALUE from the single episode
+  // judge head    → empty (auto-unrelated path: no existing nodes → no judge call)
+  // embed head    → deterministic unit vector for claim embedding + re-embed dirty
+  const provider = makeMockProvider();
 
   // No-op inducer (stub naming fn): smoke-dogfood has only 1 node → below schemaMinSupport
   const inducer = new SchemaInducer(
-    db, store, strength, retriever, embedder, config, clock,
+    db, store, strength, retriever, provider, config, clock,
     async () => 'no-op-schema',
   );
 
   const consolidator = new Consolidator(
-    db, episodes, store, strength, retriever, embedder, judge, extractor, inducer, config, clock,
+    db, episodes, store, strength, retriever, provider, inducer, config, clock,
   );
   await consolidator.consolidate();
   console.log('[smoke-dogfood] consolidation complete');

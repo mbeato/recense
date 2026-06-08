@@ -27,10 +27,10 @@ import { EpisodicStore } from '../src/db/episode-store';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { CandidateRetriever } from '../src/retrieval/topk';
 import { MockEmbedder } from '../src/model/embedder';
+import type { JudgeVerdict } from '../src/model/judge';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
 import { Consolidator } from '../src/consolidation/consolidator';
-import { MockJudge } from '../src/model/judge';
-import { MockClaimExtractor } from '../src/model/claim-extractor';
+import { MockModelProvider } from '../src/model/provider';
 import { newId } from '../src/lib/hash';
 
 // ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ describe('SchemaInducer — falsification (D-39)', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, namingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, namingFn,
     );
     await inducer.induceSchemas();
 
@@ -233,24 +233,26 @@ describe('SchemaInducer — falsification (D-39)', () => {
       session_id: 'session-contradiction',
     });
 
-    // MockClaimExtractor: returns one claim with value different from schema value
-    const extractor = new MockClaimExtractor([{ type: 'fact', value: 'contradicting-schema-content' }]);
-
-    // MockJudge: returns contradict with a magnitude that routes to 'reconcile'.
-    // For the schema node: s=0.1, c=0.5 → resistance=0.05; ratio=0.06/0.05=1.2 (in reconcile band [0.8,2.0)).
-    const judge = new MockJudge([{
+    // MockModelProvider: claim generates contradicting content, judge returns reconcile verdict.
+    // For the schema node: s=0.1, c=0.5 → resistance=0.05; ratio=0.06/0.05=1.2 (reconcile band [0.8,2.0)).
+    const contradictVerdict: JudgeVerdict = {
       best_candidate_id: schemaId,
       relation: 'contradict',
       magnitude: 0.06,
-    }]);
+    };
+    const consolidatorProvider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'contradicting-schema-content' }])],
+      judgeScript: [contradictVerdict],
+    });
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, namingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, namingFn,
     );
 
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever,
-      embedder, judge, extractor, inducer, h.config, h.clock,
+      consolidatorProvider, inducer, h.config, h.clock,
     );
 
     // consolidate() will:
@@ -294,7 +296,7 @@ describe('SchemaInducer — falsification (D-39)', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock, namingFn,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock, namingFn,
     );
     await inducer.induceSchemas();
 
@@ -333,7 +335,7 @@ describe('SchemaInducer — falsification (D-39)', () => {
     }
 
     const inducer = new SchemaInducer(
-      h.db, h.store, h.strength, h.retriever, embedder, h.config, h.clock,
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock,
       makeStubNamingFn('inv-schema'),
     );
 

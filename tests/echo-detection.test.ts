@@ -12,6 +12,9 @@
  *   4. Recency window — inferred episodes outside echoRecencyWindowMs are ignored;
  *      the later turn is processed normally (not backfilled)
  *   5. Non-echo control — a turn whose embedding is unrelated (cosine 0) is never backfilled
+ *
+ * Phase-5 Plan-02 migration: Consolidator now takes a single ModelProvider instead of
+ * separate Embedder/Judge/ClaimExtractor. Tests use MockModelProvider.
  */
 
 import Database from 'better-sqlite3';
@@ -24,30 +27,30 @@ import { SemanticStore } from '../src/db/semantic-store';
 import { EpisodicStore } from '../src/db/episode-store';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { CandidateRetriever } from '../src/retrieval/topk';
-import { MockEmbedder } from '../src/model/embedder';
 import type { JudgeVerdict } from '../src/model/judge';
-import { MockJudge } from '../src/model/judge';
-import { MockClaimExtractor } from '../src/model/claim-extractor';
+import { MockModelProvider } from '../src/model/provider';
+import type { ModelProvider } from '../src/model/provider';
 import type { PendingContradiction } from '../src/lib/types';
 import { Consolidator } from '../src/consolidation/consolidator';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
+import { newId } from '../src/lib/hash';
 
 // ---------------------------------------------------------------------------
-// Embedder helpers
+// Embed function helpers — return raw (text: string) => Float32Array for MockModelProvider
 // ---------------------------------------------------------------------------
 
 /** All texts → [1, 0, 0, ...] — cosine similarity 1.0 between any two vectors. */
-function makeAlwaysSameEmbedder(dims: number): MockEmbedder {
-  return new MockEmbedder((_text: string) => {
+function makeAlwaysSameEmbedFn(dims: number): (text: string) => Float32Array {
+  return (_text: string) => {
     const vec = new Float32Array(dims);
     vec[0] = 1.0;
     return vec;
-  });
+  };
 }
 
 /** All texts → [0, 0, 0, ...] — cosine similarity 0 (denom guard returns 0). */
-function makeZeroEmbedder(dims: number): MockEmbedder {
-  return new MockEmbedder((_text: string) => new Float32Array(dims));
+function makeZeroEmbedFn(dims: number): (text: string) => Float32Array {
+  return (_text: string) => new Float32Array(dims);
 }
 
 // ---------------------------------------------------------------------------
@@ -88,31 +91,25 @@ function makeHarness(): Harness {
   return { db, clock, episodes, store, strength, retriever, config };
 }
 
+/**
+ * No-op SchemaInducer for echo tests.
+ * SchemaInducer now takes a ModelProvider; embed/generate heads unused when namingFn bypasses
+ * the LLM. Empty MockModelProvider suffices.
+ */
 function makeNoOpSchemaInducer(h: Harness): SchemaInducer {
-  const noOpEmbedder = new MockEmbedder(
-    (_text: string) => new Float32Array(h.config.embeddingDimensions),
-  );
   return new SchemaInducer(
-    h.db, h.store, h.strength, h.retriever, noOpEmbedder, h.config, h.clock,
+    h.db, h.store, h.strength, h.retriever,
+    new MockModelProvider(),
+    h.config, h.clock,
     async (_values: string[]) => 'no-op-schema',
   );
 }
 
-/** Build a Consolidator with an optional custom judge and extractor. */
-function makeConsolidator(
-  h: Harness,
-  embedder: MockEmbedder,
-  opts: {
-    judge?: MockJudge;
-    extractor?: MockClaimExtractor;
-  } = {},
-): Consolidator {
-  // Defaults: no claims → no judge calls needed
-  const extractor = opts.extractor ?? new MockClaimExtractor([]);
-  const judge = opts.judge ?? new MockJudge([]);
+/** Build a Consolidator from a ModelProvider. */
+function makeConsolidator(h: Harness, provider: ModelProvider): Consolidator {
   return new Consolidator(
     h.db, h.episodes, h.store, h.strength, h.retriever,
-    embedder, judge, extractor,
+    provider,
     makeNoOpSchemaInducer(h), h.config, h.clock,
   );
 }
@@ -239,9 +236,13 @@ describe('echo detection via consolidate()', () => {
       session_id: 'session-echo',
     });
 
-    // makeAlwaysSameEmbedder: every text → [1,0,...] → cosine(turn, inferred) = 1.0 ≥ 0.85
-    const embedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
-    const consolidator = makeConsolidator(h, embedder);
+    // Echo guard fires (cosine 1.0 ≥ 0.85) → episode short-circuited → generate never called
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(h.config.embeddingDimensions),
+      generateScript: [],  // never consumed — echo guard short-circuits the episode
+      judgeScript: [],
+    });
+    const consolidator = makeConsolidator(h, provider);
 
     await consolidator.consolidate();
 
@@ -251,7 +252,7 @@ describe('echo detection via consolidate()', () => {
 
   it('Guard exclusion: echo turn cannot record a contradiction or strengthen a fact', async () => {
     // Seed a fact node (dirty — reembedDirty() will embed it during consolidate())
-    const factNodeId = 'fact-node-guard-test';
+    const factNodeId = newId();
     h.store.upsertNode({
       id: factNodeId,
       type: 'fact',
@@ -286,21 +287,20 @@ describe('echo detection via consolidate()', () => {
     // All embeddings → [1,0,...]:
     //   - echo detection: cosine(echo turn, inferred ep) = 1.0 ≥ 0.85 → backfill
     //   - topk: cosine(claim vec, fact node vec) = 1.0 > 0.3 → escalate to judge
-    const embedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    // Echo guard fires → episode short-circuited → generate and judge are NEVER called
+    const contradictVerdict: JudgeVerdict = {
+      relation: 'contradict',
+      magnitude: 0.01,
+      best_candidate_id: factNodeId,
+    };
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(h.config.embeddingDimensions),
+      // Scripts provided to prove guard fires before consumption (queue never touched)
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'I use TypeScript for data work' }])],
+      judgeScript: [contradictVerdict],
+    });
 
-    // Extractor returns a claim that contradicts the fact node (different text → no D-17 fast path)
-    const extractor = new MockClaimExtractor([
-      { type: 'fact', value: 'I use TypeScript for data work' },
-    ]);
-
-    // Judge returns contradict with tiny magnitude → routeContradiction → 'hold'
-    // resistance = 0.1 * 0.5 = 0.05; ratio = 0.01/0.05 = 0.2 < peReconcileBandLow (0.8) → hold
-    const judgeVerdicts: JudgeVerdict[] = [
-      { relation: 'contradict', magnitude: 0.01, best_candidate_id: factNodeId },
-    ];
-    const judge = new MockJudge(judgeVerdicts);
-
-    const consolidator = makeConsolidator(h, embedder, { judge, extractor });
+    const consolidator = makeConsolidator(h, provider);
 
     const factBefore = h.store.getNode(factNodeId)!;
     const sBefore = factBefore.s;
@@ -326,7 +326,7 @@ describe('echo detection via consolidate()', () => {
     // (exact normalized match → confirm) and calls strengthen(), incrementing s and c.
     // After the fix, the episode is short-circuited before claim processing and s/c stay unchanged.
 
-    const factNodeId = 'fact-echo-confirm-test';
+    const factNodeId = newId();
     const factValue = 'Max uses TypeScript';
 
     // Seed the fact node; reembedDirty() will embed it during consolidate()
@@ -351,7 +351,7 @@ describe('echo detection via consolidate()', () => {
 
     h.clock.advanceMs(1_000);
 
-    // Echo turn — same value, so D-17 fast path will confirm the fact node
+    // Echo turn — same value, so D-17 fast path would confirm the fact node IF guard didn't fire
     h.episodes.append({
       content: factValue,
       origin: 'observed',
@@ -361,15 +361,14 @@ describe('echo detection via consolidate()', () => {
       session_id: 'session-echo',
     });
 
-    // makeAlwaysSameEmbedder: cosine 1.0 for echo detection AND for D-17 fast path lookup
-    const embedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    // Echo guard fires → processing short-circuited → generate never called
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: factValue }])], // never consumed
+      judgeScript: [],
+    });
 
-    // Extractor returns a claim whose value exactly matches the fact node (triggers D-17 fast path)
-    const extractor = new MockClaimExtractor([
-      { type: 'fact', value: factValue },
-    ]);
-
-    const consolidator = makeConsolidator(h, embedder, { extractor });
+    const consolidator = makeConsolidator(h, provider);
 
     const factBefore = h.store.getNode(factNodeId)!;
     const sBefore = factBefore.s;
@@ -412,15 +411,14 @@ describe('echo detection via consolidate()', () => {
       session_id: 'session-echo',
     });
 
-    // makeAlwaysSameEmbedder: cosine 1.0 for echo detection; no graph nodes → topk returns []
-    const embedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    // Echo guard fires → processing short-circuited → generate never called, no node minted
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'Max is a great developer' }])], // never consumed
+      judgeScript: [],
+    });
 
-    // Extractor returns a claim that would mint a new node if processing is not short-circuited
-    const extractor = new MockClaimExtractor([
-      { type: 'fact', value: 'Max is a great developer' },
-    ]);
-
-    const consolidator = makeConsolidator(h, embedder, { extractor });
+    const consolidator = makeConsolidator(h, provider);
 
     const nodesBefore = h.db.prepare('SELECT COUNT(*) as count FROM node').get() as { count: number };
     expect(nodesBefore.count).toBe(0);
@@ -456,9 +454,14 @@ describe('echo detection via consolidate()', () => {
       session_id: 'session-echo',
     });
 
-    // makeAlwaysSameEmbedder: vectors would match (cosine 1.0), but recency window precludes it
-    const embedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
-    const consolidator = makeConsolidator(h, embedder);
+    // Inferred ep outside window → no backfill → episode IS processed normally → generate called
+    // No existing graph nodes → auto-unrelated → no judge call → '[]' claims (no nodes minted)
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(h.config.embeddingDimensions),
+      generateScript: ['[]'],  // episode processed normally; empty claims → no nodes, no judge
+      judgeScript: [],
+    });
+    const consolidator = makeConsolidator(h, provider);
 
     await consolidator.consolidate();
 
@@ -493,9 +496,14 @@ describe('echo detection via consolidate()', () => {
       session_id: 'session-unrelated',
     });
 
-    // makeZeroEmbedder: all texts → [0,...] → cosineSimF32([0,...],[0,...]) = 0 < 0.85 → no echo
-    const embedder = makeZeroEmbedder(h.config.embeddingDimensions);
-    const consolidator = makeConsolidator(h, embedder);
+    // Zero embedder: cosine(zero, zero) = 0 < 0.85 → no echo backfill
+    // Episode processed normally → generate called → '[]' (no claims, no judge)
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: ['[]'],  // episode processed normally; empty claims → no nodes
+      judgeScript: [],
+    });
+    const consolidator = makeConsolidator(h, provider);
 
     await consolidator.consolidate();
 

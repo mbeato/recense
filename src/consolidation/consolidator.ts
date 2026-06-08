@@ -36,9 +36,9 @@ import type { SemanticStore } from '../db/semantic-store';
 import type { StrengthDecayManager } from '../strength/decay';
 import type { CandidateRetriever } from '../retrieval/topk';
 import { cosineSimF32 } from '../retrieval/topk';
-import type { Embedder } from '../model/embedder';
-import type { Judge, JudgeRelation } from '../model/judge';
-import type { ClaimExtractor } from '../model/claim-extractor';
+import type { JudgeRelation } from '../model/judge';
+import type { ModelProvider } from '../model/provider';
+import { parseClaims, EXTRACTION_PROMPT } from '../model/claim-extractor';
 import type { Origin, PendingContradiction, EpisodeRow } from '../lib/types';
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
@@ -72,9 +72,7 @@ export class Consolidator {
   private readonly store: SemanticStore;
   private readonly strength: StrengthDecayManager;
   private readonly retriever: CandidateRetriever;
-  private readonly embedder: Embedder;
-  private readonly judge: Judge;
-  private readonly extractor: ClaimExtractor;
+  private readonly provider: ModelProvider;
   private readonly inducer: SchemaInducer;
   private readonly config: EngineConfig;
   private readonly clock: Clock;
@@ -85,9 +83,7 @@ export class Consolidator {
     store: SemanticStore,
     strength: StrengthDecayManager,
     retriever: CandidateRetriever,
-    embedder: Embedder,
-    judge: Judge,
-    extractor: ClaimExtractor,
+    provider: ModelProvider,
     inducer: SchemaInducer,
     config: EngineConfig,
     clock: Clock = realClock,
@@ -97,9 +93,7 @@ export class Consolidator {
     this.store = store;
     this.strength = strength;
     this.retriever = retriever;
-    this.embedder = embedder;
-    this.judge = judge;
-    this.extractor = extractor;
+    this.provider = provider;
     this.inducer = inducer;
     this.config = config;
     this.clock = clock;
@@ -120,7 +114,7 @@ export class Consolidator {
     if (dirtyRows.length === 0) return;
 
     const values = dirtyRows.map(r => r.value);
-    const vecs = await this.embedder.embed(values);
+    const vecs = await this.provider.embed(values);
 
     // Synchronous writes after the await (T-02-ASYNC: no await inside any write)
     for (let i = 0; i < dirtyRows.length; i++) {
@@ -153,7 +147,7 @@ export class Consolidator {
 
     // Batch-embed [turn, ...recent inferred] in one call (offline cost, T-02-ASYNC Phase A)
     const texts = [episode.content, ...recent.map(r => r.content)];
-    const vecs = await this.embedder.embed(texts);
+    const vecs = await this.provider.embed(texts);
 
     const episodeVec = vecs[0];
     if (!episodeVec) return null;
@@ -240,14 +234,20 @@ export class Consolidator {
 
       // ── Per-episode Phase A: all async work into plain array ───────────
       const claimOrigin: Origin = episode.origin; // inherit episode origin (T-02-SELFCONF)
-      const claims = await this.extractor.extract(episode.content, episode.role);
+      // Claim extraction via ModelProvider.generate (SEAM-01, D-46):
+      // EXTRACTION_PROMPT + role forms the full prompt; parseClaims handles the raw response.
+      const extractText = await this.provider.generate(
+        EXTRACTION_PROMPT + episode.role + '\n\nDocument content:\n' + episode.content,
+        { maxTokens: 2048 },
+      );
+      const claims = parseClaims(extractText);
       const decisions: ClaimDecision[] = [];
 
       // Batch-embed all claim query vectors in ONE call (T-02-ASYNC: Phase A, before any
       // db.transaction). Empty-claims episodes make zero embed calls.
       const claimValues = claims.map(c => c.value);
       const claimVecs = claimValues.length > 0
-        ? await this.embedder.embed(claimValues)
+        ? await this.provider.embed(claimValues)
         : [];
 
       for (let claimIdx = 0; claimIdx < claims.length; claimIdx++) {
@@ -281,7 +281,7 @@ export class Consolidator {
             id: c.id,
             value: this.store.getNode(c.id)?.value ?? '',
           }));
-          const verdict = await this.judge.judge(claim.value, candidatesWithValues);
+          const verdict = await this.provider.judge(claim.value, candidatesWithValues);
           relation = verdict.relation;
           bestCandidateId = verdict.best_candidate_id;
           magnitude = verdict.magnitude;

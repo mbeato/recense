@@ -29,9 +29,7 @@ import { EpisodicStore } from '../src/db/episode-store';
 import { SemanticStore } from '../src/db/semantic-store';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { CandidateRetriever } from '../src/retrieval/topk';
-import { OpenAIEmbedder } from '../src/model/embedder';
-import { AnthropicJudge } from '../src/model/judge';
-import { AnthropicClaimExtractor } from '../src/model/claim-extractor';
+import { DefaultModelProvider } from '../src/model/provider';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
 import { Consolidator } from '../src/consolidation/consolidator';
 import type { NodeRow } from '../src/lib/types';
@@ -87,15 +85,13 @@ async function main(): Promise<void> {
     const strength  = new StrengthDecayManager(db, clock, config);
     const retriever = new CandidateRetriever(db);
 
-    // Real model impls — keys from process.env via SDK default (T-04-01-K)
-    const embedder  = new OpenAIEmbedder(config.openaiEmbedModel, config.embeddingDimensions);
-    const judge     = new AnthropicJudge(config);
-    const extractor = new AnthropicClaimExtractor(config);
-    const inducer   = new SchemaInducer(db, store, strength, retriever, embedder, config, clock);
+    // Real model impl via ModelProvider seam — keys from process.env via SDK (T-04-01-K, T-05-KEY)
+    const provider  = new DefaultModelProvider({ generateConfig: config, judgeConfig: config, embedConfig: config });
+    const inducer   = new SchemaInducer(db, store, strength, retriever, provider, config, clock);
 
     const consolidator = new Consolidator(
       db, episodes, store, strength, retriever,
-      embedder, judge, extractor, inducer, config, clock,
+      provider, inducer, config, clock,
     );
 
     // ── 6. Run the sleep pass ─────────────────────────────────────────────

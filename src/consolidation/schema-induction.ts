@@ -23,17 +23,15 @@
  *  - Pitfall 5: Float32Array decoded with byteOffset + byteLength / 4 (never bare Buffer).
  */
 import Database from 'better-sqlite3';
-import Anthropic from '@anthropic-ai/sdk';
 import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
 import type { Origin } from '../lib/types';
 import type { SemanticStore } from '../db/semantic-store';
 import type { StrengthDecayManager } from '../strength/decay';
 import type { CandidateRetriever } from '../retrieval/topk';
-import type { Embedder } from '../model/embedder';
+import type { ModelProvider } from '../model/provider';
 import { cosineSimF32 } from '../retrieval/topk';
 import { newId } from '../lib/hash';
-import { createAnthropicClient } from '../model/anthropic-client';
 
 // ---------------------------------------------------------------------------
 // Schema name validation
@@ -150,7 +148,7 @@ export class SchemaInducer {
   private readonly store: SemanticStore;
   private readonly strength: StrengthDecayManager;
   private readonly retriever: CandidateRetriever;
-  private readonly embedder: Embedder;
+  private readonly provider: ModelProvider;
   private readonly config: EngineConfig;
   private readonly clock: Clock;
   private readonly namingFn: NamingFn;
@@ -167,7 +165,7 @@ export class SchemaInducer {
     store: SemanticStore,
     strength: StrengthDecayManager,
     retriever: CandidateRetriever,
-    embedder: Embedder,
+    provider: ModelProvider,
     config: EngineConfig,
     clock: Clock,
     namingFn?: NamingFn,
@@ -176,7 +174,7 @@ export class SchemaInducer {
     this.store = store;
     this.strength = strength;
     this.retriever = retriever;
-    this.embedder = embedder;
+    this.provider = provider;
     this.config = config;
     this.clock = clock;
     this.namingFn = namingFn ?? ((values) => this.callLlmNaming(values));
@@ -480,26 +478,15 @@ export class SchemaInducer {
   // ── Private helpers ──────────────────────────────────────────────────────
 
   /**
-   * Call the Anthropic API to name a cluster.
-   * T-04-01-K: keys from process.env via SDK default — never literals.
+   * Call the model to name a cluster, routing through ModelProvider.generate (SEAM-01, D-46).
+   * T-04-01-K: keys are handled below the ModelProvider seam — never in this file.
    * T-04-01-P: output is an untrusted label only — length-bounded, never executed.
    */
   private async callLlmNaming(memberValues: string[]): Promise<string> {
-    const { client, model } = createAnthropicClient(this.config);
     const valuesStr = memberValues.map(v => `"${v}"`).join(', ');
     const prompt = `These are related memory facts: ${valuesStr}. Provide a SHORT (2-5 words) human-readable label for the shared concept or pattern. Reply with ONLY the label, no punctuation.`;
 
-    const msg = await client.messages.create({
-      model,
-      max_tokens: 50,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const text = msg.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map(b => b.text)
-      .join('')
-      .trim();
+    const text = (await this.provider.generate(prompt, { maxTokens: 50 })).trim();
 
     if (!text) throw new Error('Empty schema naming response');
     return text;

@@ -27,9 +27,7 @@ import { EpisodicStore } from '../db/episode-store';
 import { SemanticStore } from '../db/semantic-store';
 import { StrengthDecayManager } from '../strength/decay';
 import { CandidateRetriever } from '../retrieval/topk';
-import { OpenAIEmbedder } from '../model/embedder';
-import { AnthropicJudge } from '../model/judge';
-import { AnthropicClaimExtractor } from '../model/claim-extractor';
+import { DefaultModelProvider } from '../model/provider';
 import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
 import { acquireLock, releaseLock } from './lockfile';
@@ -142,15 +140,25 @@ async function main(): Promise<void> {
     const strength = new StrengthDecayManager(db, realClock, config);
     const retriever = new CandidateRetriever(db);
 
-    // Production model impls — keys read from process.env by SDK (T-03-2-E)
-    const embedder = new OpenAIEmbedder(config.openaiEmbedModel, config.embeddingDimensions);
-    const judge = new AnthropicJudge(judgeConfig);
-    const extractor = new AnthropicClaimExtractor(extractorConfig);
+    // Per-role ModelProvider instances (D-47 split routing preserved below the seam):
+    //  - consolidatorProvider: extract head → extractorConfig, judge head → judgeConfig, embed → base config
+    //  - inducerProvider:      generate/judge head → judgeConfig (naming is reasoning-ish, low volume)
+    // Keys read from process.env by SDK inside DefaultModelProvider — never passed here (T-03-2-E, T-05-KEY).
+    const consolidatorProvider = new DefaultModelProvider({
+      generateConfig: extractorConfig,
+      judgeConfig,
+      embedConfig: config,
+    });
+    const inducerProvider = new DefaultModelProvider({
+      generateConfig: judgeConfig,
+      judgeConfig,
+      embedConfig: config,
+    });
 
     const inducer = new SchemaInducer(
       // schema-naming routes to the judge provider (reasoning-ish, low volume)
-      db, store, strength, retriever, embedder, judgeConfig, realClock,
-      // No namingFn supplied — defaults to createAnthropicClient (T-04-01-K)
+      db, store, strength, retriever, inducerProvider, judgeConfig, realClock,
+      // No namingFn supplied — defaults to provider.generate() via callLlmNaming
     );
 
     const consolidator = new Consolidator(
@@ -159,9 +167,7 @@ async function main(): Promise<void> {
       store,
       strength,
       retriever,
-      embedder,
-      judge,
-      extractor,
+      consolidatorProvider,
       inducer,
       config,
       realClock,

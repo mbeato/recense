@@ -1,21 +1,18 @@
 /**
  * ClaimExtractor seam (INGEST-03, D-05).
  *
- * Narrow seam: the seeder calls extract(); the real Anthropic call lives in
- * AnthropicClaimExtractor; tests use MockClaimExtractor (no network).
+ * Phase 5 Plan 02 (SEAM-01 wiring): AnthropicClaimExtractor removed; claim extraction now
+ * routes through ModelProvider.generate() in the Consolidator. This file retains:
+ *   - EXTRACTION_PROMPT (exported — used by Consolidator to build the generate call)
+ *   - parseClaims (exported — shared parser for both Consolidator and tests)
+ *   - ExtractedClaim / ClaimExtractor interface (kept for ColdStartSeeder compatibility)
+ *   - MockClaimExtractor (kept for ColdStartSeeder tests that have not yet migrated)
  *
- * Phase 5 SEAM-01 will subsume this into the full ModelProvider.generate/judge
- * split. Keep this minimal — only what the cold-start seeder needs.
- *
- * Threat mitigations:
- *  - T-04-KEY: Anthropic SDK reads ANTHROPIC_API_KEY from process.env by default.
- *    The key is never passed as a literal, never logged, and never committed.
- *    AnthropicClaimExtractor never calls console.log with the client or key.
+ * Threat mitigations (carried forward):
+ *  - T-04-KEY: keys are never handled in this file; Consolidator routes through
+ *    ModelProvider.generate() which delegates to createAnthropicClient below the seam.
  */
-import Anthropic from '@anthropic-ai/sdk';
 import type { NodeType, Origin } from '../lib/types';
-import type { EngineConfig } from '../lib/config';
-import { createAnthropicClient, type AnthropicLike } from './anthropic-client';
 
 /**
  * A single extracted knowledge unit from a document.
@@ -41,10 +38,10 @@ export interface ClaimExtractor {
 }
 
 // ---------------------------------------------------------------------------
-// Extraction prompt (used by AnthropicClaimExtractor)
+// Extraction prompt (exported — used by Consolidator.consolidate() via ModelProvider.generate)
 // ---------------------------------------------------------------------------
 
-const EXTRACTION_PROMPT = `You are a knowledge extraction assistant. Extract all structured knowledge from the given memory document.
+export const EXTRACTION_PROMPT = `You are a knowledge extraction assistant. Extract all structured knowledge from the given memory document.
 
 For each item extract:
 - "type": "entity" for named people, projects, tools, technologies, and organizations; "fact" for rules, preferences, capabilities, and factual statements
@@ -63,47 +60,7 @@ Example:
 Document type: `;
 
 // ---------------------------------------------------------------------------
-// Real implementation — wraps the Anthropic SDK
-// ---------------------------------------------------------------------------
-
-export class AnthropicClaimExtractor implements ClaimExtractor {
-  private readonly client: AnthropicLike;
-  private readonly model: string;
-
-  constructor(config: EngineConfig) {
-    // T-04-KEY / T-99b-KEY: createAnthropicClient routes to the direct Anthropic SDK
-    // (reads ANTHROPIC_API_KEY from process.env) or AnthropicVertex (authenticates via
-    // GCP Application Default Credentials) based on config.modelProvider.
-    // Credentials are never passed as literals, never logged, and never committed.
-    const { client, model } = createAnthropicClient(config);
-    this.client = client;
-    this.model = model;
-  }
-
-  async extract(content: string, sourceType: string): Promise<ExtractedClaim[]> {
-    const msg = await this.client.messages.create({
-      model: this.model, // 'claude-haiku-4-5-20251001' from config — never the deprecated name
-      max_tokens: 2048,
-      messages: [
-        {
-          role: 'user',
-          content: EXTRACTION_PROMPT + sourceType + '\n\nDocument content:\n' + content,
-        },
-      ],
-    });
-
-    // Extract text blocks from the response
-    const text = msg.content
-      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-      .map((block) => block.text)
-      .join('');
-
-    return parseClaims(text);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Mock — deterministic, no network; used by all unit tests
+// Mock — deterministic, no network; retained for ColdStartSeeder compatibility
 // ---------------------------------------------------------------------------
 
 /** Deterministic mock for unit tests — returns scripted claims on every call. */
