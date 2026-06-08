@@ -171,6 +171,9 @@ async function main(): Promise<void> {
       // CI-usable: non-zero exit when any regression found (D-53)
       if (regressions.length > 0) {
         log(`replay: ${regressions.length} regression(s) detected`);
+        // process.exit() skips the finally below — release the lock first so
+        // the shared single-writer lock is not leaked for LOCK_STALE_MS (WR-01).
+        releaseLock();
         process.exit(1);
       }
     }
