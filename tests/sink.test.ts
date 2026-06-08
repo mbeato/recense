@@ -42,14 +42,13 @@ describe('consolidation_event table (schema)', () => {
     expect(tables).toHaveLength(1);
   });
 
-  it('SCHEMA_VERSION is still 1 (additive table must not bump it)', () => {
+  it('schema_version meta matches SCHEMA_VERSION (consolidation_event remains additive)', () => {
     const db = new Database(':memory:');
     initSchema(db);
     const row = db
       .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string } | undefined;
-    expect(row?.value).toBe('1');
-    expect(SCHEMA_VERSION).toBe(1);
+    expect(row?.value).toBe(String(SCHEMA_VERSION));
   });
 });
 
@@ -338,11 +337,16 @@ describe('reconstructCorpus (real-data, guarded by brain.db existence)', () => {
 
       const corpus = reconstructCorpus(db);
       expect(corpus.length).toBeGreaterThanOrEqual(1);
-      // Every record has a non-null schema_version
+      // Every record carries a valid emit-time schema_version. Mixed versions are
+      // expected by design (D-49): records emitted under an older SCHEMA_VERSION
+      // keep that version so consumers can version-gate. The just-emitted events
+      // must carry the current SCHEMA_VERSION, so the max present equals it.
       for (const record of corpus) {
         expect(record.schema_version).not.toBeNull();
-        expect(record.schema_version).toBe(SCHEMA_VERSION);
+        expect(record.schema_version).toBeGreaterThanOrEqual(1);
+        expect(record.schema_version).toBeLessThanOrEqual(SCHEMA_VERSION);
       }
+      expect(Math.max(...corpus.map((r) => r.schema_version))).toBe(SCHEMA_VERSION);
 
       db.close();
     }
