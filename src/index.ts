@@ -60,3 +60,7 @@ export {
   isOscillation,
   countDistinctProvenance,
 } from './consolidation/update-decision';
+
+// ── ModelProvider seam (Phase 5, SEAM-01, D-46) ──────────────────────────────
+export type { ModelProvider } from './model/provider';
+export { DefaultModelProvider, MockModelProvider } from './model/provider';
