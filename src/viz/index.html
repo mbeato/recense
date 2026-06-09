@@ -232,7 +232,7 @@ requestAnimationFrame(tick);
 
 // ---------- applyTrace — single function for both SSE and local triggers (D-102) ----------
 function applyTrace(seedIds) {
-  logEvent('trace', `seeds=[${seedIds.slice(0, 4).join(',')}${seedIds.length > 4 ? '…' : ''}]`);
+  logEvent('spreading activation', `seeds=[${seedIds.slice(0, 4).join(',')}${seedIds.length > 4 ? '…' : ''}]`);
   seedIds.forEach(sid => {
     const seed = idMap.get(sid);
     if (!seed) return;
