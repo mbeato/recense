@@ -126,6 +126,9 @@ const MAX_FAN_OUT   = 8;
 const HULL_ROT_X = -Math.PI / 2;
 const HULL_ROT_Y = 0;
 const HULL_ROT_Z = 0;
+// Enclosure margin: the shell's narrowest half-extent = cloud radius × this. >1 wraps
+// the whole cloud with headroom. Nudge up if nodes still poke out, down if too roomy.
+const HULL_FIT_MARGIN = 1.5;
 
 // ---------- DOM refs ----------
 const logEl       = document.getElementById('log');
@@ -324,13 +327,20 @@ hullGroup.rotation.set(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
 Graph.scene().add(hullGroup);
 
 // Updated in the load callback; used by the engine-stop fit to scale the group.
-let hullBSRadius = 1;
+// The model's NARROWEST half-extent (the mesh is elongated, so fitting on the long
+// axis / bounding sphere leaves the narrow axes smaller than the cloud).
+let hullFitBase = 1;
 
 new STLLoader().load('./vendor/brain-model.stl', (geometry) => {
   geometry.center();               // recenter to origin (raw model is off-center)
   geometry.computeVertexNormals(); // smooth shading so surface detail reads
-  geometry.computeBoundingSphere();
-  hullBSRadius = geometry.boundingSphere ? geometry.boundingSphere.radius : 1;
+  geometry.computeBoundingBox();
+  const bb = geometry.boundingBox;
+  hullFitBase = Math.min(
+    (bb.max.x - bb.min.x) / 2,
+    (bb.max.y - bb.min.y) / 2,
+    (bb.max.z - bb.min.z) / 2,
+  ) || 1;
 
   const hullMat = new THREE.MeshStandardMaterial({
     color: 0x7a8db5,      // muted blue-grey, coherent with panel chrome palette
@@ -363,8 +373,8 @@ Graph.onEngineStop(() => {
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (d > maxDist) maxDist = d;
   }
-  // Scale so mesh bounding sphere ≈ 1.4× cloud radius (loosely enclosing the cloud)
-  hullGroup.scale.setScalar((maxDist * 1.4) / (hullBSRadius || 1));
+  // Scale so the shell's narrowest half-extent encloses the cloud on every axis
+  hullGroup.scale.setScalar((maxDist * HULL_FIT_MARGIN) / (hullFitBase || 1));
   hullGroup.position.set(cx, cy, cz);
 });
 
