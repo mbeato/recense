@@ -20,8 +20,29 @@ import { openSync, writeSync, closeSync, unlinkSync, statSync, existsSync } from
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-/** Exported so tests can inspect / manipulate the lock file directly. */
+/**
+ * Default lock path (module-level constant, backward-compat export).
+ * Tests that need the hermetic per-pid path should read `getLockPath()` or
+ * set `process.env['BRAIN_MEMORY_LOCK_PATH']` before calling acquireLock/releaseLock.
+ *
+ * Exported so tests can reference the default value when needed.
+ */
 export const LOCK_PATH = join(tmpdir(), 'brain-memory-sleep.lock');
+
+/**
+ * DEBT-02: resolve the effective lock path at CALL TIME (not module-load time).
+ *
+ * TypeScript `import` statements are hoisted before user code runs, which means
+ * any `process.env` assignment in a test file happens AFTER this module is loaded.
+ * Reading the env var inside each function ensures the override is visible even
+ * when set after the module has already been imported.
+ *
+ * Returns `BRAIN_MEMORY_LOCK_PATH` env var if set, otherwise the default LOCK_PATH.
+ * Zero production-behavior change when the env var is unset.
+ */
+function getLockPath(): string {
+  return process.env['BRAIN_MEMORY_LOCK_PATH'] ?? LOCK_PATH;
+}
 
 /**
  * 5 minutes — the sleep pass should complete well within this window.
@@ -38,23 +59,24 @@ export const LOCK_STALE_MS = 5 * 60 * 1000;
  * Throws        → unexpected FS error (not EEXIST); caller propagates.
  */
 export function acquireLock(): boolean {
+  const lockPath = getLockPath();
   // 1. Check for stale lock (process died without cleanup)
-  if (existsSync(LOCK_PATH)) {
+  if (existsSync(lockPath)) {
     try {
-      const { mtimeMs } = statSync(LOCK_PATH);
+      const { mtimeMs } = statSync(lockPath);
       if (Date.now() - mtimeMs < LOCK_STALE_MS) return false; // fresh → held
     } catch {
       // File removed between existsSync + statSync by a concurrent unlink — fine.
     }
     // Stale (or just removed) — unlink and fall through to O_EXCL create
-    try { unlinkSync(LOCK_PATH); } catch {
+    try { unlinkSync(lockPath); } catch {
       // Another process cleaned it first — fine; the O_EXCL below resolves the race.
     }
   }
 
   // 2. Atomic create — 'wx' = O_WRONLY | O_CREAT | O_EXCL
   try {
-    const fd = openSync(LOCK_PATH, 'wx');
+    const fd = openSync(lockPath, 'wx');
     writeSync(fd, String(process.pid));
     closeSync(fd);
     return true;
@@ -70,8 +92,9 @@ export function acquireLock(): boolean {
  * stale-reclaim). All other errors propagate.
  */
 export function releaseLock(): void {
+  const lockPath = getLockPath();
   try {
-    unlinkSync(LOCK_PATH);
+    unlinkSync(lockPath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw err;

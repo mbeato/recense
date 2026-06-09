@@ -65,11 +65,13 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // DEBT-03: declare db outside try so finally can close it on every path (CR-02/WR-03).
+  let db: Database.Database | undefined;
   try {
     log('Sleep pass starting');
 
     // ── 3. Open DB and initialize schema ────────────────────────────────────
-    const db = new Database(dbPath);
+    db = new Database(dbPath);
     initSchema(db);
 
     // ── 4+5+6. Run the full Consolidator dependency graph ───────────────────
@@ -78,7 +80,10 @@ async function main(): Promise<void> {
   } catch (err) {
     log(`Sleep pass error: ${err}`);
   } finally {
-    // ── 7. Always release the lock ───────────────────────────────────────────
+    // ── 7. Always close the DB, then release the lock (DEBT-03/CR-02/WR-03) ──
+    // Close first: flushes the WAL checkpoint and releases the read lock.
+    // Release lock second: O_EXCL unlock after DB handle is gone.
+    db?.close();
     releaseLock();
   }
 }
