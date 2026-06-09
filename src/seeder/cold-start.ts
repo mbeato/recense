@@ -50,6 +50,17 @@ export class ColdStartSeeder {
     // Collect source files (with path traversal protection)
     const sources = this.collectSources();
 
+    // D-81: If no source files resolved (empty config / paths not set), throw so the CLI
+    // adapter can log a user-friendly message. The throw happens BEFORE setMeta('seeded'),
+    // preserving the one-shot guard for a later correctly-configured run.
+    if (sources.length === 0) {
+      throw new Error(
+        'brain-seed: no source files resolved — set BRAIN_MEMORY_COLD_START_MEMORY_DIR / ' +
+          'BRAIN_MEMORY_COLD_START_CLAUDE_FILE (or configure coldStartMemoryDir/coldStartClaudeFile) ' +
+          'and re-run. The one-shot seeded flag has NOT been set.',
+      );
+    }
+
     // T-04-ASYNC: All async extractor.extract() calls happen OUTSIDE any DB
     // transaction, collected into a plain array first (Pitfall 1).
     const allFileResults: Array<{ claims: ExtractedClaim[] }> = [];

@@ -7,12 +7,15 @@
  *   - parseClaims (exported — shared parser for both Consolidator and tests)
  *   - ExtractedClaim / ClaimExtractor interface (kept for ColdStartSeeder compatibility)
  *   - MockClaimExtractor (kept for ColdStartSeeder tests that have not yet migrated)
+ *   - ProviderClaimExtractor (Phase 8, D-77): production extractor wrapping ModelProvider
  *
  * Threat mitigations (carried forward):
- *  - T-04-KEY: keys are never handled in this file; Consolidator routes through
- *    ModelProvider.generate() which delegates to createAnthropicClient below the seam.
+ *  - T-04-KEY / T-08-KEY: API key is read from env by the SDK inside DefaultModelProvider;
+ *    it is never passed to or stored in this file.
  */
 import type { NodeType, Origin } from '../lib/types';
+import type { ModelProvider } from './provider';
+import { promptForSource } from '../source/extraction-prompts';
 
 /**
  * A single extracted knowledge unit from a document.
@@ -88,6 +91,31 @@ function extractJsonArray(text: string): string | null {
   const end = text.lastIndexOf(']');
   if (start === -1 || end === -1 || end < start) return null;
   return text.slice(start, end + 1);
+}
+
+// ---------------------------------------------------------------------------
+// ProviderClaimExtractor — production extractor routing through ModelProvider.generate()
+// ---------------------------------------------------------------------------
+
+/**
+ * Production ClaimExtractor that mirrors the Consolidator's extraction call
+ * (consolidator.ts:247-251) for use by ColdStartSeeder (Phase 8, D-77).
+ *
+ * extract(content, sourceType) calls provider.generate with promptForSource(sourceType)
+ * prefix + '\n\nDocument content:\n' + content suffix, then parses the response
+ * with parseClaims. No episode.role term — seeding has no role context.
+ *
+ * Threat mitigation T-08-KEY: the API key is read from env by the SDK inside
+ * DefaultModelProvider; it is never logged or passed through this class.
+ */
+export class ProviderClaimExtractor implements ClaimExtractor {
+  constructor(private readonly provider: ModelProvider) {}
+
+  async extract(content: string, sourceType: string): Promise<ExtractedClaim[]> {
+    const prompt = promptForSource(sourceType) + '\n\nDocument content:\n' + content;
+    const text = await this.provider.generate(prompt, { maxTokens: 2048 });
+    return parseClaims(text);
+  }
 }
 
 export function parseClaims(text: string): ExtractedClaim[] {
