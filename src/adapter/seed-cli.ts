@@ -89,9 +89,11 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // CR-02/WR-03: declare db outside try so finally can close it on every path.
+  let db: Database.Database | undefined;
   try {
     // ── 4. Open DB and build config ────────────────────────────────────────
-    const db = new Database(dbPath);
+    db = new Database(dbPath);
     initSchema(db);
 
     const config = {
@@ -121,18 +123,22 @@ async function main(): Promise<void> {
 
     await seeder.seed();
     log('seed complete');
-    db.close();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // D-81: zero-sources throw is a safe no-op; log friendly and exit 0
     if (msg.includes('no source files resolved')) {
       log(`nothing to seed — no-op (seeded flag NOT set): ${msg}`);
     } else {
+      // CR-02: set exitCode instead of process.exit(1) — process.exit() inside
+      // try/finally skips the finally block, leaking the single-writer lock for
+      // up to LOCK_STALE_MS (5 min). Setting exitCode lets finally run, then the
+      // process exits 1 once the event loop drains.
       log(`fatal: ${msg}`);
-      process.exit(1);
+      process.exitCode = 1;
     }
   } finally {
-    // ── 7. Always release the lock (T-08-LOCK) ────────────────────────────
+    // ── 7. Always close the DB and release the lock (CR-02/WR-03/T-08-LOCK) ──
+    db?.close();
     releaseLock();
   }
 }
