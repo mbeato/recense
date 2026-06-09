@@ -1,5 +1,11 @@
 # brain-memory dogfood setup
 
+> **New installs:** use `brain init` (see [README](../README.md#install)). Run `npm run init`
+> from the project root — the wizard handles DB path, API keys, node-bin capture, env file,
+> scheduler registration, and hook wiring in one pass. Come back to this runbook only if you
+> need to understand what the wizard does under the hood, or if you are doing a manual / partial
+> setup.
+
 Cutover runbook for the founder as customer-zero (ADAPT-01/02, D-33 reversibility).
 
 The engine replaces the flat MEMORY.md as the *injection source* — but you must never delete
