@@ -252,7 +252,7 @@ function applyTrace(seedIds) {
 
 // ---------- nodeThreeObject factory ----------
 function makeNodeObject(node) {
-  const r    = 1 + node.s * 3;
+  const r    = 3 + node.s * 5;
   const isTomb = !!node.tombstoned;
   const base  = isTomb ? new THREE.Color(TOMBSTONE_COLOR) : new THREE.Color(TYPE_COLOR[node.type] || TYPE_COLOR.entity);
   const op    = isTomb ? 0.45 : 0.78;
@@ -274,10 +274,10 @@ function getVisibleNodes() {
 Graph = ForceGraph3D()(document.getElementById('graph'))
   .backgroundColor('#06070d')
   .graphData({ nodes: getVisibleNodes(), links: allLinks })
-  .nodeRelSize(2)
+  .nodeRelSize(4)
   .nodeThreeObject(makeNodeObject)
-  .linkColor(() => 'rgba(120,140,190,0.22)')
-  .linkWidth(0)
+  .linkColor(() => 'rgba(120,140,190,0.6)')
+  .linkWidth(1.2)
   .linkDirectionalParticleColor(() => '#ffe08a')
   .linkDirectionalParticleWidth(2.2)
   .linkDirectionalParticleSpeed(0.02)
@@ -297,6 +297,58 @@ Graph = ForceGraph3D()(document.getElementById('graph'))
       tooltipEl.style.display = 'none';
     }
   });
+
+// ---------- tighten force layout (reduce repulsion + shorten links) ----------
+const chargeForce = Graph.d3Force('charge');
+if (chargeForce) chargeForce.strength(-15);
+const linkForce = Graph.d3Force('link');
+if (linkForce) linkForce.distance(20);
+Graph.d3ReheatSimulation();
+
+// ---------- decorative memory-shell silhouette ----------
+// A bilobed translucent hull that loosely frames the node cloud.
+// Purely aesthetic — no anatomical claims, no data wired to it.
+// Uses the already-vendored THREE instance (window.THREE / three.module.js).
+const silhouetteMat = new THREE.MeshBasicMaterial({
+  color: 0x4a6899,
+  transparent: true,
+  opacity: 0.08,
+  side: THREE.DoubleSide,
+  depthWrite: false
+});
+const lobeGeo    = new THREE.SphereGeometry(1, 28, 20);
+const leftLobe   = new THREE.Mesh(lobeGeo, silhouetteMat);
+const rightLobe  = new THREE.Mesh(lobeGeo, silhouetteMat);
+const memoryShell = new THREE.Group();
+memoryShell.add(leftLobe);
+memoryShell.add(rightLobe);
+Graph.scene().add(memoryShell);
+
+// Fit hull to node cloud after simulation settles — recomputes on every engine stop
+// so tombstone toggle and graphData updates keep the shell correctly sized.
+Graph.onEngineStop(() => {
+  const nodes = getVisibleNodes();
+  if (!nodes.length) return;
+  // Compute centroid so hull tracks graph center even if the cloud drifts
+  let cx = 0, cy = 0, cz = 0;
+  for (const n of nodes) { cx += (n.x || 0); cy += (n.y || 0); cz += (n.z || 0); }
+  cx /= nodes.length; cy /= nodes.length; cz /= nodes.length;
+  // Compute bounding radius from centroid
+  let maxDist = 20;
+  for (const n of nodes) {
+    const dx = (n.x || 0) - cx, dy = (n.y || 0) - cy, dz = (n.z || 0) - cz;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (d > maxDist) maxDist = d;
+  }
+  const r = maxDist * 1.4;     // 40% padding beyond the cloud edge
+  memoryShell.position.set(cx, cy, cz);
+  // Each lobe: offset 28% of r on X, shaped as a rounded ellipsoid (wider than tall)
+  const offset = r * 0.28;
+  leftLobe.position.set(-offset, 0, 0);
+  leftLobe.scale.set(r * 0.85, r * 0.88, r * 0.78);
+  rightLobe.position.set(offset, 0, 0);
+  rightLobe.scale.set(r * 0.85, r * 0.88, r * 0.78);
+});
 
 // Tooltip follows cursor
 document.addEventListener('mousemove', e => {
