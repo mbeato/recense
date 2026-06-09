@@ -48,6 +48,27 @@ const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] watcher: ${msg}\n`);
 
 /**
+ * Platform guard for INSTALL-05 / T-09-12.
+ *
+ * Returns a clear macOS-only message if `platform` is not 'darwin' — callers
+ * should log the message and `process.exit(0)` BEFORE acquiring any lock or
+ * opening any channel (no silent failure, no lock leak).
+ * Returns undefined on darwin (normal execution path).
+ *
+ * Pure function (platform passed in) so tests can verify without mocking
+ * the read-only `process.platform` property.
+ */
+export function getNonDarwinEarlyExitMessage(platform: string): string | undefined {
+  if (platform !== 'darwin') {
+    return (
+      'iMessage/Telegram watcher is macOS-only; ' +
+      'the engine and Claude Code hooks run on Linux without it'
+    );
+  }
+  return undefined;
+}
+
+/**
  * Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var.
  * Returns undefined if neither is supplied.
  */
@@ -122,6 +143,16 @@ export async function runLockedTick(
 }
 
 export async function main(): Promise<void> {
+  // ── 0. Platform gate (INSTALL-05 / T-09-12) ─────────────────────────────────
+  // Must run BEFORE any lock acquisition or channel open — a non-darwin process
+  // that opens iMessage DB or Telegram has EoP risk. Exits 0 with a clear message;
+  // the engine and Claude Code hooks are unaffected on non-darwin platforms.
+  const earlyExitMsg = getNonDarwinEarlyExitMessage(process.platform);
+  if (earlyExitMsg) {
+    log(earlyExitMsg);
+    process.exit(0);
+  }
+
   // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──────
   // process.exit() inside a try/finally does NOT unwind the stack, so exiting while
   // the lock is held leaks it for up to LOCK_STALE_MS (5 min). Validate here —
