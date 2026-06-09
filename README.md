@@ -52,6 +52,42 @@ The launchd wrapper sources this file at startup; the Node processes read keys f
 
 ---
 
+## Cold-start seed
+
+Before the sleep pass can consolidate anything there must be nodes in the graph. The `brain-seed` CLI is a one-shot bootstrap that reads your existing memory files, extracts entity and fact claims from them, and writes them into the SQLite graph.
+
+### Env vars
+
+| Variable | Required | Description |
+|---|---|---|
+| `BRAIN_MEMORY_DB` | yes | Absolute path to the SQLite database file (e.g. `~/.config/brain-memory/brain.db`) |
+| `BRAIN_MEMORY_COLD_START_MEMORY_DIR` | yes* | Directory containing your per-file memory bodies (`.md` files) |
+| `BRAIN_MEMORY_COLD_START_CLAUDE_FILE` | yes* | Path to your `CLAUDE.md` hard-rules file |
+| `BRAIN_MEMORY_EXTRACTOR_PROVIDER` | no | Provider for claim extraction — `anthropic` (default), `vertex`, or `local` |
+
+*At least one of `BRAIN_MEMORY_COLD_START_MEMORY_DIR` or `BRAIN_MEMORY_COLD_START_CLAUDE_FILE` must be non-empty; both can be set.
+
+### Run it
+
+```sh
+BRAIN_MEMORY_DB=/path/to/brain.db \
+BRAIN_MEMORY_COLD_START_MEMORY_DIR=/path/to/memory-dir \
+BRAIN_MEMORY_COLD_START_CLAUDE_FILE=/path/to/CLAUDE.md \
+node dist/src/adapter/seed-cli.js
+```
+
+Logs are written to `/tmp/brain-memory-seed.log` — stdout stays clean.
+
+### Semantics
+
+**One-shot:** once the seeder finishes successfully it sets a `seeded` meta flag. Re-running against the same database is a no-op — it exits 0 without re-extracting anything.
+
+**Safe no-op on misconfiguration:** if neither source path resolves to any files (e.g. you ran it before setting the env vars), the seeder exits 0 *without* burning the one-shot flag. Fix the paths and re-run.
+
+**Lock-guarded:** `brain-seed` acquires the shared single-writer lock before opening the database. It is safe to run while the Telegram watcher or the hourly sleep-pass is active — they will wait or skip their cycle rather than colliding.
+
+---
+
 ## Telegram channel setup
 
 The Telegram channel is the recommended query surface. You DM your bot a question and get a memory-grounded answer. A bot has its own Telegram identity, so there is no self-echo loop.

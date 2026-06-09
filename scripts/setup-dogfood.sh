@@ -42,6 +42,9 @@ SLEEP_PASS_CLI="$DIST_ADAPTER/sleep-pass-cli.js"
 # Swap BRAIN_MEMORY_SLEEP_JS to this path in sleep.env to enable multi-channel ingestion.
 # enabledSources defaults to [] so it is a safe drop-in before any source is activated.
 INGEST_CLI="$DIST_ADAPTER/ingest-cli.js"
+# brain-seed CLI — one-shot cold-start bootstrap (D-77/D-82).
+# Documented in step 6 below; not auto-run (operator-driven, one-shot + lock-guarded).
+SEED_CLI="$DIST_ADAPTER/seed-cli.js"
 
 # DB path: env var takes precedence; fall back to project default
 DB_PATH="${BRAIN_MEMORY_DB:-$PROJECT_ROOT/brain.db}"
@@ -67,7 +70,7 @@ PLIST_LABEL="com.brain-memory.sleep-pass"
 
 # ── Step 1: Build ──────────────────────────────────────────────────────────────
 echo ""
-echo "==> [1/5] Building brain-memory..."
+echo "==> [1/6] Building brain-memory..."
 cd "$PROJECT_ROOT"
 npm run build
 echo "    Build complete."
@@ -89,7 +92,7 @@ echo "    All dist CLIs present."
 
 # ── Step 2: Generate the gitignored sleep env file (secret-safe, idempotent) ───
 echo ""
-echo "==> [2/5] Writing sleep env file..."
+echo "==> [2/6] Writing sleep env file..."
 mkdir -p "$(dirname "$ENV_FILE")"
 
 # Preserve any existing key line from a prior run — never clobber real keys.
@@ -158,7 +161,7 @@ fi
 
 # ── Step 3: Install launchd LaunchAgent ───────────────────────────────────────
 echo ""
-echo "==> [3/5] Installing launchd LaunchAgent..."
+echo "==> [3/6] Installing launchd LaunchAgent..."
 mkdir -p "$LAUNCHAGENTS_DIR"
 
 # Render plist template: wrapper path + env-file path (keys live in the env file).
@@ -197,7 +200,7 @@ fi
 
 # ── Step 4: Print settings.json hook snippet ──────────────────────────────────
 echo ""
-echo "==> [4/5] Merge the following into ~/.claude/settings.json"
+echo "==> [4/6] Merge the following into ~/.claude/settings.json"
 echo "    IMPORTANT: Do NOT replace the entire file — merge only these entries."
 echo "    Append each hook entry to its existing array (or create the array)."
 echo "    Keep all your other existing hooks intact."
@@ -257,7 +260,7 @@ echo "      export BRAIN_MEMORY_DB=/absolute/path/to/brain.db"
 
 # ── Step 5: Rollback instructions ────────────────────────────────────────────
 echo ""
-echo "==> [5/5] Rollback (reversible — MEMORY.md is NEVER deleted):"
+echo "==> [5/6] Rollback (reversible — MEMORY.md is NEVER deleted):"
 echo "    1. Remove the three brain-memory hook entries from ~/.claude/settings.json"
 echo "       (SessionStart → session-start-cli, UserPromptSubmit → turn-capture-cli,"
 echo "        Stop → stop-cli)"
@@ -265,6 +268,29 @@ echo "    2. launchctl unload $PLIST_DST"
 echo "    3. (Optional) rm $PLIST_DST"
 echo "    4. (Optional) rm $ENV_FILE"
 echo "    After rollback Claude Code uses MEMORY.md as the injection source (unchanged)."
+echo ""
+# ── Step 6: Cold-start seed (one-shot — skipped if already seeded) ────────────
+echo ""
+echo "==> [6/6] Cold-start seed (one-shot — skipped if already seeded)..."
+if [[ ! -f "$SEED_CLI" ]]; then
+    echo "    seed-cli not found — skipping (build may be incomplete)." >&2
+else
+    echo "    To seed the graph from your memory files, set env vars and run:"
+    echo "      BRAIN_MEMORY_DB=$DB_PATH \\"
+    echo "      BRAIN_MEMORY_COLD_START_MEMORY_DIR=<path-to-memory-dir> \\"
+    echo "      BRAIN_MEMORY_COLD_START_CLAUDE_FILE=<path-to-CLAUDE.md> \\"
+    echo "      $NODE_BIN $SEED_CLI"
+    echo ""
+    echo "    Optional — route extraction through a different provider (default: anthropic):"
+    echo "      BRAIN_MEMORY_EXTRACTOR_PROVIDER=local  # 'anthropic', 'vertex', or 'local'"
+    echo ""
+    echo "    One-shot: if the 'seeded' meta flag is already set the command is a no-op."
+    echo "    Safe no-op: if no source files resolve (misconfigured paths) the one-shot"
+    echo "    flag is NOT burned — fix the paths and re-run."
+    echo "    Lock-guarded: safe to run alongside the watcher or sleep-pass."
+    echo "    Logs: /tmp/brain-memory-seed.log"
+fi
+
 echo ""
 echo "==> Setup complete."
 echo "    Sleep pass: hourly via launchd, wrapper sources $ENV_FILE"
