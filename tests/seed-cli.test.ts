@@ -3,10 +3,13 @@
  *
  * ProviderClaimExtractor: production extractor wrapping ModelProvider.generate()
  * via the same promptForSource + parseClaims flow as the Consolidator (Phase 8, D-77).
+ *
+ * resolveColdStartPaths: env-overlay helper for brain-seed CLI (D-79).
  */
 import { describe, it, expect } from 'vitest';
 import { MockModelProvider } from '../src/model/provider';
 import { ProviderClaimExtractor } from '../src/model/claim-extractor';
+import { resolveColdStartPaths } from '../src/adapter/seed-cli';
 
 // ─── ProviderClaimExtractor ───────────────────────────────────────────────────
 
@@ -50,5 +53,34 @@ describe('ProviderClaimExtractor', () => {
     const extractor = new ProviderClaimExtractor(provider);
     const result = await extractor.extract('body', 'reference');
     expect(result).toHaveLength(1);
+  });
+});
+
+// ─── resolveColdStartPaths (D-79) ─────────────────────────────────────────────
+
+describe('resolveColdStartPaths', () => {
+  it('env values override the empty-string defaults', () => {
+    const env: NodeJS.ProcessEnv = {
+      BRAIN_MEMORY_COLD_START_MEMORY_DIR: '/custom/memory',
+      BRAIN_MEMORY_COLD_START_CLAUDE_FILE: '/custom/CLAUDE.md',
+    };
+    const { memoryDir, claudeFile } = resolveColdStartPaths(env);
+    expect(memoryDir).toBe('/custom/memory');
+    expect(claudeFile).toBe('/custom/CLAUDE.md');
+  });
+
+  it('absent env vars resolve to empty string (D-79 default-off fail-safe)', () => {
+    const { memoryDir, claudeFile } = resolveColdStartPaths({});
+    expect(memoryDir).toBe('');
+    expect(claudeFile).toBe('');
+  });
+
+  it('memoryDir set in env + claudeFile absent → memoryDir from env, claudeFile empty', () => {
+    const env: NodeJS.ProcessEnv = {
+      BRAIN_MEMORY_COLD_START_MEMORY_DIR: '/my/memory',
+    };
+    const { memoryDir, claudeFile } = resolveColdStartPaths(env);
+    expect(memoryDir).toBe('/my/memory');
+    expect(claudeFile).toBe('');
   });
 });
