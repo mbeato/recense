@@ -11,22 +11,30 @@ import { mkdtempSync, writeFileSync, readFileSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-// ── Hoist mock helpers so vi.mock factories can reference them ────────────────
+// ── Hoist mock helpers so vi.mock class bodies can reference them ─────────────
+// vi.hoisted() ensures these are evaluated before the vi.mock() factories run.
 const { mockAnthropicCreate, mockOpenAiCreate } = vi.hoisted(() => ({
   mockAnthropicCreate: vi.fn<[], Promise<unknown>>(),
   mockOpenAiCreate: vi.fn<[], Promise<unknown>>(),
 }));
 
+// Use classes (not arrow functions) because `new Anthropic()` requires a real constructor.
 vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: { create: mockAnthropicCreate },
-  })),
+  default: class MockAnthropic {
+    messages: { create: typeof mockAnthropicCreate };
+    constructor(_config: { apiKey: string }) {
+      this.messages = { create: mockAnthropicCreate };
+    }
+  },
 }));
 
 vi.mock('openai', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    embeddings: { create: mockOpenAiCreate },
-  })),
+  default: class MockOpenAI {
+    embeddings: { create: typeof mockOpenAiCreate };
+    constructor(_config: { apiKey: string }) {
+      this.embeddings = { create: mockOpenAiCreate };
+    }
+  },
 }));
 
 import {
