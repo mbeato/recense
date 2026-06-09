@@ -217,6 +217,25 @@ describe('INGEST-03: ColdStartSeeder', () => {
     expect(store.getMeta('seeded')).not.toBeNull();
   });
 
+  it('zero-sources guard (D-81): throws when no source files resolve and seeded flag is NOT set', async () => {
+    // Empty dir has no .md files; claudeFile '' is falsy → collectSources() returns []
+    // D-81 guard must throw BEFORE setMeta('seeded') is reached
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-empty-'));
+    const freshDb = new Database(':memory:');
+    initSchema(freshDb);
+    try {
+      const mock = new MockClaimExtractor([]);
+      const cfg = makeConfig(emptyDir, '');
+      const freshStore = new SemanticStore(freshDb, clock, cfg);
+      const seeder = new ColdStartSeeder(freshStore, mock, cfg);
+      await expect(seeder.seed()).rejects.toThrow();
+      expect(freshStore.getMeta('seeded')).toBeNull();
+    } finally {
+      fs.rmSync(emptyDir, { recursive: true, force: true });
+      freshDb.close();
+    }
+  });
+
   it('files whose real path resolves outside coldStartMemoryDir are skipped (T-04-PATH)', async () => {
     // Create a file outside tmpDir
     const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-outside-'));

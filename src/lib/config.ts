@@ -468,8 +468,8 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   trainingConfidenceThreshold: 0.6,
   maxContentBytes: 8_000,
   salience: DEFAULT_SALIENCE_CONFIG,
-  coldStartMemoryDir: '$HOME/.claude/projects/-Users-you-resume/memory',
-  coldStartClaudeFile: '$HOME/.claude/CLAUDE.md',
+  coldStartMemoryDir: '', // empty = disabled; set BRAIN_MEMORY_COLD_START_MEMORY_DIR or configure (D-79)
+  coldStartClaudeFile: '', // empty = disabled; set BRAIN_MEMORY_COLD_START_CLAUDE_FILE or configure (D-79)
   modelProvider: 'anthropic',
   anthropicModel: 'claude-haiku-4-5-20251001',
   vertexProjectId: '',
