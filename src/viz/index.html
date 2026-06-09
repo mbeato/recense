@@ -129,6 +129,9 @@ const HULL_ROT_Z = 0;
 // Enclosure margin: the shell's narrowest half-extent = cloud radius × this. >1 wraps
 // the whole cloud with headroom. Nudge up if nodes still poke out, down if too roomy.
 const HULL_FIT_MARGIN = 1.5;
+// Manual centering nudge (model units, applied after vertex-centroid recentering).
+// Leave at 0 unless the mass still reads slightly off-center after a look.
+const HULL_OFFSET_X = 0, HULL_OFFSET_Y = 0, HULL_OFFSET_Z = 0;
 
 // ---------- DOM refs ----------
 const logEl       = document.getElementById('log');
@@ -332,7 +335,17 @@ Graph.scene().add(hullGroup);
 let hullFitBase = 1;
 
 new STLLoader().load('./vendor/brain-model.stl', (geometry) => {
-  geometry.center();               // recenter to origin (raw model is off-center)
+  // Recenter on the VERTEX CENTROID (mass center), not the bounding-box midpoint:
+  // the model has a thin lower stem that drags the bbox center off the main mass,
+  // so bbox-centering left the dense rounded mass offset from the node cloud.
+  // That main mass holds the bulk of the vertices, so their mean lands inside it —
+  // where the nodes belong.
+  const pos = geometry.attributes.position;
+  let vx = 0, vy = 0, vz = 0;
+  for (let i = 0; i < pos.count; i++) { vx += pos.getX(i); vy += pos.getY(i); vz += pos.getZ(i); }
+  geometry.translate(-vx / pos.count, -vy / pos.count, -vz / pos.count);
+  // Optional manual nudge (model units) if the mass center still reads slightly off.
+  geometry.translate(HULL_OFFSET_X, HULL_OFFSET_Y, HULL_OFFSET_Z);
   geometry.computeVertexNormals(); // smooth shading so surface detail reads
   geometry.computeBoundingBox();
   const bb = geometry.boundingBox;
