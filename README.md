@@ -6,77 +6,109 @@ This is **open-source, self-hosted, single-user, bring-your-own-keys**. You clon
 
 ---
 
-## Requirements
+## Prerequisites
 
-- **Node.js** 18 or later — the core engine, sleep pass, and Telegram channel are platform-agnostic
-- **Anthropic API key** (Claude — for compose + judge heads)
-- **OpenAI API key** (for embedding head)
-- **Telegram bot token** — create a bot via [@BotFather](https://t.me/BotFather) to get one
+- **Node.js 22 or later** — required for the native module (better-sqlite3 ABI)
+- **Anthropic API key** — Claude compose + judge heads
+- **OpenAI API key** — embedding head
 
-The Telegram channel uses the bot API (HTTPS polling) and requires no macOS-specific APIs. The optional iMessage channel is macOS-only; see [below](#optional-imessage-channel-advanced).
+Optional (macOS only):
+- **Telegram bot token** — always-on query bot; create one via [@BotFather](https://t.me/BotFather)
 
 ---
 
-## Install and build
+## Install
 
 ```sh
+git clone https://github.com/<owner>/brain-memory.git
+cd brain-memory
 npm install
-npm run build
+npm run init
 ```
 
-Compiled entry points land in `dist/`. The launchd setup script references these paths.
+`npm run build` compiles the TypeScript source to `dist/`. `npm run init` runs the build then launches `brain init` — a guided wizard that:
+
+1. Prompts for your DB path (where `brain.db` will live)
+2. Collects and live-validates your API keys
+3. Captures the correct `node` binary path (required by the scheduler and hooks — BRAIN_MEMORY_NODE_BIN)
+4. Writes `~/.config/brain-memory/sleep.env` (`chmod 600`)
+5. Registers the sleep-pass scheduler (macOS: launchd; Linux: prints `brain scheduler run` guidance)
+6. Wires the three Claude Code hooks into `~/.claude/settings.json`
+7. Optionally seeds from an existing `MEMORY.md` (`[y/N]` — default No)
+
+`brain init` is idempotent — re-run it to update keys or recapture the node binary after switching Node versions.
+
+After init, verify the install:
+
+```sh
+brain doctor
+```
+
+---
+
+## Command reference
+
+| Command | Description |
+|---------|-------------|
+| `brain init` | Guided bootstrap wizard — run once after clone, or re-run to update config |
+| `brain doctor` | Health audit: DB, API keys, scheduler, hooks, Node ABI |
+| `brain scheduler install` | macOS: register the launchd sleep-pass agent. Linux: prints `brain scheduler run` guidance |
+| `brain scheduler status` | Check whether the scheduler is registered / running |
+| `brain scheduler run` | Linux: start hourly sleep-pass in the foreground (stops when the process exits) |
+| `brain recall` | Query memory from the command line |
+| `brain seed` | One-shot cold-start seed from existing memory files |
+| `brain ingest` | Run the source adapter pass (email, transcripts, Obsidian vault) |
+| `brain sleep-pass` | Run one consolidation pass immediately |
+| `brain snapshot` | Export a DB snapshot |
+| `brain watcher` | Start the Telegram / iMessage query watcher (macOS only) |
+| `brain hook session-start \| turn-capture \| stop` | Claude Code hook handlers — wired automatically by `brain init` |
+
+---
+
+## Supported platforms
+
+| Platform | Scheduler | Claude Code hooks | Query channel |
+|----------|-----------|-------------------|---------------|
+| **macOS** (full support) | launchd — always-on, survives reboots | ✓ | Telegram (launchd KeepAlive) · iMessage (optional, see [below](#optional-imessage-channel-advanced)) |
+| **Linux** | `brain scheduler run` — foreground, stops with process¹ | ✓ | — (channel watcher is macOS-only in v2.0) |
+| **Windows** | WSL — community-supported² | WSL | WSL |
+
+¹ **Linux scheduler caveat:** `brain scheduler run` starts an hourly croner tick in the foreground. The process stops when your terminal session ends — there is no background daemon or reboot-survival on Linux in v2.0. Reboot-survival via a systemd unit is planned for v2.1. Until then, restart `brain scheduler run` manually after reboots.
+
+² **Windows:** Native Windows is out of scope. Run under WSL2 — the engine, hooks, and foreground scheduler work; the channel watcher (Telegram/iMessage) behaves as on Linux (not supported in v2.0).
 
 ---
 
 ## BYO-keys
 
-Keys and the bot token live in a gitignored env file — never in source code or config literals.
+`brain init` creates and writes `~/.config/brain-memory/sleep.env` with `chmod 600`. **You do not need to create this file manually** unless you prefer to skip the wizard.
 
-Create `~/.config/brain-memory/sleep.env` (chmod 600):
-
-```sh
-mkdir -p ~/.config/brain-memory
-touch ~/.config/brain-memory/sleep.env
-chmod 600 ~/.config/brain-memory/sleep.env
-```
-
-Add your keys and token (replace placeholder names with real values — never commit this file):
+If you set it up manually, create `~/.config/brain-memory/sleep.env` (`chmod 600`) with:
 
 ```sh
 ANTHROPIC_API_KEY=your-anthropic-key-here
 OPENAI_API_KEY=your-openai-key-here
+```
+
+For the Telegram channel (macOS), also add:
+
+```sh
 BRAIN_MEMORY_TELEGRAM_TOKEN=123456:ABC-your-bot-token-here
 ```
 
-The launchd wrapper sources this file at startup; the Node processes read keys from environment via the SDK defaults. Keys are never logged or stored elsewhere.
+Keys are never logged or stored outside this file. The scheduler and hooks read keys from the environment at runtime via the SDK defaults.
 
 ---
 
 ## Cold-start seed
 
-Before the sleep pass can consolidate anything there must be nodes in the graph. The `brain-seed` CLI is a one-shot bootstrap that reads your existing memory files, extracts entity and fact claims from them, and writes them into the SQLite graph.
-
-### Env vars
-
-| Variable | Required | Description |
-|---|---|---|
-| `BRAIN_MEMORY_DB` | yes | Absolute path to the SQLite database file (e.g. `~/.config/brain-memory/brain.db`) |
-| `BRAIN_MEMORY_COLD_START_MEMORY_DIR` | yes* | Directory containing your per-file memory bodies (`.md` files) |
-| `BRAIN_MEMORY_COLD_START_CLAUDE_FILE` | yes* | Path to your `CLAUDE.md` hard-rules file |
-| `BRAIN_MEMORY_EXTRACTOR_PROVIDER` | no | Provider for claim extraction — `anthropic` (default), `vertex`, or `local` |
-
-*At least one of `BRAIN_MEMORY_COLD_START_MEMORY_DIR` or `BRAIN_MEMORY_COLD_START_CLAUDE_FILE` must be non-empty; both can be set.
-
-### Run it
+Before the sleep pass can consolidate anything there must be nodes in the graph. `brain init` offers a one-shot seed at the end of the wizard (`[y/N]` — default No). You can also run it later:
 
 ```sh
-BRAIN_MEMORY_DB=/path/to/brain.db \
-BRAIN_MEMORY_COLD_START_MEMORY_DIR=/path/to/memory-dir \
-BRAIN_MEMORY_COLD_START_CLAUDE_FILE=/path/to/CLAUDE.md \
-node dist/src/adapter/seed-cli.js
+brain seed
 ```
 
-Logs are written to `/tmp/brain-memory-seed.log` — stdout stays clean.
+The seed reads your existing memory files (configured via `BRAIN_MEMORY_COLD_START_MEMORY_DIR` and `BRAIN_MEMORY_COLD_START_CLAUDE_FILE`), extracts entity and fact claims, and writes them into the SQLite graph.
 
 ### Semantics
 
@@ -84,13 +116,15 @@ Logs are written to `/tmp/brain-memory-seed.log` — stdout stays clean.
 
 **Safe no-op on misconfiguration:** if neither source path resolves to any files (e.g. you ran it before setting the env vars), the seeder exits 0 *without* burning the one-shot flag. Fix the paths and re-run.
 
-**Lock-guarded:** `brain-seed` acquires the shared single-writer lock before opening the database. It is safe to run while the Telegram watcher or the hourly sleep-pass is active — they will wait or skip their cycle rather than colliding.
+**Lock-guarded:** `brain seed` acquires the shared single-writer lock before opening the database. It is safe to run while the Telegram watcher or the hourly sleep-pass is active — they will wait or skip their cycle rather than colliding.
 
 ---
 
 ## Telegram channel setup
 
-The Telegram channel is the recommended query surface. You DM your bot a question and get a memory-grounded answer. A bot has its own Telegram identity, so there is no self-echo loop.
+The Telegram channel is the recommended query surface on macOS. You DM your bot a question and get a memory-grounded answer.
+
+> **macOS only.** The always-on watcher (`brain watcher` / `setup-watcher.sh`) uses launchd and is not supported on Linux in v2.0.
 
 ### Step 1 — Create a bot
 
