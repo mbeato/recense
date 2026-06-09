@@ -126,12 +126,13 @@ const MAX_FAN_OUT   = 8;
 const HULL_ROT_X = -Math.PI / 2;
 const HULL_ROT_Y = 0;
 const HULL_ROT_Z = 0;
-// Enclosure margin: the shell's narrowest half-extent = cloud radius × this. >1 wraps
-// the whole cloud with headroom. Nudge up if nodes still poke out, down if too roomy.
-const HULL_FIT_MARGIN = 1.5;
-// Manual centering nudge (model units, applied after vertex-centroid recentering).
-// Leave at 0 unless the mass still reads slightly off-center after a look.
-const HULL_OFFSET_X = 0, HULL_OFFSET_Y = 0, HULL_OFFSET_Z = 0;
+// Brain world scale: the normalized brain (median axis spans ±1) maps to ±BRAIN_SCALE
+// world units. Drives BOTH the visible shell and the containment volume, so they stay
+// aligned. Bigger = roomier cloud (more space between nodes); smaller = denser.
+const BRAIN_SCALE = 200;
+// Containment pull: how hard a node that drifts outside the brain volume is drawn back
+// toward the center each tick. Higher = crisper brain edge, more surface clumping.
+const CONTAIN_STRENGTH = 0.35;
 
 // ---------- DOM refs ----------
 const logEl       = document.getElementById('log');
@@ -188,6 +189,47 @@ try {
 }
 
 loadingEl.style.display = 'none';
+
+// ---------- brain volume occupancy grid (drives the containment force) ----------
+let brainVol = null;
+try {
+  const vres = await fetch('./vendor/brain-volume.json');
+  if (vres.ok) {
+    const vj = await vres.json();
+    const rawBits = atob(vj.bits);
+    const bits = new Uint8Array(rawBits.length);
+    for (let i = 0; i < rawBits.length; i++) bits[i] = rawBits.charCodeAt(i);
+    brainVol = { res: vj.res, bits, centroid: vj.centroid, normScale: vj.normScale };
+  }
+} catch (e) { logEvent('warn', 'brain volume grid unavailable: ' + e.message); }
+
+// Occupancy test in normalized brain space (each axis in [-1,1]).
+function brainOccupied(qx, qy, qz) {
+  if (!brainVol) return true;                  // no grid → containment is a no-op
+  const R = brainVol.res;
+  const ix = ((qx + 1) * 0.5 * R) | 0, iy = ((qy + 1) * 0.5 * R) | 0, iz = ((qz + 1) * 0.5 * R) | 0;
+  if (ix < 0 || iy < 0 || iz < 0 || ix >= R || iy >= R || iz >= R) return false;
+  const i = (iz * R + iy) * R + ix;
+  return (brainVol.bits[i >> 3] >> (i & 7)) & 1;
+}
+
+// Seed initial node positions inside the brain volume so the cloud starts in-shape and
+// the force layout just relaxes within it (fast convergence, no sphere→brain morph).
+if (brainVol && allNodes.length) {
+  const R = brainVol.res, occ = [];
+  for (let i = 0; i < R * R * R; i++) if ((brainVol.bits[i >> 3] >> (i & 7)) & 1) occ.push(i);
+  const seedEuler = new THREE.Euler(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
+  const sp = new THREE.Vector3();
+  for (const n of allNodes) {
+    const c = occ.length ? occ[(Math.random() * occ.length) | 0] : 0;
+    const ix = c % R, iy = ((c / R) | 0) % R, iz = (c / (R * R)) | 0;
+    const qx = (ix + Math.random()) / R * 2 - 1;
+    const qy = (iy + Math.random()) / R * 2 - 1;
+    const qz = (iz + Math.random()) / R * 2 - 1;
+    sp.set(qx, qy, qz).multiplyScalar(BRAIN_SCALE).applyEuler(seedEuler);
+    n.x = sp.x; n.y = sp.y; n.z = sp.z;
+  }
+}
 
 if (loadErr) {
   const p = document.createElement('p');
@@ -327,33 +369,22 @@ Graph.d3ReheatSimulation();
 // Loaded from vendored STL; lit material so surface detail reads.
 const hullGroup = new THREE.Group();
 hullGroup.rotation.set(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
+hullGroup.scale.setScalar(BRAIN_SCALE);   // normalized brain → world; matches containment
 Graph.scene().add(hullGroup);
 
-// Updated in the load callback; used by the engine-stop fit to scale the group.
-// The model's NARROWEST half-extent (the mesh is elongated, so fitting on the long
-// axis / bounding sphere leaves the narrow axes smaller than the cloud).
-let hullFitBase = 1;
-
 new STLLoader().load('./vendor/brain-model.stl', (geometry) => {
-  // Recenter on the VERTEX CENTROID (mass center), not the bounding-box midpoint:
-  // the model has a thin lower stem that drags the bbox center off the main mass,
-  // so bbox-centering left the dense rounded mass offset from the node cloud.
-  // That main mass holds the bulk of the vertices, so their mean lands inside it —
-  // where the nodes belong.
-  const pos = geometry.attributes.position;
-  let vx = 0, vy = 0, vz = 0;
-  for (let i = 0; i < pos.count; i++) { vx += pos.getX(i); vy += pos.getY(i); vz += pos.getZ(i); }
-  geometry.translate(-vx / pos.count, -vy / pos.count, -vz / pos.count);
-  // Optional manual nudge (model units) if the mass center still reads slightly off.
-  geometry.translate(HULL_OFFSET_X, HULL_OFFSET_Y, HULL_OFFSET_Z);
+  // Normalize IDENTICALLY to the occupancy grid (vendor/brain-volume.json): recenter on
+  // the baked vertex centroid, then scale by the baked normScale so the median axis spans
+  // [-1,1]. This makes the visible shell and the containment volume share one coordinate
+  // space — the node cloud fills exactly the brain you see.
+  if (brainVol) {
+    const c = brainVol.centroid, s = brainVol.normScale;
+    geometry.translate(-c[0], -c[1], -c[2]);
+    geometry.scale(s, s, s);
+  } else {
+    geometry.center();
+  }
   geometry.computeVertexNormals(); // smooth shading so surface detail reads
-  geometry.computeBoundingBox();
-  const bb = geometry.boundingBox;
-  hullFitBase = Math.min(
-    (bb.max.x - bb.min.x) / 2,
-    (bb.max.y - bb.min.y) / 2,
-    (bb.max.z - bb.min.z) / 2,
-  ) || 1;
 
   const hullMat = new THREE.MeshStandardMaterial({
     color: 0x7a8db5,      // muted blue-grey, coherent with panel chrome palette
@@ -370,26 +401,36 @@ new STLLoader().load('./vendor/brain-model.stl', (geometry) => {
   hullGroup.add(hullMesh);
 });
 
-// Fit hull to node cloud after simulation settles — recomputes on every engine stop
-// so tombstone toggle and graphData updates keep the shell correctly sized.
-Graph.onEngineStop(() => {
-  const nodes = getVisibleNodes();
-  if (!nodes.length) return;
-  // Compute centroid so hull tracks graph center even if the cloud drifts
+// ---------- brain containment force ----------
+// Confine the force-directed cloud into the brain volume: clusters still form (charge +
+// links), but any node that drifts OUTSIDE the baked occupancy grid is pulled back toward
+// the brain center each tick — so the whole cloud takes the brain shape while keeping
+// its cluster structure. The shell tracks the cloud centroid so model + nodes stay
+// co-located, and its world matrix IS the world→normalized map the occupancy test uses.
+const _inv = new THREE.Matrix4();
+const _q = new THREE.Vector3();
+function brainContainment(alpha) {
+  const nodes = Graph.graphData().nodes;
+  if (!brainVol || !nodes.length) return;
   let cx = 0, cy = 0, cz = 0;
-  for (const n of nodes) { cx += (n.x || 0); cy += (n.y || 0); cz += (n.z || 0); }
+  for (const n of nodes) { cx += n.x || 0; cy += n.y || 0; cz += n.z || 0; }
   cx /= nodes.length; cy /= nodes.length; cz /= nodes.length;
-  // Compute bounding radius from centroid
-  let maxDist = 20;
-  for (const n of nodes) {
-    const dx = (n.x || 0) - cx, dy = (n.y || 0) - cy, dz = (n.z || 0) - cz;
-    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (d > maxDist) maxDist = d;
-  }
-  // Scale so the shell's narrowest half-extent encloses the cloud on every axis
-  hullGroup.scale.setScalar((maxDist * HULL_FIT_MARGIN) / (hullFitBase || 1));
   hullGroup.position.set(cx, cy, cz);
-});
+  hullGroup.updateMatrixWorld(true);
+  _inv.copy(hullGroup.matrixWorld).invert();   // world → normalized brain space
+  const k = CONTAIN_STRENGTH * alpha;
+  for (const n of nodes) {
+    _q.set(n.x || 0, n.y || 0, n.z || 0).applyMatrix4(_inv);
+    if (!brainOccupied(_q.x, _q.y, _q.z)) {
+      n.vx = (n.vx || 0) + (cx - (n.x || 0)) * k;
+      n.vy = (n.vy || 0) + (cy - (n.y || 0)) * k;
+      n.vz = (n.vz || 0) + (cz - (n.z || 0)) * k;
+    }
+  }
+}
+brainContainment.initialize = () => {};
+Graph.d3Force('brainContainment', brainContainment);
+Graph.d3ReheatSimulation();
 
 // Tooltip follows cursor
 document.addEventListener('mousemove', e => {
