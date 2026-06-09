@@ -50,8 +50,10 @@ function fail(detail: string): CheckResult { return { ok: false, detail }; }
  * the imported SCHEMA_VERSION constant.
  *
  * T-09-10: { readonly: true } prevents any accidental write.
+ *
+ * @exported — used by tests to exercise schema-pass/mismatch without live API.
  */
-function checkDb(dbPath: string): CheckResult {
+export function checkDb(dbPath: string): CheckResult {
   if (!dbPath) {
     return fail('BRAIN_MEMORY_DB not set — run `brain init`');
   }
@@ -76,8 +78,10 @@ function checkDb(dbPath: string): CheckResult {
 /**
  * Perform minimal live calls to validate both API keys.
  * T-09-09: reports valid/invalid only; key bytes are never written to stdout.
+ *
+ * @exported — exported for type reference; live calls mean tests mock/skip it.
  */
-async function checkApiKeys(): Promise<CheckResult> {
+export async function checkApiKeys(): Promise<CheckResult> {
   const anthropicKey = process.env['ANTHROPIC_API_KEY'];
   const openaiKey    = process.env['OPENAI_API_KEY'];
   const results: string[] = [];
@@ -140,8 +144,11 @@ async function checkApiKeys(): Promise<CheckResult> {
 /**
  * macOS: checks launchctl for com.brain-memory.sleep-pass.
  * Linux: pgrep-based liveness (informational — not a hard fail per D-92).
+ *
+ * @exported — used by tests; platform-specific branches make it deterministic
+ *             in CI without mocking.
  */
-function checkScheduler(): CheckResult {
+export function checkScheduler(): CheckResult {
   if (process.platform === 'darwin') {
     const result = spawnSync(
       'launchctl',
@@ -168,9 +175,13 @@ function checkScheduler(): CheckResult {
  * Reads ~/.claude/settings.json and checks SessionStart, UserPromptSubmit,
  * and Stop each have a brain hook entry (new `brain ... hook` form OR the
  * pre-migration `brain-memory/dist/src/adapter/` path).
+ *
+ * @param settingsOverridePath — override the default path for testing.
+ * @exported — used by tests to verify hook detection without modifying the
+ *             real settings.json.
  */
-function checkHooks(): CheckResult {
-  const settingsPath = join(homedir(), '.claude', 'settings.json');
+export function checkHooks(settingsOverridePath?: string): CheckResult {
+  const settingsPath = settingsOverridePath ?? join(homedir(), '.claude', 'settings.json');
   if (!existsSync(settingsPath)) {
     return fail('~/.claude/settings.json not found — run `brain init`');
   }
@@ -215,8 +226,11 @@ function checkHooks(): CheckResult {
 /**
  * Spawn BRAIN_MEMORY_NODE_BIN and require better-sqlite3.
  * Non-zero exit or NODE_MODULE_VERSION in stderr = ABI mismatch.
+ *
+ * @exported — used by tests to assert fail behavior when BRAIN_MEMORY_NODE_BIN
+ *             is unset, without requiring a live node binary.
  */
-function checkNodeAbi(): CheckResult {
+export function checkNodeAbi(): CheckResult {
   const nodeBin = process.env['BRAIN_MEMORY_NODE_BIN'];
   if (!nodeBin) {
     return fail('BRAIN_MEMORY_NODE_BIN not set — run `brain init`');
