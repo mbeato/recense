@@ -40,7 +40,7 @@ import {
   writeFileSync,
 } from 'fs';
 import { createInterface } from 'readline';
-import { homedir, tmpdir } from 'os';
+import { homedir } from 'os';
 import { dirname, join, resolve } from 'path';
 import { spawnSync } from 'child_process';
 
@@ -48,6 +48,7 @@ import { spawnSync } from 'child_process';
 // (lazy require inside validateApiKey was not interceptable in vitest forks/CJS mode)
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { defaultDbPath } from './runtime-config';
 
 const LOG_PATH = '/tmp/brain-memory-init.log';
 
@@ -102,8 +103,11 @@ export function captureNodeBin(): string {
  */
 export function writeEnvFile(envPath: string, vars: Record<string, string>): void {
   const lines = Object.entries(vars).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
-  const tmp = join(tmpdir(), `brain-env-${Date.now()}-${process.pid}.tmp`);
   mkdirSync(dirname(envPath), { recursive: true });
+  // WR-01: write the tmp file in the destination dir, not os.tmpdir() — rename(2)
+  // is not atomic across filesystems and throws EXDEV when /tmp (tmpfs on Linux)
+  // and $HOME are on different mounts. An intra-directory rename is always atomic.
+  const tmp = join(dirname(envPath), `.brain-env-${Date.now()}-${process.pid}.tmp`);
   writeFileSync(tmp, lines, { mode: 0o600 });
   chmodSync(tmp, 0o600); // belt-and-suspenders (umask may limit mode in writeFileSync)
   renameSync(tmp, envPath);
@@ -156,6 +160,7 @@ export function mergeSettingsHooks(
   settingsPath: string,
   nodeBin: string,
   brainJs: string,
+  dbPath: string,
 ): void {
   let settings: Record<string, unknown> = {};
   if (existsSync(settingsPath)) {
@@ -191,21 +196,24 @@ export function mergeSettingsHooks(
       group.hooks = [];
     }
 
-    // Remove old-style brain entries by basename match (T-09-18: surgical splice)
-    group.hooks = group.hooks.filter(
-      h => !/(session-start-cli|turn-capture-cli|stop-cli)\.js$/.test(h.command ?? ''),
-    );
+    // Remove any prior brain entry — old-style `*-cli.js` OR new-style `brain ... hook`
+    // (T-09-18: surgical splice). Stripping the new-style entry too makes re-running
+    // init re-pin the current --db path (idempotent AND correct when the DB path changes).
+    const isBrainHook = (c: string): boolean =>
+      /(session-start-cli|turn-capture-cli|stop-cli)\.js\b/.test(c) ||
+      /brain(\.js)?\s+hook\s/.test(c);
+    group.hooks = group.hooks.filter(h => !isBrainHook(h.command ?? ''));
 
-    // Add new-style entry only if no brain hook command is already present (idempotent)
-    const newCommand = `${nodeBin} ${brainJs} hook ${hookSubcmd}`;
-    if (!group.hooks.some(h => /brain.*hook/.test(h.command ?? ''))) {
-      group.hooks.push({ type: 'command', command: newCommand, timeout: 5 });
-    }
+    // CR-01: pin the configured DB into the hook command so the hook resolves the
+    // init-configured DB regardless of the env Claude Code launches the hook with.
+    const newCommand = `${nodeBin} ${brainJs} hook ${hookSubcmd} --db ${dbPath}`;
+    group.hooks.push({ type: 'command', command: newCommand, timeout: 5 });
   }
 
-  // Atomic write: tmp→rename; 2-space JSON to avoid collapsing other tools' formatting
+  // Atomic write: tmp→rename; 2-space JSON to avoid collapsing other tools' formatting.
+  // WR-01: tmp file in the destination dir, not os.tmpdir() (cross-fs rename throws EXDEV).
   mkdirSync(dirname(settingsPath), { recursive: true });
-  const tmp = join(tmpdir(), `brain-settings-${Date.now()}-${process.pid}.tmp`);
+  const tmp = join(dirname(settingsPath), `.brain-settings-${Date.now()}-${process.pid}.tmp`);
   writeFileSync(tmp, JSON.stringify(settings, null, 2));
   renameSync(tmp, settingsPath);
 }
@@ -309,10 +317,9 @@ async function main(): Promise<void> {
   console.log('Press Enter to keep the current value shown in brackets.\n');
 
   // ── D-89 Step 1: DB path ──────────────────────────────────────────────────
-  const defaultDbPath =
-    existing.get('BRAIN_MEMORY_DB') ??
-    join(homedir(), '.config', 'brain-memory', 'brain.db');
-  const dbPath = await ask(rl, 'DB path', defaultDbPath);
+  // CR-01: single source of truth for the default — must match what the hooks resolve.
+  const defaultDb = existing.get('BRAIN_MEMORY_DB') ?? defaultDbPath();
+  const dbPath = await ask(rl, 'DB path', defaultDb);
 
   // ── D-89 Steps 2-3: API keys with live validation ─────────────────────────
   const anthropicKey = await promptAndValidateKey(
@@ -364,7 +371,7 @@ async function main(): Promise<void> {
   const brainJs = resolve(__dirname, 'brain.js');
   console.log('\n  Wiring hooks in settings.json...');
   try {
-    mergeSettingsHooks(settingsPath, nodeBin, brainJs);
+    mergeSettingsHooks(settingsPath, nodeBin, brainJs, dbPath);
     console.log('  Hooks wired: SessionStart, UserPromptSubmit, Stop');
   } catch (e) {
     const msg = String(e);

@@ -23,9 +23,9 @@
  */
 import { appendFileSync } from 'fs';
 import { spawn } from 'child_process';
-import { homedir } from 'os';
-import { join, resolve } from 'path';
+import { resolve } from 'path';
 import Database from 'better-sqlite3';
+import { resolveDbPath, loadConfiguredEnv } from './runtime-config';
 import { initSchema } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
@@ -53,12 +53,16 @@ async function consumeStdin(): Promise<Record<string, unknown>> {
  */
 function spawnSleepPass(dbPath: string): void {
   const sleepPassScript = resolve(__dirname, 'sleep-pass-cli.js');
+  // WR-04: the per-turn sleep pass makes Haiku + embedding calls, so it needs the
+  // API keys. On a `brain init` install those live in the configured env file, not
+  // the hook's ambient env. Merge them in; explicitly-exported process.env wins.
   const child = spawn(
     process.execPath,                    // same node binary — avoids PATH issues in hook context
     [sleepPassScript, '--db', dbPath],
     {
       detached: true,                    // detach from parent process group
       stdio: 'ignore',                   // MUST be 'ignore' — never 'inherit' or 'pipe'
+      env: { ...loadConfiguredEnv(), ...process.env },
     },
   );
   child.unref();                         // parent can exit without waiting for child
@@ -75,7 +79,8 @@ async function main(): Promise<void> {
     ? input['session_id'] : 'unknown';
   const cwd       = typeof input['cwd'] === 'string' ? input['cwd'] : '';
 
-  const dbPath = process.env['BRAIN_MEMORY_DB'] ?? join(homedir(), 'brain-memory', 'brain.db');
+  // CR-01: --db (pinned by `brain init`) > BRAIN_MEMORY_DB env > shared default.
+  const dbPath = resolveDbPath();
 
   if (assistantText) {
     const config = { ...DEFAULT_CONFIG, dbPath };

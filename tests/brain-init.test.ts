@@ -45,6 +45,7 @@ import {
   validateApiKey,
   mergeSettingsHooks,
 } from '../src/adapter/brain-init';
+import { resolveDbPath } from '../src/adapter/runtime-config';
 
 // ── resolveExistingEnv ────────────────────────────────────────────────────────
 
@@ -205,12 +206,13 @@ describe('validateApiKey', () => {
 describe('mergeSettingsHooks', () => {
   const FAKE_NODE = '/usr/bin/node';
   const FAKE_BRAIN = '/path/to/dist/src/adapter/brain.js';
+  const FAKE_DB = '/home/u/.config/brain-memory/brain.db';
 
   it('adds SessionStart, UserPromptSubmit, and Stop brain hook entries to a fresh file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brain-init-settings-'));
     const settingsPath = join(dir, 'settings.json');
 
-    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN);
+    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN, FAKE_DB);
 
     const s = JSON.parse(readFileSync(settingsPath, 'utf8'));
     for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop']) {
@@ -236,7 +238,7 @@ describe('mergeSettingsHooks', () => {
     };
     writeFileSync(settingsPath, JSON.stringify(initial));
 
-    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN);
+    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN, FAKE_DB);
 
     const s = JSON.parse(readFileSync(settingsPath, 'utf8'));
     for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop']) {
@@ -268,7 +270,7 @@ describe('mergeSettingsHooks', () => {
     };
     writeFileSync(settingsPath, JSON.stringify(initial));
 
-    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN);
+    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN, FAKE_DB);
 
     const s = JSON.parse(readFileSync(settingsPath, 'utf8'));
     const allCmds = (s.hooks.SessionStart as Array<{ hooks: Array<{ command: string }> }>)
@@ -285,7 +287,7 @@ describe('mergeSettingsHooks', () => {
   it('writes with 2-space JSON formatting', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brain-init-settings-'));
     const settingsPath = join(dir, 'settings.json');
-    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN);
+    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN, FAKE_DB);
     const raw = readFileSync(settingsPath, 'utf8');
     // 2-space indentation: no tab characters
     expect(raw).not.toContain('\t');
@@ -296,8 +298,8 @@ describe('mergeSettingsHooks', () => {
   it('is idempotent — running twice does not duplicate hook entries', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brain-init-settings-'));
     const settingsPath = join(dir, 'settings.json');
-    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN);
-    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN);
+    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN, FAKE_DB);
+    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN, FAKE_DB);
 
     const s = JSON.parse(readFileSync(settingsPath, 'utf8'));
     for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop']) {
@@ -306,6 +308,38 @@ describe('mergeSettingsHooks', () => {
         .flatMap(g => g.hooks ?? [])
         .filter(h => /brain.*hook/.test(h.command ?? ''));
       expect(brainEntries.length).toBe(1);
+    }
+  });
+
+  // ── CR-01 regression: the wired hook command must pin --db to the configured DB,
+  //    and the hook's own resolver must recover exactly that path from its argv.
+  //    This is the guard against the init-vs-hook DB-path divergence that silently
+  //    broke the core loop on a default install.
+  it('pins --db <configured> into every hook command and round-trips through resolveDbPath (CR-01)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brain-init-settings-'));
+    const settingsPath = join(dir, 'settings.json');
+    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN, FAKE_DB);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop']) {
+      const groups = s.hooks[event] as Array<{ hooks: Array<{ command: string }> }>;
+      const cmd = groups
+        .flatMap(g => g.hooks ?? [])
+        .map(h => h.command ?? '')
+        .find(c => /brain.*hook/.test(c));
+      expect(cmd, `${event} brain hook missing`).toBeTruthy();
+      // Command literally carries the configured DB
+      expect(cmd).toContain(`--db ${FAKE_DB}`);
+      // And the hook (running this exact command) resolves back to the same DB,
+      // independent of process.env — proving init and the hooks now agree.
+      const argv = (cmd as string).split(/\s+/);
+      const prevEnv = process.env['BRAIN_MEMORY_DB'];
+      delete process.env['BRAIN_MEMORY_DB'];
+      try {
+        expect(resolveDbPath(argv)).toBe(FAKE_DB);
+      } finally {
+        if (prevEnv !== undefined) process.env['BRAIN_MEMORY_DB'] = prevEnv;
+      }
     }
   });
 });

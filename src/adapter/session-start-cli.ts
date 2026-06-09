@@ -23,9 +23,8 @@
  *              invoked beyond initSchema DDL.
  */
 import { appendFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
 import Database from 'better-sqlite3';
+import { resolveDbPath } from './runtime-config';
 import { initSchema } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
@@ -81,7 +80,8 @@ async function main(): Promise<void> {
   // Type-guard cwd from the hook payload (T-03-3-T; hot path — no LLM/embedding calls added)
   const cwd = typeof input['cwd'] === 'string' ? input['cwd'] : '';
 
-  const dbPath = process.env['BRAIN_MEMORY_DB'] ?? join(homedir(), 'brain-memory', 'brain.db');
+  // CR-01: --db (pinned by `brain init`) > BRAIN_MEMORY_DB env > shared default.
+  const dbPath = resolveDbPath();
   const config = { ...DEFAULT_CONFIG, dbPath };
   const db = new Database(dbPath);
   initSchema(db);

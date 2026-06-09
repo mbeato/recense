@@ -32,6 +32,7 @@ import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { SCHEMA_VERSION } from '../db/schema';
+import { resolveDbPath } from './runtime-config';
 
 // ── Check result type ─────────────────────────────────────────────────────────
 
@@ -254,7 +255,11 @@ interface DoctorDimension {
 }
 
 async function runDoctor(): Promise<void> {
-  const dbPath = process.env['BRAIN_MEMORY_DB'] ?? '';
+  // CR-01: resolve the same DB the hooks/init use (env > shared default), so a
+  // `brain doctor` run immediately after `brain init` audits the configured DB
+  // instead of falsely reporting "BRAIN_MEMORY_DB not set" when the var is only
+  // in the env file and not the shell.
+  const dbPath = resolveDbPath();
 
   const dimensions: DoctorDimension[] = [
     { name: 'DB',       result: checkDb(dbPath)    },
