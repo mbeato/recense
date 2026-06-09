@@ -70,12 +70,14 @@ brain doctor
 | Platform | Scheduler | Claude Code hooks | Query channel |
 |----------|-----------|-------------------|---------------|
 | **macOS** (full support) | launchd — always-on, survives reboots | ✓ | Telegram (launchd KeepAlive) · iMessage (optional, see [below](#optional-imessage-channel-advanced)) |
-| **Linux** | `brain scheduler run` — foreground, stops with process¹ | ✓ | — (channel watcher is macOS-only in v2.0) |
-| **Windows** | WSL — community-supported² | WSL | WSL |
+| **Linux** | `brain scheduler run` — foreground, stops with process¹ | ✓³ | — (channel watcher is macOS-only in v2.0) |
+| **Windows** | WSL — community-supported² | WSL² | WSL² |
 
 ¹ **Linux scheduler caveat:** `brain scheduler run` starts an hourly croner tick in the foreground. The process stops when your terminal session ends — there is no background daemon or reboot-survival on Linux in v2.0. Reboot-survival via a systemd unit is planned for v2.1. Until then, restart `brain scheduler run` manually after reboots.
 
-² **Windows:** Native Windows is out of scope. Run under WSL2 — the engine, hooks, and foreground scheduler work; the channel watcher (Telegram/iMessage) behaves as on Linux (not supported in v2.0).
+² **Windows:** Native Windows is out of scope. Under WSL2 the engine, hooks, and foreground scheduler are *expected* to work, but this path is **not covered by CI or an install smoke** — community reports welcome. The channel watcher (Telegram/iMessage) behaves as on Linux (not supported in v2.0).
+
+³ **Linux verification scope:** the engine, hooks, and scheduler are exercised by the CI build + unit suite on `ubuntu-22.04` (PORT-02). An end-to-end `brain init` install smoke on a fresh Linux machine is not yet in CI (planned) — the install path is unit-tested, not yet integration-tested.
 
 ---
 
