@@ -52,6 +52,12 @@ export class RetrievalEngine {
   // All time reads go through this.clock.nowMs() — the global time fn is not used here (D-12).
   private readonly stmtGetAllLiveNodes: Database.Statement;
 
+  // DEBT-06 cwd soft filter statements (compiled once in constructor — T-01-SQL).
+  // stmtGetProjectNodeIds: node IDs that have ≥1 supporting episode with the given cwd.
+  // stmtGetGlobalNodeIds:  node IDs whose ALL supporting episodes have cwd='' (global facts).
+  private readonly stmtGetProjectNodeIds: Database.Statement;
+  private readonly stmtGetGlobalNodeIds: Database.Statement;
+
   constructor(
     db: Database.Database,
     clock: Clock,
@@ -72,17 +78,45 @@ export class RetrievalEngine {
     this.stmtGetAllLiveNodes = db.prepare(
       'SELECT id, value, s, last_access FROM node WHERE tombstoned = 0'
     );
+
+    // DEBT-06 Option A: cwd soft filter helpers (T-09-05: cwd bound as param, never interpolated).
+    // Returns node_ids that have at least one supporting episode matching the given cwd.
+    this.stmtGetProjectNodeIds = db.prepare(`
+      SELECT DISTINCT ce.node_id
+      FROM consolidation_event ce
+      JOIN episode e ON ce.episode_id = e.id
+      WHERE e.cwd = ? AND ce.node_id IS NOT NULL
+    `);
+
+    // Returns node_ids whose ALL supporting episodes have cwd='' (globally-visible facts).
+    // HAVING MAX(...) = 0 ensures every linked episode has cwd='' (none have a project cwd).
+    // Only includes nodes that have at least one consolidation_event entry.
+    this.stmtGetGlobalNodeIds = db.prepare(`
+      SELECT ce.node_id
+      FROM consolidation_event ce
+      JOIN episode e ON ce.episode_id = e.id
+      WHERE ce.node_id IS NOT NULL AND ce.episode_id IS NOT NULL
+      GROUP BY ce.node_id
+      HAVING MAX(CASE WHEN e.cwd != '' THEN 1 ELSE 0 END) = 0
+    `);
   }
 
   /**
    * Cue-less bulk retrieval: rank all live nodes by effective strength, apply 1-hop
    * spreading activation, pin hard_keep nodes first, fill to token budget.
    *
+   * When `cwd` is a non-empty string, applies a SOFT filter (DEBT-06 / D-93):
+   *   - Include nodes whose supporting episodes contain ≥1 episode with `cwd = cwd` (project-specific).
+   *   - Include nodes whose ALL supporting episodes have `cwd = ''` (global/older facts — always shown).
+   *   - Exclude nodes supported only by episodes from other cwds (cross-project bleed).
+   *
+   * When `cwd` is undefined or '' (no project context), returns all live nodes (backward-compat).
+   *
    * Returns { results, status: 'ok' } — status is always 'ok' (no cue to miss).
    *
-   * RET-01 / D-24/26/27/28.
+   * RET-01 / D-24/26/27/28 / DEBT-06.
    */
-  retrieveCueless(): RetrieveResult {
+  retrieveCueless(cwd?: string): RetrieveResult {
     const nowMs = this.clock.nowMs();
 
     // ── Step 1: Compute base scores for all live nodes ─────────────────────────
@@ -90,12 +124,30 @@ export class RetrievalEngine {
     // NOTE: effective_s already encodes recency via exp(−λ·Δt since last_access).
     // w_r > 0 double-counts the same Δt — keep w_r ≈ 0 (DEFAULT_CONFIG = 0.0)
     // unless dogfood shows effective_s alone misses fresh-session recall (D-24 caveat).
-    const rows = this.stmtGetAllLiveNodes.all() as Array<{
+    let rows = this.stmtGetAllLiveNodes.all() as Array<{
       id: string;
       value: string;
       s: number;
       last_access: number;
     }>;
+
+    // ── DEBT-06 cwd soft filter (Option A / D-93) ───────────────────────────────
+    // When cwd is provided, restrict the candidate set to:
+    //   - project-specific nodes: ≥1 supporting episode with matching cwd, AND
+    //   - global nodes: all supporting episodes have cwd='' (evidence-backed global facts).
+    // Orphan nodes (no consolidation_event entries) are excluded in cwd-scoped calls.
+    // When cwd is empty/undefined, behavior is identical to today (all live nodes).
+    if (cwd) {
+      const projectIds = new Set<string>(
+        (this.stmtGetProjectNodeIds.all(cwd) as Array<{ node_id: string }>)
+          .map(r => r.node_id),
+      );
+      const globalIds = new Set<string>(
+        (this.stmtGetGlobalNodeIds.all() as Array<{ node_id: string }>)
+          .map(r => r.node_id),
+      );
+      rows = rows.filter(r => projectIds.has(r.id) || globalIds.has(r.id));
+    }
 
     const scores = new Map<string, number>();
     const nodeValues = new Map<string, string>();
