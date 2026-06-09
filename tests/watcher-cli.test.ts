@@ -1,5 +1,5 @@
 /**
- * Unit tests for imessage-watcher-cli helpers (Phase 7, D-71).
+ * Unit tests for watcher-cli helpers (Phase 7, D-71).
  *
  * Tests the exported pure helpers only — main() is behind require.main guard
  * and is never invoked here.
@@ -18,7 +18,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MockChannel } from '../src/channel/channel';
 import type { InboundMessage } from '../src/channel/channel';
-import { runTick, runLockedTick, resolveDbPath } from '../src/adapter/imessage-watcher-cli';
+import { runTick, runLockedTick, resolveDbPath } from '../src/adapter/watcher-cli';
 import { LOCK_PATH } from '../src/adapter/lockfile';
 import type { ResponderResult } from '../src/responder';
 

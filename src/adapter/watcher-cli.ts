@@ -1,7 +1,8 @@
 /**
- * imessage-watcher-cli — long-running iMessage watcher (D-71, KeepAlive).
+ * watcher-cli — long-running channel watcher (D-71, KeepAlive).
  *
- * Entry point: loaded by launchd KeepAlive (never spawned per-turn).
+ * Generic entry point for any configured query channel (Telegram primary, iMessage optional).
+ * Loaded by launchd KeepAlive (never spawned per-turn).
  *
  * Design invariants:
  *  - Validate args BEFORE lock (WR-02: lock leak prevention).
@@ -40,11 +41,11 @@ import { DefaultChatDbReader } from '../channel/chat-db-reader';
 import { TelegramChannel, DefaultTelegramTransport } from '../channel/telegram-channel';
 import { acquireLock, releaseLock } from './lockfile';
 
-const LOG_PATH = '/tmp/brain-memory-imessage.log';
+const LOG_PATH = '/tmp/brain-memory-watcher.log';
 
 /** Append a timestamped line to the log file (never stdout). */
 const log = (msg: string): void =>
-  appendFileSync(LOG_PATH, `[${new Date().toISOString()}] imessage-watcher: ${msg}\n`);
+  appendFileSync(LOG_PATH, `[${new Date().toISOString()}] watcher: ${msg}\n`);
 
 /**
  * Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var.
@@ -206,10 +207,10 @@ export async function main(): Promise<void> {
     500
   );
   setInterval(() => {
-    void runLockedTick(channel, responder, 'imessage-session', log);
+    void runLockedTick(channel, responder, 'watcher-session', log);
   }, intervalMs);
 
-  log('iMessage watcher started (pollIntervalMs=' + String(intervalMs) + 'ms)');
+  log('watcher started (pollIntervalMs=' + String(intervalMs) + 'ms)');
 
   // The setInterval keeps the event loop alive — main() never resolves from here.
   // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -220,7 +221,7 @@ export async function main(): Promise<void> {
 // imported by a unit test of the exported helpers above.
 if (require.main === module) {
   main().catch(err => {
-    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] imessage-watcher FATAL: ${err}\n`);
+    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] watcher FATAL: ${err}\n`);
     releaseLock(); // best-effort cleanup
     process.exit(1);
   });
