@@ -24,6 +24,9 @@ import { CandidateRetriever } from './topk';
 import { StrengthDecayManager } from '../strength/decay';
 import { SemanticStore } from '../db/semantic-store';
 import { AllocationGate } from '../gate/allocation-gate';
+import type { ActivationTraceSink } from '../viz/activation-sink';
+import { NoopActivationTraceSink } from '../viz/activation-sink';
+import { newId } from '../lib/hash';
 
 export type RetrieveStatus = 'ok' | 'deleted' | 'unreachable';
 
@@ -45,6 +48,9 @@ export class RetrievalEngine {
   private readonly store: SemanticStore;
   private readonly strength: StrengthDecayManager;
   private readonly gate: AllocationGate;
+  private readonly traceSink: ActivationTraceSink;
+  /** D-97: derived once in ctor so the Noop path pays zero per-call cost. */
+  private readonly traceEnabled: boolean;
 
   // Prepared statement compiled once — SELECT all live nodes for cue-less rank
   // CRITICAL: effectiveStrength() is the ONLY strength call legal from this path.
@@ -66,6 +72,7 @@ export class RetrievalEngine {
     store: SemanticStore,
     strength: StrengthDecayManager,
     gate: AllocationGate,
+    traceSink: ActivationTraceSink = new NoopActivationTraceSink(),
   ) {
     this.clock = clock;
     this.config = config;
@@ -73,6 +80,9 @@ export class RetrievalEngine {
     this.store = store;
     this.strength = strength;
     this.gate = gate;
+    this.traceSink = traceSink;
+    // D-97: derive once so the Noop hot path pays zero per-call work (no instanceof per query).
+    this.traceEnabled = !(traceSink instanceof NoopActivationTraceSink);
 
     // Read all non-tombstoned nodes for cue-less rank
     this.stmtGetAllLiveNodes = db.prepare(
@@ -200,6 +210,33 @@ export class RetrievalEngine {
     const finalRanked = Array.from(scores.entries())
       .filter(([id]) => nodeValues.has(id))
       .sort((a, b) => b[1] - a[1]);
+
+    // ── Trace emission (D-97 guarded): zero work on the Noop/session-start path ─
+    // Seeds payload + 1-hop hops payload built ONLY inside the guard — no cost when Noop.
+    // T-10-05: wrapped in try/catch fire-and-forget so a sink error never corrupts results.
+    if (this.traceEnabled) {
+      try {
+        const seedIds = seeds.map(([id]) => id);
+        // Collect activated neighbors: nodes whose score was boosted in the spread loop.
+        // We track these by iterating seeds again and reading their out-edges from the scores map.
+        const hopEntries: Array<{ node_id: string; score: number; hop: number }> = [];
+        const seenInHops = new Set<string>();
+        for (const [seedId] of seeds) {
+          const edges = this.store.getOutEdges(seedId);
+          for (const edge of edges) {
+            if (seenInHops.has(edge.dst)) continue;
+            seenInHops.add(edge.dst);
+            const score = scores.get(edge.dst);
+            if (score !== undefined) {
+              hopEntries.push({ node_id: edge.dst, score, hop: 1 });
+            }
+          }
+        }
+        this.traceSink.emit({ query_id: newId(), seeds: seedIds, hops: hopEntries });
+      } catch {
+        // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
+      }
+    }
 
     // ── Step 4: hard_keep pin + token-budget fill (D-24/D-25) ──────────────────
     // hard_keep nodes always go first — never budget-capped (D-24).

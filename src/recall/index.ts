@@ -40,6 +40,9 @@ import { CandidateRetriever } from '../retrieval/topk';
 import { SemanticStore } from '../db/semantic-store';
 import { StrengthDecayManager } from '../strength/decay';
 import { EpisodicStore } from '../db/episode-store';
+import type { ActivationTraceSink } from '../viz/activation-sink';
+import { NoopActivationTraceSink } from '../viz/activation-sink';
+import { newId } from '../lib/hash';
 
 // T-04-03-I: bound query length to cap compose prompt size (4 KB is generous)
 const MAX_QUERY_BYTES = 4_000;
@@ -68,6 +71,9 @@ export class RecallEngine {
    */
   private readonly strength: StrengthDecayManager;
   private readonly episodes: EpisodicStore;
+  private readonly traceSink: ActivationTraceSink;
+  /** D-97: derived once in ctor so the Noop path pays zero per-call cost. */
+  private readonly traceEnabled: boolean;
 
   constructor(
     db: Database.Database, // part of DI pattern; all reads go through store/retriever
@@ -78,6 +84,7 @@ export class RecallEngine {
     store: SemanticStore,
     strength: StrengthDecayManager,
     episodes: EpisodicStore,
+    traceSink: ActivationTraceSink = new NoopActivationTraceSink(),
   ) {
     // Suppress unused-variable lint for the db parameter (held for DI symmetry):
     void db;
@@ -88,6 +95,9 @@ export class RecallEngine {
     this.store = store;
     this.strength = strength;
     this.episodes = episodes;
+    this.traceSink = traceSink;
+    // D-97: derive once so the Noop hot path pays zero per-call work.
+    this.traceEnabled = !(traceSink instanceof NoopActivationTraceSink);
   }
 
   /**
@@ -167,6 +177,22 @@ export class RecallEngine {
 
       neighborhood.push({ id: neighbor.id, value: neighbor.value });
       nodeCount++;
+    }
+
+    // ── Trace emission (D-97 guarded): zero work on the Noop path ────────────
+    // seeds = [bestMatch.id]; hops = neighborhood members with monotonic rank-proxy scores.
+    // T-10-05: wrapped in try/catch fire-and-forget so a sink error never corrupts recall.
+    if (this.traceEnabled) {
+      try {
+        const hops = neighborhood.map((n, i) => ({
+          node_id: n.id,
+          score:   1 - i * 0.05,  // monotonic rank proxy; hop=1 (1-hop schema members)
+          hop:     1 as const,
+        }));
+        this.traceSink.emit({ query_id: newId(), seeds: [bestMatch.id], hops });
+      } catch {
+        // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
+      }
     }
 
     // ── (4) Compose inference via schema-prior (T-04-03-P safe fallback) ─────
