@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brain-memory.imessage-watcher</string>
+
+    <!--
+        ProgramArguments: bash + the committed, secret-free launchd wrapper.
+        Placeholder substituted by scripts/setup-imessage-channel.sh:
+          __WRAPPER__ → absolute path to scripts/imessage-watcher-launchd.sh
+        The wrapper sources the gitignored env file (path from BRAIN_MEMORY_SLEEP_ENV
+        below) for keys + per-role config, then execs node on the compiled watcher CLI.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__WRAPPER__</string>
+    </array>
+
+    <!--
+        EnvironmentVariables: only the env-file path. All other config — node binary,
+        watcher JS path, DB path, API keys — lives in the gitignored env file (chmod 600),
+        written additively by scripts/setup-imessage-channel.sh.
+        __ENV_FILE__ → absolute path to the sleep env file (BRAIN_MEMORY_SLEEP_ENV),
+                       default ~/.config/brain-memory/sleep.env.
+    -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BRAIN_MEMORY_SLEEP_ENV</key>
+        <string>__ENV_FILE__</string>
+    </dict>
+
+    <!-- KeepAlive: launchd restarts the watcher if it exits unexpectedly (D-71). -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- RunAtLoad true: start the watcher immediately when the agent is loaded. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Redirect stdout/stderr to log files — watcher also writes to imessage.log -->
+    <key>StandardOutPath</key>
+    <string>/tmp/brain-memory-imessage.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/brain-memory-imessage-err.log</string>
+</dict>
+</plist>
