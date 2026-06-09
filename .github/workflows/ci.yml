@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+        node: [22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # better-sqlite3 node-gyp requires python setuptools on both platforms
+      - if: ${{ startsWith(matrix.os, 'ubuntu') }}
+        name: Install python setuptools (Ubuntu)
+        run: python3 -m pip install setuptools
+
+      - if: ${{ startsWith(matrix.os, 'macos') }}
+        name: Install python setuptools (macOS)
+        run: brew install python-setuptools
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      # Smoke: verify brain doctor RUNS without crashing.
+      # Exits 1 (no keys/DB in CI) but || true prevents a false-red.
+      # A real crash surfaces in the build/test steps above.
+      - name: Smoke — brain doctor runs without crashing
+        run: BRAIN_MEMORY_DB=:memory: node dist/src/adapter/brain.js doctor || true
+
+      # Guard: telegram committed default must stay fail-closed (DEBT-01 / T-09-22).
+      # Imports the COMPILED DEFAULT_CONFIG — immune to comments and test fixtures
+      # (Pitfall 5 from 09-RESEARCH.md).
+      - name: Guard — telegram must be fail-closed in committed config
+        run: |
+          node -e "
+            const {DEFAULT_CONFIG} = require('./dist/src/lib/config');
+            if (DEFAULT_CONFIG.telegram.enable !== false || DEFAULT_CONFIG.telegram.allowlist.length !== 0) {
+              console.error('FAIL: telegram config is not fail-closed');
+              process.exit(1);
+            }
+            console.log('OK: telegram is fail-closed');
+          "
