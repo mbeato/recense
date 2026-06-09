@@ -46,6 +46,7 @@ async function main(): Promise<void> {
   // Type-guard the fields we need (T-03-2-T)
   const promptText = typeof input['prompt'] === 'string' ? input['prompt'] : '';
   const sessionId  = typeof input['session_id'] === 'string' ? input['session_id'] : 'unknown';
+  const cwd        = typeof input['cwd'] === 'string' ? input['cwd'] : '';
 
   if (promptText) {
     const dbPath = process.env['BRAIN_MEMORY_DB'] ?? join(homedir(), 'brain-memory', 'brain.db');
@@ -62,6 +63,7 @@ async function main(): Promise<void> {
       role: 'user',
       origin: 'observed',
       sessionId,
+      cwd,
       // sourceInferenceId left undefined → null (D-34: no-op pass-through this phase)
     });
 

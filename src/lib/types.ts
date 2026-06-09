@@ -97,6 +97,8 @@ export interface EpisodeRow {
   source: string;
   /** Per-source dedup key — D-59 (NULL for legacy claude-code episodes; each NULL is distinct). */
   external_id: string | null;
+  /** Working directory of the Claude Code session that produced this episode (DEBT-06). Empty '' for global/email episodes. */
+  cwd: string;
 }
 
 /**

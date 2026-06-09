@@ -76,7 +76,10 @@ function emitContext(text: string): void {
 
 async function main(): Promise<void> {
   // MUST drain stdin before any I/O — harness blocks on write otherwise (RESEARCH §1.1)
-  await consumeStdin();
+  const input = await consumeStdin();
+
+  // Type-guard cwd from the hook payload (T-03-3-T; hot path — no LLM/embedding calls added)
+  const cwd = typeof input['cwd'] === 'string' ? input['cwd'] : '';
 
   const dbPath = process.env['BRAIN_MEMORY_DB'] ?? join(homedir(), 'brain-memory', 'brain.db');
   const config = { ...DEFAULT_CONFIG, dbPath };
@@ -92,7 +95,9 @@ async function main(): Promise<void> {
   const engine    = new RetrievalEngine(db, clock, config, retriever, store, strength, gate);
 
   // Cue-less retrieval — 100% synchronous SQLite reads, no embedding calls (RET-01)
-  const result = engine.retrieveCueless();
+  // Pass cwd for soft project scoping (DEBT-06): project-specific + global facts surface;
+  // facts from other projects are excluded. Hot-path invariant: no LLM/embedding calls added.
+  const result = engine.retrieveCueless(cwd);
 
   // ── Format results into a compact text block (D-25) ──────────────────────────
   // hard_keep nodes are already pinned first by the engine (D-24).

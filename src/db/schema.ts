@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -32,7 +32,8 @@ export const DDL = `
     role                TEXT    NOT NULL CHECK(role IN ('user','assistant','tool')),
     session_id          TEXT    NOT NULL,
     source              TEXT    NOT NULL DEFAULT 'claude-code',
-    external_id         TEXT
+    external_id         TEXT,
+    cwd                 TEXT    NOT NULL DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS node (
@@ -142,6 +143,21 @@ export function initSchema(db: Database.Database): void {
       ON episode(source, consolidated);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_episode_source_external
       ON episode(source, external_id);
+  `);
+
+  // v3 migration: add cwd to existing DBs for cross-project scoping (DEBT-06).
+  // Same PRAGMA table_info guard as the v2 migration above — idempotent re-run.
+  // Fresh DBs already have cwd from the DDL above → guard skips the ALTER.
+  // Existing v2 DBs: cwd absent → ALTER TABLE adds it with DEFAULT '' (no backfill, no data loss).
+  if (!cols.has('cwd')) {
+    db.exec("ALTER TABLE episode ADD COLUMN cwd TEXT NOT NULL DEFAULT ''");
+  }
+
+  // idx_episode_cwd: accelerates cwd-scoped retrieval join (DEBT-06 Option A soft filter).
+  // Uses CREATE INDEX IF NOT EXISTS — idempotent.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_episode_cwd
+      ON episode(cwd, consolidated);
   `);
 
   // Stamp or update schema version in the now-guaranteed meta table
