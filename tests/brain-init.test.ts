@@ -14,8 +14,8 @@ import { join } from 'path';
 // ── Hoist mock helpers so vi.mock class bodies can reference them ─────────────
 // vi.hoisted() ensures these are evaluated before the vi.mock() factories run.
 const { mockAnthropicCreate, mockOpenAiCreate } = vi.hoisted(() => ({
-  mockAnthropicCreate: vi.fn<[], Promise<unknown>>(),
-  mockOpenAiCreate: vi.fn<[], Promise<unknown>>(),
+  mockAnthropicCreate: vi.fn(),
+  mockOpenAiCreate: vi.fn(),
 }));
 
 // Use classes (not arrow functions) because `new Anthropic()` requires a real constructor.
@@ -172,7 +172,7 @@ describe('validateApiKey', () => {
   });
 
   it('returns ok=true when the Anthropic call succeeds (mocked)', async () => {
-    mockAnthropicCreate.mockResolvedValueOnce({ content: [] });
+    mockAnthropicCreate.mockResolvedValueOnce({ content: [] } as unknown);
     const r = await validateApiKey('sk-ant-valid', 'anthropic');
     expect(r.ok).toBe(true);
     expect(r.error).toBeUndefined();
@@ -186,7 +186,7 @@ describe('validateApiKey', () => {
   });
 
   it('returns ok=true when the OpenAI call succeeds (mocked)', async () => {
-    mockOpenAiCreate.mockResolvedValueOnce({ data: [] });
+    mockOpenAiCreate.mockResolvedValueOnce({ data: [] } as unknown);
     const r = await validateApiKey('sk-openai-valid', 'openai');
     expect(r.ok).toBe(true);
     expect(r.error).toBeUndefined();
