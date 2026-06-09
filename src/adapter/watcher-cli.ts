@@ -40,6 +40,7 @@ import { DefaultIMessageChannel, DefaultOsascriptSender } from '../channel/imess
 import { DefaultChatDbReader } from '../channel/chat-db-reader';
 import { TelegramChannel, DefaultTelegramTransport } from '../channel/telegram-channel';
 import { acquireLock, releaseLock } from './lockfile';
+import { SQLiteActivationTraceSink, NoopActivationTraceSink } from '../viz/activation-sink';
 
 const LOG_PATH = '/tmp/brain-memory-watcher.log';
 
@@ -206,8 +207,18 @@ export async function main(): Promise<void> {
     embedConfig: config,
   });
 
-  const retrieval = new RetrievalEngine(db, realClock, config, retriever, store, strength, gate);
-  const recall    = new RecallEngine(db, realClock, config, provider, retriever, store, strength, episodes);
+  // VIZ-01: inject SQLite trace sink iff viz_trace_enabled='1' (set by `brain viz`, Plan 03).
+  // Same flag-check pattern as recall-cli.ts. Default OFF: Noop when key absent or '0'.
+  const traceFlagRaw = db.prepare(
+    "SELECT value FROM meta WHERE key = 'viz_trace_enabled'"
+  ).get() as { value: string } | undefined;
+  const vizTraceEnabled = traceFlagRaw?.value === '1';
+  const traceSink = vizTraceEnabled
+    ? new SQLiteActivationTraceSink(db, realClock)
+    : new NoopActivationTraceSink();
+
+  const retrieval = new RetrievalEngine(db, realClock, config, retriever, store, strength, gate, traceSink);
+  const recall    = new RecallEngine(db, realClock, config, provider, retriever, store, strength, episodes, traceSink);
   const responder = new HybridResponder(realClock, config, provider, retrieval, recall, episodes);
 
   // ── 5. Construct the active channel (Telegram preferred) ─────────────────────

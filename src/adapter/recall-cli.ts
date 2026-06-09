@@ -30,6 +30,7 @@ import { CandidateRetriever } from '../retrieval/topk';
 import { DefaultModelProvider } from '../model/provider';
 import { RecallEngine } from '../recall';
 import { acquireLock, releaseLock } from './lockfile';
+import { SQLiteActivationTraceSink, NoopActivationTraceSink } from '../viz/activation-sink';
 
 const LOG_PATH = '/tmp/brain-memory-recall.log';
 
@@ -111,8 +112,18 @@ async function main(): Promise<void> {
     // Resolved provider names are logged by the caller (never secrets).
     const provider = new DefaultModelProvider({ generateConfig: config, judgeConfig: config, embedConfig: config });
 
+    // VIZ-01: inject SQLite trace sink iff viz_trace_enabled='1' (set by `brain viz`, Plan 03).
+    // Default OFF: when the meta key is absent or '0' the Noop sink is used — zero extra cost.
+    const traceFlagRaw = db.prepare(
+      "SELECT value FROM meta WHERE key = 'viz_trace_enabled'"
+    ).get() as { value: string } | undefined;
+    const traceEnabled = traceFlagRaw?.value === '1';
+    const traceSink = traceEnabled
+      ? new SQLiteActivationTraceSink(db, realClock)
+      : new NoopActivationTraceSink();
+
     const engine = new RecallEngine(
-      db, realClock, config, provider, retriever, store, strength, episodes,
+      db, realClock, config, provider, retriever, store, strength, episodes, traceSink,
     );
 
     // ── 5. Run recall and emit JSON to stdout ─────────────────────────────
