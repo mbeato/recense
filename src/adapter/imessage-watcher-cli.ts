@@ -37,6 +37,7 @@ import type { Channel } from '../channel/channel';
 import type { ResponderResult } from '../responder';
 import { DefaultIMessageChannel, DefaultOsascriptSender } from '../channel/imessage-channel';
 import { DefaultChatDbReader } from '../channel/chat-db-reader';
+import { TelegramChannel, DefaultTelegramTransport } from '../channel/telegram-channel';
 import { acquireLock, releaseLock } from './lockfile';
 
 const LOG_PATH = '/tmp/brain-memory-imessage.log';
@@ -135,12 +136,21 @@ export async function main(): Promise<void> {
   initSchema(db);
   const config = { ...DEFAULT_CONFIG, dbPath };
 
-  // ── 3. Configured-check BEFORE constructing DefaultChatDbReader ─────────────
-  // DefaultChatDbReader opens chat.db at construction — it must not be called with
-  // an empty path. This check also satisfies WR-02 for the idle path: no lock is
-  // ever acquired when unconfigured (no KeepAlive restart thrash).
-  if (!config.channel.enable || config.channel.allowlist.length === 0 || !config.channel.chatDbPath) {
-    log('channel not configured; idling');
+  // ── 3. Channel selection + configured-check ─────────────────────────────────
+  // Telegram is the primary surface (a bot has its own identity → no self-echo loop).
+  // iMessage is an optional fallback. A channel must be fully configured to be "ready";
+  // if none is, idle without polling (WR-02: no lock acquired when unconfigured — no
+  // KeepAlive restart thrash).
+  const telegramToken = process.env['BRAIN_MEMORY_TELEGRAM_TOKEN'];
+  const telegramReady =
+    config.telegram.enable && config.telegram.allowlist.length > 0 && !!telegramToken;
+  const imessageReady =
+    config.channel.enable && config.channel.allowlist.length > 0 && !!config.channel.chatDbPath;
+  if (config.telegram.enable && !telegramToken) {
+    log('telegram.enable set but BRAIN_MEMORY_TELEGRAM_TOKEN is missing — Telegram disabled');
+  }
+  if (!telegramReady && !imessageReady) {
+    log('no channel configured; idling');
     // Enter an idle that never resolves and never polls — event loop stays alive
     // so launchd KeepAlive does not restart the process on a clean exit.
     const timer = setInterval(() => { /* noop heartbeat — keeps event loop alive */ }, 60_000);
@@ -168,14 +178,22 @@ export async function main(): Promise<void> {
   const recall    = new RecallEngine(db, realClock, config, provider, retriever, store, strength, episodes);
   const responder = new HybridResponder(realClock, config, provider, retrieval, recall, episodes);
 
-  // ── 5. Construct iMessage channel ────────────────────────────────────────────
-  const channel = new DefaultIMessageChannel(
-    config,
-    new DefaultChatDbReader(config.channel.chatDbPath),
-    new DefaultOsascriptSender(),
-    store,  // SemanticStore implements MetaStore (getMeta/setMeta for cursor:imessage)
-    log,
-  );
+  // ── 5. Construct the active channel (Telegram preferred) ─────────────────────
+  // SemanticStore implements MetaStore (getMeta/setMeta for cursor:telegram / cursor:imessage).
+  let channel: Channel;
+  if (telegramReady) {
+    channel = new TelegramChannel(config, new DefaultTelegramTransport(telegramToken!), store, log);
+    log('using Telegram channel');
+  } else {
+    channel = new DefaultIMessageChannel(
+      config,
+      new DefaultChatDbReader(config.channel.chatDbPath),
+      new DefaultOsascriptSender(),
+      store,
+      log,
+    );
+    log('using iMessage channel');
+  }
 
   // ── 6. Poll loop ─────────────────────────────────────────────────────────────
   // Per-tick lock: acquires the shared single-writer lock (same brain-memory-sleep.lock
@@ -183,7 +201,10 @@ export async function main(): Promise<void> {
   // Acquiring FIRST means the channel cursor advance (inside receive()) is also under
   // the lock — if contended, skip the entire tick (no message consumed then dropped).
   // Floor at 500ms to prevent excessive syscalls (T-07-07).
-  const intervalMs = Math.max(config.channel.pollIntervalMs, 500);
+  const intervalMs = Math.max(
+    telegramReady ? config.telegram.pollIntervalMs : config.channel.pollIntervalMs,
+    500
+  );
   setInterval(() => {
     void runLockedTick(channel, responder, 'imessage-session', log);
   }, intervalMs);
