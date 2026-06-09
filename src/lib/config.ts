@@ -318,9 +318,9 @@ export interface EngineConfig {
   /**
    * Band-cutpoint τ for the D-53 embedding-similarity replay match (SEAM-03).
    * cosine(expected_answer_embed, replayed_answer_embed) ≥ τ → match; below → regression.
-   * A non-regressing engine's answer text should barely move — calibrate tighter than
-   * deletedSimilarityThreshold (0.7). Set to 0.85 as a placeholder; TODO calibrate against
-   * real retrieval drift measurements on the founder's brain.db (D-13).
+   * A non-regressing engine's answer text should barely move — must stay above
+   * deletedSimilarityThreshold (0.7). Default 0.85; recalibrate via
+   * scripts/eval/calibrate-snapshot-threshold.cjs once eval_snapshot rows are populated (D-13).
    */
   snapshotMatchThreshold: number;
 
@@ -496,7 +496,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   recallNeighborhoodBudget: 20,
   echoSimilarityThreshold: 0.85,
   echoRecencyWindowMs: 86_400_000,
-  snapshotMatchThreshold: 0.85, // TODO calibrate — tighter than deletedSimilarityThreshold (0.7); real drift data pending
+  snapshotMatchThreshold: 0.85, // default; recalibrate via scripts/eval/calibrate-snapshot-threshold.cjs (2026-06-09) once eval_snapshot rows exist — must stay above deletedSimilarityThreshold (0.7)
 
   // Phase 6: multi-channel ingestion (D-60/D-65/D-68/D-69)
   gmail: {
