@@ -55,6 +55,7 @@ switch (cmd) {
   // ── Forward-declared commands (implemented in later plans) ───────────────────
   case 'init':   require('./brain-init');   break;
   case 'doctor': require('./brain-doctor'); break;
+  case 'viz':    require('./brain-viz-cli'); break;
 
   // ── Scheduler (exports runSchedulerCommand; not auto-invoking) ───────────────
   case 'scheduler': {
@@ -73,7 +74,7 @@ switch (cmd) {
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, sleep-pass, seed, ingest, snapshot, watcher, scheduler\n',
+      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, snapshot, watcher, scheduler\n',
     );
     process.exit(1);
 }
