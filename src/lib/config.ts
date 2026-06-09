@@ -368,6 +368,28 @@ export interface EngineConfig {
    * preventing surprise ingestion when credentials are absent.
    */
   enabledSources: string[];
+
+  // --- Phase 7: iMessage channel (D-70/D-71/D-74) ---
+
+  /**
+   * iMessage channel configuration (D-70/D-71/D-74).
+   * channel.enable: false (default) — channel is off until self-hoster opts in (fail-closed, D-74).
+   *   Set true only after populating chatDbPath and allowlist.
+   * channel.chatDbPath: empty = disabled; set to ~/Library/Messages/chat.db after granting
+   *   macOS Full Disk Access to the watcher process — see README.md onboarding.
+   * channel.allowlist: [] (default = answers no one until configured, D-74).
+   *   Entries are normalized phone/email handles matched against handle.id in chat.db.
+   *   Unlisted senders are silently ignored — never confirms the surface exists.
+   * channel.pollIntervalMs: 2000 — poll cadence for chat.db change detection.
+   *   Near-instant feel; FSEvents watcher may replace this at Claude's discretion (D-71).
+   *   Lower = faster reply but more syscalls; do not go below 500ms.
+   */
+  channel: {
+    enable: boolean;
+    chatDbPath: string;
+    allowlist: string[];
+    pollIntervalMs: number;
+  };
 }
 
 /** Default salience weights for the Allocation Gate. Calibrate against real transcripts. */
@@ -466,4 +488,12 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
     dir: '', // empty = disabled; set to vault root — founder's own vault only (D-56/D-61)
   },
   enabledSources: [], // default-off fail-safe; populate per environment to activate adapters (D-66)
+
+  // Phase 7: iMessage channel (D-70/D-71/D-74)
+  channel: {
+    enable: false,           // default-off fail-closed; set true only after allowlist is populated
+    chatDbPath: '',          // empty = disabled; set path in config after Full Disk Access grant
+    allowlist: [],           // [] = answers no one (D-74 fail-closed); add your own handle(s)
+    pollIntervalMs: 2_000,   // 2s poll cadence — near-instant feel, tunable (D-71)
+  },
 };
