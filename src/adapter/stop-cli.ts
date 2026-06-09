@@ -23,7 +23,8 @@
  */
 import { appendFileSync } from 'fs';
 import { spawn } from 'child_process';
-import { resolve } from 'path';
+import { homedir } from 'os';
+import { join, resolve } from 'path';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
@@ -73,7 +74,7 @@ async function main(): Promise<void> {
   const sessionId = typeof input['session_id'] === 'string'
     ? input['session_id'] : 'unknown';
 
-  const dbPath = process.env['BRAIN_MEMORY_DB'] ?? '$HOME/brain-memory/brain.db';
+  const dbPath = process.env['BRAIN_MEMORY_DB'] ?? join(homedir(), 'brain-memory', 'brain.db');
 
   if (assistantText) {
     const config = { ...DEFAULT_CONFIG, dbPath };

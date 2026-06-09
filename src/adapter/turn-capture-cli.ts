@@ -16,6 +16,8 @@
  *    uses EpisodicStore.append which uses prepared statements (T-01-SQL).
  */
 import { appendFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
@@ -46,7 +48,7 @@ async function main(): Promise<void> {
   const sessionId  = typeof input['session_id'] === 'string' ? input['session_id'] : 'unknown';
 
   if (promptText) {
-    const dbPath = process.env['BRAIN_MEMORY_DB'] ?? '$HOME/brain-memory/brain.db';
+    const dbPath = process.env['BRAIN_MEMORY_DB'] ?? join(homedir(), 'brain-memory', 'brain.db');
     const config = { ...DEFAULT_CONFIG, dbPath };
     const db = new Database(dbPath);
     initSchema(db);
