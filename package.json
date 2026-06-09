@@ -7,8 +7,13 @@
   },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
+  "bin": {
+    "brain": "dist/src/adapter/brain.js"
+  },
   "scripts": {
     "build": "tsc",
+    "postbuild": "chmod +x dist/src/adapter/brain.js",
+    "init": "npm run build && node dist/src/adapter/brain.js init",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "tsx src/index.ts",
