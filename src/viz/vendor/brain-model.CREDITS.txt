@@ -1,0 +1,22 @@
+Vendored decorative 3D model — attribution (required by license)
+================================================================
+
+File:     brain-model.stl  (binary STL, 82,438 triangles)
+Title:    "3DModel of Brain"
+Author:   Nevit Dilmen
+Source:   https://commons.wikimedia.org/wiki/File:3DPX-003765_3DModel_of_Brain_Nevit_Dilmen.stl
+Origin:   NIH 3D Print Exchange, model 3DPX-003765
+License:  Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+          https://creativecommons.org/licenses/by-sa/3.0/
+          (also dual-licensed GFDL 1.2+ by the author)
+
+Modifications: none to the geometry. The mesh is rendered only as a translucent,
+non-interactive decorative shell enclosing the memory graph; it is not labeled or
+presented as an anatomical reference. Vendored locally (no CDN at runtime, D-93).
+
+A visible credit is shown in the viz UI to satisfy the attribution requirement.
+
+STLLoader.js (same directory) is from three.js r171
+(https://github.com/mrdoob/three.js, MIT License); its bare `from 'three'` import
+was rewritten to the local `./three.module.js` to preserve the single-THREE-instance
+vendoring approach (D-93).

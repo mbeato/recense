@@ -94,11 +94,15 @@ button:hover { background:#243559; }
 
 <div id="tooltip"></div>
 
+<!-- CC BY-SA attribution required by brain-model.CREDITS.txt -->
+<div id="hull-credit" style="position:fixed;bottom:8px;right:12px;z-index:10;font-size:10px;color:#4a5268;pointer-events:none;letter-spacing:.02em;">brain model: Nevit Dilmen · CC BY-SA 3.0</div>
+
 <!-- Vendored, local-first (D-93/D-102): no CDN at runtime. ONE shared THREE instance —
      ESM module sets window.THREE, then the self-contained UMD bundle reads it.
      Load order is NON-NEGOTIABLE (spike 001 README, D-93): three.module.js FIRST. -->
 <script type="module">
 import * as THREE from './vendor/three.module.js';
+import { STLLoader } from './vendor/STLLoader.js';
 window.THREE = THREE;                          // UMD bundle reads window.THREE → single instance
 
 await new Promise((resolve, reject) => {
@@ -115,6 +119,13 @@ const TYPE_COLOR    = { entity: 0x5b8dff, fact: 0x9b8cff, schema: 0xff6b9d };
 const TOMBSTONE_COLOR = 0x3a3e4a;
 const HOT           = new THREE.Color(0xffe08a);   // activation glow / particle color
 const MAX_FAN_OUT   = 8;
+
+// hull mesh rotation constants (radians) — tweak if the model sits rotated
+// e.g. -Math.PI/2 on X to lay it flat. Longest STL axis is Z (~208 units):
+// HULL_ROT_X = -Math.PI/2 rotates that axis from pointing up to pointing forward.
+const HULL_ROT_X = -Math.PI / 2;
+const HULL_ROT_Y = 0;
+const HULL_ROT_Z = 0;
 
 // ---------- DOM refs ----------
 const logEl       = document.getElementById('log');
@@ -305,24 +316,36 @@ const linkForce = Graph.d3Force('link');
 if (linkForce) linkForce.distance(20);
 Graph.d3ReheatSimulation();
 
-// ---------- decorative memory-shell silhouette ----------
-// A bilobed translucent hull that loosely frames the node cloud.
-// Purely aesthetic — no anatomical claims, no data wired to it.
-// Uses the already-vendored THREE instance (window.THREE / three.module.js).
-const silhouetteMat = new THREE.MeshBasicMaterial({
-  color: 0x4a6899,
-  transparent: true,
-  opacity: 0.08,
-  side: THREE.DoubleSide,
-  depthWrite: false
+// ---------- real brain mesh hull (CC BY-SA, Nevit Dilmen) ----------
+// Decorative translucent shell — no anatomical claims, no data wired to it.
+// Loaded from vendored STL; lit material so surface detail reads.
+const hullGroup = new THREE.Group();
+hullGroup.rotation.set(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
+Graph.scene().add(hullGroup);
+
+// Updated in the load callback; used by the engine-stop fit to scale the group.
+let hullBSRadius = 1;
+
+new STLLoader().load('./vendor/brain-model.stl', (geometry) => {
+  geometry.center();               // recenter to origin (raw model is off-center)
+  geometry.computeVertexNormals(); // smooth shading so surface detail reads
+  geometry.computeBoundingSphere();
+  hullBSRadius = geometry.boundingSphere ? geometry.boundingSphere.radius : 1;
+
+  const hullMat = new THREE.MeshStandardMaterial({
+    color: 0x7a8db5,      // muted blue-grey, coherent with panel chrome palette
+    transparent: true,
+    opacity: 0.14,        // very subtle; nudge 0.10–0.20 to taste
+    roughness: 0.9,
+    metalness: 0,
+    side: THREE.DoubleSide,
+    depthWrite: false,    // never occludes nodes
+  });
+
+  const hullMesh = new THREE.Mesh(geometry, hullMat);
+  hullMesh.renderOrder = -1;  // render before nodes (default renderOrder 0) so nodes stay on top
+  hullGroup.add(hullMesh);
 });
-const lobeGeo    = new THREE.SphereGeometry(1, 28, 20);
-const leftLobe   = new THREE.Mesh(lobeGeo, silhouetteMat);
-const rightLobe  = new THREE.Mesh(lobeGeo, silhouetteMat);
-const memoryShell = new THREE.Group();
-memoryShell.add(leftLobe);
-memoryShell.add(rightLobe);
-Graph.scene().add(memoryShell);
 
 // Fit hull to node cloud after simulation settles — recomputes on every engine stop
 // so tombstone toggle and graphData updates keep the shell correctly sized.
@@ -340,14 +363,9 @@ Graph.onEngineStop(() => {
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (d > maxDist) maxDist = d;
   }
-  const r = maxDist * 1.4;     // 40% padding beyond the cloud edge
-  memoryShell.position.set(cx, cy, cz);
-  // Each lobe: offset 28% of r on X, shaped as a rounded ellipsoid (wider than tall)
-  const offset = r * 0.28;
-  leftLobe.position.set(-offset, 0, 0);
-  leftLobe.scale.set(r * 0.85, r * 0.88, r * 0.78);
-  rightLobe.position.set(offset, 0, 0);
-  rightLobe.scale.set(r * 0.85, r * 0.88, r * 0.78);
+  // Scale so mesh bounding sphere ≈ 1.4× cloud radius (loosely enclosing the cloud)
+  hullGroup.scale.setScalar((maxDist * 1.4) / (hullBSRadius || 1));
+  hullGroup.position.set(cx, cy, cz);
 });
 
 // Tooltip follows cursor
