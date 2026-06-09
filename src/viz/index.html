@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>brain-memory · activations</title>
+<style>
+html,body { margin:0; height:100%; background:#06070d; color:#cdd3e0;
+  font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; overflow:hidden; }
+#graph { position:fixed; inset:0; }
+#panel { position:fixed; top:12px; left:12px; z-index:10;
+  background:rgba(10,12,20,.82); border:1px solid #1d2233; border-radius:10px;
+  padding:12px 14px; width:300px; backdrop-filter:blur(6px); }
+#detail { position:fixed; top:12px; right:12px; z-index:10;
+  background:rgba(10,12,20,.82); border:1px solid #1d2233; border-radius:10px;
+  padding:12px 14px; width:340px; backdrop-filter:blur(6px);
+  display:none; max-height:calc(100vh - 40px); overflow-y:auto; }
+#tooltip { position:fixed; z-index:20; background:rgba(10,12,20,.82);
+  border:1px solid #1d2233; border-radius:10px;
+  padding:6px 10px; font-size:11px; color:#cdd3e0; pointer-events:none;
+  backdrop-filter:blur(6px); display:none; }
+#backdrop { position:fixed; inset:0; z-index:9; display:none; }
+h1 { font-size:13px; font-weight:500; margin:0 0 8px; letter-spacing:.04em; color:#e6ebf5; }
+button { background:#1b2740; color:#cfe0ff; border:1px solid #2c3c5e; border-radius:7px;
+  padding:7px 11px; cursor:pointer; font:inherit; margin:2px 0; }
+button:hover { background:#243559; }
+.row { display:flex; gap:6px; align-items:center; margin:5px 0; }
+.lbl { color:#8a93a8; font-size:11px; }
+#log { margin-top:10px; max-height:180px; overflow:auto; font-size:11px; color:#7e8aa3;
+  border-top:1px solid #1d2233; padding-top:8px; white-space:pre-wrap; }
+.stat { color:#5dd6a0; }
+.legend { font-size:11px; color:#8a93a8; margin-top:6px; }
+#sse-dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+  background:#ffd166; margin-right:4px; vertical-align:middle; flex-shrink:0; }
+/* Detail panel */
+#detail-close { float:right; background:none; border:none; color:#8a93a8;
+  font-size:16px; padding:0 2px; margin:0; cursor:pointer; line-height:1; }
+#detail-close:hover { color:#e6ebf5; }
+#detail-title { font-size:15px; font-weight:500; color:#e6ebf5;
+  margin:8px 0; line-height:1.2; clear:both; word-break:break-word; }
+.meta-grid { font-size:11px; margin:4px 0 4px; }
+.meta-row { display:flex; gap:8px; margin:2px 0; }
+.meta-key { color:#8a93a8; min-width:80px; flex-shrink:0; }
+.meta-val { color:#cdd3e0; word-break:break-all; }
+.divider { border:none; border-top:1px solid #1d2233; margin:12px 0; }
+#detail-body { font-size:13px; color:#cdd3e0; max-height:240px; overflow-y:auto;
+  line-height:1.5; word-break:break-word; }
+#detail-conns-head { font-size:13px; font-weight:500; color:#e6ebf5; margin:0 0 6px; }
+.conn-link { display:block; color:#5b8dff; cursor:pointer; font-size:13px;
+  margin:2px 0; }
+.conn-link:hover { color:#8ab0ff; }
+#detail-conns-more { font-size:11px; color:#8a93a8; margin-top:4px; }
+#detail-loading { font-size:11px; color:#8a93a8; margin-top:8px; }
+</style>
+</head>
+<body>
+<div id="graph"></div>
+
+<div id="panel">
+  <h1>brain-memory · activations</h1>
+  <div class="row">
+    <button id="btn-tombstones">Show tombstones</button>
+    <button id="btn-test-trace" style="font-size:11px;padding:5px 9px">Test trace</button>
+  </div>
+  <div class="row">
+    <span id="sse-dot"></span>
+    <span id="sse-label" class="lbl" style="color:#ffd166">connecting…</span>
+  </div>
+  <div class="row">
+    <span class="lbl">nodes</span>
+    <span id="ncount" class="stat">—</span>
+  </div>
+  <div class="legend">
+    <span style="color:#5b8dff">●</span> entity&nbsp;
+    <span style="color:#9b8cff">●</span> fact&nbsp;
+    <span style="color:#ff6b9d">●</span> schema
+  </div>
+  <div id="detail-loading" style="display:none">Initializing graph…</div>
+  <div id="log"></div>
+</div>
+
+<div id="backdrop"></div>
+
+<div id="detail">
+  <button id="detail-close" aria-label="Close node detail">×</button>
+  <div id="detail-title"></div>
+  <div class="meta-grid" id="detail-meta"></div>
+  <hr class="divider" />
+  <div id="detail-body"></div>
+  <hr class="divider" />
+  <div id="detail-conns-head">Connections</div>
+  <div id="detail-conns"></div>
+  <div id="detail-conns-more"></div>
+</div>
+
+<div id="tooltip"></div>
+
+<!-- Vendored, local-first (D-93/D-102): no CDN at runtime. ONE shared THREE instance —
+     ESM module sets window.THREE, then the self-contained UMD bundle reads it.
+     Load order is NON-NEGOTIABLE (spike 001 README, D-93): three.module.js FIRST. -->
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+window.THREE = THREE;                          // UMD bundle reads window.THREE → single instance
+
+await new Promise((resolve, reject) => {
+  const s = document.createElement('script');
+  s.src = './vendor/3d-force-graph.min.js';
+  s.onload = resolve;
+  s.onerror = () => reject(new Error('failed to load vendored 3d-force-graph.min.js'));
+  document.head.appendChild(s);
+});
+const ForceGraph3D = window.ForceGraph3D;
+
+// ---------- constants ----------
+const TYPE_COLOR    = { entity: 0x5b8dff, fact: 0x9b8cff, schema: 0xff6b9d };
+const TOMBSTONE_COLOR = 0x3a3e4a;
+const HOT           = new THREE.Color(0xffe08a);   // activation glow / particle color
+const MAX_FAN_OUT   = 8;
+
+// ---------- DOM refs ----------
+const logEl       = document.getElementById('log');
+const ncountEl    = document.getElementById('ncount');
+const sseLabelEl  = document.getElementById('sse-label');
+const sseDotEl    = document.getElementById('sse-dot');
+const detailEl    = document.getElementById('detail');
+const backdropEl  = document.getElementById('backdrop');
+const tooltipEl   = document.getElementById('tooltip');
+const btnTomb     = document.getElementById('btn-tombstones');
+const btnTest     = document.getElementById('btn-test-trace');
+const loadingEl   = document.getElementById('detail-loading');
+
+// ---------- state ----------
+let allNodes      = [];
+let allLinks      = [];
+let showTombstones = false;
+const idMap       = new Map();   // node.id → node object
+const adj         = new Map();   // node.id → array of link objects (both directions)
+let selectedNode  = null;
+let selectionRing = null;
+let hoveredNode   = null;
+let Graph;
+
+// ---------- log ----------
+const evts = [];
+function logEvent(cat, msg) {
+  const t = new Date().toISOString().slice(11, 23);
+  evts.push({ t, cat, msg });
+  logEl.textContent = evts.slice(-40).map(e => `${e.t} [${e.cat}] ${e.msg}`).join('\n');
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ---------- SSE status ----------
+function setSSEStatus(live) {
+  sseDotEl.style.background = live ? '#5dd6a0' : '#ffd166';
+  sseLabelEl.style.color    = live ? '#5dd6a0' : '#ffd166';
+  sseLabelEl.textContent    = live ? 'live'    : 'reconnecting…';
+}
+
+// ---------- load /graph ----------
+loadingEl.style.display = 'block';
+
+let loadErr = null;
+try {
+  const res = await fetch('/graph');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  allNodes = data.nodes || [];
+  allLinks = data.links || [];
+} catch (err) {
+  loadErr = err;
+  logEvent('error', String(err));
+}
+
+loadingEl.style.display = 'none';
+
+if (loadErr) {
+  const p = document.createElement('p');
+  p.style.cssText = 'color:#ffd166;font-size:11px;margin:8px 0 0';
+  p.textContent   = 'Could not read memory graph — verify brain-memory is installed and the database path is correct.';
+  document.getElementById('panel').appendChild(p);
+} else if (allNodes.length === 0) {
+  const h = document.createElement('p');
+  h.style.cssText  = 'color:#e6ebf5;font-size:13px;font-weight:500;margin:8px 0 4px';
+  h.textContent    = 'No memory nodes yet';
+  const b = document.createElement('p');
+  b.style.cssText  = 'color:#8a93a8;font-size:11px;margin:0';
+  b.textContent    = 'Run `brain recall` or send a Telegram message to build your memory graph.';
+  document.getElementById('panel').appendChild(h);
+  document.getElementById('panel').appendChild(b);
+}
+
+// ---------- idMap + adjacency (BEFORE ForceGraph3D mutates link.source/target) ----------
+for (const n of allNodes) idMap.set(n.id, n);
+for (const n of allNodes) adj.set(n.id, []);
+for (const l of allLinks) {
+  const src = typeof l.source === 'object' ? l.source.id : l.source;
+  const dst = typeof l.target === 'object' ? l.target.id : l.target;
+  if (adj.has(src)) adj.get(src).push(l);
+  if (adj.has(dst)) adj.get(dst).push({ source: dst, target: src, _mirror: l, rel: l.rel, w: l.w, kind: l.kind });
+}
+
+ncountEl.textContent = String(allNodes.length);
+if (!loadErr) logEvent('init', `graph loaded: ${allNodes.length} nodes / ${allLinks.length} edges`);
+
+// ---------- rAF activation loop ----------
+// Touches ONLY active set — never all nodes, no per-frame full refresh (perf trap D-93).
+const active = new Set();
+
+function activate(node, level) {
+  if (!node || !node.__mat) return;   // node not rendered (tombstone hidden or not yet initialized)
+  node.__act = Math.max(node.__act, level);
+  active.add(node);
+}
+
+function resolve(x) { return typeof x === 'object' ? x : idMap.get(x); }
+
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  for (const node of [...active]) {
+    if (!node.__mat || !node.__mesh) { active.delete(node); continue; }
+    node.__act -= dt * 0.6;                              // ~1.6s decay
+    if (node.__act <= 0.001) { node.__act = 0; active.delete(node); continue; }
+    const a = Math.max(0, node.__act);
+    node.__mat.color.copy(node.__base).lerp(HOT, a);
+    node.__mat.opacity = 0.78 + a * 0.22;
+    node.__mesh.scale.setScalar(1 + a * 1.8);           // seed (a=1) → 2.8×, neighbor (a=0.85) → 2.53×
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+// ---------- applyTrace — single function for both SSE and local triggers (D-102) ----------
+function applyTrace(seedIds) {
+  logEvent('trace', `seeds=[${seedIds.slice(0, 4).join(',')}${seedIds.length > 4 ? '…' : ''}]`);
+  seedIds.forEach(sid => {
+    const seed = idMap.get(sid);
+    if (!seed) return;
+    activate(seed, 1.0);                                 // phase 1: seed pulse at full activation
+    const edges = (adj.get(sid) || []).slice(0, MAX_FAN_OUT);
+    edges.forEach((edge, i) => {
+      setTimeout(() => {
+        const nb = resolve(edge.target);
+        if (!nb) return;
+        activate(nb, 0.85);                              // phase 2: neighbor spread at 0.85
+        const link = edge._mirror || edge;
+        try { Graph.emitParticle(link); } catch (e) { logEvent('warn', 'emitParticle: ' + e.message); }
+      }, 120 + i * 90);                                  // stagger: 120ms + 90ms per neighbor
+    });
+  });
+}
+
+// ---------- nodeThreeObject factory ----------
+function makeNodeObject(node) {
+  const r    = 1 + node.s * 3;
+  const isTomb = !!node.tombstoned;
+  const base  = isTomb ? new THREE.Color(TOMBSTONE_COLOR) : new THREE.Color(TYPE_COLOR[node.type] || TYPE_COLOR.entity);
+  const op    = isTomb ? 0.45 : 0.78;
+  const mat   = new THREE.MeshBasicMaterial({ color: base.clone(), transparent: true, opacity: op });
+  node.__base  = base;
+  node.__mat   = mat;
+  node.__act   = 0;
+  const mesh   = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 8), mat);
+  node.__mesh  = mesh;
+  node.__baseR = r;
+  return mesh;
+}
+
+function getVisibleNodes() {
+  return showTombstones ? allNodes : allNodes.filter(n => !n.tombstoned);
+}
+
+// ---------- 3d-force-graph init ----------
+Graph = ForceGraph3D()(document.getElementById('graph'))
+  .backgroundColor('#06070d')
+  .graphData({ nodes: getVisibleNodes(), links: allLinks })
+  .nodeRelSize(2)
+  .nodeThreeObject(makeNodeObject)
+  .linkColor(() => 'rgba(120,140,190,0.22)')
+  .linkWidth(0)
+  .linkDirectionalParticleColor(() => '#ffe08a')
+  .linkDirectionalParticleWidth(2.2)
+  .linkDirectionalParticleSpeed(0.02)
+  .onNodeClick(node => selectNode(node))
+  .onNodeHover(node => {
+    // Restore previous hovered node's base opacity
+    if (hoveredNode && hoveredNode.__mat) {
+      hoveredNode.__mat.opacity = hoveredNode.tombstoned ? 0.45 : 0.78;
+    }
+    hoveredNode = node || null;
+    if (node) {
+      if (node.__mat) node.__mat.opacity = 1.0;
+      tooltipEl.style.display = 'block';
+      const typeLabel = node.tombstoned ? 'tombstone' : (node.type || 'entity');
+      tooltipEl.textContent = `${typeLabel} · ${(node.value || '').slice(0, 50)}`;
+    } else {
+      tooltipEl.style.display = 'none';
+    }
+  });
+
+// Tooltip follows cursor
+document.addEventListener('mousemove', e => {
+  tooltipEl.style.left = (e.clientX + 12) + 'px';
+  tooltipEl.style.top  = (e.clientY + 12) + 'px';
+});
+
+// ---------- tombstone toggle ----------
+btnTomb.addEventListener('click', () => {
+  showTombstones = !showTombstones;
+  btnTomb.textContent = showTombstones ? 'Hide tombstones' : 'Show tombstones';
+  Graph.graphData({ nodes: getVisibleNodes(), links: allLinks });
+  ncountEl.textContent = String(getVisibleNodes().length);
+  logEvent('toggle', showTombstones ? 'tombstones shown' : 'tombstones hidden');
+});
+
+// ---------- test trace (local trigger — D-102 proof: same applyTrace as SSE) ----------
+btnTest.addEventListener('click', () => {
+  const visible = getVisibleNodes();
+  if (!visible.length) return;
+  const pool   = visible.slice().sort((a, b) => b.s - a.s).slice(0, 50);
+  const seeds  = pool.slice(0, 2).map(n => n.id);
+  applyTrace(seeds);
+});
+
+// ---------- SSE live-tail — calls same applyTrace as local trigger ----------
+const es = new EventSource('/events');
+es.onopen  = () => { setSSEStatus(true);  logEvent('sse', 'connected'); };
+es.onerror = () => { setSSEStatus(false); logEvent('sse', 'error/retry'); };
+es.addEventListener('trace', ev => {
+  const row = JSON.parse(ev.data);
+  logEvent('sse-trace', `#${row.id} seeds=[${(row.seeds || []).join(',')}]`);
+  applyTrace(row.seeds || []);
+});
+
+// ---------- node detail panel ----------
+
+function closeDetail() {
+  detailEl.style.display  = 'none';
+  backdropEl.style.display = 'none';
+  clearSelection();
+}
+
+function clearSelection() {
+  if (selectedNode && selectionRing) {
+    if (selectedNode.__mesh) selectedNode.__mesh.remove(selectionRing);
+    if (selectionRing.geometry) selectionRing.geometry.dispose();
+    if (selectionRing.material) selectionRing.material.dispose();
+  }
+  selectedNode  = null;
+  selectionRing = null;
+}
+
+function selectNode(node) {
+  clearSelection();
+  if (!node) return;
+  selectedNode = node;
+
+  // White selection ring — added as child of the node mesh so it tracks the node
+  if (node.__mesh && node.__baseR) {
+    const r = node.__baseR;
+    const ringGeo = new THREE.RingGeometry(r * 1.4, r * 1.7, 32);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.DoubleSide
+    });
+    selectionRing = new THREE.Mesh(ringGeo, ringMat);
+    node.__mesh.add(selectionRing);
+  }
+
+  populateDetail(node);
+  detailEl.style.display   = 'block';
+  backdropEl.style.display = 'block';
+}
+
+function populateDetail(node) {
+  // Title — textContent only, never innerHTML with raw value (T-10-12)
+  document.getElementById('detail-title').textContent = (node.value || '').slice(0, 80);
+
+  // Metadata block (all via DOM, no innerHTML with data)
+  const metaEl = document.getElementById('detail-meta');
+  metaEl.innerHTML = '';
+  const tombVal = node.tombstoned ? String(node.tombstoned) : '—';
+  const fields = [
+    ['type',       node.tombstoned ? 'tombstone' : (node.type || '—')],
+    ['strength',   typeof node.s === 'number' ? node.s.toFixed(2) : '—'],
+    ['confidence', typeof node.c === 'number' ? node.c.toFixed(2) : '—'],
+    ['origin',     node.origin || '—'],
+    ['tombstone',  tombVal],
+  ];
+  for (const [key, val] of fields) {
+    const row = document.createElement('div');
+    row.className = 'meta-row';
+    const k = document.createElement('span');
+    k.className   = 'meta-key';
+    k.textContent = key;
+    const v = document.createElement('span');
+    v.className   = 'meta-val';
+    v.textContent = val;
+    row.appendChild(k);
+    row.appendChild(v);
+    metaEl.appendChild(row);
+  }
+
+  // Body text (full value, textContent only)
+  document.getElementById('detail-body').textContent = node.value || '';
+
+  // Connections section
+  const connsEl  = document.getElementById('detail-conns');
+  const moreEl   = document.getElementById('detail-conns-more');
+  connsEl.innerHTML = '';
+  moreEl.textContent = '';
+
+  const nodeId   = node.id;
+  const seen     = new Set();
+  const neighbors = [];
+  for (const edge of (adj.get(nodeId) || [])) {
+    const nbId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+    if (nbId && nbId !== nodeId && !seen.has(nbId)) {
+      seen.add(nbId);
+      const nb = idMap.get(nbId);
+      if (nb) neighbors.push(nb);
+    }
+  }
+
+  if (neighbors.length === 0) {
+    const noConns = document.createElement('div');
+    noConns.style.cssText = 'font-size:11px;color:#8a93a8';
+    noConns.textContent   = 'No direct connections';
+    connsEl.appendChild(noConns);
+  } else {
+    const visible = neighbors.slice(0, MAX_FAN_OUT);
+    const extra   = neighbors.length - MAX_FAN_OUT;
+    for (const nb of visible) {
+      const span = document.createElement('span');
+      span.className = 'conn-link';
+      span.setAttribute('role', 'button');
+      span.setAttribute('tabindex', '0');
+      span.textContent = '[[' + (nb.value || nb.id).slice(0, 40) + ']]';
+      span.addEventListener('click', () => selectNode(nb));
+      span.addEventListener('keydown', e => { if (e.key === 'Enter') selectNode(nb); });
+      connsEl.appendChild(span);
+    }
+    if (extra > 0) {
+      moreEl.textContent = `+ ${extra} more`;
+    }
+  }
+}
+
+// Close button
+document.getElementById('detail-close').addEventListener('click', closeDetail);
+
+// Backdrop click dismisses detail
+backdropEl.addEventListener('click', closeDetail);
+
+// Escape key dismisses detail
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && detailEl.style.display !== 'none') closeDetail();
+});
+</script>
+</body>
+</html>
