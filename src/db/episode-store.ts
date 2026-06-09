@@ -34,6 +34,11 @@ export interface AppendEventParams {
   source?: string;
   /** Per-source dedup key — D-59. Null means no dedup (each append is distinct). Defaults to null. */
   external_id?: string | null;
+  /**
+   * Working directory of the Claude Code session (DEBT-06). Defaults to '' (global/cross-project).
+   * Email and other non-hook episodes leave this empty — they are always globally visible.
+   */
+  cwd?: string;
 }
 
 /** Truncation marker appended when content exceeds maxContentBytes (D-09). */
@@ -97,11 +102,11 @@ export class EpisodicStore {
       INSERT OR IGNORE INTO episode (
         id, ts, content, origin, salience, hard_keep,
         consolidated, source_inference_id, role, session_id,
-        source, external_id
+        source, external_id, cwd
       ) VALUES (
         @id, @ts, @content, @origin, @salience, @hard_keep,
         0, @source_inference_id, @role, @session_id,
-        @source, @external_id
+        @source, @external_id, @cwd
       )
     `);
 
@@ -151,6 +156,7 @@ export class EpisodicStore {
     const content = capContent(params.content, this.config.maxContentBytes);
     const source = params.source ?? 'claude-code';
     const external_id = params.external_id ?? null;
+    const cwd = params.cwd ?? '';
 
     const info = this.stmtInsert.run({
       id,
@@ -164,6 +170,7 @@ export class EpisodicStore {
       session_id: params.session_id,
       source,
       external_id,
+      cwd,
     });
 
     // Dedup hit: INSERT OR IGNORE fired (0 rows changed) and external_id is non-null.

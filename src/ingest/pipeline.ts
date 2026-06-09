@@ -40,6 +40,12 @@ export interface RecordEventParams {
    * Adapters set this to a stable message/note identifier so re-ingestion is idempotent.
    */
   externalId?: string | null;
+  /**
+   * Working directory of the Claude Code session (DEBT-06).
+   * Defaults to '' (globally visible). Only Claude Code hook adapters supply this;
+   * email/ingest adapters leave it empty so their episodes are always globally visible.
+   */
+  cwd?: string;
 }
 
 export class IngestionPipeline {
@@ -72,6 +78,7 @@ export class IngestionPipeline {
       hard_keep: hardKeep ? 1 : 0,
       source,
       external_id: e.externalId ?? null,
+      cwd: e.cwd ?? '',
     });
   }
 }

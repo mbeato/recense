@@ -73,6 +73,7 @@ async function main(): Promise<void> {
     ? input['last_assistant_message'] : '';
   const sessionId = typeof input['session_id'] === 'string'
     ? input['session_id'] : 'unknown';
+  const cwd       = typeof input['cwd'] === 'string' ? input['cwd'] : '';
 
   const dbPath = process.env['BRAIN_MEMORY_DB'] ?? join(homedir(), 'brain-memory', 'brain.db');
 
@@ -90,6 +91,7 @@ async function main(): Promise<void> {
       role: 'assistant',
       origin: 'observed',
       sessionId,
+      cwd,
     });
 
     db.close();
