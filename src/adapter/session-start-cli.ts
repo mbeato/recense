@@ -23,6 +23,8 @@
  *              invoked beyond initSchema DDL.
  */
 import { appendFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
@@ -76,7 +78,7 @@ async function main(): Promise<void> {
   // MUST drain stdin before any I/O — harness blocks on write otherwise (RESEARCH §1.1)
   await consumeStdin();
 
-  const dbPath = process.env['BRAIN_MEMORY_DB'] ?? '$HOME/brain-memory/brain.db';
+  const dbPath = process.env['BRAIN_MEMORY_DB'] ?? join(homedir(), 'brain-memory', 'brain.db');
   const config = { ...DEFAULT_CONFIG, dbPath };
   const db = new Database(dbPath);
   initSchema(db);
