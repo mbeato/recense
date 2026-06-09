@@ -1,14 +1,20 @@
 /**
  * ADAPT-02: Hand-rolled O_EXCL lockfile — concurrent-acquire coverage.
  *
+ * DEBT-02: redirect the lock to a per-pid path so this test never touches the
+ * production lock held by the live watcher. Must be set BEFORE the lockfile
+ * import — vitest pool:forks evaluates the module fresh per fork at load time.
+ *
  * Tests:
  *  1. First acquireLock() returns true; second returns false while held.
  *  2. After releaseLock(), acquireLock() returns true again.
  *  3. A stale lock (mtime older than LOCK_STALE_MS) is reclaimed.
  */
-import { writeFileSync, utimesSync, existsSync } from 'fs';
-import { join } from 'path';
 import { tmpdir } from 'os';
+import { join } from 'path';
+// DEBT-02: set hermetic per-pid lock path BEFORE importing lockfile module.
+process.env['BRAIN_MEMORY_LOCK_PATH'] = join(tmpdir(), `brain-memory-test-lock-${process.pid}.lock`);
+import { writeFileSync, utimesSync, existsSync } from 'fs';
 import { describe, it, expect, afterEach } from 'vitest';
 import { acquireLock, releaseLock, LOCK_PATH } from '../src/adapter/lockfile';
 

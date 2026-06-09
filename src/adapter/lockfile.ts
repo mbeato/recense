@@ -20,8 +20,15 @@ import { openSync, writeSync, closeSync, unlinkSync, statSync, existsSync } from
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-/** Exported so tests can inspect / manipulate the lock file directly. */
-export const LOCK_PATH = join(tmpdir(), 'brain-memory-sleep.lock');
+/**
+ * Exported so tests can inspect / manipulate the lock file directly.
+ *
+ * DEBT-02: BRAIN_MEMORY_LOCK_PATH env override lets test processes redirect to a
+ * per-pid path under tmpdir() so they never touch the production lock held by the
+ * live watcher. When the env var is unset, behaviour is identical to before.
+ */
+export const LOCK_PATH =
+  process.env['BRAIN_MEMORY_LOCK_PATH'] ?? join(tmpdir(), 'brain-memory-sleep.lock');
 
 /**
  * 5 minutes — the sleep pass should complete well within this window.
