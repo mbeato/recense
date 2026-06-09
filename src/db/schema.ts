@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -103,6 +103,18 @@ export const DDL = `
     magnitude      REAL,
     payload        TEXT
   );
+
+  -- VIZ: ring-buffered spreading-activation trace (schema v4, append-only, capped at 50 rows).
+  -- Written by SQLiteActivationTraceSink; read by the viz server's read-only handle.
+  -- Ring eviction: DELETE WHERE id NOT IN (SELECT id FROM activation_trace ORDER BY id DESC LIMIT 50)
+  -- run after every insert (single-writer, viz server never writes).
+  CREATE TABLE IF NOT EXISTS activation_trace (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        INTEGER NOT NULL,
+    query_id  TEXT    NOT NULL,
+    seeds     TEXT    NOT NULL,  -- JSON array of node ids
+    hops      TEXT    NOT NULL   -- JSON array of {node_id, score, hop}
+  );
 `;
 
 /**
@@ -158,6 +170,13 @@ export function initSchema(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_episode_cwd
       ON episode(cwd, consolidated);
+  `);
+
+  // v4 migration: activation_trace ring-buffered table + ts index (VIZ-02).
+  // Table uses CREATE TABLE IF NOT EXISTS in DDL above → idempotent, no ALTER needed.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_activation_trace_ts
+      ON activation_trace(ts DESC);
   `);
 
   // Stamp or update schema version in the now-guaranteed meta table
