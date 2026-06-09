@@ -61,6 +61,10 @@ DB_PATH="${BRAIN_MEMORY_DB:-$PROJECT_ROOT/brain.db}"
 
 # Per-role split config for the detached sleep pass (validated config defaults).
 # Extraction → local model; judge → anthropic. Env vars override.
+# IN-04: this LOCAL_MODEL is the dogfood *extractor* default (lighter/faster) and is
+# intentionally distinct from the engine's `localModel` default in src/lib/config.ts
+# (qwen3.6:35b-a3b — the empirically-validated judge-grade model). They serve different
+# roles; override either via BRAIN_MEMORY_LOCAL_MODEL. Not a divergence bug.
 EXTRACTOR_PROVIDER="${BRAIN_MEMORY_EXTRACTOR_PROVIDER:-local}"
 LOCAL_MODEL="${BRAIN_MEMORY_LOCAL_MODEL:-qwen2.5:7b-instruct}"
 JUDGE_PROVIDER="${BRAIN_MEMORY_JUDGE_PROVIDER:-anthropic}"

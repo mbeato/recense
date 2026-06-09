@@ -15,7 +15,7 @@
  *  2. After releaseLock(), acquireLock() returns true again.
  *  3. A stale lock (mtime older than LOCK_STALE_MS) is reclaimed.
  */
-import { writeFileSync, utimesSync, existsSync } from 'fs';
+import { writeFileSync, utimesSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
@@ -55,10 +55,10 @@ describe('acquireLock / releaseLock', () => {
   });
 
   it('reclaims a stale lock (mtime older than LOCK_STALE_MS)', () => {
-    // Write the lock file directly and back-date its mtime to 10 minutes ago
-    // so the staleness branch is exercised deterministically
+    // Write the lock file directly and back-date its mtime well beyond the 30-minute
+    // (WR-02) stale window so the staleness branch is exercised deterministically.
     writeFileSync(TEST_LOCK_PATH, 'stale-pid-99999');
-    const staleMtime = new Date(Date.now() - 10 * 60 * 1000); // 10 minutes ago
+    const staleMtime = new Date(Date.now() - 40 * 60 * 1000); // 40 minutes ago
     utimesSync(TEST_LOCK_PATH, staleMtime, staleMtime);
 
     // Verify the file exists and is stale before calling acquireLock
@@ -67,5 +67,15 @@ describe('acquireLock / releaseLock', () => {
     // acquireLock should reclaim the stale lock and return true
     const got = acquireLock();
     expect(got).toBe(true);
+  });
+
+  it('releaseLock leaves a lock owned by another pid intact (WR-02)', () => {
+    // After a stale-reclaim the lock can belong to a different live process; a slow
+    // original must NOT delete it (that would admit a third concurrent writer).
+    const otherPid = String(process.pid + 1);
+    writeFileSync(TEST_LOCK_PATH, otherPid);
+    releaseLock(); // we are NOT the recorded owner
+    expect(existsSync(TEST_LOCK_PATH)).toBe(true);
+    unlinkSync(TEST_LOCK_PATH); // manual cleanup (bypass ownership check)
   });
 });

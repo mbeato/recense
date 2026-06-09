@@ -156,6 +156,24 @@ describe('writeEnvFile', () => {
     expect(content).not.toContain('KEY=first');
     expect(statSync(envPath).mode & 0o777).toBe(0o600);
   });
+
+  it('preserves comments and unrecognized keys on re-write (IN-03)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brain-init-test-'));
+    const envPath = join(dir, 'sleep.env');
+    // Simulate a file with guidance comments + a commented placeholder + an extra key
+    writeFileSync(
+      envPath,
+      '# guidance comment\nBRAIN_MEMORY_DB=/old/path.db\n# GMAIL_CLIENT_ID=\nCUSTOM_EXTRA=keepme\n',
+    );
+    // Re-run init only touches BRAIN_MEMORY_DB
+    writeEnvFile(envPath, { BRAIN_MEMORY_DB: '/new/path.db' });
+    const content = readFileSync(envPath, 'utf8');
+    expect(content).toContain('# guidance comment');       // comment preserved
+    expect(content).toContain('# GMAIL_CLIENT_ID=');        // placeholder preserved
+    expect(content).toContain('CUSTOM_EXTRA=keepme');       // unrecognized key preserved
+    expect(content).toContain('BRAIN_MEMORY_DB=/new/path.db'); // known key updated
+    expect(content).not.toContain('/old/path.db');
+  });
 });
 
 // ── validateApiKey ────────────────────────────────────────────────────────────
@@ -341,5 +359,44 @@ describe('mergeSettingsHooks', () => {
         if (prevEnv !== undefined) process.env['BRAIN_MEMORY_DB'] = prevEnv;
       }
     }
+  });
+
+  it('strips brain hooks from matcher-scoped groups and adds to an unmatched group (WR-03)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brain-init-settings-'));
+    const settingsPath = join(dir, 'settings.json');
+
+    // SessionStart with a matcher-scoped group holding BOTH a stale brain hook and a
+    // non-brain hook — the kind of layout that previously double-fired / went stale.
+    const initial = {
+      hooks: {
+        SessionStart: [{
+          matcher: 'startup',
+          hooks: [
+            { type: 'command', command: '/other/tool/on-start.sh', timeout: 10 },
+            { type: 'command', command: '/nd/session-start-cli.js', timeout: 5 },
+          ],
+        }],
+      },
+    };
+    writeFileSync(settingsPath, JSON.stringify(initial));
+
+    mergeSettingsHooks(settingsPath, FAKE_NODE, FAKE_BRAIN, FAKE_DB);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    const groups = s.hooks.SessionStart as Array<{ matcher?: string; hooks: Array<{ command: string }> }>;
+
+    // The matcher group keeps its non-brain hook and lost the stale brain entry.
+    const matcherGroup = groups.find(g => g.matcher === 'startup')!;
+    expect(matcherGroup.hooks.some(h => h.command === '/other/tool/on-start.sh')).toBe(true);
+    expect(matcherGroup.hooks.some(h => /session-start-cli\.js/.test(h.command))).toBe(false);
+
+    // The brain hook now lives in an unmatched group, pinned with --db, exactly once.
+    const brainEntries = groups
+      .flatMap(g => g.hooks ?? [])
+      .filter(h => /brain.*hook/.test(h.command ?? ''));
+    expect(brainEntries).toHaveLength(1);
+    expect(brainEntries[0]!.command).toContain(`--db ${FAKE_DB}`);
+    const unmatched = groups.find(g => g.matcher === undefined)!;
+    expect(unmatched.hooks.some(h => /brain.*hook/.test(h.command))).toBe(true);
   });
 });

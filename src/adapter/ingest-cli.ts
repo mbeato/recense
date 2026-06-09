@@ -169,7 +169,6 @@ async function main(): Promise<void> {
   // Source selection: --all (default) or a single <source> positional arg.
   // When invoked by the launchd wrapper (no args) we default to --all.
   const hasAllFlag = process.argv.includes('--all');
-  const dbArgIdx = process.argv.indexOf('--db');
   // Positional args: everything after "node script.js" that is not a flag and
   // not the value consumed by --db.
   const positionals = process.argv.slice(2).filter((a, idx, arr) => {

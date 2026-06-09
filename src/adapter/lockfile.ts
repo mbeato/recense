@@ -16,7 +16,7 @@
  * Threat mitigations:
  *  - T-03-2-Tlock: atomic O_EXCL create; EEXIST loser returns false.
  */
-import { openSync, writeSync, closeSync, unlinkSync, statSync, existsSync } from 'fs';
+import { openSync, writeSync, closeSync, unlinkSync, statSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -45,11 +45,18 @@ function getLockPath(): string {
 }
 
 /**
- * 5 minutes — the sleep pass should complete well within this window.
- * If a future API-heavy run approaches this limit, switch to `proper-lockfile`
- * with a generous `stale` value. For now, hand-rolled is sufficient.
+ * 30 minutes (WR-02) — comfortably beyond a worst-case API-bound pass.
+ *
+ * The previous 5-minute window was a real single-writer hazard: a sleep/ingest
+ * pass making per-episode Haiku + embedding calls can exceed 5 min on a backlog or
+ * under rate-limiting, at which point a *live* pass looks stale and gets reclaimed
+ * → two concurrent graph writers. 30 min makes a false-stale reclaim of a healthy
+ * pass extremely unlikely. The complementary defense is ownership-checked release
+ * (see releaseLock): even if a reclaim happens, the slow original will not delete
+ * the new owner's lock. If a future run can legitimately exceed 30 min, switch to
+ * `proper-lockfile` with mtime heartbeats.
  */
-export const LOCK_STALE_MS = 5 * 60 * 1000;
+export const LOCK_STALE_MS = 30 * 60 * 1000;
 
 /**
  * Attempt to acquire the sleep-pass lock.
@@ -88,11 +95,25 @@ export function acquireLock(): boolean {
 
 /**
  * Release the sleep-pass lock.
+ *
+ * WR-02 — ownership-checked: after a stale-reclaim the lock file may belong to a
+ * NEW owner, so a slow original must NOT delete it (doing so would admit a third
+ * concurrent writer). We unlink only when the recorded pid is ours, or when the
+ * file is missing/unreadable/empty (best-effort, matches prior behavior).
+ *
  * Best-effort: ignores ENOENT (already removed by a concurrent releaseLock or
  * stale-reclaim). All other errors propagate.
  */
 export function releaseLock(): void {
   const lockPath = getLockPath();
+  let owner: string | null = null;
+  try {
+    owner = readFileSync(lockPath, 'utf8').trim();
+  } catch {
+    owner = null; // missing/unreadable — fall through to best-effort unlink
+  }
+  // Not our lock — a reclaim handed it to another live process. Leave it alone.
+  if (owner !== null && owner !== '' && owner !== String(process.pid)) return;
   try {
     unlinkSync(lockPath);
   } catch (err) {

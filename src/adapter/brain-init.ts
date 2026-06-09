@@ -102,13 +102,36 @@ export function captureNodeBin(): string {
  * Parent directories are created if they do not exist.
  */
 export function writeEnvFile(envPath: string, vars: Record<string, string>): void {
-  const lines = Object.entries(vars).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
+  // IN-03: preserve comments, blank lines, and unrecognized keys from an existing
+  // file (e.g. the GMAIL_* placeholders + guidance comments written by setup-dogfood).
+  // Known keys are updated in place; brand-new keys are appended at the end.
+  const out: string[] = [];
+  const written = new Set<string>();
+  if (existsSync(envPath)) {
+    for (const line of readFileSync(envPath, 'utf8').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) { out.push(line); continue; }
+      const eq = trimmed.indexOf('=');
+      const key = eq === -1 ? trimmed : trimmed.slice(0, eq);
+      if (Object.prototype.hasOwnProperty.call(vars, key)) {
+        out.push(`${key}=${vars[key]}`);
+        written.add(key);
+      } else {
+        out.push(line); // unrecognized key — preserve untouched
+      }
+    }
+  }
+  for (const [k, v] of Object.entries(vars)) {
+    if (!written.has(k)) out.push(`${k}=${v}`);
+  }
+  const content = out.join('\n').replace(/\n+$/, '') + '\n';
+
   mkdirSync(dirname(envPath), { recursive: true });
   // WR-01: write the tmp file in the destination dir, not os.tmpdir() — rename(2)
   // is not atomic across filesystems and throws EXDEV when /tmp (tmpfs on Linux)
   // and $HOME are on different mounts. An intra-directory rename is always atomic.
   const tmp = join(dirname(envPath), `.brain-env-${Date.now()}-${process.pid}.tmp`);
-  writeFileSync(tmp, lines, { mode: 0o600 });
+  writeFileSync(tmp, content, { mode: 0o600 });
   chmodSync(tmp, 0o600); // belt-and-suspenders (umask may limit mode in writeFileSync)
   renameSync(tmp, envPath);
 }
@@ -184,30 +207,41 @@ export function mergeSettingsHooks(
   type HookEntry = { type?: string; command?: string; timeout?: number };
   type HookGroup = { hooks?: HookEntry[]; matcher?: unknown };
 
+  // A prior brain entry is either old-style `*-cli.js` OR new-style `brain ... hook`.
+  // Stripping the new-style entry too makes re-running init re-pin the current --db
+  // path (idempotent AND correct when the DB path changes).
+  const isBrainHook = (c: string): boolean =>
+    /(session-start-cli|turn-capture-cli|stop-cli)\.js\b/.test(c) ||
+    /brain(\.js)?\s+hook\s/.test(c);
+
   for (const [event, hookSubcmd] of hookMap) {
-    // Ensure the event array exists with at least one group
-    if (!Array.isArray(hooksSection[event]) || (hooksSection[event] as unknown[]).length === 0) {
-      hooksSection[event] = [{ hooks: [] }];
+    if (!Array.isArray(hooksSection[event])) {
+      hooksSection[event] = [];
     }
-
     const groups = hooksSection[event] as HookGroup[];
-    const group = groups[0]!;
-    if (!Array.isArray(group.hooks)) {
-      group.hooks = [];
+
+    // WR-03: strip prior brain entries from EVERY group — not just groups[0]. Matcher-
+    // scoped groups (e.g. SessionStart "startup"/"resume"/"clear") could otherwise
+    // harbor stale brain hooks that survive and double-fire.
+    for (const g of groups) {
+      if (Array.isArray(g.hooks)) {
+        g.hooks = g.hooks.filter(h => !isBrainHook(h.command ?? ''));
+      }
     }
 
-    // Remove any prior brain entry — old-style `*-cli.js` OR new-style `brain ... hook`
-    // (T-09-18: surgical splice). Stripping the new-style entry too makes re-running
-    // init re-pin the current --db path (idempotent AND correct when the DB path changes).
-    const isBrainHook = (c: string): boolean =>
-      /(session-start-cli|turn-capture-cli|stop-cli)\.js\b/.test(c) ||
-      /brain(\.js)?\s+hook\s/.test(c);
-    group.hooks = group.hooks.filter(h => !isBrainHook(h.command ?? ''));
+    // Add the new entry to the unmatched (catch-all) group so it fires for every
+    // variant of the event; create one if the event only has matcher-scoped groups.
+    let target = groups.find(g => g.matcher === undefined);
+    if (!target) {
+      target = { hooks: [] };
+      groups.push(target);
+    }
+    if (!Array.isArray(target.hooks)) target.hooks = [];
 
     // CR-01: pin the configured DB into the hook command so the hook resolves the
     // init-configured DB regardless of the env Claude Code launches the hook with.
     const newCommand = `${nodeBin} ${brainJs} hook ${hookSubcmd} --db ${dbPath}`;
-    group.hooks.push({ type: 'command', command: newCommand, timeout: 5 });
+    target.hooks.push({ type: 'command', command: newCommand, timeout: 5 });
   }
 
   // Atomic write: tmp→rename; 2-space JSON to avoid collapsing other tools' formatting.
@@ -231,6 +265,36 @@ function ask(rl: Rl, question: string, defaultVal?: string): Promise<string> {
 }
 
 /**
+ * Prompt for a secret WITHOUT echoing typed characters (IN-02): keeps API keys out
+ * of on-screen output and terminal scrollback. The key still never reaches
+ * stdout/logs/argv. The prompt is shown once, then all subsequent writes (keystrokes
+ * and line refreshes) are swallowed — the user types blind, like a password prompt.
+ * Falls back to normal echo if the readline internals are unavailable.
+ */
+function askSecret(rl: Rl, promptStr: string): Promise<string> {
+  return new Promise(res => {
+    const rlAny = rl as unknown as {
+      output?: { write: (s: string) => void };
+      _writeToOutput?: (s: string) => void;
+    };
+    const orig = rlAny._writeToOutput;
+    if (typeof orig === 'function') {
+      const bound = orig.bind(rlAny);
+      let promptShown = false;
+      rlAny._writeToOutput = (s: string): void => {
+        if (!promptShown) { promptShown = true; bound(s); }
+        // subsequent writes (typed chars, refreshes) are swallowed — no echo
+      };
+    }
+    rl.question(promptStr, ans => {
+      if (typeof orig === 'function') rlAny._writeToOutput = orig;
+      rlAny.output?.write('\n'); // terminate the masked input line
+      res(ans.trim());
+    });
+  });
+}
+
+/**
  * Prompt for an API key with the D-91 retry loop.
  *   - Shows existing key as '(set — press Enter to keep)' (raw key never echoed).
  *   - Skips live validation when the key hash is unchanged (D-90).
@@ -243,12 +307,14 @@ async function promptAndValidateKey(
   existingKey: string,
   provider: 'anthropic' | 'openai',
 ): Promise<string> {
-  const hint = existingKey ? '(set — press Enter to keep)' : undefined;
-  const entered = await ask(rl, label, hint);
+  // IN-02: masked entry — the key is never echoed to the terminal.
+  const promptStr = existingKey
+    ? `${label} (set — press Enter to keep): `
+    : `${label}: `;
+  const entered = await askSecret(rl, promptStr);
 
   // Use existing key when user pressed Enter and there is one
-  const key =
-    entered === '(set — press Enter to keep)' || entered === '' ? existingKey : entered;
+  const key = entered === '' ? existingKey : entered;
 
   // D-90: skip validation when the key is unchanged
   if (key && existingKey && isKeyUnchanged(existingKey, key)) {
@@ -274,11 +340,7 @@ async function promptAndValidateKey(
     console.error(`  ${provider} key error: ${r.error}`);
 
     if (attempt < 3) {
-      const next = await ask(
-        rl,
-        `  Re-enter ${label} (or 's' to skip validation)`,
-        undefined,
-      );
+      const next = await askSecret(rl, `  Re-enter ${label} (or 's' to skip validation): `);
       if (next.toLowerCase() === 's') {
         console.log(
           `  Skipping validation — key written as-is. Verify later with 'brain doctor'.`,
@@ -287,10 +349,9 @@ async function promptAndValidateKey(
       }
       if (next) currentKey = next;
     } else {
-      const skip = await ask(
+      const skip = await askSecret(
         rl,
-        `  3 attempts failed. Type 's' to skip validation, or enter a new key`,
-        undefined,
+        `  3 attempts failed. Type 's' to skip validation, or enter a new key: `,
       );
       if (skip.toLowerCase() === 's' || skip === '') {
         console.log('  Skipping validation.');
