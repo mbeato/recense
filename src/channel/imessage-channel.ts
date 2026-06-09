@@ -207,9 +207,23 @@ export class DefaultIMessageChannel implements Channel {
       return [];
     }
 
-    // Read dedup cursor from meta store (default 0 = backfill all recent rows)
+    // Read dedup cursor from meta store.
     const cursorRaw = this.meta.getMeta('cursor:imessage');
-    const cursor = cursorRaw !== null ? parseInt(cursorRaw, 10) : 0;
+
+    // Cold start (first-ever boot — no cursor persisted): baseline at the current
+    // high-water ROWID and answer NOTHING pre-existing. A reply-sending query channel
+    // must never replay/answer the existing conversation history (that mass-texts the
+    // owner on first run). A crash / KeepAlive restart keeps a non-null persisted
+    // cursor, so it still answers messages received during downtime — only the very
+    // first start skips backfill. (D-71)
+    if (cursorRaw === null) {
+      const baseline = this.reader.maxRowId();
+      this.meta.setMeta('cursor:imessage', String(baseline));
+      this.log('cold start: baselined cursor at rowid ' + String(baseline) + ' — skipping backfill');
+      return [];
+    }
+
+    const cursor = parseInt(cursorRaw, 10);
 
     // Poll new rows from ChatDbReader (synchronous, better-sqlite3)
     const rows = this.reader.pollNew(cursor);

@@ -76,6 +76,7 @@ function makeChannel(opts: {
   allowlist: string[];
   sender?: MockOsascriptSender;
   meta?: InMemoryMeta;
+  coldStart?: boolean;
 }): {
   ch: DefaultIMessageChannel;
   sender: MockOsascriptSender;
@@ -83,6 +84,13 @@ function makeChannel(opts: {
 } {
   const sender = opts.sender ?? new MockOsascriptSender();
   const meta = opts.meta ?? new InMemoryMeta();
+  // Filtering/dedup/mapping tests exercise delivery of available rows — they assume an
+  // already-watching channel. Pre-seed a baseline cursor of 0 (an explicit, non-null
+  // cursor → pollNew(0) delivers all rows) so they are unaffected by the cold-start
+  // baseline policy. Cold-start tests pass coldStart:true to keep a null cursor.
+  if (!opts.coldStart && meta.getMeta('cursor:imessage') === null) {
+    meta.setMeta('cursor:imessage', '0');
+  }
   const ch = new DefaultIMessageChannel(
     makeConfig(opts.allowlist),
     new MockChatDbReader(opts.rows),
@@ -187,6 +195,64 @@ describe('DefaultIMessageChannel — dedup cursor (T-07-03)', () => {
     await ch.receive();
     // Cursor must be 101 (ROW_UNLISTED rowid), not just 100 (ROW_ALLOWED rowid)
     expect(meta.getMeta('cursor:imessage')).toBe('101');
+  });
+});
+
+// ── (c2) Cold start — first boot baselines at high-water mark, never backfills ─
+
+describe('DefaultIMessageChannel — cold start (no history replay on first boot)', () => {
+  it('first boot (null cursor) returns [] and baselines cursor at max rowid', async () => {
+    const meta = new InMemoryMeta();
+    // Three pre-existing allowlisted messages — must NOT be answered on first boot.
+    const { ch } = makeChannel({
+      rows: [ROW_ALLOWED, ROW_UNLISTED, ROW_ALLOWED_2], // rowids 100, 101, 102
+      allowlist: [ALLOWED_HANDLE],
+      meta,
+      coldStart: true,
+    });
+
+    const msgs = await ch.receive();
+
+    expect(msgs).toEqual([]); // no backfill — history is never replayed/answered
+    expect(meta.getMeta('cursor:imessage')).toBe('102'); // baselined at global max rowid
+  });
+
+  it('cold start with no rows baselines cursor at 0 and returns []', async () => {
+    const meta = new InMemoryMeta();
+    const { ch } = makeChannel({ rows: [], allowlist: [ALLOWED_HANDLE], meta, coldStart: true });
+    const msgs = await ch.receive();
+    expect(msgs).toEqual([]);
+    expect(meta.getMeta('cursor:imessage')).toBe('0');
+  });
+
+  it('after cold-start baseline, a newly-arrived allowed row IS delivered', async () => {
+    const meta = new InMemoryMeta();
+    // First boot: baseline at 102, answer nothing.
+    const { ch: ch1 } = makeChannel({
+      rows: [ROW_ALLOWED, ROW_ALLOWED_2], // 100, 102
+      allowlist: [ALLOWED_HANDLE],
+      meta,
+      coldStart: true,
+    });
+    expect(await ch1.receive()).toEqual([]);
+    expect(meta.getMeta('cursor:imessage')).toBe('102');
+
+    // A genuinely new message arrives after baseline (rowid 200) — must be delivered.
+    const NEW_ROW: ChatDbRow = {
+      rowid: 200,
+      handle: ALLOWED_HANDLE,
+      text: 'a brand new question',
+      dateMs: 1_700_000_009_000,
+      isFromMe: false,
+    };
+    const { ch: ch2 } = makeChannel({
+      rows: [ROW_ALLOWED, ROW_ALLOWED_2, NEW_ROW],
+      allowlist: [ALLOWED_HANDLE],
+      meta, // cursor is now '102' (non-null) — normal incremental path
+    });
+    const msgs = await ch2.receive();
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.text).toBe('a brand new question');
   });
 });
 

@@ -275,3 +275,47 @@ describe('DefaultChatDbReader — cursor filtering with real SQLite', () => {
     expect(rows[1]!.rowid).toBe(5);
   });
 });
+
+// ── maxRowId — current high-water mark (cold-start baseline support) ───────────
+
+describe('MockChatDbReader — maxRowId', () => {
+  it('returns the highest rowid among scripted rows', () => {
+    const rows: ChatDbRow[] = [
+      { rowid: 10, handle: '+1', text: 'a', dateMs: 1, isFromMe: false },
+      { rowid: 42, handle: '+1', text: 'b', dateMs: 2, isFromMe: false },
+      { rowid: 7, handle: '+1', text: 'c', dateMs: 3, isFromMe: false },
+    ];
+    expect(new MockChatDbReader(rows).maxRowId()).toBe(42);
+  });
+
+  it('returns 0 when there are no rows', () => {
+    expect(new MockChatDbReader([]).maxRowId()).toBe(0);
+  });
+});
+
+describe('DefaultChatDbReader — maxRowId', () => {
+  let tmpDir: string;
+  let db: Database.Database;
+  let dbPath: string;
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns MAX(ROWID) over ALL messages incl. is_from_me=1 (true high-water mark)', () => {
+    ({ dbPath, tmpDir, db } = makeTempDb());
+    db.prepare('INSERT INTO handle (ROWID, id) VALUES (1, ?)').run('+14155550101');
+    // rowid 9 is is_from_me=1 (own-sent) — must still count toward the high-water mark
+    db.prepare('INSERT INTO message (ROWID, handle_id, text, date, is_from_me) VALUES (5, 1, ?, ?, 0)').run('in', APPLE_NS_2024_01_01);
+    db.prepare('INSERT INTO message (ROWID, handle_id, text, date, is_from_me) VALUES (9, 1, ?, ?, 1)').run('out', APPLE_NS_2024_01_01);
+    db.close();
+
+    expect(new DefaultChatDbReader(dbPath).maxRowId()).toBe(9);
+  });
+
+  it('returns 0 on an empty message table', () => {
+    ({ dbPath, tmpDir, db } = makeTempDb());
+    db.close();
+    expect(new DefaultChatDbReader(dbPath).maxRowId()).toBe(0);
+  });
+});

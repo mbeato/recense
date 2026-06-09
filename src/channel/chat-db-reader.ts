@@ -138,6 +138,14 @@ export interface ChatDbReader {
    * Synchronous — better-sqlite3 statements are synchronous by design.
    */
   pollNew(cursor: number): ChatDbRow[];
+
+  /**
+   * Return the current maximum ROWID across ALL messages (sent and received), or 0 if
+   * the table is empty. Used to baseline the cursor on first-ever watcher boot so a
+   * reply-sending query channel never backfills/answers pre-existing history (D-71).
+   * Synchronous.
+   */
+  maxRowId(): number;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +165,9 @@ export class DefaultChatDbReader implements ChatDbReader {
 
   // Prepared statement compiled once in constructor — never inside pollNew (T-02-SQL)
   private readonly stmt: Database.Statement;
+
+  // High-water-mark statement compiled once — used by maxRowId() for cold-start baseline.
+  private readonly maxStmt: Database.Statement;
 
   constructor(chatDbPath: string) {
     // T-07-08: open read-only — this reader NEVER writes to the Messages database
@@ -180,6 +191,15 @@ export class DefaultChatDbReader implements ChatDbReader {
       WHERE m.ROWID > ? AND m.is_from_me = 0
       ORDER BY m.ROWID ASC
     `);
+
+    // High-water mark across ALL rows (sent + received) — the cold-start baseline.
+    // Including is_from_me=1 guarantees every existing row is behind the baseline.
+    this.maxStmt = this.db.prepare('SELECT MAX(ROWID) AS maxId FROM message');
+  }
+
+  maxRowId(): number {
+    const row = this.maxStmt.get() as { maxId: number | null };
+    return row.maxId ?? 0; // MAX over an empty table is NULL → 0
   }
 
   pollNew(cursor: number): ChatDbRow[] {
@@ -234,5 +254,9 @@ export class MockChatDbReader implements ChatDbReader {
 
   pollNew(cursor: number): ChatDbRow[] {
     return this.rows.filter(r => r.rowid > cursor);
+  }
+
+  maxRowId(): number {
+    return this.rows.reduce((max, r) => Math.max(max, r.rowid), 0);
   }
 }
