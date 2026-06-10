@@ -13,7 +13,11 @@
  *                   externalId=null — D-06/D-07). NEVER touches the graph (MCP-03: the
  *                   sleep pass stays the sole graph writer). Origin clamped via
  *                   validateOrigin (D-05). Honest deferred ack (D-10). Per-call lock.
- *   memory_ask    — registered with schema; handler stub until Plan 03 (always registered, D-04).
+ *   memory_ask    — HybridResponder.respond → { answer, origin } (D-09); no-answer is a
+ *                   structured { answer: null, origin: 'none' } — Telegram channel phrasing
+ *                   and the '(inferred)' marker stay out of MCP. Always registered (D-04);
+ *                   safe-null on a missing LLM key. Per-call lock (facts-first branch writes
+ *                   one inferred/salience-0 episode).
  *
  * Design invariants:
  *  - One DB handle for the server lifetime; one session ID (UUID) per server process
@@ -128,9 +132,6 @@ export async function createBrainMcpServer(
 
   // One session ID per server process (RESEARCH Session-ID recommendation, A3).
   const sessionId = randomUUID();
-
-  // memory_ask consumes the responder (Task 2); referenced here until that handler lands.
-  void responder;
 
   // ── 3. Server + exactly three tools (D-01/D-03; memory_ask always registered, D-04) ──
   const server = new McpServer(
@@ -271,10 +272,42 @@ export async function createBrainMcpServer(
         origin: z.enum(['fact', 'inferred', 'none']),
       }),
     },
-    async () => ({
-      isError: true,
-      content: [{ type: 'text' as const, text: 'memory_ask not yet implemented (Plan 03)' }],
-    }),
+    async ({ query }) => {
+      // ── Validate BEFORE the lock (T-11-05: early exits must be lock-free) ──
+      // T-11-02: query is data only — bounded, embedded/prompted, never interpolated.
+      const bounded = query.slice(0, MAX_QUERY_BYTES);
+
+      // The responder's facts-first branch appends ONE origin='inferred', salience=0
+      // episode — that is a write, so the single-writer lock is required (coexists
+      // with the hourly sleep pass and the always-on watcher).
+      if (!(await acquireLockWithRetry())) {
+        return {
+          isError: true,
+          content: [{ type: 'text' as const, text: 'Memory busy; retry in a moment.' }],
+        };
+      }
+      try {
+        // D-04 graceful no-key: respond() is internally safe-null — a missing LLM
+        // key (or any throw) yields { reply: null, origin: 'none' }, never a crash.
+        const r = await responder.respond(bounded, sessionId);
+        // D-09 mapping: reply → answer, origin → origin, drop episodeId. Channel
+        // presentation stays OUT of MCP: when origin is 'none' the responder's
+        // reply is its Telegram honest-no-answer phrasing — the MCP contract is a
+        // structured null instead. No '(inferred)' text marker is added here either;
+        // the raw structured origin carries that signal.
+        const out = { answer: r.origin === 'none' ? null : r.reply, origin: r.origin };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(out) }],
+          structuredContent: out,
+        };
+      } catch (err) {
+        // T-11-06: defensive — never rethrow across the transport.
+        log(`memory_ask error: ${err}`);
+        return { isError: true, content: [{ type: 'text' as const, text: 'memory_ask failed' }] };
+      } finally {
+        releaseLock();
+      }
+    },
   );
 
   return server;
