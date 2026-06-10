@@ -209,6 +209,13 @@ export async function main(): Promise<void> {
 
   // VIZ-01: inject SQLite trace sink iff viz_trace_enabled='1' (set by `brain viz`, Plan 03).
   // Same flag-check pattern as recall-cli.ts. Default OFF: Noop when key absent or '0'.
+  //
+  // KNOWN LIMITATION (WR-04): the flag is read ONCE here, at watcher startup, and the
+  // sink is bound for the watcher's entire (long-running launchd KeepAlive) lifetime.
+  // If `brain viz` enables tracing AFTER the watcher is already running, this process
+  // keeps the Noop sink and Telegram-driven retrieval/recall will NOT appear in the
+  // live visualization until the watcher is restarted. Per-tick re-checking would
+  // change persistent-process behavior and is deferred as a human decision.
   const traceFlagRaw = db.prepare(
     "SELECT value FROM meta WHERE key = 'viz_trace_enabled'"
   ).get() as { value: string } | undefined;
