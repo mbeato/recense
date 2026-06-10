@@ -180,13 +180,15 @@ export class RecallEngine {
     }
 
     // ── Trace emission (D-97 guarded): zero work on the Noop path ────────────
-    // seeds = [bestMatch.id]; hops = neighborhood members with monotonic rank-proxy scores.
+    // seeds = [bestMatch.id]; hops = neighborhood members in rank order.
     // T-10-05: wrapped in try/catch fire-and-forget so a sink error never corrupts recall.
     if (this.traceEnabled) {
       try {
-        const hops = neighborhood.map((n, i) => ({
+        const hops = neighborhood.map((n) => ({
           node_id: n.id,
-          score:   1 - i * 0.05,  // monotonic rank proxy; hop=1 (1-hop schema members)
+          // WR-02: recall has no measured activation/similarity magnitude here — only
+          // rank order. Emit null rather than fabricate a score that reads as measured.
+          score:   null,
           hop:     1 as const,
         }));
         this.traceSink.emit({ query_id: newId(), seeds: [bestMatch.id], hops });

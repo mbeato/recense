@@ -45,8 +45,12 @@ export interface ActivationTraceInput {
   query_id: string;
   /** Node IDs that seeded the spreading-activation pass. */
   seeds: string[];
-  /** 1-hop activated neighbours with scores (JSON-serialised in DB). */
-  hops: Array<{ node_id: string; score: number; hop: number }>;
+  /**
+   * 1-hop activated neighbours (JSON-serialised in DB). `score` is `null` when the
+   * emitter has only rank order and no measured activation/similarity magnitude
+   * (WR-02: never present a fabricated number as a real activation value).
+   */
+  hops: Array<{ node_id: string; score: number | null; hop: number }>;
   /** Emission timestamp (ms). Defaults to clock.nowMs() when omitted. */
   ts?: number;
 }
