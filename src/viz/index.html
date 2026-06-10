@@ -357,7 +357,7 @@ function makeNodeObject(node) {
   const isTomb = !!node.tombstoned;
   let r, op;
   if (node.__cat === 'schema')    { r = 2.2 + Math.sqrt(node.__members || 0) * 1.3; op = 0.95; }
-  else if (node.__cat === 'haze') { r = 1 + node.s * 1.2;                            op = 0.32; }
+  else if (node.__cat === 'haze') { r = 1.1 + node.s * 1.3;                          op = 0.45; }
   else                            { r = 1.1 + node.s * 2;                            op = 0.85; }
   const base  = isTomb ? new THREE.Color(TOMBSTONE_COLOR) : new THREE.Color(TYPE_COLOR[node.type] || TYPE_COLOR.entity);
   const mat   = new THREE.MeshBasicMaterial({ color: base.clone(), transparent: true, opacity: isTomb ? 0.4 : op });
@@ -493,7 +493,7 @@ Graph.d3ReheatSimulation();
 // Frame the camera on the brain-scaled cloud. The cloud is now fixed at BRAIN_SCALE
 // (not the library's default natural size), so set an explicit distance that shows the
 // whole brain + stem instead of relying on 3d-force-graph's default camera.
-Graph.cameraPosition({ x: 0, y: 0, z: BRAIN_SCALE * 4.1 });
+Graph.cameraPosition({ x: 0, y: 0, z: BRAIN_SCALE * 3.6 });
 
 // Tooltip follows cursor
 document.addEventListener('mousemove', e => {
