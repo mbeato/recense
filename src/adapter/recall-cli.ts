@@ -1,7 +1,7 @@
 /**
  * recall-cli — on-demand latency-tolerant recall adapter (LEARN-02, D-40).
  *
- * Entry point: invoked explicitly with --query <text> [--db <path>]
+ * Entry point: `brain recall "<text>"` (positional) or `--query <text>` [--db <path>]
  * (not spawned from the hot SessionStart hook path — that stays cue-less, LLM-free).
  *
  * Design invariants:
@@ -51,19 +51,45 @@ function resolveDbPath(): string | undefined {
 }
 
 /**
- * Resolve query string from --query <text> argv.
- * Returns undefined if --query is not supplied or has no value.
+ * Resolve query string from argv. Accepts BOTH forms:
+ *   brain recall "some question"     (positional — the natural form)
+ *   brain recall --query "some question"   (explicit flag — back-compat)
+ * Returns undefined if neither is present.
  * T-04-03-I: returned as-is — treated as data only inside RecallEngine.
  */
 function resolveQuery(): string | undefined {
-  const idx = process.argv.indexOf('--query');
-  if (idx !== -1 && process.argv[idx + 1]) {
-    return process.argv[idx + 1];
+  const argv = process.argv;
+  // Explicit --query wins (back-compat).
+  const idx = argv.indexOf('--query');
+  if (idx !== -1 && typeof argv[idx + 1] === 'string' && argv[idx + 1] !== '') {
+    return argv[idx + 1];
+  }
+  // Otherwise take the first positional arg, skipping the 'recall' subcommand token
+  // and any flag/value pairs (--db <path>, --query <text>) and bare flags.
+  const start = argv[2] === 'recall' ? 3 : 2;
+  for (let i = start; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--db' || a === '--query') { i++; continue; } // flag consumes its value
+    if (a === undefined || a.startsWith('-')) continue;     // skip flags
+    return a;                                               // first bare token = query
   }
   return undefined;
 }
 
 const SAFE_NULL_RESULT = JSON.stringify({ inference: null, episodeId: null, origin: 'inferred' });
+
+/**
+ * Acquire the single-writer lock, retrying briefly to ride out the watcher's per-tick
+ * holds (it grabs the same lock every ~500ms). Bounded so a genuinely stuck/long holder
+ * (watcher mid-LLM-response) still fails fast rather than hanging the CLI.
+ */
+async function acquireLockWithRetry(attempts = 8, delayMs = 150): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    if (acquireLock()) return true;
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return false;
+}
 
 async function main(): Promise<void> {
   // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──
@@ -87,8 +113,13 @@ async function main(): Promise<void> {
   }
 
   // ── 2. Lock guard (single-writer for episode append, D-43) ──────────────
-  if (!acquireLock()) {
-    log('Lock held by another process — exiting');
+  // The always-on watcher acquires this same lock every poll tick (~500ms) around a
+  // brief getUpdates fetch + cursor write. A single non-retrying acquire would make
+  // interactive recall fail intermittently whenever it collides with a watcher tick.
+  // Retry briefly (bounded) so recall coexists with the watcher; only give up if the
+  // lock stays held (e.g. the watcher is mid-LLM-response to a Telegram message).
+  if (!(await acquireLockWithRetry())) {
+    log('Lock held by another process after retries — exiting');
     // WR-03: lock-held is a normal runtime condition; always emit JSON so callers
     // can JSON.parse(stdout) without throwing on an empty string.
     process.stdout.write(SAFE_NULL_RESULT);
