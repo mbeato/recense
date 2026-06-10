@@ -65,6 +65,7 @@ brain doctor
 | `brain sleep-pass` | Run one consolidation pass immediately |
 | `brain snapshot` | Export a DB snapshot |
 | `brain watcher` | Start the Telegram / iMessage query watcher (macOS only) |
+| `brain mcp` | Start a stdio MCP server exposing memory_search / memory_add / memory_ask to any local MCP client (Claude Code, Claude Desktop). Requires `--db <path>`. |
 | `brain hook session-start \| turn-capture \| stop` | Claude Code hook handlers — wired automatically by `brain init` |
 
 ---
@@ -199,6 +200,28 @@ tail -f /tmp/brain-memory-watcher.log
 ```
 
 Note: the bot only answers while your Mac is awake — this is a local self-hosted service, not a cloud process.
+
+---
+
+## MCP server
+
+`brain mcp` starts a stdio MCP server that gives any local MCP client (Claude Code, Claude Desktop, standalone agents) deliberate on-demand access to the same `brain.db` the hooks use — the client spawns the process per its config entry, so there is zero deployment. The server exposes exactly three tools: `memory_search`, `memory_add`, and `memory_ask`. See [docs/mcp.md](docs/mcp.md) for registration config and full tool semantics.
+
+If you are coming from `@modelcontextprotocol/server-memory`, here is how the vocabularies map:
+
+| server-memory tool | brain equivalent | Notes |
+|--------------------|-----------------|-------|
+| `search_nodes` | `memory_search` | Find nodes by query; brain uses graph+vector, not raw JSON |
+| `open_nodes` | — no equivalent | Nodes engine-internal; search is the read interface by design |
+| `add_observations` | `memory_add` | brain writes are episodic; becomes a graph fact after hourly consolidation |
+| `create_entities` | — no equivalent | No CRUD; brain builds entities via consolidation |
+| `read_graph` | — no equivalent | Graph is engine-internal by design |
+| `delete_entities` | — no equivalent | No user-initiated deletes; tombstone via sleep pass |
+| `delete_observations` | — no equivalent | No user-initiated deletes |
+| `delete_relations` | — no equivalent | No user-initiated deletes |
+| (new) | `memory_ask` | LLM-composed answer over stored knowledge; no server-memory equivalent |
+
+Our `memory_add` ≈ server-memory's `add_observations`, except writes are episodic and consolidation is deferred to the hourly sleep pass — brain has no user-initiated CRUD or deletes by design (the graph is engine-internal; the sleep pass is the sole graph writer).
 
 ---
 
