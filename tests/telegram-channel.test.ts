@@ -17,9 +17,9 @@
  *  (j) No self-echo: a bot never receives its own sends.
  */
 import { describe, it, expect } from 'vitest';
-import { TelegramChannel } from '../src/channel/telegram-channel';
+import { TelegramChannel, DefaultTelegramTransport } from '../src/channel/telegram-channel';
 import { MockTelegramTransport } from '../src/channel/telegram-channel';
-import type { TelegramUpdate } from '../src/channel/telegram-channel';
+import type { TelegramUpdate, TelegramTransport } from '../src/channel/telegram-channel';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
 
@@ -335,5 +335,114 @@ describe('TelegramChannel — commitCursor monotonicity', () => {
     expect(meta.getMeta('cursor:telegram')).toBe('50');
     ch.commitCursor('50'); // equal — no-op
     expect(meta.getMeta('cursor:telegram')).toBe('50');
+  });
+});
+
+// ── C-1: fetch() never throws even when transport rejects ─────────────────────
+
+describe('TelegramChannel — C-1 never-throws contract', () => {
+  it('fetch() resolves to idle when transport.getUpdates() rejects (cold start)', async () => {
+    const rejectingTransport: TelegramTransport = {
+      async getUpdates(_offset: number): Promise<TelegramUpdate[]> {
+        throw new Error('network failure');
+      },
+      async sendMessage(_chatId: number, _text: string): Promise<void> {},
+    };
+    const meta = new InMemoryMeta(); // null cursor → cold start path
+    const ch = new TelegramChannel(makeConfig([ALLOWED_ID]), rejectingTransport, meta, () => {});
+    const result = await ch.fetch();
+    expect(result).toEqual({ messages: [], commitTo: null });
+  });
+
+  it('fetch() resolves to idle when transport.getUpdates() rejects (normal path)', async () => {
+    const rejectingTransport: TelegramTransport = {
+      async getUpdates(_offset: number): Promise<TelegramUpdate[]> {
+        throw new Error('5xx body parse error');
+      },
+      async sendMessage(_chatId: number, _text: string): Promise<void> {},
+    };
+    const meta = new InMemoryMeta();
+    meta.setMeta('cursor:telegram', '10'); // non-null cursor → normal path
+    const ch = new TelegramChannel(makeConfig([ALLOWED_ID]), rejectingTransport, meta, () => {});
+    const result = await ch.fetch();
+    expect(result).toEqual({ messages: [], commitTo: null });
+  });
+});
+
+// ── M-2: DefaultTelegramTransport surfaces non-2xx HTTP errors ────────────────
+
+describe('DefaultTelegramTransport — M-2 non-2xx error surfacing', () => {
+  it('getUpdates() throws on non-ok HTTP response', async () => {
+    // Monkey-patch globalThis.fetch for this test only
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const transport = new DefaultTelegramTransport('test-token');
+      await expect(transport.getUpdates(0)).rejects.toThrow('telegram getUpdates HTTP 500');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it('sendMessage() throws on non-ok HTTP response', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({}),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const transport = new DefaultTelegramTransport('test-token');
+      await expect(transport.sendMessage(123, 'hi')).rejects.toThrow('telegram sendMessage HTTP 400');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});
+
+// ── L-9: Cold-start pagination to exhaustion ──────────────────────────────────
+
+describe('TelegramChannel — L-9 cold-start pagination', () => {
+  it('cold-start baseline scans all pages and returns the max update_id across them', async () => {
+    // Simulate a bot with 130 queued updates (2 pages: 100 + 30).
+    // The transport returns updates in chunks, advancing by max+1 each time.
+    const page1: TelegramUpdate[] = Array.from({ length: 100 }, (_, i) => ({
+      update_id: i,
+      message: { message_id: i, from: { id: 111 }, chat: { id: 111 }, date: 1_700_000_000, text: 'old' },
+    }));
+    const page2: TelegramUpdate[] = Array.from({ length: 30 }, (_, i) => ({
+      update_id: 100 + i,
+      message: { message_id: 100 + i, from: { id: 111 }, chat: { id: 111 }, date: 1_700_000_001, text: 'old2' },
+    }));
+
+    // Paged transport: returns page1 for offset=0, page2 for offset=100, empty for offset=130
+    const pagedTransport: TelegramTransport = {
+      async getUpdates(offset: number): Promise<TelegramUpdate[]> {
+        if (offset === 0) return page1;
+        if (offset === 100) return page2;
+        return [];
+      },
+      async sendMessage(_chatId: number, _text: string): Promise<void> {},
+    };
+
+    const meta = new InMemoryMeta(); // null cursor → cold start
+    const ch = new TelegramChannel(makeConfig([ALLOWED_ID]), pagedTransport, meta, () => {});
+    const result = await ch.fetch();
+
+    // Baseline should be the max update_id across BOTH pages (page2 max = 129)
+    expect(result.messages).toEqual([]);
+    expect(result.commitTo).toBe('129');
+    // fetch() must not write the cursor (T-LOCK-01)
+    expect(meta.getMeta('cursor:telegram')).toBeNull();
   });
 });

@@ -380,6 +380,45 @@ describe('DefaultIMessageChannel — send() (D-70)', () => {
   });
 });
 
+// ── C-1: fetch() never throws even when reader throws ────────────────────────
+
+describe('DefaultIMessageChannel — C-1 never-throws contract', () => {
+  it('fetch() resolves to idle when reader.pollNew() throws (chat.db lock)', async () => {
+    const throwingReader = {
+      maxRowId(): number { return 0; },
+      pollNew(_cursor: number): never { throw new Error('SQLITE_BUSY: unable to open db'); },
+    };
+    const meta = new InMemoryMeta();
+    meta.setMeta('cursor:imessage', '0'); // non-null cursor → reaches pollNew
+    const ch = new DefaultIMessageChannel(
+      makeConfig([ALLOWED_HANDLE]),
+      throwingReader as any,
+      new MockOsascriptSender(),
+      meta,
+      () => {},
+    );
+    const result = await ch.fetch();
+    expect(result).toEqual({ messages: [], commitTo: null });
+  });
+
+  it('fetch() resolves to idle when reader.maxRowId() throws (cold start path)', async () => {
+    const throwingReader = {
+      maxRowId(): never { throw new Error('SQLITE_BUSY: database is locked'); },
+      pollNew(_cursor: number): never { throw new Error('unreachable'); },
+    };
+    const meta = new InMemoryMeta(); // null cursor → cold start path → maxRowId()
+    const ch = new DefaultIMessageChannel(
+      makeConfig([ALLOWED_HANDLE]),
+      throwingReader as any,
+      new MockOsascriptSender(),
+      meta,
+      () => {},
+    );
+    const result = await ch.fetch();
+    expect(result).toEqual({ messages: [], commitTo: null });
+  });
+});
+
 // ── (h) Injection-shaped text passed as data, not script (T-07-02) ────────────
 
 describe('DefaultIMessageChannel — injection guard (T-07-02)', () => {
