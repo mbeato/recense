@@ -108,6 +108,16 @@ describe('checkNodeAbi', () => {
     expect(result.detail).toContain('BRAIN_MEMORY_NODE_BIN not set');
     expect(result.detail).toContain('brain init');
   });
+
+  it('(e2) passes when BRAIN_MEMORY_NODE_BIN is the currently running node binary (ABI match)', () => {
+    // process.execPath is the node binary that is running these tests — it compiled
+    // better-sqlite3 and can certainly load it. This test is the canonical ABI-match path.
+    process.env['BRAIN_MEMORY_NODE_BIN'] = process.execPath;
+    const result = checkNodeAbi();
+    // Must succeed: same node binary → same NODE_MODULE_VERSION → ABI match.
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('Node ABI match');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,8 @@
 
 import Database from 'better-sqlite3';
 import { existsSync, copyFileSync, unlinkSync } from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect, afterAll } from 'vitest';
 import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
 import { FakeClock } from '../src/lib/clock';
@@ -292,8 +294,9 @@ describe('ConsolidationEventType enum completeness', () => {
 // reconstructCorpus — runs only when brain.db exists (D-54, CI guard)
 // ---------------------------------------------------------------------------
 
-const BRAIN_DB = '$HOME/brain-memory/brain.db';
-const COPY_DB = '/tmp/seam02-sink-test.db';
+// M-11: path-agnostic — works from any checkout, not just $HOME/brain-memory
+const BRAIN_DB = path.resolve('brain.db');
+const COPY_DB = path.join(os.tmpdir(), 'seam02-sink-test.db');
 
 describe('reconstructCorpus (real-data, guarded by brain.db existence)', () => {
   afterAll(() => {
@@ -302,7 +305,7 @@ describe('reconstructCorpus (real-data, guarded by brain.db existence)', () => {
     }
   });
 
-  it.skipIf(!existsSync(BRAIN_DB))(
+  it.skipIf(!existsSync(BRAIN_DB) || !process.env['BRAIN_MEMORY_RUN_LIVE_TESTS'])(
     'returns schema_version-stamped records after events are written',
     () => {
       // Copy the real DB so we do NOT write to production

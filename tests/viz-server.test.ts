@@ -298,6 +298,88 @@ describe('GET /events — trace payload shape (CR-01 regression)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Host-header guard (L-5 / DNS rebinding)
+// ---------------------------------------------------------------------------
+
+describe('Host-header guard (L-5)', () => {
+  it('request with a spoofed Host header returns 403 (DNS rebinding guard)', async () => {
+    // Send a request that connects to 127.0.0.1:port but presents a foreign Host header.
+    // An attacker rebinding DNS to 127.0.0.1 would produce exactly this pattern.
+    const response = await new Promise<{ statusCode: number }>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/graph',
+          method: 'GET',
+          headers: { 'Host': 'evil.attacker.com' },
+        },
+        (res) => {
+          res.resume(); // drain
+          resolve({ statusCode: res.statusCode ?? 0 });
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  it('request with correct Host header (127.0.0.1:port) is allowed', async () => {
+    // The default get() helper sends Host: 127.0.0.1:<port> — must pass the guard.
+    const res = await get(port, '/graph');
+    expect(res.statusCode).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Corrupt activation_trace row — L-4 (JSON.parse crash guard)
+// ---------------------------------------------------------------------------
+
+describe('corrupt activation_trace row (L-4)', () => {
+  it('corrupt seeds/hops JSON is skipped without killing the setInterval callback', async () => {
+    // Hold an SSE connection so the poll code path runs (clients.size > 0).
+    let sseDestroyed = false;
+    const sseSettled = new Promise<void>((resolve) => {
+      const req = http.request(
+        { hostname: '127.0.0.1', port, path: '/events', method: 'GET' },
+        (res) => {
+          res.on('data', () => {}); // drain; we don't care about frames
+          res.on('error', () => resolve());
+          res.on('end', () => resolve());
+        },
+      );
+      req.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ECONNRESET') { resolve(); return; }
+        resolve();
+      });
+      req.end();
+
+      // Give the SSE client ~100 ms to register, then write a corrupt row.
+      // seeds is not valid JSON → JSON.parse would throw without the try/catch.
+      setTimeout(() => {
+        const writeDb = new Database(tmpDbPath);
+        writeDb.prepare(
+          'INSERT INTO activation_trace (ts, query_id, seeds, hops) VALUES (?, ?, ?, ?)',
+        ).run(Date.now(), 'corrupt-row', 'not-valid-json', '["valid"]');
+        writeDb.close();
+      }, 100);
+
+      // Destroy the SSE connection after ≥2 poll cycles (POLL_MS = 250 ms).
+      setTimeout(() => {
+        if (!sseDestroyed) { sseDestroyed = true; req.destroy(); }
+      }, 700);
+    });
+
+    await sseSettled;
+
+    // If setInterval had crashed, the server process would be dead and /graph would fail.
+    const graphRes = await get(port, '/graph');
+    expect(graphRes.statusCode).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Path-traversal rejection (T-10-07)
 // ---------------------------------------------------------------------------
 

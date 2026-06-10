@@ -38,10 +38,13 @@ jobs:
         run: npm test
 
       # Smoke: verify brain doctor RUNS without crashing.
-      # Exits 1 (no keys/DB in CI) but || true prevents a false-red.
-      # A real crash surfaces in the build/test steps above.
+      # Exits 1 (no keys/DB in CI) — that is expected. But the process MUST emit
+      # "brain doctor:" output before exiting; a silent crash would not.
+      # L-10: assert output contains the expected header, not just `|| true`.
       - name: Smoke — brain doctor runs without crashing
-        run: BRAIN_MEMORY_DB=:memory: node dist/src/adapter/brain.js doctor || true
+        run: |
+          BRAIN_MEMORY_DB=:memory: node dist/src/adapter/brain.js doctor > /tmp/doctor-out.txt 2>&1 || true
+          grep -q "brain doctor:" /tmp/doctor-out.txt
 
       # Guard: telegram committed default must stay fail-closed (DEBT-01 / T-09-22).
       # Imports the COMPILED DEFAULT_CONFIG — immune to comments and test fixtures

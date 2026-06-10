@@ -32,6 +32,7 @@ import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { SCHEMA_VERSION } from '../db/schema';
+import { DEFAULT_CONFIG } from '../lib/config';
 import { resolveDbPath } from './runtime-config';
 
 // ── Check result type ─────────────────────────────────────────────────────────
@@ -98,7 +99,7 @@ export async function checkApiKeys(): Promise<CheckResult> {
       // T-09-09: apiKey not logged; client construction is opaque
       const client = new Anthropic({ apiKey: anthropicKey });
       await client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: DEFAULT_CONFIG.anthropicModel,
         max_tokens: 1,
         messages: [{ role: 'user', content: 'hi' }],
       });
@@ -123,7 +124,7 @@ export async function checkApiKeys(): Promise<CheckResult> {
       const { default: OpenAI } = require('openai') as typeof import('openai');
       // T-09-09: apiKey not logged; client construction is opaque
       const client = new OpenAI({ apiKey: openaiKey });
-      await client.embeddings.create({ model: 'text-embedding-3-small', input: 'hi' });
+      await client.embeddings.create({ model: DEFAULT_CONFIG.openaiEmbedModel, input: 'hi' });
       results.push('OPENAI valid');
     } catch (e: unknown) {
       const msg = String(e);

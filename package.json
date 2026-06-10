@@ -13,6 +13,7 @@
   "scripts": {
     "build": "tsc",
     "postbuild": "chmod +x dist/src/adapter/brain.js && node scripts/copy-viz-assets.cjs",
+    "pretest": "npm run build",
     "init": "npm run build && node dist/src/adapter/brain.js init",
     "test": "vitest run",
     "test:watch": "vitest",

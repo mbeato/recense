@@ -202,11 +202,14 @@ describe('eval-snapshot', () => {
     const BRAIN_DB = path.resolve('brain.db');
     const hasDb = fs.existsSync(BRAIN_DB);
     const hasApiKey = !!process.env['OPENAI_API_KEY'];
+    const hasLiveFlag = !!process.env['BRAIN_MEMORY_RUN_LIVE_TESTS'];
     const skipReason = !hasDb
       ? 'brain.db not found (CI guard)'
       : !hasApiKey
         ? 'OPENAI_API_KEY not set (CI guard)'
-        : null;
+        : !hasLiveFlag
+          ? 'BRAIN_MEMORY_RUN_LIVE_TESTS not set — skipped to prevent accidental token burn'
+          : null;
 
     it.skipIf(!!skipReason)(`record→replay matched=1 regressions=0 (ROADMAP SC3 / D-54)`, async () => {
       // Copy brain.db to a tmp path so we never touch the real store
