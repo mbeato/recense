@@ -50,7 +50,7 @@ import type { ResponderResult } from '../responder';
 import { DefaultIMessageChannel, DefaultOsascriptSender } from '../channel/imessage-channel';
 import { DefaultChatDbReader } from '../channel/chat-db-reader';
 import { TelegramChannel, DefaultTelegramTransport } from '../channel/telegram-channel';
-import { acquireLockWithRetry, releaseLock } from './lockfile';
+import { acquireLockWithRetry, releaseLock, heartbeatLock } from './lockfile';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 
 const LOG_PATH = '/tmp/brain-memory-watcher.log';
@@ -135,6 +135,9 @@ export async function runTick(
       } catch (err) {
         logFn('respond error: ' + err);
       }
+      // L-11: refresh the lock mtime once per message so a long multi-message batch
+      // (100 msgs × multi-second LLM responds) is never falsely reclaimed mid-batch.
+      heartbeatLock();
     }
   } catch (err) {
     logFn('tick error: ' + err);
@@ -145,10 +148,13 @@ export async function runTick(
  * Fetch-before-lock tick: fetches messages UNLOCKED, then acquires the lock only when
  * there is work to do, processes the messages, and commits the cursor under the lock.
  *
- * Flow (LOCK-WATCHER-REWORK):
- *  1. channel.fetch() — UNLOCKED network/db read, no write.
- *  2. commitTo === null && messages.length === 0 → return (idle tick, lock never touched).
- *  3. tickInFlight guard — if already in-flight, log + return (in-process serialization).
+ * Flow (LOCK-WATCHER-REWORK, post-L-11/C-1 reorder):
+ *  1. tickInFlight guard — if already in-flight, log + return WITHOUT fetching (L-11: saves
+ *     the network read during an ongoing long respond).
+ *  2. channel.fetch() — UNLOCKED network/db read, no write. Wrapped in its own try/catch so
+ *     a thrown error (should not happen — impl contract — but belt-and-suspenders C-1) logs
+ *     and returns cleanly.
+ *  3. commitTo === null && messages.length === 0 → return (idle tick, lock never touched).
  *  4. acquireLockWithRetry() — if lock held after retries, log + return WITHOUT committing
  *     cursor (re-fetch on next tick → no message loss, invariant #2 preserved).
  *  5. Under the lock:
@@ -166,17 +172,10 @@ export async function runLockedTick(
   sessionId: string,
   logFn: (msg: string) => void,
 ): Promise<void> {
-  // ── 1. Fetch UNLOCKED — network/db read, no cursor write (LOCK-CHANNEL-SPLIT) ─
-  const { messages, commitTo } = await channel.fetch();
-
-  // ── 2. Idle check — nothing to do, never touch the lock ──────────────────────
-  if (commitTo === null && messages.length === 0) {
-    return;
-  }
-
-  // ── 3. In-process tick guard (T-LOCK-02) ─────────────────────────────────────
-  // fetch() moved off the lock removes its implicit serialization; this guard
-  // prevents overlapping setInterval ticks from racing each other.
+  // ── 1. In-process tick guard FIRST (L-11 + T-LOCK-02) ────────────────────────
+  // Moved ahead of fetch(): a long in-flight respond (LLM call, multi-message batch)
+  // now stops the NEXT tick BEFORE it does a redundant network fetch. Previously the
+  // guard came after fetch(), wasting a getUpdates call on every skipped tick.
   if (tickInFlight) {
     logFn('tick already in flight — skipping re-entry');
     return;
@@ -184,6 +183,24 @@ export async function runLockedTick(
   tickInFlight = true;
 
   try {
+    // ── 2. Fetch UNLOCKED — network/db read, no cursor write (LOCK-CHANNEL-SPLIT) ─
+    // Belt-and-suspenders catch (C-1): impls should never throw (they wrap errors
+    // internally), but if one does, we log and return cleanly rather than propagating
+    // an unhandled rejection from the setInterval callback.
+    let messages: InboundMessage[];
+    let commitTo: string | null;
+    try {
+      ({ messages, commitTo } = await channel.fetch());
+    } catch (err) {
+      logFn('fetch error: ' + String(err));
+      return; // tickInFlight reset in outer finally
+    }
+
+    // ── 3. Idle check — nothing to do, never touch the lock ──────────────────────
+    if (commitTo === null && messages.length === 0) {
+      return;
+    }
+
     // ── 4. Acquire the single-writer lock ──────────────────────────────────────
     // If the lock stays held (sleep-pass or another long holder), defer this tick:
     // the cursor is NOT advanced so the next tick re-fetches the same messages (inv #2).
@@ -266,10 +283,11 @@ export async function main(): Promise<void> {
   }
   if (!telegramReady && !imessageReady) {
     log('no channel configured; idling');
-    // Enter an idle that never resolves and never polls — event loop stays alive
-    // so launchd KeepAlive does not restart the process on a clean exit.
-    const timer = setInterval(() => { /* noop heartbeat — keeps event loop alive */ }, 60_000);
-    timer.unref();
+    // H-3: the setInterval is intentionally NOT unref'd — it IS the keep-alive handle.
+    // With unref(), Node exits immediately (pending Promise alone does not hold the event
+    // loop) → launchd KeepAlive restarts the process on every throttle interval (thrash).
+    // A non-unref'd 60s interval keeps the process alive without polling.
+    setInterval(() => { /* noop heartbeat — intentionally ref'd to hold the event loop */ }, 60_000);
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     await new Promise<never>(() => {});
     return; // unreachable — satisfies TypeScript return-type check
@@ -334,7 +352,11 @@ export async function main(): Promise<void> {
   setInterval(() => {
     // WR-04: cheap indexed meta read — pick up `brain viz` toggles without restart.
     traceSink.refresh();
-    void runLockedTick(channel, responder, 'watcher-session', log);
+    // C-1: explicit .catch so a stray rejection from runLockedTick logs FATAL rather than
+    // propagating as an unhandledRejection (which would kill the process on Node ≥15).
+    runLockedTick(channel, responder, 'watcher-session', log).catch(err =>
+      log('runLockedTick rejected: ' + String(err))
+    );
   }, intervalMs);
 
   log('watcher started (pollIntervalMs=' + String(intervalMs) + 'ms)');
@@ -343,6 +365,12 @@ export async function main(): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   return new Promise<never>(() => {});
 }
+
+// C-1: catch-all for any stray rejection that escapes the per-tick .catch above.
+// Logs FATAL to the watcher log (not silently killed) so diagnostics remain visible.
+process.on('unhandledRejection', (err) => {
+  appendFileSync(LOG_PATH, `[${new Date().toISOString()}] watcher FATAL unhandledRejection: ${String(err)}\n`);
+});
 
 // Only run when invoked as the entry point (launchd KeepAlive), NOT when
 // imported by a unit test of the exported helpers above.

@@ -20,10 +20,13 @@
  *   resolveDbPath:
  *     (k) BRAIN_MEMORY_DB env var → returned as dbPath
  */
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, unlinkSync, existsSync, statSync, utimesSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { spawn } from 'child_process';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MockChannel } from '../src/channel/channel';
-import type { InboundMessage } from '../src/channel/channel';
+import type { Channel, InboundMessage, FetchResult } from '../src/channel/channel';
 import { runTick, runLockedTick, resolveDbPath } from '../src/adapter/watcher-cli';
 import { LOCK_PATH } from '../src/adapter/lockfile';
 import type { ResponderResult } from '../src/responder';
@@ -190,8 +193,9 @@ describe('runLockedTick — guarantee: tickInFlight', () => {
   });
 
   it('(h) overlapping ticks — second is a no-op (tickInFlight guard)', async () => {
-    // Deferred responder: tick1 blocks inside the respond loop until we resolve it.
-    // This keeps tickInFlight=true while tick2 starts, so tick2 hits the guard.
+    // L-11 reorder: tickInFlight is now checked BEFORE fetch(). tick1 sets the flag
+    // synchronously before its first await; tick2 starts synchronously next and
+    // immediately hits the guard (before calling fetch at all).
     let resolveRespond!: () => void;
     const respondBlocker = new Promise<void>(r => { resolveRespond = r; });
     const slowResponder = {
@@ -201,14 +205,14 @@ describe('runLockedTick — guarantee: tickInFlight', () => {
       },
     };
 
+    // Only one fetchScript entry — tick2 is blocked before it can call fetch
     const channel = new MockChannel({
       fetchScript: [
-        { messages: [MSG], commitTo: '1' }, // consumed by tick1
-        { messages: [MSG], commitTo: '1' }, // consumed by tick2 (tick2 fetches before seeing guard)
+        { messages: [MSG], commitTo: '1' }, // consumed by tick1 only
       ],
     });
 
-    // Fire both ticks without awaiting — both start, both fetch, then tickInFlight check happens
+    // Fire both ticks without awaiting
     const tick1 = runLockedTick(channel, slowResponder, 'sess', noopLog);
     const tick2 = runLockedTick(channel, slowResponder, 'sess', noopLog);
 
@@ -218,7 +222,7 @@ describe('runLockedTick — guarantee: tickInFlight', () => {
     await tick1;
     await tick2;
 
-    // tick1 committed once; tick2 was blocked by tickInFlight → no second commit, no extra send
+    // tick1 committed once; tick2 was blocked by tickInFlight before fetch → no second commit
     expect(channel.committed).toHaveLength(1);
     expect(channel.committed[0]).toBe('1');
     expect(channel.sent).toHaveLength(1);
@@ -308,6 +312,169 @@ describe('runLockedTick — guarantee: cold start', () => {
     // Lock was never acquired — lock file absent
     expect(existsSync(CUSTOM_LOCK)).toBe(false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// L-11: runTick calls heartbeatLock once per processed message
+// ---------------------------------------------------------------------------
+
+describe('runTick — L-11: heartbeat lock per message', () => {
+  const HEARTBEAT_LOCK = LOCK_PATH + '.test-runTick-heartbeat';
+
+  afterEach(() => {
+    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    if (existsSync(HEARTBEAT_LOCK)) {
+      try { unlinkSync(HEARTBEAT_LOCK); } catch { /* ignore */ }
+    }
+  });
+
+  it('runTick updates the lock mtime once per processed message', async () => {
+    process.env['BRAIN_MEMORY_LOCK_PATH'] = HEARTBEAT_LOCK;
+
+    // Create lock file with an old mtime
+    writeFileSync(HEARTBEAT_LOCK, String(process.pid));
+    const oldMtime = new Date(Date.now() - 5000);
+    utimesSync(HEARTBEAT_LOCK, oldMtime, oldMtime);
+
+    const before = Date.now();
+    const channel = new MockChannel();
+    await runTick(channel, [MSG], makeResponder('hi'), 'sess', noopLog);
+
+    const { mtimeMs } = statSync(HEARTBEAT_LOCK);
+    // Mtime should be updated (heartbeat called after processing MSG)
+    expect(mtimeMs).toBeGreaterThanOrEqual(before - 100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C-1: rejecting fetch resolves runLockedTick (belt-and-suspenders)
+// ---------------------------------------------------------------------------
+
+describe('runLockedTick — C-1: rejecting fetch resolves cleanly', () => {
+  const CUSTOM_LOCK = LOCK_PATH + '.test-fetchreject';
+
+  beforeEach(() => {
+    if (existsSync(CUSTOM_LOCK)) {
+      try { unlinkSync(CUSTOM_LOCK); } catch { /* ignore */ }
+    }
+    process.env['BRAIN_MEMORY_LOCK_PATH'] = CUSTOM_LOCK;
+  });
+
+  afterEach(() => {
+    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    if (existsSync(CUSTOM_LOCK)) {
+      try { unlinkSync(CUSTOM_LOCK); } catch { /* ignore */ }
+    }
+  });
+
+  it('runLockedTick resolves (does not reject) when channel.fetch() throws', async () => {
+    const rejectingChannel: Channel = {
+      async fetch(): Promise<FetchResult> { throw new Error('network boom'); },
+      commitCursor(_v: string) {},
+      currentCursor(): string | null { return null; },
+      async send(_r: string, _t: string): Promise<void> {},
+    };
+    const noop = { async respond(_q: string, _s: string): Promise<ResponderResult> {
+      return { reply: null, origin: 'none' as const, episodeId: null };
+    }};
+    await expect(
+      runLockedTick(rejectingChannel, noop, 'sess', noopLog),
+    ).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L-11: tickInFlight skips fetch entirely (prove with a call counter)
+// ---------------------------------------------------------------------------
+
+describe('runLockedTick — L-11: tickInFlight blocks fetch', () => {
+  const CUSTOM_LOCK = LOCK_PATH + '.test-fetchcount';
+
+  beforeEach(() => {
+    if (existsSync(CUSTOM_LOCK)) {
+      try { unlinkSync(CUSTOM_LOCK); } catch { /* ignore */ }
+    }
+    process.env['BRAIN_MEMORY_LOCK_PATH'] = CUSTOM_LOCK;
+  });
+
+  afterEach(() => {
+    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    if (existsSync(CUSTOM_LOCK)) {
+      try { unlinkSync(CUSTOM_LOCK); } catch { /* ignore */ }
+    }
+  });
+
+  it('second concurrent runLockedTick returns without calling fetch', async () => {
+    let fetchCount = 0;
+    let resolveRespond!: () => void;
+    const respondBlocker = new Promise<void>(r => { resolveRespond = r; });
+
+    const slowResponder = {
+      async respond(_q: string, _s: string): Promise<ResponderResult> {
+        await respondBlocker;
+        return { reply: 'ok', origin: 'fact' as const, episodeId: null };
+      },
+    };
+
+    let cursor: string | null = null;
+    const countingChannel: Channel = {
+      async fetch(): Promise<FetchResult> {
+        fetchCount++;
+        return { messages: [MSG], commitTo: '1' };
+      },
+      commitCursor(v: string) { cursor = v; },
+      currentCursor(): string | null { return cursor; },
+      async send(_r: string, _t: string): Promise<void> {},
+    };
+
+    // tick1: sets tickInFlight=true before its first await
+    // tick2: immediately hits the guard — never calls fetch
+    const tick1 = runLockedTick(countingChannel, slowResponder, 'sess', noopLog);
+    const tick2 = runLockedTick(countingChannel, slowResponder, 'sess', noopLog);
+
+    resolveRespond();
+    await tick1;
+    await tick2;
+
+    // Only tick1 called fetch; tick2 was blocked before reaching it
+    expect(fetchCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H-3: unconfigured watcher stays alive past the poll interval (no unref)
+// ---------------------------------------------------------------------------
+
+describe('watcher-cli — H-3: unconfigured-channel process stays alive', () => {
+  const WATCHER_CLI_DIST = join(__dirname, '..', 'dist', 'src', 'adapter', 'watcher-cli.js');
+
+  it('process is still alive ~700ms after start with no channel config (KeepAlive safe)', async () => {
+    if (!existsSync(WATCHER_CLI_DIST)) {
+      console.warn('SKIP H-3: dist not built — run npm run build first');
+      return;
+    }
+
+    const tempDb = join(tmpdir(), `brain-watcher-h3-${Date.now()}.db`);
+    const child = spawn(process.execPath, [WATCHER_CLI_DIST, '--db', tempDb], {
+      // No BRAIN_MEMORY_TELEGRAM_TOKEN, no channel config → unconfigured idle path
+      env: {
+        ...process.env,
+        BRAIN_MEMORY_DB: tempDb,
+        BRAIN_MEMORY_LOCK_PATH: LOCK_PATH + '.test-h3-alive',
+      },
+      stdio: 'ignore',
+    });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 700));
+
+    const isAlive = child.exitCode === null && !child.killed;
+    child.kill('SIGTERM');
+
+    // Cleanup
+    try { unlinkSync(tempDb); } catch { /* ignore */ }
+
+    expect(isAlive).toBe(true);
+  }, 5000);
 });
 
 // ---------------------------------------------------------------------------

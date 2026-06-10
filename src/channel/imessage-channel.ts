@@ -206,60 +206,67 @@ export class DefaultIMessageChannel implements Channel {
    *   commitTo covers ALL scanned ROWIDs (listed or not) — T-07-03.
    */
   async fetch(): Promise<FetchResult> {
-    // D-74: fail-closed — empty allowlist = answer no one; idle signal (commitTo:null)
-    if (this.config.channel.allowlist.length === 0) {
-      return { messages: [], commitTo: null };
-    }
-
-    // Read dedup cursor from meta store.
-    const cursorRaw = this.meta.getMeta('cursor:imessage');
-
-    // Cold start (first-ever boot — no cursor persisted): baseline at the current
-    // high-water ROWID and answer NOTHING pre-existing. The baseline write is deferred to
-    // commitCursor() so it lands under the single-writer lock (T-LOCK-01). A crash /
-    // KeepAlive restart keeps a non-null persisted cursor — only the very first start skips
-    // backfill. (D-71)
-    if (cursorRaw === null) {
-      const baseline = this.reader.maxRowId();
-      this.log('cold start: imessage baseline at rowid ' + String(baseline) + ' — backfill skipped (write deferred to commitCursor)');
-      return { messages: [], commitTo: String(baseline) };
-    }
-
-    const cursor = parseInt(cursorRaw, 10);
-
-    // Poll new rows from ChatDbReader (synchronous, better-sqlite3)
-    const rows = this.reader.pollNew(cursor);
-
-    if (rows.length === 0) {
-      // No new rows — commitTo:null signals idle (caller skips lock acquisition)
-      return { messages: [], commitTo: null };
-    }
-
-    // commitTo covers ALL scanned ROWIDs (listed and unlisted) — T-07-03.
-    // Unlisted-sender rows are not re-delivered to pollNew on the next tick.
-    const maxRowid = rows.reduce((max, r) => Math.max(max, r.rowid), 0);
-
-    // Pre-normalize allowlist entries once per poll call
-    const normalizedAllowlist = this.config.channel.allowlist.map(normalizeHandle);
-
-    // Filter: only allowlisted senders reach the responder
-    const result: InboundMessage[] = [];
-    for (const row of rows) {
-      const normHandle = normalizeHandle(row.handle);
-      if (normalizedAllowlist.includes(normHandle)) {
-        result.push({
-          id: String(row.rowid),
-          sender: row.handle,
-          text: row.text,
-          ts: row.dateMs,
-        });
-      } else {
-        // D-74/T-07-05: silent ignore — log to file only; never reply, never confirm surface
-        this.log('ignored unlisted sender');
+    try {
+      // D-74: fail-closed — empty allowlist = answer no one; idle signal (commitTo:null)
+      if (this.config.channel.allowlist.length === 0) {
+        return { messages: [], commitTo: null };
       }
-    }
 
-    return { messages: result, commitTo: String(maxRowid) };
+      // Read dedup cursor from meta store.
+      const cursorRaw = this.meta.getMeta('cursor:imessage');
+
+      // Cold start (first-ever boot — no cursor persisted): baseline at the current
+      // high-water ROWID and answer NOTHING pre-existing. The baseline write is deferred to
+      // commitCursor() so it lands under the single-writer lock (T-LOCK-01). A crash /
+      // KeepAlive restart keeps a non-null persisted cursor — only the very first start skips
+      // backfill. (D-71)
+      if (cursorRaw === null) {
+        const baseline = this.reader.maxRowId();
+        this.log('cold start: imessage baseline at rowid ' + String(baseline) + ' — backfill skipped (write deferred to commitCursor)');
+        return { messages: [], commitTo: String(baseline) };
+      }
+
+      const cursor = parseInt(cursorRaw, 10);
+
+      // Poll new rows from ChatDbReader (synchronous, better-sqlite3)
+      const rows = this.reader.pollNew(cursor);
+
+      if (rows.length === 0) {
+        // No new rows — commitTo:null signals idle (caller skips lock acquisition)
+        return { messages: [], commitTo: null };
+      }
+
+      // commitTo covers ALL scanned ROWIDs (listed and unlisted) — T-07-03.
+      // Unlisted-sender rows are not re-delivered to pollNew on the next tick.
+      const maxRowid = rows.reduce((max, r) => Math.max(max, r.rowid), 0);
+
+      // Pre-normalize allowlist entries once per poll call
+      const normalizedAllowlist = this.config.channel.allowlist.map(normalizeHandle);
+
+      // Filter: only allowlisted senders reach the responder
+      const result: InboundMessage[] = [];
+      for (const row of rows) {
+        const normHandle = normalizeHandle(row.handle);
+        if (normalizedAllowlist.includes(normHandle)) {
+          result.push({
+            id: String(row.rowid),
+            sender: row.handle,
+            text: row.text,
+            ts: row.dateMs,
+          });
+        } else {
+          // D-74/T-07-05: silent ignore — log to file only; never reply, never confirm surface
+          this.log('ignored unlisted sender');
+        }
+      }
+
+      return { messages: result, commitTo: String(maxRowid) };
+    } catch (err) {
+      // C-1: "never throws" contract — reader errors (chat.db lock, WAL rotation) must not
+      // crash the watcher. Log to file and return idle so the cursor is never advanced on error.
+      this.log('imessage fetch error: ' + String(err));
+      return { messages: [], commitTo: null };
+    }
   }
 
   /**

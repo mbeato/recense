@@ -94,18 +94,23 @@ export class DefaultTelegramTransport implements TelegramTransport {
   }
 
   async getUpdates(offset: number): Promise<TelegramUpdate[]> {
-    const res = await fetch(`${this.base}/getUpdates?offset=${String(offset)}&timeout=0`);
+    const res = await fetch(`${this.base}/getUpdates?offset=${String(offset)}&timeout=0`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error('telegram getUpdates HTTP ' + String(res.status));
     const body = (await res.json()) as GetUpdatesResponse;
     return body.ok && body.result ? body.result : [];
   }
 
   async sendMessage(chatId: number, text: string): Promise<void> {
     // text + chat_id travel in a JSON body — never interpolated into the URL/shell.
-    await fetch(`${this.base}/sendMessage`, {
+    const res = await fetch(`${this.base}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text }),
+      signal: AbortSignal.timeout(10_000),
     });
+    if (!res.ok) throw new Error('telegram sendMessage HTTP ' + String(res.status));
   }
 }
 
@@ -178,60 +183,77 @@ export class TelegramChannel implements Channel {
    *   commitTo covers ALL scanned updates (listed or not) so unlisted ones are confirmed.
    */
   async fetch(): Promise<FetchResult> {
-    // Fail-closed — empty allowlist answers no one; commitTo=null signals idle (no lock needed)
-    if (this.config.telegram.allowlist.length === 0) {
+    try {
+      // Fail-closed — empty allowlist answers no one; commitTo=null signals idle (no lock needed)
+      if (this.config.telegram.allowlist.length === 0) {
+        return { messages: [], commitTo: null };
+      }
+
+      const cursorRaw = this.meta.getMeta('cursor:telegram');
+
+      // Cold start (first-ever boot — no cursor persisted): paginate to exhaustion to get the
+      // true current max update_id — a >100-update backlog would only partially be scanned by a
+      // single getUpdates(0) call (Telegram default page limit = 100). Answer NOTHING. The
+      // baseline write is deferred to commitCursor() so it lands under the single-writer lock
+      // (T-LOCK-01). L-9: pagination loop ensures the full backlog is consumed before the
+      // baseline is computed.
+      if (cursorRaw === null) {
+        let offset = 0;
+        let maxId = 0;
+        while (true) {
+          const page = await this.transport.getUpdates(offset);
+          if (page.length === 0) break;
+          for (const u of page) {
+            if (u.update_id > maxId) maxId = u.update_id;
+          }
+          offset = maxId + 1;
+        }
+        this.log('cold start: telegram baseline at update_id ' + String(maxId) + ' — backlog skipped (write deferred to commitCursor)');
+        return { messages: [], commitTo: String(maxId) };
+      }
+
+      const cursor = parseInt(cursorRaw, 10);
+
+      // offset = cursor + 1 → fetch updates with update_id > cursor (Telegram confirms <= cursor)
+      const updates = await this.transport.getUpdates(cursor + 1);
+      if (updates.length === 0) {
+        // No new updates — return commitTo:null to signal idle (caller skips lock acquisition)
+        return { messages: [], commitTo: null };
+      }
+
+      // commitTo covers ALL scanned updates (listed or not) — unlisted ones are confirmed so
+      // they are not re-fetched on the next tick. (Same invariant as before, now in commitTo.)
+      const maxId = updates.reduce((max, u) => Math.max(max, u.update_id), cursor);
+
+      const allow = new Set(this.config.telegram.allowlist.map(s => s.trim()));
+
+      const result: InboundMessage[] = [];
+      for (const u of updates) {
+        const msg = u.message;
+        // Ignore non-text or malformed updates (stickers, joins, channel posts, etc.)
+        if (!msg || !msg.from || !msg.chat || typeof msg.text !== 'string' || msg.text.length === 0) {
+          continue;
+        }
+        const fromId = String(msg.from.id);
+        if (allow.has(fromId)) {
+          result.push({
+            id: String(u.update_id),
+            sender: String(msg.chat.id), // reply target
+            text: msg.text,
+            ts: msg.date * 1000, // Telegram date is Unix seconds → ms
+          });
+        } else {
+          this.log('ignored unlisted telegram sender');
+        }
+      }
+
+      return { messages: result, commitTo: String(maxId) };
+    } catch (err) {
+      // C-1: "never throws" contract — transport errors (network blip, 5xx, timeout) must not
+      // crash the watcher. Log to file and return idle so the cursor is never advanced on error.
+      this.log('telegram fetch error: ' + String(err));
       return { messages: [], commitTo: null };
     }
-
-    const cursorRaw = this.meta.getMeta('cursor:telegram');
-
-    // Cold start (first-ever boot — no cursor persisted): baseline at the current max
-    // update_id and answer NOTHING. Telegram queues updates for ~24h; without this, a
-    // first boot would replay/answer the whole backlog. The baseline write is deferred to
-    // commitCursor() so it lands under the single-writer lock (T-LOCK-01).
-    if (cursorRaw === null) {
-      const pending = await this.transport.getUpdates(0);
-      const baseline = pending.reduce((max, u) => Math.max(max, u.update_id), 0);
-      this.log('cold start: telegram baseline at update_id ' + String(baseline) + ' — backlog skipped (write deferred to commitCursor)');
-      return { messages: [], commitTo: String(baseline) };
-    }
-
-    const cursor = parseInt(cursorRaw, 10);
-
-    // offset = cursor + 1 → fetch updates with update_id > cursor (Telegram confirms <= cursor)
-    const updates = await this.transport.getUpdates(cursor + 1);
-    if (updates.length === 0) {
-      // No new updates — return commitTo:null to signal idle (caller skips lock acquisition)
-      return { messages: [], commitTo: null };
-    }
-
-    // commitTo covers ALL scanned updates (listed or not) — unlisted ones are confirmed so
-    // they are not re-fetched on the next tick. (Same invariant as before, now in commitTo.)
-    const maxId = updates.reduce((max, u) => Math.max(max, u.update_id), cursor);
-
-    const allow = new Set(this.config.telegram.allowlist.map(s => s.trim()));
-
-    const result: InboundMessage[] = [];
-    for (const u of updates) {
-      const msg = u.message;
-      // Ignore non-text or malformed updates (stickers, joins, channel posts, etc.)
-      if (!msg || !msg.from || !msg.chat || typeof msg.text !== 'string' || msg.text.length === 0) {
-        continue;
-      }
-      const fromId = String(msg.from.id);
-      if (allow.has(fromId)) {
-        result.push({
-          id: String(u.update_id),
-          sender: String(msg.chat.id), // reply target
-          text: msg.text,
-          ts: msg.date * 1000, // Telegram date is Unix seconds → ms
-        });
-      } else {
-        this.log('ignored unlisted telegram sender');
-      }
-    }
-
-    return { messages: result, commitTo: String(maxId) };
   }
 
   /**
