@@ -50,7 +50,7 @@ import type { ResponderResult } from '../responder';
 import { DefaultIMessageChannel, DefaultOsascriptSender } from '../channel/imessage-channel';
 import { DefaultChatDbReader } from '../channel/chat-db-reader';
 import { TelegramChannel, DefaultTelegramTransport } from '../channel/telegram-channel';
-import { acquireLockWithRetry, releaseLock } from './lockfile';
+import { acquireLockWithRetry, releaseLock, heartbeatLock } from './lockfile';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 
 const LOG_PATH = '/tmp/brain-memory-watcher.log';
@@ -135,6 +135,9 @@ export async function runTick(
       } catch (err) {
         logFn('respond error: ' + err);
       }
+      // L-11: refresh the lock mtime once per message so a long multi-message batch
+      // (100 msgs × multi-second LLM responds) is never falsely reclaimed mid-batch.
+      heartbeatLock();
     }
   } catch (err) {
     logFn('tick error: ' + err);

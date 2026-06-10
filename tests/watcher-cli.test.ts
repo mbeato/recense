@@ -315,6 +315,38 @@ describe('runLockedTick — guarantee: cold start', () => {
 });
 
 // ---------------------------------------------------------------------------
+// L-11: runTick calls heartbeatLock once per processed message
+// ---------------------------------------------------------------------------
+
+describe('runTick — L-11: heartbeat lock per message', () => {
+  const HEARTBEAT_LOCK = LOCK_PATH + '.test-runTick-heartbeat';
+
+  afterEach(() => {
+    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    if (existsSync(HEARTBEAT_LOCK)) {
+      try { unlinkSync(HEARTBEAT_LOCK); } catch { /* ignore */ }
+    }
+  });
+
+  it('runTick updates the lock mtime once per processed message', async () => {
+    process.env['BRAIN_MEMORY_LOCK_PATH'] = HEARTBEAT_LOCK;
+
+    // Create lock file with an old mtime
+    writeFileSync(HEARTBEAT_LOCK, String(process.pid));
+    const oldMtime = new Date(Date.now() - 5000);
+    utimesSync(HEARTBEAT_LOCK, oldMtime, oldMtime);
+
+    const before = Date.now();
+    const channel = new MockChannel();
+    await runTick(channel, [MSG], makeResponder('hi'), 'sess', noopLog);
+
+    const { mtimeMs } = statSync(HEARTBEAT_LOCK);
+    // Mtime should be updated (heartbeat called after processing MSG)
+    expect(mtimeMs).toBeGreaterThanOrEqual(before - 100);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // C-1: rejecting fetch resolves runLockedTick (belt-and-suspenders)
 // ---------------------------------------------------------------------------
 

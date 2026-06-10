@@ -16,7 +16,7 @@
  * Threat mitigations:
  *  - T-03-2-Tlock: atomic O_EXCL create; EEXIST loser returns false.
  */
-import { openSync, writeSync, closeSync, unlinkSync, statSync, existsSync, readFileSync } from 'fs';
+import { openSync, writeSync, closeSync, unlinkSync, statSync, existsSync, readFileSync, renameSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -63,25 +63,85 @@ export const LOCK_STALE_MS = 30 * 60 * 1000;
  *
  * Returns true  → lock acquired; caller may proceed.
  * Returns false → lock is held by another live process; caller should exit 0.
- * Throws        → unexpected FS error (not EEXIST); caller propagates.
+ * Throws        → unexpected FS error (not EEXIST / ENOENT); caller propagates.
+ *
+ * Stale-takeover TOCTOU fix (H-4a): instead of unlinkSync + openSync('wx') — which
+ * lets two concurrent processes both delete + recreate the lock — we use a
+ * renameSync to a per-pid '.reap.<pid>' sentinel. Only ONE process can rename
+ * a given path; the loser gets ENOENT and falls through to the O_EXCL create
+ * (which gets EEXIST → returns false). Exactly one winner.
+ *
+ * PID-liveness check (H-4b): a FRESH lock whose recorded PID is dead (ESRCH) is
+ * treated as stale and reclaimed immediately — no waiting for the full 30-min
+ * window after a hard kill of the holder.
  */
 export function acquireLock(): boolean {
   const lockPath = getLockPath();
-  // 1. Check for stale lock (process died without cleanup)
+
   if (existsSync(lockPath)) {
+    let stale = false;
+
     try {
       const { mtimeMs } = statSync(lockPath);
-      if (Date.now() - mtimeMs < LOCK_STALE_MS) return false; // fresh → held
+
+      if (Date.now() - mtimeMs >= LOCK_STALE_MS) {
+        // Old by mtime — treat as stale regardless of PID
+        stale = true;
+      } else {
+        // Fresh by mtime — probe the recorded PID for liveness (H-4b)
+        let pidStr: string;
+        try {
+          pidStr = readFileSync(lockPath, 'utf8').trim();
+        } catch {
+          // File vanished or unreadable — conservative: treat as held
+          return false;
+        }
+
+        if (!pidStr || !/^\d+$/.test(pidStr)) {
+          // Non-numeric or empty PID on a fresh lock — conservative: treat as held (L-3 cousin)
+          return false;
+        }
+
+        const pid = parseInt(pidStr, 10);
+        try {
+          process.kill(pid, 0); // signal 0 = liveness probe; throws on dead/no-permission
+          // No exception → process alive; EPERM would also reach here (alive, not ours)
+          return false; // held by a live process
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === 'ESRCH') {
+            // No such process → holder is dead; reclaim it
+            stale = true;
+          } else {
+            // EPERM or other: process exists, we can't signal it → treat as held
+            return false;
+          }
+        }
+      }
     } catch {
-      // File removed between existsSync + statSync by a concurrent unlink — fine.
+      // File removed between existsSync + statSync by a concurrent unlink — fall through
     }
-    // Stale (or just removed) — unlink and fall through to O_EXCL create
-    try { unlinkSync(lockPath); } catch {
-      // Another process cleaned it first — fine; the O_EXCL below resolves the race.
+
+    if (stale) {
+      // Atomic takeover via rename (H-4a): only ONE process can rename a given path.
+      // The winner gets the '.reap.<pid>' file; the loser gets ENOENT and falls through
+      // to the O_EXCL create below (which will get EEXIST → return false).
+      const reapPath = lockPath + '.reap.' + String(process.pid);
+      try {
+        renameSync(lockPath, reapPath);
+        // We won the rename race — clean up our sentinel before the O_EXCL create
+        try { unlinkSync(reapPath); } catch { /* ignore — best-effort cleanup */ }
+        // Fall through to O_EXCL create
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+          // Another process renamed it first — fall through; O_EXCL below will EEXIST
+        } else {
+          throw e; // unexpected FS error
+        }
+      }
     }
   }
 
-  // 2. Atomic create — 'wx' = O_WRONLY | O_CREAT | O_EXCL
+  // Atomic create — 'wx' = O_WRONLY | O_CREAT | O_EXCL
   try {
     const fd = openSync(lockPath, 'wx');
     writeSync(fd, String(process.pid));
@@ -117,7 +177,11 @@ export async function acquireLockWithRetry(attempts = 8, delayMs = 150): Promise
  * WR-02 — ownership-checked: after a stale-reclaim the lock file may belong to a
  * NEW owner, so a slow original must NOT delete it (doing so would admit a third
  * concurrent writer). We unlink only when the recorded pid is ours, or when the
- * file is missing/unreadable/empty (best-effort, matches prior behavior).
+ * file is missing/unreadable (best-effort).
+ *
+ * L-3 — empty-but-fresh guard: an empty lockfile that is fresh by mtime is NOT
+ * provably ours — it may be another process's just-created lock whose PID write
+ * is still pending. Leave it alone rather than racing the write.
  *
  * Best-effort: ignores ENOENT (already removed by a concurrent releaseLock or
  * stale-reclaim). All other errors propagate.
@@ -130,12 +194,50 @@ export function releaseLock(): void {
   } catch {
     owner = null; // missing/unreadable — fall through to best-effort unlink
   }
+
   // Not our lock — a reclaim handed it to another live process. Leave it alone.
   if (owner !== null && owner !== '' && owner !== String(process.pid)) return;
+
+  // L-3: empty-but-fresh lockfile is not provably ours — another process may have
+  // just created it and not yet written its PID. Leave it alone.
+  if (owner === '') {
+    try {
+      const { mtimeMs } = statSync(lockPath);
+      if (Date.now() - mtimeMs < LOCK_STALE_MS) return; // fresh, not provably ours
+    } catch {
+      // File vanished between read and stat — fall through to best-effort unlink
+    }
+  }
+
   try {
     unlinkSync(lockPath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// heartbeatLock — refresh lock mtime to prevent false-stale reclaims (L-11)
+// ---------------------------------------------------------------------------
+
+/**
+ * Touch the lock mtime to prevent it from expiring during a long batch (L-11).
+ *
+ * A watcher batch processing 100 messages × multi-second LLM responds can
+ * theoretically exceed the 30-min stale window, causing a live lock to be
+ * reclaimed. Calling heartbeatLock() once per processed message refreshes the
+ * mtime so the lock always appears fresh to any concurrent acquireLock() probe.
+ *
+ * No-op (silent) when the lock file is absent or unreadable — a failed heartbeat
+ * is not worth crashing the batch over.
+ *
+ * Exported for use in runTick (watcher-cli.ts) and for unit testing.
+ */
+export function heartbeatLock(): void {
+  try {
+    utimesSync(getLockPath(), new Date(), new Date());
+  } catch {
+    // ENOENT / unreadable — no-op
   }
 }
