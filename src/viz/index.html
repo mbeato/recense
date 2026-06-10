@@ -585,7 +585,8 @@ Graph.cameraPosition({ x: 0, y: 0, z: BRAIN_SCALE * 3.1 });
 // Let the force layout settle while the canvas is invisible; on first engine stop, PIN every node
 // at its settled position (fx/fy/fz) so the graph is static from the moment it appears and never
 // reshuffles (on tombstone toggle, schema expand, etc.), then fade it in.
-Graph.cooldownTicks(120);
+// Nodes are seeded in-brain already, so only a brief relax is needed before pinning + reveal.
+Graph.cooldownTicks(12);
 const graphEl = document.getElementById('graph');
 graphEl.style.opacity = '0';   // hide INSTANTLY (no transition yet → no fade-out flash)
 let _settled = false;
@@ -593,11 +594,11 @@ function revealSettled() {
   if (_settled) return;
   _settled = true;
   for (const n of allNodes) { if (n.x != null) { n.fx = n.x; n.fy = n.y; n.fz = n.z; } }
-  graphEl.style.transition = 'opacity 0.5s ease';   // add transition ONLY now → fades in, never out
+  graphEl.style.transition = 'opacity 0.35s ease';   // add transition ONLY now → fades in, never out
   graphEl.style.opacity = '1';
 }
 Graph.onEngineStop(revealSettled);
-setTimeout(revealSettled, 5000);   // safety: reveal even if the engine never reports a stop
+setTimeout(revealSettled, 200);    // primary reveal path — minimal settle then show (onEngineStop is unreliable/slow)
 
 // Tooltip follows cursor
 document.addEventListener('mousemove', e => {
