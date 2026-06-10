@@ -18,6 +18,17 @@ import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
 import type { Origin, NodeRow } from '../lib/types';
 
+/**
+ * Minimum age (ms) a tombstoned node must sit at before eviction eligibility.
+ * 30 days — gates genuine abandonment vs. recently-superseded nodes still in the graph.
+ *
+ * Defined here (not config.ts) because config.ts carries an uncommitted local override
+ * that must not be changed. This constant is the correct home for the eviction threshold.
+ * Replaces the unreachable `evictionCThreshold` predicate (M-1 — c is monotonically
+ * non-decreasing so c < 0.15 is structurally dead).
+ */
+const EVICTION_TOMBSTONE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
 export class StrengthDecayManager {
   private readonly db: Database.Database;
   private readonly clock: Clock;
@@ -29,6 +40,8 @@ export class StrengthDecayManager {
   private readonly stmtUpdateIncrement: Database.Statement;
   private readonly stmtGetAllNodes: Database.Statement;
   private readonly stmtDeleteNode: Database.Statement;
+  // M-1 FK-safe eviction: delete edges referencing the node BEFORE deleting the node itself.
+  private readonly stmtDeleteEdgesForNode: Database.Statement;
 
   constructor(db: Database.Database, clock: Clock, config: EngineConfig) {
     this.db = db;
@@ -53,6 +66,9 @@ export class StrengthDecayManager {
 
     // Delete evicted nodes
     this.stmtDeleteNode = db.prepare('DELETE FROM node WHERE id = ?');
+    // FK-safe: remove all edges referencing a node before deleting it (M-1 FK invariant).
+    // edge.src and edge.dst both reference node(id); both directions must be cleaned up.
+    this.stmtDeleteEdgesForNode = db.prepare('DELETE FROM edge WHERE src = ? OR dst = ?');
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -119,12 +135,19 @@ export class StrengthDecayManager {
 
   /**
    * Eviction sweep (T-03-EVICT, STR-03).
-   * Scans all nodes; evicts those where ALL three conditions hold:
-   *   tombstoned = 1  AND  effective_s < evictionSThreshold  AND  c < evictionCThreshold
    *
-   * The AND-gate means tombstoned=0 nodes are structurally protected regardless of s/c.
-   * This is the invariant: no origin=observed/asserted_by_user node with tombstoned=0
-   * can ever be evicted by decay alone. (T-03-EVICT)
+   * Scans all nodes; evicts those where ALL three conditions hold:
+   *   tombstoned = 1  AND  effective_s < evictionSThreshold  AND  age > EVICTION_TOMBSTONE_AGE_MS
+   *
+   * The tombstone-age gate replaces the unreachable `c < evictionCThreshold` predicate (M-1):
+   * `c` is monotonically non-decreasing (strengthen() only increments it) so c < 0.15 was
+   * structurally dead code. The age gate makes STR-03 reachable for genuinely abandoned tombstones.
+   *
+   * The AND-gate on tombstoned=1 means tombstoned=0 nodes are structurally protected regardless.
+   * No origin=observed/asserted_by_user node with tombstoned=0 can ever be evicted. (T-03-EVICT)
+   *
+   * Delete order: edges first (FK-safe), then node, in a per-node .immediate() transaction.
+   * A failure on one node continues to the next so a single FK constraint never aborts the sweep.
    *
    * Returns the ids of evicted nodes (deleted from DB).
    */
@@ -137,14 +160,24 @@ export class StrengthDecayManager {
       // Compute the lazy effective strength at current time
       const effectiveS = this.effectiveStrength(row.s, row.last_access, nowMs, this.config.lambda);
 
-      // AND-gated predicate: all three conditions required (T-03-EVICT)
+      // AND-gated predicate: tombstoned + low effective_s + tombstone age > 30d (T-03-EVICT, M-1)
       if (
         row.tombstoned === 1 &&
         effectiveS < this.config.evictionSThreshold &&
-        row.c < this.config.evictionCThreshold
+        (nowMs - row.last_access) > EVICTION_TOMBSTONE_AGE_MS
       ) {
-        this.stmtDeleteNode.run(row.id);
-        evicted.push(row.id);
+        // FK-safe per-node transaction: delete edges before node to satisfy REFERENCES constraint.
+        // .immediate() prevents SQLITE_BUSY_SNAPSHOT in WAL mode (M-5 prerequisite for sweep).
+        // try/catch: one bad node never aborts the sweep (M-1 robustness invariant).
+        try {
+          this.db.transaction(() => {
+            this.stmtDeleteEdgesForNode.run(row.id, row.id);
+            this.stmtDeleteNode.run(row.id);
+          }).immediate();
+          evicted.push(row.id);
+        } catch {
+          // Continue — failure on one node must not abort the rest of the sweep.
+        }
       }
     }
 
