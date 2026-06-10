@@ -166,6 +166,18 @@ function logEvent(cat, msg) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+// Surface uncaught errors in the on-screen log (visible without devtools); dedupe the
+// repeating ones so a per-frame error doesn't flood the panel.
+let _lastErrMsg = '';
+window.addEventListener('error', ev => {
+  const m = `${ev.message || 'error'}${ev.filename ? ' @ ' + ev.filename.split('/').pop() + ':' + ev.lineno : ''}`;
+  if (m === _lastErrMsg) return; _lastErrMsg = m;
+  try { logEvent('error', m); } catch (_) {}
+});
+window.addEventListener('unhandledrejection', ev => {
+  try { logEvent('error', 'promise: ' + ((ev.reason && ev.reason.message) || ev.reason)); } catch (_) {}
+});
+
 // ---------- SSE status ----------
 function setSSEStatus(live) {
   sseDotEl.style.background = live ? '#5dd6a0' : '#ffd166';
