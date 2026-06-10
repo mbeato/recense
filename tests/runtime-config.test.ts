@@ -45,6 +45,24 @@ describe('resolveDbPath precedence', () => {
   it('ignores a dangling --db with no value', () => {
     expect(resolveDbPath(['node', 'brain.js', 'hook', 'stop', '--db'])).toBe(defaultDbPath());
   });
+
+  // M-8: fallbackToDefault option
+  it('{ fallbackToDefault: false } returns undefined when neither --db nor env is set', () => {
+    expect(resolveDbPath([], { fallbackToDefault: false })).toBeUndefined();
+  });
+
+  it('{ fallbackToDefault: false } still returns env path when BRAIN_MEMORY_DB is set', () => {
+    process.env['BRAIN_MEMORY_DB'] = '/env/path.db';
+    expect(resolveDbPath([], { fallbackToDefault: false })).toBe('/env/path.db');
+  });
+
+  it('{ fallbackToDefault: false } --db flag always wins regardless of toggle', () => {
+    expect(resolveDbPath(['node', 'x', '--db', '/x.db'], { fallbackToDefault: false })).toBe('/x.db');
+  });
+
+  it('fallbackToDefault omitted (default) returns defaultDbPath() when nothing is set', () => {
+    expect(resolveDbPath([])).toBe(defaultDbPath());
+  });
 });
 
 describe('loadConfiguredEnv', () => {

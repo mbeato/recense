@@ -36,6 +36,8 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
+import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
+import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 import { EpisodicStore } from '../db/episode-store';
 import { SemanticStore } from '../db/semantic-store';
 import { StrengthDecayManager } from '../strength/decay';
@@ -82,14 +84,13 @@ export function getNonDarwinEarlyExitMessage(platform: string): string | undefin
 
 /**
  * Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var.
- * Returns undefined if neither is supplied.
+ * Returns undefined if neither is supplied (fallbackToDefault=false).
+ *
+ * M-8: delegates to the shared resolveDbPath from runtime-config.
+ * Exported for backward-compat with tests/watcher-cli.test.ts.
  */
 export function resolveDbPath(): string | undefined {
-  const dbArgIdx = process.argv.indexOf('--db');
-  if (dbArgIdx !== -1 && process.argv[dbArgIdx + 1]) {
-    return process.argv[dbArgIdx + 1];
-  }
-  return process.env['BRAIN_MEMORY_DB'];
+  return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
 }
 
 // ---------------------------------------------------------------------------
@@ -300,10 +301,16 @@ export async function main(): Promise<void> {
   const retriever = new CandidateRetriever(db);
   const gate     = new AllocationGate(config);
 
-  // T-04-03-K / T-07-KEY: keys read from process.env by SDK inside DefaultModelProvider.
+  // M-7: apply provider overlay so BRAIN_MEMORY_MODEL_PROVIDER / BRAIN_MEMORY_EXTRACTOR_PROVIDER
+  // / BRAIN_MEMORY_JUDGE_PROVIDER env vars route generate+judge to the configured provider
+  // (e.g. a local model). embed stays base config (OpenAI regardless of overlay).
+  // Log resolved provider NAMES only (never keys — T-04-03-K / T-07-KEY).
+  const generateConfig = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER') };
+  const judgeConfig    = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_JUDGE_PROVIDER') };
+  log('providers — generate: ' + generateConfig.modelProvider + ' | judge: ' + judgeConfig.modelProvider);
   const provider = new DefaultModelProvider({
-    generateConfig: config,
-    judgeConfig: config,
+    generateConfig,
+    judgeConfig,
     embedConfig: config,
   });
 

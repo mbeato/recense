@@ -23,6 +23,7 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { acquireLock, releaseLock } from './lockfile';
+import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 
 // Back-compat re-exports: resolveProviderOverlay, ProviderOverlay, and VALID_PROVIDERS
 // were originally defined here and are imported by tests/sleep-pass-provider.test.ts.
@@ -36,16 +37,10 @@ const LOG_PATH = '/tmp/brain-memory-sleep.log';
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] sleep-pass: ${msg}\n`);
 
-/**
- * Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var.
- * Returns undefined if neither is supplied.
- */
+// M-8: delegate to the shared resolveDbPath with fallbackToDefault=false so a missing
+// --db flag / BRAIN_MEMORY_DB env causes the missing-path exit (process.exit(0) below).
 function resolveDbPath(): string | undefined {
-  const dbArgIdx = process.argv.indexOf('--db');
-  if (dbArgIdx !== -1 && process.argv[dbArgIdx + 1]) {
-    return process.argv[dbArgIdx + 1];
-  }
-  return process.env['BRAIN_MEMORY_DB'];
+  return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
 }
 
 async function main(): Promise<void> {

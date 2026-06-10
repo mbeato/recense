@@ -42,6 +42,7 @@ import { TranscriptAdapter } from '../source/transcript-adapter';
 import { ObsidianAdapter } from '../source/obsidian-adapter';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { acquireLock, releaseLock } from './lockfile';
+import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 
 const LOG_PATH = '/tmp/brain-memory-ingest.log';
 
@@ -49,17 +50,11 @@ const LOG_PATH = '/tmp/brain-memory-ingest.log';
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] brain-ingest: ${msg}\n`);
 
-/**
- * Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var.
- * Returns undefined if neither is supplied.
- * Identical to sleep-pass-cli.resolveDbPath (T-03-2-Dpath: argv array element, never shell string).
- */
+// M-8: delegate to the shared resolveDbPath with fallbackToDefault=false so a missing
+// --db flag / BRAIN_MEMORY_DB env causes the missing-path exit (process.exit(0) below).
+// T-03-2-Dpath: argv array element, never shell string.
 function resolveDbPath(): string | undefined {
-  const dbArgIdx = process.argv.indexOf('--db');
-  if (dbArgIdx !== -1 && process.argv[dbArgIdx + 1]) {
-    return process.argv[dbArgIdx + 1];
-  }
-  return process.env['BRAIN_MEMORY_DB'];
+  return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
 }
 
 /**

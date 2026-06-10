@@ -29,6 +29,7 @@ import { ProviderClaimExtractor } from '../model/claim-extractor';
 import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 import { ColdStartSeeder } from '../seeder/cold-start';
 import { acquireLock, releaseLock } from './lockfile';
+import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 
 const LOG_PATH = '/tmp/brain-memory-seed.log';
 
@@ -39,13 +40,12 @@ const log = (msg: string): void =>
 /**
  * Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var.
  * Returns undefined if neither is supplied.
+ *
+ * M-8: delegates to the shared resolveDbPath with fallbackToDefault=false.
+ * Exported for backward-compat with any importer; delegates to runtime-config.
  */
 export function resolveDbPath(): string | undefined {
-  const idx = process.argv.indexOf('--db');
-  if (idx !== -1 && process.argv[idx + 1]) {
-    return process.argv[idx + 1];
-  }
-  return process.env['BRAIN_MEMORY_DB'];
+  return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
 }
 
 /**

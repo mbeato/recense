@@ -32,6 +32,8 @@ import { RetrievalEngine } from '../retrieval/engine';
 import { DefaultModelProvider } from '../model/provider';
 import { recordSnapshot, replaySnapshots } from '../eval/snapshot';
 import { acquireLock, releaseLock } from './lockfile';
+import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
+import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 
 const LOG_PATH = '/tmp/brain-memory-snapshot.log';
 
@@ -39,11 +41,9 @@ const LOG_PATH = '/tmp/brain-memory-snapshot.log';
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] snapshot-cli: ${msg}\n`);
 
-/** Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var. */
+// M-8: delegate to the shared resolveDbPath with fallbackToDefault=false.
 function resolveDbPath(): string | undefined {
-  const idx = process.argv.indexOf('--db');
-  if (idx !== -1 && process.argv[idx + 1]) return process.argv[idx + 1];
-  return process.env['BRAIN_MEMORY_DB'];
+  return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
 }
 
 /**
@@ -114,11 +114,15 @@ async function main(): Promise<void> {
 
     const config = { ...DEFAULT_CONFIG, dbPath };
 
-    // T-05-SNAP-K: DefaultModelProvider reads API keys from env; never logged or stdout.
+    // M-7: apply provider overlay so BRAIN_MEMORY_MODEL_PROVIDER / role-specific provider
+    // env vars route generate+judge to the configured provider. embed stays base config.
+    // T-05-SNAP-K: keys from env only, never logged or stdout.
+    const generateConfig = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER') };
+    const judgeConfig    = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_JUDGE_PROVIDER') };
     const provider = new DefaultModelProvider({
-      generateConfig: config,
-      judgeConfig:    config,
-      embedConfig:    config,
+      generateConfig,
+      judgeConfig,
+      embedConfig: config,
     });
 
     if (MODE_RECORD) {
