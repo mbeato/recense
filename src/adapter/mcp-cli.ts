@@ -15,9 +15,9 @@
  *                   validateOrigin (D-05). Honest deferred ack (D-10). Per-call lock.
  *   memory_ask    — HybridResponder.respond → { answer, origin } (D-09); no-answer is a
  *                   structured { answer: null, origin: 'none' } — Telegram channel phrasing
- *                   and the '(inferred)' marker stay out of MCP. Always registered (D-04);
- *                   safe-null on a missing LLM key. Per-call lock (facts-first branch writes
- *                   one inferred/salience-0 episode).
+ *                   and text markers stay out of MCP. Always registered (D-04); safe-null on
+ *                   a missing LLM key. Per-call lock (facts-first branch writes one
+ *                   inferred/salience-0 episode).
  *
  * Design invariants:
  *  - One DB handle for the server lifetime; one session ID (UUID) per server process
@@ -293,8 +293,8 @@ export async function createBrainMcpServer(
         // D-09 mapping: reply → answer, origin → origin, drop episodeId. Channel
         // presentation stays OUT of MCP: when origin is 'none' the responder's
         // reply is its Telegram honest-no-answer phrasing — the MCP contract is a
-        // structured null instead. No '(inferred)' text marker is added here either;
-        // the raw structured origin carries that signal.
+        // structured null instead. No inferred-marker text suffix is added here
+        // either; the raw structured origin carries that signal.
         const out = { answer: r.origin === 'none' ? null : r.reply, origin: r.origin };
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(out) }],
