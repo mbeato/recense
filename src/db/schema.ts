@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -82,9 +82,6 @@ export const DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_node_dirty
     ON node(embedded_hash) WHERE embedded_hash IS NULL;
-
-  CREATE INDEX IF NOT EXISTS idx_node_eviction
-    ON node(tombstoned, s, c);
 
   -- SEAM-02: ConsolidationSink event stream (append-only, single-writer: offline pass).
   -- Each row mirrors one applyDecision branch + schema emitted/falsified (D-49).
@@ -173,15 +170,46 @@ export function initSchema(db: Database.Database): void {
       ON episode(cwd, consolidated);
   `);
 
-  // v4 migration: activation_trace ring-buffered table + ts index (VIZ-02).
+  // v4 migration: activation_trace ring-buffered table (VIZ-02).
   // Table uses CREATE TABLE IF NOT EXISTS in DDL above → idempotent, no ALTER needed.
+  // idx_activation_trace_ts was created here but is a DEAD INDEX (queries hit by id, not ts).
+  // It is dropped below in the v5 migration to keep the index set clean.
+
+  // v5 migration: drop dead indexes + create hot-path indexes (M-10, L-7).
+  //  - idx_node_eviction: dead — the eviction sweep is a full scan (c is monotonically
+  //    non-decreasing so the c < 0.15 gate is never true in practice; M-1).
+  //  - idx_activation_trace_ts: dead — activation_trace rows are read by id, not ts.
+  //  - idx_consolidation_event_node/episode: two full-scans per SessionStart (M-10).
+  //  - idx_episode_origin_ts: listRecentInferred / detectEcho (M-10).
+  //  - idx_edge_dst: getInEdges WHERE dst=? — edge PK is src-prefix so has no dst coverage (L-7).
   db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_activation_trace_ts
-      ON activation_trace(ts DESC);
+    DROP INDEX IF EXISTS idx_node_eviction;
+    DROP INDEX IF EXISTS idx_activation_trace_ts;
+    CREATE INDEX IF NOT EXISTS idx_consolidation_event_node
+      ON consolidation_event(node_id);
+    CREATE INDEX IF NOT EXISTS idx_consolidation_event_episode
+      ON consolidation_event(episode_id);
+    CREATE INDEX IF NOT EXISTS idx_episode_origin_ts
+      ON episode(origin, ts);
+    CREATE INDEX IF NOT EXISTS idx_edge_dst
+      ON edge(dst);
   `);
 
-  // Stamp or update schema version in the now-guaranteed meta table
-  db.prepare(
-    "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
-  ).run(String(SCHEMA_VERSION));
+  // Stamp schema version — read first to guard against downgrade (M-9).
+  // Throws when stored > SCHEMA_VERSION so a stale launchd binary can't re-stamp a future DB
+  // and mask the mismatch from doctor. Stamps only on fresh DB or upgrade.
+  const storedRaw = db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as
+    { value: string } | undefined;
+  const stored = storedRaw ? Number(storedRaw.value) : null;
+  if (stored !== null && stored > SCHEMA_VERSION) {
+    throw new Error(
+      'DB schema_version ' + stored + ' is newer than this binary (' + SCHEMA_VERSION +
+      ') — upgrade brain-memory; refusing to downgrade-stamp'
+    );
+  }
+  if (stored === null || stored < SCHEMA_VERSION) {
+    db.prepare(
+      "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
+    ).run(String(SCHEMA_VERSION));
+  }
 }
