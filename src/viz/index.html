@@ -420,7 +420,10 @@ const traceLinks = new Set(); // link keys temporarily lit by an active trace
 const linkKey = l => {
   const s = typeof l.source === 'object' ? l.source.id : l.source;
   const t = typeof l.target === 'object' ? l.target.id : l.target;
-  return s < t ? s + '' + t : t + '' + s;
+  // IN-03: visible '|' delimiter (a UUID id can never contain it). Was previously a
+  // literal \x01 control char — a valid separator, but invisible in editors so it read
+  // as 's + "" + t' and looked like a key-collision bug. Made explicit.
+  return s < t ? s + '|' + t : t + '|' + s;
 };
 const nodeVisible = n => !!n && (n.__cat !== 'member' || expanded.has(n.__schemaId) || traceNodes.has(n.id));
 const linkVis = l => {
