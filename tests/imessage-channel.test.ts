@@ -1,13 +1,18 @@
 /**
- * DefaultIMessageChannel tests (Phase 7, D-70/D-74/T-07-02/T-07-03).
+ * DefaultIMessageChannel tests (Phase 7, D-70/D-74/T-07-02/T-07-03 / LOCK-CHANNEL-SPLIT).
  * All tests use MockChatDbReader + MockOsascriptSender — no real chat.db, no osascript.
  *
  * Covers:
- *  (a) Empty allowlist → receive() returns [] (D-74 fail-closed).
+ *  (a) Empty allowlist → fetch() returns {messages:[],commitTo:null} (D-74 fail-closed, idle).
  *  (b) Configured allowlist → only matching-sender rows returned; unlisted dropped silently.
- *  (c) Dedup — cursor:imessage advanced so a ROWID is never returned twice.
- *  (d) send() forwards recipient+text to MockOsascriptSender.sent.
- *  (e) Injection-shaped text passed through to sender UNMODIFIED (T-07-02 data-not-script).
+ *  (c) Dedup — cursor:imessage only changes after explicit commitCursor(), NOT fetch().
+ *      fetch() performs NO write (T-LOCK-01).
+ *  (d) Cold start — fetch() returns {messages:[],commitTo:<baseline>} with meta STILL NULL;
+ *      cursor written only after explicit commitCursor() call.
+ *  (e) Zero new rows → fetch() returns {messages:[],commitTo:null} (idle, lock never acquired).
+ *  (f) currentCursor() reflects the persisted value after commitCursor().
+ *  (g) send() forwards recipient+text to MockOsascriptSender.sent.
+ *  (h) Injection-shaped text passed through to sender UNMODIFIED (T-07-02 data-not-script).
  */
 import { describe, it, expect } from 'vitest';
 import { DefaultIMessageChannel, MockOsascriptSender } from '../src/channel/imessage-channel';
@@ -101,19 +106,19 @@ function makeChannel(opts: {
   return { ch, sender, meta };
 }
 
-// ── (a) Empty allowlist → receive() returns [] ────────────────────────────────
+// ── (a) Empty allowlist → fetch() returns idle sentinel ──────────────────────
 
 describe('DefaultIMessageChannel — empty allowlist (D-74 fail-closed)', () => {
-  it('returns [] when allowlist is empty even with available rows', async () => {
+  it('fetch() returns {messages:[],commitTo:null} when allowlist is empty, rows available', async () => {
     const { ch } = makeChannel({ rows: [ROW_ALLOWED], allowlist: [] });
-    const msgs = await ch.receive();
-    expect(msgs).toEqual([]);
+    const result = await ch.fetch();
+    expect(result).toEqual({ messages: [], commitTo: null });
   });
 
-  it('returns [] when allowlist is empty and no rows exist', async () => {
+  it('fetch() returns {messages:[],commitTo:null} when allowlist is empty and no rows', async () => {
     const { ch } = makeChannel({ rows: [], allowlist: [] });
-    const msgs = await ch.receive();
-    expect(msgs).toEqual([]);
+    const result = await ch.fetch();
+    expect(result).toEqual({ messages: [], commitTo: null });
   });
 });
 
@@ -125,107 +130,157 @@ describe('DefaultIMessageChannel — allowlist filtering (D-74)', () => {
       rows: [ROW_ALLOWED, ROW_UNLISTED],
       allowlist: [ALLOWED_HANDLE],
     });
-    const msgs = await ch.receive();
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.sender).toBe(ALLOWED_HANDLE);
-    expect(msgs[0]!.text).toBe('what is my training load?');
+    const result = await ch.fetch();
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]!.sender).toBe(ALLOWED_HANDLE);
+    expect(result.messages[0]!.text).toBe('what is my training load?');
+    // commitTo covers ALL scanned rows (T-07-03) including unlisted
+    expect(result.commitTo).toBe('101');
   });
 
-  it('returns [] when all rows are from unlisted senders', async () => {
+  it('returns empty messages[] but non-null commitTo when all rows are from unlisted senders', async () => {
     const { ch } = makeChannel({ rows: [ROW_UNLISTED], allowlist: [ALLOWED_HANDLE] });
-    const msgs = await ch.receive();
-    expect(msgs).toEqual([]);
+    const result = await ch.fetch();
+    expect(result.messages).toEqual([]);
+    // commitTo = maxRowid of scanned rows (still need to commit to skip them next tick)
+    expect(result.commitTo).toBe('101');
   });
 
   it('maps row fields to InboundMessage (id=rowid, sender, text, ts=dateMs)', async () => {
     const { ch } = makeChannel({ rows: [ROW_ALLOWED], allowlist: [ALLOWED_HANDLE] });
-    const msgs = await ch.receive();
-    expect(msgs[0]).toMatchObject({
+    const result = await ch.fetch();
+    expect(result.messages[0]).toMatchObject({
       id: '100',
       sender: ALLOWED_HANDLE,
       text: 'what is my training load?',
       ts: 1_700_000_000_000,
     });
-  });
-
-  it('returns [] when there are no rows', async () => {
-    const { ch } = makeChannel({ rows: [], allowlist: [ALLOWED_HANDLE] });
-    const msgs = await ch.receive();
-    expect(msgs).toEqual([]);
+    expect(result.commitTo).toBe('100');
   });
 });
 
-// ── (c) Dedup cursor — cursor:imessage advances; same ROWID not returned twice ─
+// ── (e) Zero new rows → idle (commitTo:null) ──────────────────────────────────
 
-describe('DefaultIMessageChannel — dedup cursor (T-07-03)', () => {
-  it('does not re-return rows after cursor has advanced past their ROWID', async () => {
+describe('DefaultIMessageChannel — zero new rows (idle)', () => {
+  it('fetch() returns {messages:[],commitTo:null} when there are no new rows', async () => {
+    const { ch } = makeChannel({ rows: [], allowlist: [ALLOWED_HANDLE] });
+    const result = await ch.fetch();
+    expect(result).toEqual({ messages: [], commitTo: null });
+  });
+});
+
+// ── (c) fetch() is write-free; cursor only changes via commitCursor() ─────────
+
+describe('DefaultIMessageChannel — fetch() performs NO write (T-LOCK-01)', () => {
+  it('cursor:imessage unchanged after fetch() on normal path', async () => {
+    const meta = new InMemoryMeta();
+    meta.setMeta('cursor:imessage', '0'); // pre-seed non-cold-start
+    const { ch } = makeChannel({
+      rows: [ROW_ALLOWED, ROW_ALLOWED_2],
+      allowlist: [ALLOWED_HANDLE],
+      meta,
+    });
+    await ch.fetch();
+    // fetch() must not advance the cursor
+    expect(meta.getMeta('cursor:imessage')).toBe('0');
+  });
+
+  it('cursor advances only after explicit commitCursor() call', async () => {
+    const meta = new InMemoryMeta();
+    meta.setMeta('cursor:imessage', '0');
+    const { ch } = makeChannel({
+      rows: [ROW_ALLOWED, ROW_ALLOWED_2],
+      allowlist: [ALLOWED_HANDLE],
+      meta,
+    });
+    const { commitTo } = await ch.fetch();
+    expect(meta.getMeta('cursor:imessage')).toBe('0'); // not yet advanced
+    ch.commitCursor(commitTo!);
+    expect(meta.getMeta('cursor:imessage')).toBe('102'); // now advanced to maxRowid
+  });
+
+  it('does not re-return rows after cursor advanced via commitCursor()', async () => {
     const meta = new InMemoryMeta();
 
-    // First receive() — delivers two allowed rows
     const { ch: ch1 } = makeChannel({
       rows: [ROW_ALLOWED, ROW_ALLOWED_2],
       allowlist: [ALLOWED_HANDLE],
       meta,
     });
-    const first = await ch1.receive();
-    expect(first).toHaveLength(2);
-
-    // Cursor must now be at max rowid seen (102)
+    const { commitTo } = await ch1.fetch();
+    expect(commitTo).toBe('102');
+    ch1.commitCursor(commitTo!);
     expect(meta.getMeta('cursor:imessage')).toBe('102');
 
-    // Second channel instance shares the same meta (cursor at 102).
-    // MockChatDbReader.pollNew(102) filters to rows with rowid > 102 → none.
+    // Second channel shares same meta (cursor at 102) → MockChatDbReader.pollNew(102) → empty
     const { ch: ch2 } = makeChannel({
       rows: [ROW_ALLOWED, ROW_ALLOWED_2],
       allowlist: [ALLOWED_HANDLE],
       meta,
     });
-    const second = await ch2.receive();
-    expect(second).toEqual([]);
+    const second = await ch2.fetch();
+    expect(second).toEqual({ messages: [], commitTo: null });
   });
 
-  it('advances cursor past ALL rows including unlisted ones (T-07-03)', async () => {
+  it('commitTo advances past ALL rows including unlisted ones (T-07-03)', async () => {
     const meta = new InMemoryMeta();
     const { ch } = makeChannel({
       rows: [ROW_ALLOWED, ROW_UNLISTED],
       allowlist: [ALLOWED_HANDLE],
       meta,
     });
-
-    await ch.receive();
-    // Cursor must be 101 (ROW_UNLISTED rowid), not just 100 (ROW_ALLOWED rowid)
+    const { commitTo } = await ch.fetch();
+    // commitTo must be 101 (ROW_UNLISTED rowid), not just 100 (ROW_ALLOWED rowid)
+    expect(commitTo).toBe('101');
+    ch.commitCursor(commitTo!);
     expect(meta.getMeta('cursor:imessage')).toBe('101');
   });
 });
 
-// ── (c2) Cold start — first boot baselines at high-water mark, never backfills ─
+// ── (d) Cold start ────────────────────────────────────────────────────────────
 
 describe('DefaultIMessageChannel — cold start (no history replay on first boot)', () => {
-  it('first boot (null cursor) returns [] and baselines cursor at max rowid', async () => {
+  it('fetch() returns {messages:[],commitTo:<baseline>} with meta cursor STILL NULL', async () => {
     const meta = new InMemoryMeta();
-    // Three pre-existing allowlisted messages — must NOT be answered on first boot.
     const { ch } = makeChannel({
       rows: [ROW_ALLOWED, ROW_UNLISTED, ROW_ALLOWED_2], // rowids 100, 101, 102
       allowlist: [ALLOWED_HANDLE],
       meta,
       coldStart: true,
     });
-
-    const msgs = await ch.receive();
-
-    expect(msgs).toEqual([]); // no backfill — history is never replayed/answered
-    expect(meta.getMeta('cursor:imessage')).toBe('102'); // baselined at global max rowid
+    const result = await ch.fetch();
+    expect(result.messages).toEqual([]); // no backfill
+    expect(result.commitTo).toBe('102'); // max rowid as baseline
+    // meta cursor must still be null — fetch() performs no write (T-LOCK-01)
+    expect(meta.getMeta('cursor:imessage')).toBeNull();
   });
 
-  it('cold start with no rows baselines cursor at 0 and returns []', async () => {
+  it('cold start with no rows baselines commitTo at 0; meta cursor null until commitCursor', async () => {
     const meta = new InMemoryMeta();
     const { ch } = makeChannel({ rows: [], allowlist: [ALLOWED_HANDLE], meta, coldStart: true });
-    const msgs = await ch.receive();
-    expect(msgs).toEqual([]);
+    const result = await ch.fetch();
+    expect(result.messages).toEqual([]);
+    expect(result.commitTo).toBe('0');
+    expect(meta.getMeta('cursor:imessage')).toBeNull();
+    ch.commitCursor(result.commitTo!);
     expect(meta.getMeta('cursor:imessage')).toBe('0');
   });
 
-  it('after cold-start baseline, a newly-arrived allowed row IS delivered', async () => {
+  it('commitCursor() writes the baseline under caller control', async () => {
+    const meta = new InMemoryMeta();
+    const { ch } = makeChannel({
+      rows: [ROW_ALLOWED, ROW_ALLOWED_2],
+      allowlist: [ALLOWED_HANDLE],
+      meta,
+      coldStart: true,
+    });
+    const { commitTo } = await ch.fetch();
+    expect(meta.getMeta('cursor:imessage')).toBeNull();
+    ch.commitCursor(commitTo!);
+    expect(meta.getMeta('cursor:imessage')).toBe('102');
+  });
+
+  it('after cold-start baseline committed, a newly-arrived allowed row IS delivered', async () => {
     const meta = new InMemoryMeta();
     // First boot: baseline at 102, answer nothing.
     const { ch: ch1 } = makeChannel({
@@ -234,7 +289,8 @@ describe('DefaultIMessageChannel — cold start (no history replay on first boot
       meta,
       coldStart: true,
     });
-    expect(await ch1.receive()).toEqual([]);
+    const { commitTo } = await ch1.fetch();
+    ch1.commitCursor(commitTo!); // write baseline
     expect(meta.getMeta('cursor:imessage')).toBe('102');
 
     // A genuinely new message arrives after baseline (rowid 200) — must be delivered.
@@ -250,13 +306,58 @@ describe('DefaultIMessageChannel — cold start (no history replay on first boot
       allowlist: [ALLOWED_HANDLE],
       meta, // cursor is now '102' (non-null) — normal incremental path
     });
-    const msgs = await ch2.receive();
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.text).toBe('a brand new question');
+    const result = await ch2.fetch();
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]!.text).toBe('a brand new question');
+    expect(result.commitTo).toBe('200');
   });
 });
 
-// ── (d) send() forwards recipient + text to MockOsascriptSender ───────────────
+// ── (f) currentCursor() ───────────────────────────────────────────────────────
+
+describe('DefaultIMessageChannel — currentCursor()', () => {
+  it('returns null before any commit (cold start)', () => {
+    const meta = new InMemoryMeta();
+    const { ch } = makeChannel({ rows: [], allowlist: [ALLOWED_HANDLE], meta, coldStart: true });
+    expect(ch.currentCursor()).toBeNull();
+  });
+
+  it('returns the persisted cursor value after commitCursor()', () => {
+    const meta = new InMemoryMeta();
+    meta.setMeta('cursor:imessage', '99');
+    const { ch } = makeChannel({ rows: [], allowlist: [ALLOWED_HANDLE], meta });
+    expect(ch.currentCursor()).toBe('99');
+  });
+
+  it('reflects writes made via commitCursor()', async () => {
+    const meta = new InMemoryMeta();
+    const { ch } = makeChannel({
+      rows: [ROW_ALLOWED],
+      allowlist: [ALLOWED_HANDLE],
+      meta,
+    });
+    const { commitTo } = await ch.fetch();
+    ch.commitCursor(commitTo!);
+    expect(ch.currentCursor()).toBe('100');
+  });
+});
+
+// ── commitCursor monotonicity ─────────────────────────────────────────────────
+
+describe('DefaultIMessageChannel — commitCursor monotonicity', () => {
+  it('does not regress the cursor when commitTo <= current', () => {
+    const meta = new InMemoryMeta();
+    const { ch } = makeChannel({ rows: [], allowlist: [ALLOWED_HANDLE], meta });
+    ch.commitCursor('100');
+    expect(meta.getMeta('cursor:imessage')).toBe('100');
+    ch.commitCursor('50'); // regression attempt — no-op
+    expect(meta.getMeta('cursor:imessage')).toBe('100');
+    ch.commitCursor('100'); // equal — no-op
+    expect(meta.getMeta('cursor:imessage')).toBe('100');
+  });
+});
+
+// ── (g) send() forwards recipient + text to MockOsascriptSender ───────────────
 
 describe('DefaultIMessageChannel — send() (D-70)', () => {
   it('forwards recipient and text to MockOsascriptSender.sent', async () => {
@@ -279,7 +380,7 @@ describe('DefaultIMessageChannel — send() (D-70)', () => {
   });
 });
 
-// ── (e) Injection-shaped text passed as data, not script (T-07-02) ────────────
+// ── (h) Injection-shaped text passed as data, not script (T-07-02) ────────────
 
 describe('DefaultIMessageChannel — injection guard (T-07-02)', () => {
   it('passes injection-shaped text unmodified to sender — treated as data, not script', async () => {
