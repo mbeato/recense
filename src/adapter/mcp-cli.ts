@@ -6,10 +6,13 @@
  * the server because require.main would stay brain.js).
  *
  * Exposes exactly three snake_case tools (D-01/D-03/D-04):
- *   memory_search — IMPLEMENTED here: embed query → RetrievalEngine.retrieve(cueVec) →
- *                   structured provenance rows. LLM-free (embedding only, zero generation
- *                   calls — D-08). Read-only: no lock acquisition (spec §8).
- *   memory_add    — registered with schema; handler stub until Plan 03.
+ *   memory_search — embed query → RetrievalEngine.retrieve(cueVec) → structured provenance
+ *                   rows. LLM-free (embedding only, zero generation calls — D-08).
+ *                   Read-only: no lock acquisition (spec §8).
+ *   memory_add    — episodic-only write via IngestionPipeline.recordEvent (source='mcp',
+ *                   externalId=null — D-06/D-07). NEVER touches the graph (MCP-03: the
+ *                   sleep pass stays the sole graph writer). Origin clamped via
+ *                   validateOrigin (D-05). Honest deferred ack (D-10). Per-call lock.
  *   memory_ask    — registered with schema; handler stub until Plan 03 (always registered, D-04).
  *
  * Design invariants:
@@ -49,6 +52,7 @@ import { IngestionPipeline } from '../ingest/pipeline';
 import { NoopActivationTraceSink } from '../viz/activation-sink';
 import { resolveDbPath } from './runtime-config';
 import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
+import { acquireLockWithRetry, releaseLock } from './lockfile';
 
 const LOG_PATH = '/tmp/brain-memory-mcp.log';
 
@@ -58,6 +62,20 @@ const log = (msg: string): void =>
 
 /** T-11-02: bound the query before embedding (mirrors HybridResponder MAX_QUERY_BYTES). */
 const MAX_QUERY_BYTES = 4_000;
+
+/** T-11-03: bound memory_add content at the handler boundary (DoS cap). */
+const MAX_CONTENT_CHARS = 8_000;
+
+/**
+ * D-05 origin clamp (defense in depth behind the zod enum, T-11-01): a client can
+ * never mint inferred-origin content — 'inferred' would let an agent's own output
+ * strengthen a fact (self-confirmation, spec §4). Returns 'asserted_by_user' ONLY
+ * on an exact match; everything else (incl. 'inferred', unknown values, undefined)
+ * clamps to 'observed'. Exported for direct unit testing.
+ */
+export function validateOrigin(raw: string | undefined): 'observed' | 'asserted_by_user' {
+  return raw === 'asserted_by_user' ? 'asserted_by_user' : 'observed';
+}
 
 export interface CreateBrainMcpServerOptions {
   dbPath: string;
@@ -111,9 +129,8 @@ export async function createBrainMcpServer(
   // One session ID per server process (RESEARCH Session-ID recommendation, A3).
   const sessionId = randomUUID();
 
-  // Plan 03 consumes these in the memory_add / memory_ask handlers; referenced here so
-  // the wiring is complete (and type-checked) from day one.
-  void responder; void pipeline; void sessionId; void strength;
+  // memory_ask consumes the responder (Task 2); referenced here until that handler lands.
+  void responder;
 
   // ── 3. Server + exactly three tools (D-01/D-03; memory_ask always registered, D-04) ──
   const server = new McpServer(
@@ -189,10 +206,57 @@ export async function createBrainMcpServer(
       }),
       outputSchema: z.object({ status: z.string(), message: z.string() }),
     },
-    async () => ({
-      isError: true,
-      content: [{ type: 'text' as const, text: 'memory_add not yet implemented (Plan 03)' }],
-    }),
+    async ({ content, origin: rawOrigin }) => {
+      // ── Validate BEFORE the lock (T-11-05: early exits must be lock-free) ──
+      // T-11-03: DoS bound at the handler boundary; redactSecrets runs inside recordEvent.
+      const bounded = content.slice(0, MAX_CONTENT_CHARS);
+      // D-05: clamp origin — 'inferred' (or anything unknown) can never reach the engine.
+      const origin = validateOrigin(rawOrigin);
+
+      // Single-writer lock per call: coexists with the hourly sleep pass and the
+      // always-on watcher. Lock-fail returns to the CLIENT — never process.exit
+      // (the server must keep serving; T-11-05).
+      if (!(await acquireLockWithRetry())) {
+        return {
+          isError: true,
+          content: [{
+            type: 'text' as const,
+            text: 'Memory busy (consolidation in progress); retry in a moment.',
+          }],
+        };
+      }
+      try {
+        // Episodic path ONLY (MCP-03): recordEvent → gate.score → episode append.
+        // No graph node is ever created or mutated here — the sleep pass remains
+        // the sole graph writer. Flat source='mcp' (D-06), no dedup key (D-07).
+        pipeline.recordEvent({
+          content: bounded,
+          role: 'user',
+          origin,
+          sessionId,
+          source: 'mcp',
+          externalId: null,
+        });
+        // D-10: honest deferred ack — searchable only after the next sleep pass.
+        const ack = {
+          status: 'queued',
+          message: 'stored as episode; becomes searchable after the next consolidation pass (runs hourly)',
+        };
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Stored as episode; becomes searchable after the next consolidation pass (runs hourly).',
+          }],
+          structuredContent: ack,
+        };
+      } catch (err) {
+        // T-11-06: never rethrow across the transport — log file-side, generic text out.
+        log(`memory_add error: ${err}`);
+        return { isError: true, content: [{ type: 'text' as const, text: 'memory_add failed' }] };
+      } finally {
+        releaseLock();
+      }
+    },
   );
 
   server.registerTool(
