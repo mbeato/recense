@@ -129,7 +129,7 @@ const HULL_ROT_Z = 0;
 // Brain world scale: the normalized brain (median axis spans ±1) maps to ±BRAIN_SCALE
 // world units. Drives BOTH the visible shell and the containment volume, so they stay
 // aligned. Bigger = roomier cloud (more space between nodes); smaller = denser.
-const BRAIN_SCALE = 200;
+const BRAIN_SCALE = 280;
 // Containment pull: how hard a node that drifts outside the brain volume is drawn back
 // toward the center each tick. Higher = crisper brain edge, more surface clumping.
 const CONTAIN_STRENGTH = 0.35;
@@ -323,7 +323,7 @@ function applyTrace(seedIds) {
 
 // ---------- nodeThreeObject factory ----------
 function makeNodeObject(node) {
-  const r    = 3 + node.s * 5;
+  const r    = 2 + node.s * 3.5;
   const isTomb = !!node.tombstoned;
   const base  = isTomb ? new THREE.Color(TOMBSTONE_COLOR) : new THREE.Color(TYPE_COLOR[node.type] || TYPE_COLOR.entity);
   const op    = isTomb ? 0.45 : 0.78;
