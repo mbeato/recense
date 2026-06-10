@@ -119,6 +119,10 @@ const TYPE_COLOR    = { entity: 0x5b8dff, fact: 0x9b8cff, schema: 0xff6b9d };
 const TOMBSTONE_COLOR = 0x3a3e4a;
 const HOT           = new THREE.Color(0xffe08a);   // activation glow / particle color
 const MAX_FAN_OUT   = 8;
+const MAX_HOPS         = 4;    // spreading-activation depth (multi-hop pathways)
+const HOP_MS           = 620;  // delay between hop waves — energy propagates outward
+const TRACE_FANOUT     = 5;    // max edges followed out of each node
+const TRACE_MAX_EDGES  = 80;   // total pulse budget per trace
 
 // hull mesh rotation constants (radians) — tweak if the model sits rotated
 // e.g. -Math.PI/2 on X to lay it flat. Longest STL axis is Z (~208 units):
@@ -273,6 +277,20 @@ for (const l of allLinks) {
 ncountEl.textContent = String(allNodes.length);
 if (!loadErr) logEvent('init', `graph loaded: ${allNodes.length} nodes / ${allLinks.length} edges`);
 
+// ---------- spreading-activation pulses (slow electric energy traveling node → node) ----------
+const PULSE_MS = 1100;
+const pulses = [];                                  // {from, to, t0, mesh}
+const _pulseGeo = new THREE.SphereGeometry(3, 10, 10);
+let pulseGroup = null;                              // created after Graph init (needs the scene)
+function spawnPulse(from, to) {
+  if (!pulseGroup || !from || !to) return;
+  const mat = new THREE.MeshBasicMaterial({ color: 0xcdefff, transparent: true, opacity: 0.9,
+    blending: THREE.AdditiveBlending, depthWrite: false });
+  const mesh = new THREE.Mesh(_pulseGeo, mat);
+  pulseGroup.add(mesh);
+  pulses.push({ from, to, t0: performance.now(), mesh });
+}
+
 // ---------- rAF activation loop ----------
 // Touches ONLY active set — never all nodes, no per-frame full refresh (perf trap D-93).
 const active = new Set();
@@ -296,30 +314,81 @@ function tick(now) {
     const a = Math.max(0, node.__act);
     node.__mat.color.copy(node.__base).lerp(HOT, a);
     node.__mat.opacity = 0.78 + a * 0.22;
-    node.__mesh.scale.setScalar(1 + a * 1.8);           // seed (a=1) → 2.8×, neighbor (a=0.85) → 2.53×
+    node.__mesh.scale.setScalar(1 + a * 0.7);           // subtle node glow — the moving pulses carry the signal
+  }
+  // advance traveling pulses (sample live node positions so they track the layout)
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    const p = pulses[i];
+    const k = (now - p.t0) / PULSE_MS;
+    if (k >= 1) { pulseGroup.remove(p.mesh); p.mesh.material.dispose(); pulses.splice(i, 1); continue; }
+    const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;   // easeInOut
+    p.mesh.position.set(
+      (p.from.x || 0) + ((p.to.x || 0) - (p.from.x || 0)) * e,
+      (p.from.y || 0) + ((p.to.y || 0) - (p.from.y || 0)) * e,
+      (p.from.z || 0) + ((p.to.z || 0) - (p.from.z || 0)) * e,
+    );
+    const glow = Math.sin(k * Math.PI);                 // fade in over the trip, out at the end
+    p.mesh.material.opacity = 0.3 + glow * 0.65;
+    p.mesh.scale.setScalar(0.6 + glow * 0.9);
   }
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
 
-// ---------- applyTrace — single function for both SSE and local triggers (D-102) ----------
+// ---------- applyTrace — multi-hop spreading activation as slow electric pulses (D-102) ----------
+// Same function for SSE + local triggers. BFS outward from the seeds; each hop wave sends a
+// slow glowing pulse traveling node→node along its edges, lighting the destination as it lands.
+// The pathway is revealed through the LOD for the trace's duration, then fades back.
 function applyTrace(seedIds) {
   logEvent('spreading activation', `seeds=[${seedIds.slice(0, 4).join(',')}${seedIds.length > 4 ? '…' : ''}]`);
-  seedIds.forEach(sid => {
-    const seed = idMap.get(sid);
-    if (!seed) return;
-    activate(seed, 1.0);                                 // phase 1: seed pulse at full activation
-    const edges = (adj.get(sid) || []).slice(0, MAX_FAN_OUT);
-    edges.forEach((edge, i) => {
-      setTimeout(() => {
+  const visited = new Set();
+  const seeds = [];
+  for (const sid of seedIds) {
+    const s = idMap.get(sid);
+    if (s && !visited.has(sid)) { visited.add(sid); seeds.push(s); }
+  }
+  if (!seeds.length) return;
+
+  // BFS into hop-ordered waves of edges
+  const waves = [];
+  let frontier = seeds, budget = TRACE_MAX_EDGES;
+  for (let hop = 1; hop <= MAX_HOPS && frontier.length && budget > 0; hop++) {
+    const wave = [], next = [];
+    for (const node of frontier) {
+      for (const edge of (adj.get(node.id) || []).slice(0, TRACE_FANOUT)) {
         const nb = resolve(edge.target);
-        if (!nb) return;
-        activate(nb, 0.85);                              // phase 2: neighbor spread at 0.85
+        if (!nb || visited.has(nb.id)) continue;
+        if (budget-- <= 0) break;
+        visited.add(nb.id);
+        wave.push({ edge, from: node, to: nb });
+        next.push(nb);
+      }
+    }
+    if (wave.length) waves.push(wave);
+    frontier = next;
+  }
+
+  // reveal the whole pathway through the LOD up front (one visibility re-apply), light the seeds
+  seeds.forEach(s => traceNodes.add(s.id));
+  for (const wave of waves) for (const { edge, to } of wave) { traceNodes.add(to.id); traceLinks.add(linkKey(edge)); }
+  revealTrace();
+  seeds.forEach(s => activate(s, 1.0));
+
+  // animate the pulses hop by hop — energy propagates outward
+  waves.forEach((wave, h) => {
+    const intensity = Math.max(0.3, 1 - (h + 1) * 0.18);
+    setTimeout(() => {
+      wave.forEach(({ edge, from, to }, i) => setTimeout(() => {
+        spawnPulse(from, to);                                       // slow electric pulse, node → node
         const link = edge._mirror || edge;
-        try { Graph.emitParticle(link); } catch (e) { logEvent('warn', 'emitParticle: ' + e.message); }
-      }, 120 + i * 90);                                  // stagger: 120ms + 90ms per neighbor
-    });
+        try { Graph.emitParticle(link); } catch (e) {}
+        setTimeout(() => activate(to, intensity), PULSE_MS * 0.8);  // light the node as the pulse arrives
+      }, i * 35));
+    }, h * HOP_MS);
   });
+
+  // fade the revealed pathway back into the LOD once the pulses finish
+  setTimeout(() => { traceNodes.clear(); traceLinks.clear(); revealTrace(); }, waves.length * HOP_MS + 2800);
 }
 
 // ---------- LOD classification: the engine's schema hierarchy IS the clustering ----------
@@ -341,15 +410,24 @@ for (const n of allNodes) {
   else if (memberSchema.has(n.id))   { n.__cat = 'member'; n.__schemaId = memberSchema.get(n.id); }
   else                               { n.__cat = 'haze'; }
 }
-const expanded = new Set();   // schemaIds currently drilled-in
-const nodeVisible = n => !!n && (n.__cat !== 'member' || expanded.has(n.__schemaId));
+const expanded   = new Set(); // schemaIds currently drilled-in
+const traceNodes = new Set(); // node ids temporarily lit by an active trace (revealed through the LOD)
+const traceLinks = new Set(); // link keys temporarily lit by an active trace
+const linkKey = l => {
+  const s = typeof l.source === 'object' ? l.source.id : l.source;
+  const t = typeof l.target === 'object' ? l.target.id : l.target;
+  return s < t ? s + '' + t : t + '' + s;
+};
+const nodeVisible = n => !!n && (n.__cat !== 'member' || expanded.has(n.__schemaId) || traceNodes.has(n.id));
 const linkVis = l => {
+  if (traceLinks.has(linkKey(l))) return true;                   // active trace pathway always shows
   const sid = typeof l.source === 'object' ? l.source.id : l.source;
   const tid = typeof l.target === 'object' ? l.target.id : l.target;
   if (l.kind === 'abstracts') return expanded.has(sid);          // schema→member: only when drilled in
   return nodeVisible(idMap.get(sid)) && nodeVisible(idMap.get(tid)) &&
     (expanded.has(memberSchema.get(sid)) || expanded.has(memberSchema.get(tid)));
 };
+function revealTrace() { Graph.nodeVisibility(nodeVisible); Graph.linkVisibility(linkVis); }
 
 // ---------- nodeThreeObject factory (cached so Graph.refresh() reuses meshes) ----------
 function makeNodeObject(node) {
@@ -384,9 +462,9 @@ Graph = ForceGraph3D()(document.getElementById('graph'))
   .linkVisibility(linkVis)
   .linkColor(() => 'rgba(120,140,190,0.6)')
   .linkWidth(1.2)
-  .linkDirectionalParticleColor(() => '#ffe08a')
-  .linkDirectionalParticleWidth(2.2)
-  .linkDirectionalParticleSpeed(0.02)
+  .linkDirectionalParticleColor(() => '#aef0ff')   // electric blue-white energy
+  .linkDirectionalParticleWidth(3)
+  .linkDirectionalParticleSpeed(0.005)             // slow-moving pulse, node → node
   .onNodeClick(node => {
     if (node.__cat === 'schema') {            // drill into / out of a schema cluster
       if (expanded.has(node.id)) expanded.delete(node.id); else expanded.add(node.id);
@@ -417,7 +495,7 @@ Graph = ForceGraph3D()(document.getElementById('graph'))
 const chargeForce = Graph.d3Force('charge');
 if (chargeForce) chargeForce.strength(-15);
 const linkForce = Graph.d3Force('link');
-if (linkForce) linkForce.distance(l => l.kind === 'abstracts' ? 7 : 16);   // members hug their schema
+if (linkForce) linkForce.distance(l => l.kind === 'abstracts' ? 16 : 22);  // enough spacing for visible pulse travel
 Graph.d3ReheatSimulation();
 
 // ---------- real brain mesh hull (CC BY-SA, Nevit Dilmen) ----------
@@ -427,6 +505,8 @@ const hullGroup = new THREE.Group();
 hullGroup.rotation.set(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
 hullGroup.scale.setScalar(BRAIN_SCALE);   // normalized brain → world; matches containment
 Graph.scene().add(hullGroup);
+pulseGroup = new THREE.Group();           // holds the traveling activation pulses
+Graph.scene().add(pulseGroup);
 
 new STLLoader().load('./vendor/brain-model.stl', (geometry) => {
   // Normalize IDENTICALLY to the occupancy grid (vendor/brain-volume.json): recenter on
@@ -514,8 +594,10 @@ btnTomb.addEventListener('click', () => {
 btnTest.addEventListener('click', () => {
   const visible = getVisibleNodes();
   if (!visible.length) return;
-  const pool   = visible.slice().sort((a, b) => b.s - a.s).slice(0, 50);
-  const seeds  = pool.slice(0, 2).map(n => n.id);
+  // pick the best-connected seeds so the spreading pathways are actually visible
+  const connected = visible.filter(n => (adj.get(n.id) || []).length > 0)
+                           .sort((a, b) => (adj.get(b.id).length) - (adj.get(a.id).length));
+  const seeds = (connected.length ? connected : visible).slice(0, 2).map(n => n.id);
   applyTrace(seeds);
 });
 
