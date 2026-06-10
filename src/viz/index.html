@@ -581,6 +581,24 @@ Graph.d3ReheatSimulation();
 // whole brain + stem instead of relying on 3d-force-graph's default camera.
 Graph.cameraPosition({ x: 0, y: 0, z: BRAIN_SCALE * 3.1 });
 
+// ---------- settle behind a hidden canvas, then freeze + fade in (no load-time shuffle) ----------
+// Let the force layout settle while the canvas is invisible; on first engine stop, PIN every node
+// at its settled position (fx/fy/fz) so the graph is static from the moment it appears and never
+// reshuffles (on tombstone toggle, schema expand, etc.), then fade it in.
+Graph.cooldownTicks(170);
+const graphEl = document.getElementById('graph');
+graphEl.style.transition = 'opacity 0.7s ease';
+graphEl.style.opacity = '0';
+let _settled = false;
+function revealSettled() {
+  if (_settled) return;
+  _settled = true;
+  for (const n of allNodes) { if (n.x != null) { n.fx = n.x; n.fy = n.y; n.fz = n.z; } }
+  graphEl.style.opacity = '1';
+}
+Graph.onEngineStop(revealSettled);
+setTimeout(revealSettled, 6000);   // safety: reveal even if the engine never reports a stop
+
 // Tooltip follows cursor
 document.addEventListener('mousemove', e => {
   tooltipEl.style.left = (e.clientX + 12) + 'px';
