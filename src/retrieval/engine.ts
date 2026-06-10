@@ -84,9 +84,10 @@ export class RetrievalEngine {
     // D-97: derive once so the Noop hot path pays zero per-call work (no instanceof per query).
     this.traceEnabled = !(traceSink instanceof NoopActivationTraceSink);
 
-    // Read all non-tombstoned nodes for cue-less rank
+    // Read all non-tombstoned nodes for cue-less rank.
+    // origin included for L-6: inferred-origin nodes are excluded from hard_keep pinning.
     this.stmtGetAllLiveNodes = db.prepare(
-      'SELECT id, value, s, last_access FROM node WHERE tombstoned = 0'
+      'SELECT id, value, s, last_access, origin FROM node WHERE tombstoned = 0'
     );
 
     // DEBT-06 Option A: cwd soft filter helpers (T-09-05: cwd bound as param, never interpolated).
@@ -139,6 +140,7 @@ export class RetrievalEngine {
       value: string;
       s: number;
       last_access: number;
+      origin: string;
     }>;
 
     // ── DEBT-06 cwd soft filter (Option A / D-93) ───────────────────────────────
@@ -161,6 +163,8 @@ export class RetrievalEngine {
 
     const scores = new Map<string, number>();
     const nodeValues = new Map<string, string>();
+    // L-6: track origin per node so inferred nodes can be excluded from hard_keep pinning.
+    const nodeOrigins = new Map<string, string>();
 
     for (const row of rows) {
       const eff = this.strength.effectiveStrength(
@@ -176,6 +180,7 @@ export class RetrievalEngine {
 
       scores.set(row.id, this.config.rankWeightS * eff + this.config.rankWeightR * recency);
       nodeValues.set(row.id, row.value);
+      nodeOrigins.set(row.id, row.origin);
     }
 
     // ── Step 2: 1-hop spreading activation from top base-ranked seeds ──────────
@@ -248,7 +253,10 @@ export class RetrievalEngine {
 
     for (const [id, score] of finalRanked) {
       const value = nodeValues.get(id)!;
-      if (this.gate.score(value, 'user').hardKeep) {
+      // L-6: inferred-origin nodes are excluded from hard_keep pinning — they must not
+      // re-inject assistant-minted content unconditionally (amplifies the C-2 loop).
+      // Only user/tool-origin (observed/asserted_by_user) nodes with directive vocabulary pin.
+      if (this.gate.score(value, 'user').hardKeep && nodeOrigins.get(id) !== 'inferred') {
         hardKeep.push({ id, value, score });
       } else {
         regular.push({ id, value, score });

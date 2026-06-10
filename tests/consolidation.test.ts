@@ -1232,6 +1232,93 @@ describe('Consolidator', () => {
     // The original engineerNodeId remains tombstoned (it was tombstoned in pass 1)
     expect(allNodesAfterPass2.find(n => n.id === engineerNodeId)!.tombstoned).toBe(1);
   });
+  // ── C-2: assistant-role episodes never strengthen (self-confirmation guard) ────
+  //
+  // An assistant-role episode whose claim exact-matches an existing node must NOT
+  // increase s or c (the memory's own restated output cannot strengthen itself).
+  // A user-role episode with the same exact match MUST increase s (regression guard).
+  // In both cases a 'confirm' sink event is emitted (for audit trail).
+
+  it('C-2: assistant-role confirm does NOT strengthen (s and c unchanged)', async () => {
+    const nodeId = newId();
+    const nodeValue = 'always use TypeScript';
+
+    h.store.upsertNode({ id: nodeId, type: 'fact', value: nodeValue, origin: 'observed', s: 0.3, c: 0.5 });
+    const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
+    const [vec] = await embedder.embed([nodeValue]);
+    h.store.setEmbedding(nodeId, vec!);
+
+    const sBefore = h.store.getNode(nodeId)!.s;
+    const cBefore = h.store.getNode(nodeId)!.c;
+
+    const provider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: nodeValue }])], // D-17 fast path
+      judgeScript: [],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider,
+      makeNoOpSchemaInducer(h), h.config, h.clock, sink,
+    );
+
+    // Assistant-role episode: must not strengthen even on exact match
+    h.episodes.append({
+      content: 'assistant confirming content',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-c2-assistant',
+    });
+
+    await consolidator.consolidate();
+
+    const nodeAfter = h.store.getNode(nodeId)!;
+    // s and c must be UNCHANGED — assistant confirm does not strengthen
+    expect(nodeAfter.s).toBe(sBefore);
+    expect(nodeAfter.c).toBe(cBefore);
+    // confirm event still emitted for audit trail
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]!.event_type).toBe('confirm');
+  });
+
+  it('C-2 regression guard: user-role confirm DOES strengthen (user-role still works)', async () => {
+    const nodeId = newId();
+    const nodeValue = 'always use TypeScript';
+
+    h.store.upsertNode({ id: nodeId, type: 'fact', value: nodeValue, origin: 'observed', s: 0.3, c: 0.5 });
+    const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
+    const [vec] = await embedder.embed([nodeValue]);
+    h.store.setEmbedding(nodeId, vec!);
+
+    const sBefore = h.store.getNode(nodeId)!.s;
+
+    const provider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: nodeValue }])], // D-17 fast path
+      judgeScript: [],
+    });
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider,
+      makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    // User-role episode: confirm MUST strengthen
+    h.episodes.append({
+      content: 'user confirming content',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-c2-user',
+    });
+
+    await consolidator.consolidate();
+
+    const sAfter = h.store.getNode(nodeId)!.s;
+    expect(sAfter).toBeGreaterThan(sBefore);
+  });
 });
 
 // ---------------------------------------------------------------------------

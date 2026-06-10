@@ -106,6 +106,41 @@ describe('RetrievalEngine', () => {
       // hard_keep node must be first, despite lowest strength
       expect(result.results[0]?.id).toBe('rule');
     });
+
+    it('L-6: inferred-origin node is NOT hard-keep-pinned (subject to budget instead)', () => {
+      // An inferred-origin node with directive vocabulary must NOT be unconditionally pinned.
+      // It falls into the regular (budget-capped) bucket, stopping the C-2 amplification loop.
+      store.upsertNode({
+        id: 'inferred-directive',
+        type: 'fact',
+        value: 'always remember the user prefers TypeScript',
+        origin: 'inferred',
+        s: 0.01,
+      });
+      // An observed-origin node with the same directive vocabulary DOES pin.
+      addNode('observed-directive', 'always remember the user prefers TypeScript', 0.01);
+      // A non-directive observed node with high strength (to demonstrate budget behavior)
+      addNode('strong', 'some random high-strength fact', 0.99);
+
+      const result = makeEngine().retrieveCueless();
+
+      // observed-directive pins to slot 0 (hard_keep, origin=observed)
+      expect(result.results[0]?.id).toBe('observed-directive');
+      // inferred-directive must NOT be in the hard_keep bucket — index > 0 and subject to budget
+      const inferredIdx = result.results.findIndex(r => r.id === 'inferred-directive');
+      expect(inferredIdx).toBeGreaterThan(0);
+    });
+
+    it('L-6 regression: observed-origin hard_keep node still pins', () => {
+      // Guard against regressions: the fix must not affect observed-origin pinning.
+      addNode('strong', 'some random fact', 0.99);
+      addNode('observed-rule', 'always remember this rule', 0.01);
+
+      const result = makeEngine().retrieveCueless();
+
+      // observed-rule (hard_keep) must still be first
+      expect(result.results[0]?.id).toBe('observed-rule');
+    });
   });
 
   // ─── RET-01: token-budget cap ────────────────────────────────────────────────

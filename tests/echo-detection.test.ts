@@ -473,6 +473,64 @@ describe('echo detection via consolidate()', () => {
     expect(updated?.consolidated).toBe(1);
   });
 
+  it('H-6: episode.ts-relative window — detects Monday inferred in Friday replay when clock is far in future', async () => {
+    // Scenario: inferred episode at t0 (Monday), replay at t0+4d (Friday),
+    // but consolidation runs at t0+100d (clock.nowMs far in future).
+    // echoRecencyWindowMs = 5 days (wider than the 4-day gap between episodes).
+    // Old code: sinceMs = nowMs - 5d = t0+95d → Monday (t0) excluded → echo NOT detected.
+    // New code: sinceMs = episode.ts - 5d = (t0+4d) - 5d = t0-1d → Monday (t0) included → echo IS detected.
+    const customConfig: typeof h.config = { ...h.config, echoRecencyWindowMs: 5 * 86_400_000 };
+
+    const t0 = h.clock.nowMs(); // Monday
+
+    // Inferred episode at Monday (t0)
+    const inferredEp = h.episodes.append({
+      content: 'Max always uses TypeScript',
+      origin: 'inferred',
+      salience: 0,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-h6-inf',
+    });
+
+    // Advance clock to Friday (4 days later)
+    h.clock.advanceMs(4 * 86_400_000);
+
+    // Replay episode at Friday — same content as inferred
+    const replayEp = h.episodes.append({
+      content: 'Max always uses TypeScript',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 1,
+      role: 'user',
+      session_id: 'session-h6-replay',
+    });
+
+    // Advance clock far into the future (total t0 + 100 days at consolidation time)
+    h.clock.advanceMs(96 * 86_400_000);
+
+    // With new episode.ts-relative window, the inferred episode is within the window
+    // of the Friday replay (Friday - 5d = t0-1d; Monday t0 > t0-1d → included).
+    // Echo guard fires → generate never called.
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(customConfig.embeddingDimensions),
+      generateScript: [], // echo guard fires → processing short-circuited
+      judgeScript: [],
+    });
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider,
+      makeNoOpSchemaInducer(h), customConfig, h.clock,
+    );
+
+    await consolidator.consolidate();
+
+    // The Friday replay episode must have source_inference_id set to the Monday inferred ep
+    const updatedReplay = h.episodes.getEpisode(replayEp.id);
+    expect(updatedReplay?.source_inference_id).toBe(inferredEp.id);
+  });
+
   it('Non-echo control: an unrelated turn (cosine 0) is never backfilled', async () => {
     // Append a prior inferred episode
     h.episodes.append({

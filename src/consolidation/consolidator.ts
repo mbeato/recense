@@ -40,7 +40,7 @@ import type { JudgeRelation } from '../model/judge';
 import type { ModelProvider } from '../model/provider';
 import { parseClaims } from '../model/claim-extractor';
 import { promptForSource } from '../source/extraction-prompts';
-import type { Origin, PendingContradiction, EpisodeRow } from '../lib/types';
+import type { Origin, PendingContradiction, EpisodeRow, EpisodeRole } from '../lib/types';
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
 import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
@@ -62,6 +62,8 @@ interface ClaimDecision {
   magnitude: number;
   /** Episode's source_inference_id — null means provenance-eligible for D-19 recording. */
   episodeSourceInferenceId: string | null;
+  /** Episode role — assistant-role confirms must NOT strengthen (C-2 self-confirmation guard). */
+  episodeRole: EpisodeRole;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,12 +148,19 @@ export class Consolidator {
     // An inferred episode is never classified as an echo of itself (D-44)
     if (episode.origin === 'inferred') return null;
 
-    const sinceMs = this.clock.nowMs() - this.config.echoRecencyWindowMs;
+    // H-6: use episode.ts as window anchor, not clock.nowMs() (episode-relative window).
+    // This way a Friday replay of a Monday inference is detected correctly regardless of
+    // when the sleep pass actually runs — the window is keyed to the episode's own timestamp.
+    const sinceMs = episode.ts - this.config.echoRecencyWindowMs;
     const recent = this.episodes.listRecentInferred(sinceMs);
     if (recent.length === 0) return null;
+    // Cap to candidates at or before the replayed episode (prevents a future inferred episode
+    // from being treated as the echo source of a past replay during out-of-order consolidation).
+    const recentCapped = recent.filter(r => r.ts <= episode.ts);
+    if (recentCapped.length === 0) return null;
 
-    // Batch-embed [turn, ...recent inferred] in one call (offline cost, T-02-ASYNC Phase A)
-    const texts = [episode.content, ...recent.map(r => r.content)];
+    // Batch-embed [turn, ...recentCapped inferred] in one call (offline cost, T-02-ASYNC Phase A)
+    const texts = [episode.content, ...recentCapped.map(r => r.content)];
     const vecs = await this.provider.embed(texts);
 
     const episodeVec = vecs[0];
@@ -160,11 +169,11 @@ export class Consolidator {
     let bestId: string | null = null;
     let bestSim = -1;
 
-    for (let i = 0; i < recent.length; i++) {
-      const recentEp = recent[i]!;
+    for (let i = 0; i < recentCapped.length; i++) {
+      const recentEp = recentCapped[i]!;
       const recentVec = vecs[i + 1];
       if (!recentVec) continue;
-      // Safety: skip if the same id appears (shouldn't happen — inferred vs non-inferred)
+      // Safety: skip if the same id appears (shouldn't happen — inferred vs non-inferred, and ts-capped)
       if (recentEp.id === episode.id) continue;
       const sim = cosineSimF32(episodeVec, recentVec);
       if (sim > bestSim) {
@@ -304,6 +313,7 @@ export class Consolidator {
           episodeSessionId: episode.session_id,
           magnitude,
           episodeSourceInferenceId: episode.source_inference_id,
+          episodeRole: episode.role,
         });
       }
 
@@ -334,9 +344,13 @@ export class Consolidator {
     switch (decision.relation) {
       case 'confirm': {
         if (decision.bestCandidateId) {
-          // Pass inherited episode origin — StrengthDecayManager blocks 'inferred' (T-02-SELFCONF)
-          this.strength.strengthen(decision.bestCandidateId, decision.claimOrigin);
-          // SEAM-02 D-49: emit inside the existing transaction (D-48 in-transaction)
+          // C-2: assistant-role episodes must NOT strengthen — the memory's own output restated
+          // by Claude is self-confirmation (session-inject echo). User/tool roles still strengthen.
+          // The inferred-origin guard in StrengthDecayManager (T-02-SELFCONF) remains as a second layer.
+          if (decision.episodeRole !== 'assistant') {
+            this.strength.strengthen(decision.bestCandidateId, decision.claimOrigin);
+          }
+          // Always emit — records the confirm event for audit regardless of role (D-49 compliance).
           this.sink.emit({
             event_type: 'confirm',
             node_id: decision.bestCandidateId,
