@@ -238,8 +238,11 @@ export function startVizServer(dbPath: string, port: number): http.Server {
       return;
     }
 
-    // ── Other static files under src/viz/ (e.g. /favicon.ico) ──────────────
-    // Resolve and assert containment within VIZ_ROOT (T-10-07).
+    // ── Catch-all (IN-01) ────────────────────────────────────────────────────
+    // We do NOT serve arbitrary top-level static files (only / , /index.html, and
+    // /vendor/* are served). This remaining branch is the traversal-guarded 404:
+    // resolve the path and 403 if it escapes VIZ_ROOT (T-10-07 — this is the live
+    // guard for non-/vendor paths like /../package.json), otherwise 404.
     const candidate = path.resolve(VIZ_ROOT, url.slice(1));
     if (candidate !== VIZ_ROOT && !candidate.startsWith(VIZ_ROOT + path.sep)) {
       res.writeHead(403, { 'content-type': 'text/plain' });
@@ -247,15 +250,14 @@ export function startVizServer(dbPath: string, port: number): http.Server {
       return;
     }
 
-    // ── 404 fallthrough ─────────────────────────────────────────────────────
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('not found');
   });
 
   // T-10-09: bind to 127.0.0.1 ONLY — loopback-only, never a wildcard.
-  server.listen(port, '127.0.0.1', () => {
-    process.stdout.write(`brain viz → http://127.0.0.1:${port}\n`);
-  });
+  // No stdout here — the CLI launcher (brain-viz-cli) owns the user-facing URL
+  // print (IN-02); a library start fn must not write to stdout (pollutes callers/tests).
+  server.listen(port, '127.0.0.1');
 
   // Clean up on server close.
   server.on('close', () => {
