@@ -29,7 +29,7 @@ import { StrengthDecayManager } from '../strength/decay';
 import { CandidateRetriever } from '../retrieval/topk';
 import { DefaultModelProvider } from '../model/provider';
 import { RecallEngine } from '../recall';
-import { acquireLock, releaseLock } from './lockfile';
+import { releaseLock, acquireLockWithRetry } from './lockfile';
 import { SQLiteActivationTraceSink, NoopActivationTraceSink } from '../viz/activation-sink';
 
 const LOG_PATH = '/tmp/brain-memory-recall.log';
@@ -77,19 +77,6 @@ function resolveQuery(): string | undefined {
 }
 
 const SAFE_NULL_RESULT = JSON.stringify({ inference: null, episodeId: null, origin: 'inferred' });
-
-/**
- * Acquire the single-writer lock, retrying briefly to ride out the watcher's per-tick
- * holds (it grabs the same lock every ~500ms). Bounded so a genuinely stuck/long holder
- * (watcher mid-LLM-response) still fails fast rather than hanging the CLI.
- */
-async function acquireLockWithRetry(attempts = 8, delayMs = 150): Promise<boolean> {
-  for (let i = 0; i < attempts; i++) {
-    if (acquireLock()) return true;
-    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
-  }
-  return false;
-}
 
 async function main(): Promise<void> {
   // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──

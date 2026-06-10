@@ -94,6 +94,24 @@ export function acquireLock(): boolean {
 }
 
 /**
+ * Acquire the sleep-pass lock, retrying briefly to ride out short-lived holds.
+ *
+ * Shared by recall-cli and watcher-cli (LOCK-RETRY-HELPER): a bounded retry lets an
+ * interactive recall or a watcher tick coexist with the other's per-tick hold without
+ * failing on the first collision. Returns false only if the lock stays held across all
+ * attempts (e.g. a sleep-pass or LLM-response-in-flight).
+ *
+ * Default: 8 attempts × 150ms delay ≈ 1050ms worst-case wait.
+ */
+export async function acquireLockWithRetry(attempts = 8, delayMs = 150): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    if (acquireLock()) return true;
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return false;
+}
+
+/**
  * Release the sleep-pass lock.
  *
  * WR-02 — ownership-checked: after a stale-reclaim the lock file may belong to a

@@ -5,19 +5,24 @@
  * into a Channel that enforces the D-74 fail-closed allowlist at the transport edge.
  *
  * Design decisions baked in:
- *  - D-74: empty allowlist → receive() returns [] (answers no one until configured).
+ *  - D-74: empty allowlist → fetch() returns {messages:[],commitTo:null} (lock never touched).
  *  - D-74: unlisted senders are silently ignored — logged to file only, never replied to.
  *  - cursor:imessage in the meta store: each ROWID returned at most once (dedup).
- *  - Cursor advanced past ALL scanned ROWIDs (listed or not) so unlisted messages
- *    are not re-scanned on the next poll. (T-07-03)
+ *  - commitTo covers ALL scanned ROWIDs (listed or not) so unlisted messages are not
+ *    re-scanned on the next poll. (T-07-03)
+ *  - Cursor write is deferred to commitCursor() and called by the watcher under the
+ *    single-writer lock (T-LOCK-01 / LOCK-CHANNEL-SPLIT).
  *
  * Threat mitigations:
- *  - T-07-01: fail-closed allowlist — empty → [] (D-74); exact normalized handle match.
+ *  - T-07-01: fail-closed allowlist — empty → {messages:[],commitTo:null} (D-74); exact
+ *    normalized handle match.
  *  - T-07-05: silent ignore for unlisted — no reply, log to file only; surface never confirmed.
  *  - T-07-02: DefaultOsascriptSender uses execFile (no shell); recipient+text are run-handler
  *    argv params, never concatenated into the AppleScript body or any shell string.
- *  - T-07-03: cursor:imessage advanced past every scanned rowid, not just allowlisted ones.
+ *  - T-07-03: commitTo advances past every scanned rowid, not just allowlisted ones.
  *  - T-07-04: log calls go to the injected log fn (file-only); message body never logged.
+ *  - T-LOCK-01: fetch() is write-free; commitCursor() is the sole cursor writer, called
+ *    by the watcher under the lock.
  *
  * Structure: OsascriptSender (seam interface) + DefaultOsascriptSender (execFile, argv-passed)
  *            + MockOsascriptSender (scripted, no osascript) + DefaultIMessageChannel (Channel impl).
@@ -25,7 +30,7 @@
 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import type { Channel, InboundMessage } from './channel';
+import type { Channel, InboundMessage, FetchResult } from './channel';
 import type { ChatDbReader } from './chat-db-reader';
 import type { EngineConfig } from '../lib/config';
 
@@ -160,7 +165,7 @@ interface MetaStore {
  *
  * Construction is SIDE-EFFECT-FREE: no chat.db connection, no osascript invocation at
  * new time. The reader is injected already-constructed; all I/O is deferred to
- * receive()/send() calls. (mirrors GmailAdapter lazy-credential discipline, D-68 analog)
+ * fetch()/send() calls. (mirrors GmailAdapter lazy-credential discipline, D-68 analog)
  */
 export class DefaultIMessageChannel implements Channel {
   private readonly config: EngineConfig;
@@ -191,36 +196,33 @@ export class DefaultIMessageChannel implements Channel {
   }
 
   /**
-   * Poll for new allowlisted inbound messages (D-70/D-74).
+   * Poll for new allowlisted inbound messages. Performs NO write (T-LOCK-01).
    *
-   * D-74 fail-closed: if allowlist is empty, returns [] immediately — answers no one
-   * until the self-hoster opts a handle in.
-   *
-   * Cursor advancement: ALL scanned ROWIDs (listed and unlisted) advance the cursor
-   * so unlisted messages are not re-scanned on subsequent polls. (T-07-03)
-   *
-   * Returns an empty array when there are no new rows; never throws.
+   * D-74 fail-closed: empty allowlist → {messages:[],commitTo:null} — idle, lock never touched.
+   * Cold start (first-ever boot — no cursor persisted): returns {messages:[],commitTo:<baseline>}
+   *   with the meta cursor STILL NULL. The caller writes the baseline under the lock (T-LOCK-01).
+   * Normal: polls new rows; if none → {messages:[],commitTo:null} (idle);
+   *   otherwise returns the allowlisted InboundMessage[] and maxRowid as commitTo.
+   *   commitTo covers ALL scanned ROWIDs (listed or not) — T-07-03.
    */
-  async receive(): Promise<InboundMessage[]> {
-    // D-74: fail-closed — empty allowlist = answer no one
+  async fetch(): Promise<FetchResult> {
+    // D-74: fail-closed — empty allowlist = answer no one; idle signal (commitTo:null)
     if (this.config.channel.allowlist.length === 0) {
-      return [];
+      return { messages: [], commitTo: null };
     }
 
     // Read dedup cursor from meta store.
     const cursorRaw = this.meta.getMeta('cursor:imessage');
 
     // Cold start (first-ever boot — no cursor persisted): baseline at the current
-    // high-water ROWID and answer NOTHING pre-existing. A reply-sending query channel
-    // must never replay/answer the existing conversation history (that mass-texts the
-    // owner on first run). A crash / KeepAlive restart keeps a non-null persisted
-    // cursor, so it still answers messages received during downtime — only the very
-    // first start skips backfill. (D-71)
+    // high-water ROWID and answer NOTHING pre-existing. The baseline write is deferred to
+    // commitCursor() so it lands under the single-writer lock (T-LOCK-01). A crash /
+    // KeepAlive restart keeps a non-null persisted cursor — only the very first start skips
+    // backfill. (D-71)
     if (cursorRaw === null) {
       const baseline = this.reader.maxRowId();
-      this.meta.setMeta('cursor:imessage', String(baseline));
-      this.log('cold start: baselined cursor at rowid ' + String(baseline) + ' — skipping backfill');
-      return [];
+      this.log('cold start: imessage baseline at rowid ' + String(baseline) + ' — backfill skipped (write deferred to commitCursor)');
+      return { messages: [], commitTo: String(baseline) };
     }
 
     const cursor = parseInt(cursorRaw, 10);
@@ -229,13 +231,13 @@ export class DefaultIMessageChannel implements Channel {
     const rows = this.reader.pollNew(cursor);
 
     if (rows.length === 0) {
-      return [];
+      // No new rows — commitTo:null signals idle (caller skips lock acquisition)
+      return { messages: [], commitTo: null };
     }
 
-    // Advance cursor:imessage past ALL rows seen (including unlisted) — T-07-03
-    // This ensures unlisted-sender rows are not re-delivered to pollNew on the next tick.
+    // commitTo covers ALL scanned ROWIDs (listed and unlisted) — T-07-03.
+    // Unlisted-sender rows are not re-delivered to pollNew on the next tick.
     const maxRowid = rows.reduce((max, r) => Math.max(max, r.rowid), 0);
-    this.meta.setMeta('cursor:imessage', String(maxRowid));
 
     // Pre-normalize allowlist entries once per poll call
     const normalizedAllowlist = this.config.channel.allowlist.map(normalizeHandle);
@@ -257,7 +259,26 @@ export class DefaultIMessageChannel implements Channel {
       }
     }
 
-    return result;
+    return { messages: result, commitTo: String(maxRowid) };
+  }
+
+  /**
+   * Advance cursor:imessage past commitTo. Called under the single-writer lock (T-LOCK-01).
+   *
+   * Belt-and-suspenders monotonicity: if commitTo <= the stored cursor, does nothing.
+   */
+  commitCursor(commitTo: string): void {
+    const current = this.meta.getMeta('cursor:imessage');
+    if (current !== null && Number(commitTo) <= Number(current)) return; // monotonic — no regression
+    this.meta.setMeta('cursor:imessage', commitTo);
+  }
+
+  /**
+   * Return the currently persisted cursor:imessage value, or null if unset (first boot).
+   * Read by the watcher under the lock to drop stale messages and check monotonicity.
+   */
+  currentCursor(): string | null {
+    return this.meta.getMeta('cursor:imessage');
   }
 
   /**
