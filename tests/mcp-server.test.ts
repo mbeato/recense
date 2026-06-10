@@ -8,6 +8,7 @@
  *
  * Coverage:
  *   factory       — createBrainMcpServer({ dbPath, provider }) returns a connectable server
+ *   tools/list    — exactly three snake_case tools: memory_add, memory_ask, memory_search
  *   memory_search — populated DB returns structured provenance { value, origin, score, lastUpdatedMs }
  *   memory_search — calls provider.embed exactly once, provider.generate zero times (D-08)
  *   memory_search — empty DB returns { results: [] } without error
@@ -68,6 +69,12 @@ describe('mcp-server (in-process SDK client)', () => {
 
   afterEach(async () => {
     await client.close();
+  });
+
+  it('tools/list returns exactly the three brain tools', async () => {
+    const { tools } = await client.listTools();
+    const names = tools.map(t => t.name).sort();
+    expect(names).toEqual(['memory_add', 'memory_ask', 'memory_search']);
   });
 
   it('memory_search returns a results array on an empty DB', async () => {
