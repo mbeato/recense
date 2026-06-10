@@ -322,13 +322,45 @@ function applyTrace(seedIds) {
   });
 }
 
-// ---------- nodeThreeObject factory ----------
+// ---------- LOD classification: the engine's schema hierarchy IS the clustering ----------
+// `abstracts` edges go schema → member. Overview shows schema super-nodes (sized by how many
+// memories they abstract) over a faint haze of unconsolidated (un-abstracted) memory; clicking
+// a schema reveals the memories it abstracts. Scales: overview stays ~#schemas regardless of N.
+const schemaMembers = new Map();   // schemaId  -> Set(memberId)
+const memberSchema  = new Map();   // memberId  -> schemaId
+for (const l of allLinks) {
+  if (l.kind !== 'abstracts') continue;
+  const s = typeof l.source === 'object' ? l.source.id : l.source;
+  const m = typeof l.target === 'object' ? l.target.id : l.target;
+  if (!schemaMembers.has(s)) schemaMembers.set(s, new Set());
+  schemaMembers.get(s).add(m);
+  if (!memberSchema.has(m)) memberSchema.set(m, s);
+}
+for (const n of allNodes) {
+  if (n.type === 'schema')           { n.__cat = 'schema'; n.__members = (schemaMembers.get(n.id) || new Set()).size; }
+  else if (memberSchema.has(n.id))   { n.__cat = 'member'; n.__schemaId = memberSchema.get(n.id); }
+  else                               { n.__cat = 'haze'; }
+}
+const expanded = new Set();   // schemaIds currently drilled-in
+const nodeVisible = n => !!n && (n.__cat !== 'member' || expanded.has(n.__schemaId));
+const linkVis = l => {
+  const sid = typeof l.source === 'object' ? l.source.id : l.source;
+  const tid = typeof l.target === 'object' ? l.target.id : l.target;
+  if (l.kind === 'abstracts') return expanded.has(sid);          // schema→member: only when drilled in
+  return nodeVisible(idMap.get(sid)) && nodeVisible(idMap.get(tid)) &&
+    (expanded.has(memberSchema.get(sid)) || expanded.has(memberSchema.get(tid)));
+};
+
+// ---------- nodeThreeObject factory (cached so Graph.refresh() reuses meshes) ----------
 function makeNodeObject(node) {
-  const r    = 1.1 + node.s * 2;
+  if (node.__mesh) return node.__mesh;
   const isTomb = !!node.tombstoned;
+  let r, op;
+  if (node.__cat === 'schema')    { r = 3.5 + Math.sqrt(node.__members || 0) * 2.2; op = 0.95; }
+  else if (node.__cat === 'haze') { r = 0.7 + node.s * 0.8;                          op = 0.16; }
+  else                            { r = 1.1 + node.s * 2;                            op = 0.85; }
   const base  = isTomb ? new THREE.Color(TOMBSTONE_COLOR) : new THREE.Color(TYPE_COLOR[node.type] || TYPE_COLOR.entity);
-  const op    = isTomb ? 0.45 : 0.78;
-  const mat   = new THREE.MeshBasicMaterial({ color: base.clone(), transparent: true, opacity: op });
+  const mat   = new THREE.MeshBasicMaterial({ color: base.clone(), transparent: true, opacity: isTomb ? 0.4 : op });
   node.__base  = base;
   node.__mat   = mat;
   node.__act   = 0;
@@ -348,12 +380,21 @@ Graph = ForceGraph3D()(document.getElementById('graph'))
   .graphData({ nodes: getVisibleNodes(), links: allLinks })
   .nodeRelSize(4)
   .nodeThreeObject(makeNodeObject)
+  .nodeVisibility(nodeVisible)
+  .linkVisibility(linkVis)
   .linkColor(() => 'rgba(120,140,190,0.6)')
   .linkWidth(1.2)
   .linkDirectionalParticleColor(() => '#ffe08a')
   .linkDirectionalParticleWidth(2.2)
   .linkDirectionalParticleSpeed(0.02)
-  .onNodeClick(node => selectNode(node))
+  .onNodeClick(node => {
+    if (node.__cat === 'schema') {            // drill into / out of a schema cluster
+      if (expanded.has(node.id)) expanded.delete(node.id); else expanded.add(node.id);
+      Graph.refresh();
+    } else {
+      selectNode(node);
+    }
+  })
   .onNodeHover(node => {
     // Restore previous hovered node's base opacity + scale
     if (hoveredNode && hoveredNode.__mat) {
@@ -376,7 +417,7 @@ Graph = ForceGraph3D()(document.getElementById('graph'))
 const chargeForce = Graph.d3Force('charge');
 if (chargeForce) chargeForce.strength(-15);
 const linkForce = Graph.d3Force('link');
-if (linkForce) linkForce.distance(14);
+if (linkForce) linkForce.distance(l => l.kind === 'abstracts' ? 7 : 16);   // members hug their schema
 Graph.d3ReheatSimulation();
 
 // ---------- real brain mesh hull (CC BY-SA, Nevit Dilmen) ----------
