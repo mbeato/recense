@@ -48,6 +48,22 @@ import type { SchemaInducer } from './schema-induction';
 import { NoopConsolidationSink, type ConsolidationSink } from './sink';
 
 // ---------------------------------------------------------------------------
+// Module-level helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Defensive JSON parse for the pending_contradictions column (L-4).
+ * Returns [] on any parse failure so a corrupt row does not abort the consolidation pass.
+ */
+function safeParseContradictions(json: string): PendingContradiction[] {
+  try {
+    return JSON.parse(json) as PendingContradiction[];
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Internal types — collect Phase A results into plain arrays before any DB write
 // ---------------------------------------------------------------------------
 
@@ -81,6 +97,7 @@ export class Consolidator {
   private readonly config: EngineConfig;
   private readonly clock: Clock;
   private readonly sink: ConsolidationSink;
+  private readonly log: (msg: string) => void;
 
   constructor(
     db: Database.Database,
@@ -93,6 +110,7 @@ export class Consolidator {
     config: EngineConfig,
     clock: Clock = realClock,
     sink: ConsolidationSink = new NoopConsolidationSink(),
+    log: (msg: string) => void = () => {},
   ) {
     this.db = db;
     this.episodes = episodes;
@@ -104,6 +122,7 @@ export class Consolidator {
     this.config = config;
     this.clock = clock;
     this.sink = sink;
+    this.log = log;
   }
 
   // ── Private helper: re-embed dirty nodes in batch ───────────────────────
@@ -207,127 +226,143 @@ export class Consolidator {
     // (T-02-ASYNC — better-sqlite3 is synchronous). Each episode is checkpointed
     // individually so a crash between episodes never double-applies (CONSOL-02).
     const unconsolidated = this.episodes.listUnconsolidated();
+    // H-2: track which episodes were quarantined this pass (for logging/observability).
+    // Quarantined episodes are NOT marked consolidated — they will be retried next pass.
+    const quarantine = new Set<string>();
 
     for (let episode of unconsolidated) {
-      // CONSOL-01: per-source + per-role skip threshold (D-60).
-      // Per-source override wins when present (e.g. gmail 0.4); otherwise falls back to
-      // the per-role default (assistant 0.5, all other roles 0.2). LLM-free at the gate.
-      const skipThreshold =
-        this.config.salience.consolSkipThresholdBySource[episode.source] ??
-        (episode.role === 'assistant'
-          ? this.config.consolSkipThresholdAssistant
-          : this.config.consolSkipThreshold);
-      if (episode.salience < skipThreshold && episode.hard_keep === 0) {
-        continue;
-      }
+      // H-2: per-episode isolation — mirrors the per-adapter isolation in D-66 (runPullPhase).
+      // A deterministically-failing episode (bad API 400 on its content, corrupt DB row)
+      // must not block later episodes or abort Phase C / induction / eviction.
+      // On error: log, quarantine (don't markConsolidated), continue.
+      try {
+        // CONSOL-01: per-source + per-role skip threshold (D-60).
+        // Per-source override wins when present (e.g. gmail 0.4); otherwise falls back to
+        // the per-role default (assistant 0.5, all other roles 0.2). LLM-free at the gate.
+        const skipThreshold =
+          this.config.salience.consolSkipThresholdBySource[episode.source] ??
+          (episode.role === 'assistant'
+            ? this.config.consolSkipThresholdAssistant
+            : this.config.consolSkipThreshold);
+        if (episode.salience < skipThreshold && episode.hard_keep === 0) {
+          continue;
+        }
 
-      // ── Echo detection (D-44/D-45): backfill source_inference_id BEFORE claim processing ──
-      // A replayed turn whose embedding cosines >= echoSimilarityThreshold against a recent
-      // inferred episode (within echoRecencyWindowMs) has its source_inference_id backfilled
-      // for audit. The structural guard below then short-circuits the episode before claims
-      // are extracted, preventing any graph effects regardless of the verdict branch taken.
-      // Phase A only: detectEcho awaits the embedder fully before any db.transaction (T-02-ASYNC).
-      const echoSourceId = await this.detectEcho(episode);
-      if (echoSourceId !== null) {
-        this.episodes.backfillSourceInferenceId(episode.id, echoSourceId);
-        // Refresh the in-memory copy so the guard below reads the backfilled source_inference_id.
-        episode = { ...episode, source_inference_id: echoSourceId };
-      }
+        // ── Echo detection (D-44/D-45): backfill source_inference_id BEFORE claim processing ──
+        // A replayed turn whose embedding cosines >= echoSimilarityThreshold against a recent
+        // inferred episode (within echoRecencyWindowMs) has its source_inference_id backfilled
+        // for audit. The structural guard below then short-circuits the episode before claims
+        // are extracted, preventing any graph effects regardless of the verdict branch taken.
+        // Phase A only: detectEcho awaits the embedder fully before any db.transaction (T-02-ASYNC).
+        const echoSourceId = await this.detectEcho(episode);
+        if (echoSourceId !== null) {
+          this.episodes.backfillSourceInferenceId(episode.id, echoSourceId);
+          // Refresh the in-memory copy so the guard below reads the backfilled source_inference_id.
+          episode = { ...episode, source_inference_id: echoSourceId };
+        }
 
-      // ── WR-01 / CR-01: hard stop — no graph effects for inferred or echo episodes ─────────
-      // WR-01: inferred-origin episodes are ephemeral; they must NEVER produce graph effects
-      //        (LEARN-02 ephemeral-as-fact guarantee). The salience skip above is a tunable
-      //        performance heuristic; this is the hard structural correctness guard.
-      // CR-01: an echo of a prior inference (echoSourceId !== null) carries no independent
-      //        evidence — allowing it to strengthen a fact or mint a node is self-confirmation
-      //        (LEARN-03, correctness invariant). The contradict→HOLD guard at applyDecision
-      //        was the only branch that previously blocked this; confirm/extend/unrelated did not.
-      // Backfill persists above for the audit trail; no claims are extracted for either class.
-      if (episode.origin === 'inferred' || echoSourceId !== null) {
-        this.db.transaction(() => this.episodes.markConsolidated(episode.id))();
-        continue;
-      }
+        // ── WR-01 / CR-01: hard stop — no graph effects for inferred or echo episodes ─────────
+        // WR-01: inferred-origin episodes are ephemeral; they must NEVER produce graph effects
+        //        (LEARN-02 ephemeral-as-fact guarantee). The salience skip above is a tunable
+        //        performance heuristic; this is the hard structural correctness guard.
+        // CR-01: an echo of a prior inference (echoSourceId !== null) carries no independent
+        //        evidence — allowing it to strengthen a fact or mint a node is self-confirmation
+        //        (LEARN-03, correctness invariant). The contradict→HOLD guard at applyDecision
+        //        was the only branch that previously blocked this; confirm/extend/unrelated did not.
+        // Backfill persists above for the audit trail; no claims are extracted for either class.
+        if (episode.origin === 'inferred' || echoSourceId !== null) {
+          this.db.transaction(() => this.episodes.markConsolidated(episode.id))();
+          continue;
+        }
 
-      // ── Per-episode Phase A: all async work into plain array ───────────
-      const claimOrigin: Origin = episode.origin; // inherit episode origin (T-02-SELFCONF)
-      // Claim extraction via ModelProvider.generate (SEAM-01, D-46):
-      // promptForSource(source) selects the per-source extraction prefix (D-62);
-      // role + content suffix is identical across every source — zero new extract plumbing.
-      const extractText = await this.provider.generate(
-        promptForSource(episode.source) + episode.role + '\n\nDocument content:\n' + episode.content,
-        { maxTokens: 2048 },
-      );
-      const claims = parseClaims(extractText);
-      const decisions: ClaimDecision[] = [];
-
-      // Batch-embed all claim query vectors in ONE call (T-02-ASYNC: Phase A, before any
-      // db.transaction). Empty-claims episodes make zero embed calls.
-      const claimValues = claims.map(c => c.value);
-      const claimVecs = claimValues.length > 0
-        ? await this.provider.embed(claimValues)
-        : [];
-
-      for (let claimIdx = 0; claimIdx < claims.length; claimIdx++) {
-        const claim = claims[claimIdx]!;
-        const queryVec = claimVecs[claimIdx];
-        if (!queryVec) continue;
-
-        const candidates = this.retriever.topk(queryVec, this.config.candidateK);
-
-        let relation: JudgeRelation;
-        let bestCandidateId: string | null = null;
-        let magnitude = 0; // only meaningful for 'contradict' (D-15)
-
-        // D-17: zero-inference fast path — normalized exact-match → confirm, no judge call
-        const fastPathCandidate = candidates.find(
-          c => normalizeValue(this.store.getNode(c.id)?.value ?? '') === normalizeValue(claim.value)
+        // ── Per-episode Phase A: all async work into plain array ───────────
+        const claimOrigin: Origin = episode.origin; // inherit episode origin (T-02-SELFCONF)
+        // Claim extraction via ModelProvider.generate (SEAM-01, D-46):
+        // promptForSource(source) selects the per-source extraction prefix (D-62);
+        // role + content suffix is identical across every source — zero new extract plumbing.
+        const extractText = await this.provider.generate(
+          promptForSource(episode.source) + episode.role + '\n\nDocument content:\n' + episode.content,
+          { maxTokens: 2048 },
         );
-        if (fastPathCandidate) {
-          relation = 'confirm';
-          bestCandidateId = fastPathCandidate.id;
-        } else if (
-          candidates.length === 0 ||
-          candidates[0]!.score < this.config.unrelatedSimilarityThreshold
-        ) {
-          // UPDATE-02 safe-direction: low cosine → auto-unrelated, no judge call
-          relation = 'unrelated';
-          bestCandidateId = null;
-        } else {
-          // Escalate to judge — read candidate values from graph (UPDATE-01 "current value")
-          const candidatesWithValues = candidates.map(c => ({
-            id: c.id,
-            value: this.store.getNode(c.id)?.value ?? '',
-          }));
-          const verdict = await this.provider.judge(claim.value, candidatesWithValues);
-          relation = verdict.relation;
-          bestCandidateId = verdict.best_candidate_id;
-          magnitude = verdict.magnitude;
+        const claims = parseClaims(extractText);
+        const decisions: ClaimDecision[] = [];
+
+        // Batch-embed all claim query vectors in ONE call (T-02-ASYNC: Phase A, before any
+        // db.transaction). Empty-claims episodes make zero embed calls.
+        const claimValues = claims.map(c => c.value);
+        const claimVecs = claimValues.length > 0
+          ? await this.provider.embed(claimValues)
+          : [];
+
+        for (let claimIdx = 0; claimIdx < claims.length; claimIdx++) {
+          const claim = claims[claimIdx]!;
+          const queryVec = claimVecs[claimIdx];
+          if (!queryVec) continue;
+
+          const candidates = this.retriever.topk(queryVec, this.config.candidateK);
+
+          let relation: JudgeRelation;
+          let bestCandidateId: string | null = null;
+          let magnitude = 0; // only meaningful for 'contradict' (D-15)
+
+          // D-17: zero-inference fast path — normalized exact-match → confirm, no judge call
+          const fastPathCandidate = candidates.find(
+            c => normalizeValue(this.store.getNode(c.id)?.value ?? '') === normalizeValue(claim.value)
+          );
+          if (fastPathCandidate) {
+            relation = 'confirm';
+            bestCandidateId = fastPathCandidate.id;
+          } else if (
+            candidates.length === 0 ||
+            candidates[0]!.score < this.config.unrelatedSimilarityThreshold
+          ) {
+            // UPDATE-02 safe-direction: low cosine → auto-unrelated, no judge call
+            relation = 'unrelated';
+            bestCandidateId = null;
+          } else {
+            // Escalate to judge — read candidate values from graph (UPDATE-01 "current value")
+            const candidatesWithValues = candidates.map(c => ({
+              id: c.id,
+              value: this.store.getNode(c.id)?.value ?? '',
+            }));
+            const verdict = await this.provider.judge(claim.value, candidatesWithValues);
+            relation = verdict.relation;
+            bestCandidateId = verdict.best_candidate_id;
+            magnitude = verdict.magnitude;
+          }
+
+          decisions.push({
+            claimValue: claim.value,
+            claimType: claim.type,
+            claimOrigin,
+            relation,
+            bestCandidateId,
+            episodeSessionId: episode.session_id,
+            magnitude,
+            episodeSourceInferenceId: episode.source_inference_id,
+            episodeRole: episode.role,
+          });
         }
 
-        decisions.push({
-          claimValue: claim.value,
-          claimType: claim.type,
-          claimOrigin,
-          relation,
-          bestCandidateId,
-          episodeSessionId: episode.session_id,
-          magnitude,
-          episodeSourceInferenceId: episode.source_inference_id,
-          episodeRole: episode.role,
-        });
+        // ── Per-episode Phase B: synchronous write — one transaction (CONSOL-02) ──
+        // All decisions for this episode + markConsolidated in ONE atomic transaction.
+        // No await inside (T-02-ASYNC). If a later episode's Phase A crashes, this
+        // episode's checkpoint is already committed and will not be re-applied.
+        const episodeId = episode.id;
+        this.db.transaction(() => {
+          for (const decision of decisions) {
+            this.applyDecision(decision, episodeId);
+          }
+          this.episodes.markConsolidated(episodeId);
+        })();
+      } catch (err) {
+        // H-2: poison-episode isolation — log and quarantine without marking consolidated.
+        // The episode will be retried on the next pass. One bad episode must not abort the
+        // loop or Phase C / induction / eviction (mirrors D-66 per-adapter isolation).
+        this.log(`episode ${episode.id} skipped (consolidation error): ${String(err)}`);
+        quarantine.add(episode.id);
+        // fall through to next episode (continue implicit after catch)
       }
-
-      // ── Per-episode Phase B: synchronous write — one transaction (CONSOL-02) ──
-      // All decisions for this episode + markConsolidated in ONE atomic transaction.
-      // No await inside (T-02-ASYNC). If a later episode's Phase A crashes, this
-      // episode's checkpoint is already committed and will not be re-applied.
-      const episodeId = episode.id;
-      this.db.transaction(() => {
-        for (const decision of decisions) {
-          this.applyDecision(decision, episodeId);
-        }
-        this.episodes.markConsolidated(episodeId);
-      })();
     }
 
     // ── Phase C: Re-embed nodes dirtied by this pass, then eviction sweep ──
@@ -538,9 +573,8 @@ export class Consolidator {
             // Re-read node to get the freshly-appended pending_contradictions
             const updatedNode = this.store.getNode(decision.bestCandidateId);
             if (updatedNode) {
-              const entries = JSON.parse(
-                updatedNode.pending_contradictions,
-              ) as PendingContradiction[];
+              // L-4: defensive parse — corrupt column returns [] so other claims remain processable
+              const entries = safeParseContradictions(updatedNode.pending_contradictions);
               const distinctCount = countDistinctProvenance(entries);
 
               // Force-destabilize when N distinct independent sessions have contradicted

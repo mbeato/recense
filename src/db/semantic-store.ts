@@ -215,7 +215,14 @@ export class SemanticStore {
   recordContradiction(nodeId: string, entry: PendingContradiction): void {
     const node = this.stmtGetNode.get(nodeId) as NodeRow | undefined;
     if (!node) return;
-    const contradictions = JSON.parse(node.pending_contradictions) as PendingContradiction[];
+    // L-4: defensive parse — on corrupt column reset to [] and continue (write-back repairs it).
+    let contradictions: PendingContradiction[];
+    try {
+      contradictions = JSON.parse(node.pending_contradictions) as PendingContradiction[];
+    } catch {
+      // Corrupt column: treat as empty and write back the repaired array with this new entry.
+      contradictions = [];
+    }
     contradictions.push(entry);
     this.stmtUpdateContradictions.run(JSON.stringify(contradictions), nodeId);
   }

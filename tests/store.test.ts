@@ -245,6 +245,28 @@ describe('SemanticStore', () => {
       const contradictions = JSON.parse(store.getNode('n1')!.pending_contradictions) as PendingContradiction[];
       expect(contradictions[0]!.episode_id).toBe('ep_001');
     });
+
+    it('L-4: recordContradiction on a node with corrupt pending_contradictions does not throw', () => {
+      // L-4: a corrupt pending_contradictions column must be treated as empty (reset to [])
+      // and the new entry written back, repairing the column.
+      store.upsertNode({ id: 'n-corrupt', type: 'fact', value: 'v', origin: 'observed' });
+      // Corrupt the column directly via SQL (bypassing the store's write primitive)
+      db.prepare("UPDATE node SET pending_contradictions = ? WHERE id = ?").run('{not json', 'n-corrupt');
+
+      // Must not throw
+      expect(() => {
+        store.recordContradiction('n-corrupt', { episode_id: 'ep-repair', session_id: 'sess-r', origin: 'observed' });
+      }).not.toThrow();
+
+      // Column must now be valid JSON with one entry (the new contradiction)
+      const node = store.getNode('n-corrupt')!;
+      let contradictions: PendingContradiction[] | undefined;
+      expect(() => {
+        contradictions = JSON.parse(node.pending_contradictions) as PendingContradiction[];
+      }).not.toThrow();
+      expect(contradictions).toHaveLength(1);
+      expect(contradictions![0]!.episode_id).toBe('ep-repair');
+    });
   });
 
   // ── explicit prev_value carry (D-20) ─────────────────────────────────────
