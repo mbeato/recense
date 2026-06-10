@@ -76,14 +76,22 @@ async function main(): Promise<void> {
   // macOS: 'open -a "Google Chrome" --args --app=<url>'
   // On failure (Chrome not installed, non-macOS, etc.) fall back to a plain browser tab.
   try {
-    spawn('open', ['-a', 'Google Chrome', '--args', `--app=${url}`], {
+    const appChild = spawn('open', ['-a', 'Google Chrome', '--args', `--app=${url}`], {
       detached: true,
       stdio: 'ignore',
-    }).unref();
+    });
+    // WR-03: spawn failures (ENOENT on non-darwin, missing Chrome) arrive async via
+    // the 'error' event, NOT as a sync throw — an unhandled 'error' crashes the
+    // process. Swallow it; the URL is already printed to stdout below.
+    appChild.on('error', () => { /* non-macOS or Chrome missing — URL already printed */ });
+    appChild.unref();
   } catch {
     // Browser-tab fallback: 'open <url>' uses the system default browser.
     try {
-      spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
+      const tabChild = spawn('open', [url], { detached: true, stdio: 'ignore' });
+      // WR-03: same async 'error' guard as the app-window spawn above.
+      tabChild.on('error', () => { /* non-macOS — URL already printed */ });
+      tabChild.unref();
     } catch {
       // Headless/CI — URL already printed to stdout below; nothing more to do.
     }
