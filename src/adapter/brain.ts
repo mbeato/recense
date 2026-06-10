@@ -18,6 +18,13 @@
  *  - T-09-08: default case prints usage and exits 1 (fail-closed on unknown argv).
  */
 
+// Pin the Node runtime BEFORE any handler (and thus better-sqlite3) loads. Re-execs under
+// BRAIN_MEMORY_NODE_BIN when the ambient Node's ABI would mismatch the native addon, so
+// `brain` works in any terminal regardless of the user's nvm default (DX). One-hop guarded;
+// no-op when already on the right Node or when no pin is configured. pin-node imports only
+// Node built-ins, so this stays off the better-sqlite3 load path.
+(require('./pin-node') as typeof import('./pin-node')).pinNodeRuntime(__filename);
+
 const cmd  = process.argv[2];
 const sub  = process.argv[3];
 const rest = process.argv.slice(4);
