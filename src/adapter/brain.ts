@@ -25,6 +25,12 @@
 // Node built-ins, so this stays off the better-sqlite3 load path.
 (require('./pin-node') as typeof import('./pin-node')).pinNodeRuntime(__filename);
 
+// Hydrate the brain-memory config (DB path, API keys, model) from the env file the launchd
+// jobs already source, for any key absent from the shell — so interactive `brain <cmd>`
+// resolves the SAME DB/config as the background jobs instead of an empty default DB.
+// Set-only-if-missing: an explicit shell env or `--db <flag>` still wins.
+(require('./runtime-config') as typeof import('./runtime-config')).hydrateRuntimeEnv();
+
 const cmd  = process.argv[2];
 const sub  = process.argv[3];
 const rest = process.argv.slice(4);

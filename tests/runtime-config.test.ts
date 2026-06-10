@@ -14,6 +14,7 @@ import {
   resolveDbPath,
   sleepEnvPath,
   loadConfiguredEnv,
+  hydrateRuntimeEnv,
 } from '../src/adapter/runtime-config';
 
 describe('defaultDbPath', () => {
@@ -59,6 +60,48 @@ describe('loadConfiguredEnv', () => {
     expect(env['ANTHROPIC_API_KEY']).toBe('sk-ant=weird');
     expect(env['OPENAI_API_KEY']).toBe('sk-oai');
     expect(Object.keys(env)).toHaveLength(2);
+  });
+});
+
+describe('hydrateRuntimeEnv', () => {
+  const KEYS = ['BRAIN_MEMORY_DB', 'ANTHROPIC_API_KEY', 'BRAIN_MEMORY_TEST_ONLY'];
+  let saved: Record<string, string | undefined>;
+  beforeEach(() => {
+    saved = {};
+    for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  });
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] !== undefined) process.env[k] = saved[k];
+      else delete process.env[k];
+    }
+  });
+
+  const writeEnv = (content: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'brain-hydrate-'));
+    const p = join(dir, 'sleep.env');
+    writeFileSync(p, content);
+    return p;
+  };
+
+  it('sets keys that are absent from the ambient env', () => {
+    const p = writeEnv('BRAIN_MEMORY_DB=/real/brain.db\nBRAIN_MEMORY_TEST_ONLY=x\n');
+    const applied = hydrateRuntimeEnv(p);
+    expect(process.env['BRAIN_MEMORY_DB']).toBe('/real/brain.db');
+    expect(process.env['BRAIN_MEMORY_TEST_ONLY']).toBe('x');
+    expect(applied).toContain('BRAIN_MEMORY_DB');
+  });
+
+  it('does NOT override a key already set in the shell env (set-only-if-missing)', () => {
+    process.env['BRAIN_MEMORY_DB'] = '/shell/wins.db';
+    const p = writeEnv('BRAIN_MEMORY_DB=/file/loses.db\n');
+    const applied = hydrateRuntimeEnv(p);
+    expect(process.env['BRAIN_MEMORY_DB']).toBe('/shell/wins.db');
+    expect(applied).not.toContain('BRAIN_MEMORY_DB');
+  });
+
+  it('returns [] when the env file is absent', () => {
+    expect(hydrateRuntimeEnv('/tmp/nope-brain-hydrate.env')).toEqual([]);
   });
 });
 

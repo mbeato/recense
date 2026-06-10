@@ -72,3 +72,26 @@ export function loadConfiguredEnv(
   }
   return out;
 }
+
+/**
+ * Hydrate process.env from the configured env file (sleep.env) for any key NOT already
+ * set in the ambient environment, then return the keys it applied.
+ *
+ * The launchd jobs source sleep.env directly (`set -a; . sleep.env`), so they run with the
+ * real DB path, API keys, and model config. Interactive `brain <cmd>` does NOT — its shell
+ * lacks those vars, so it fell back to an empty default DB and missing keys. Calling this
+ * once at dispatcher startup makes interactive `brain` resolve the SAME config the jobs do.
+ *
+ * Set-only-if-missing preserves precedence: an explicit shell env var or `--db <flag>` still
+ * wins; the file only provides defaults. Secrets are read but only the absent ones are set.
+ */
+export function hydrateRuntimeEnv(envPath: string = sleepEnvPath()): string[] {
+  const applied: string[] = [];
+  for (const [k, v] of Object.entries(loadConfiguredEnv(envPath))) {
+    if (process.env[k] === undefined) {
+      process.env[k] = v;
+      applied.push(k);
+    }
+  }
+  return applied;
+}
