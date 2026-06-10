@@ -85,12 +85,16 @@ switch (cmd) {
   case 'seed':       spawnScript('seed-cli.js',       process.argv.slice(3)); break;
   case 'ingest':     spawnScript('ingest-cli.js',     process.argv.slice(3)); break;
   case 'watcher':    spawnScript('watcher-cli.js',    process.argv.slice(3)); break;
+  // mcp-cli exports createBrainMcpServer for tests, so its CLI entry is guarded by
+  // `require.main === module` — a bare require() here would never fire the guard
+  // (require.main stays brain.js) and the server would never start.
+  case 'mcp':        spawnScript('mcp-cli.js',        process.argv.slice(3)); break;
 
   // ── Default: fail closed (T-09-08) ───────────────────────────────────────────
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, snapshot, watcher, scheduler\n',
+      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, snapshot, watcher, scheduler, mcp\n',
     );
     process.exit(1);
 }
