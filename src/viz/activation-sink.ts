@@ -115,6 +115,54 @@ export class NoopActivationTraceSink implements ActivationTraceSink {
 }
 
 // ---------------------------------------------------------------------------
+// SwitchableActivationTraceSink — runtime-togglable wrapper (WR-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * A sink whose backing implementation flips between SQLite and Noop at runtime
+ * based on the `viz_trace_enabled` meta flag, so a long-running process (the
+ * launchd watcher) starts/stops tracing when `brain viz` toggles the flag —
+ * WITHOUT a restart. Engines hold a stable reference to this wrapper; the owner
+ * calls refresh() (cheap indexed meta read) once per poll tick to re-evaluate.
+ *
+ * Default is Noop until the first refresh() confirms the flag is '1' (fail-closed).
+ */
+export class SwitchableActivationTraceSink implements ActivationTraceSink {
+  private readonly db: Database.Database;
+  private readonly clock: Clock;
+  private delegate: ActivationTraceSink;
+  private readonly flagStmt: Database.Statement;
+
+  constructor(db: Database.Database, clock: Clock) {
+    this.db = db;
+    this.clock = clock;
+    this.flagStmt = db.prepare("SELECT value FROM meta WHERE key = 'viz_trace_enabled'");
+    this.delegate = new NoopActivationTraceSink();
+    this.refresh();
+  }
+
+  /**
+   * Re-read viz_trace_enabled and swap the backing sink on transition only
+   * (no churn while the flag is steady). Returns the active enabled state.
+   */
+  refresh(): boolean {
+    const row = this.flagStmt.get() as { value: string } | undefined;
+    const enabled = row?.value === '1';
+    const isSqlite = this.delegate instanceof SQLiteActivationTraceSink;
+    if (enabled && !isSqlite) {
+      this.delegate = new SQLiteActivationTraceSink(this.db, this.clock);
+    } else if (!enabled && isSqlite) {
+      this.delegate = new NoopActivationTraceSink();
+    }
+    return enabled;
+  }
+
+  emit(trace: ActivationTraceInput): void {
+    this.delegate.emit(trace);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // MockActivationTraceSink — test helper
 // ---------------------------------------------------------------------------
 

@@ -21,6 +21,7 @@ import {
   SQLiteActivationTraceSink,
   NoopActivationTraceSink,
   MockActivationTraceSink,
+  SwitchableActivationTraceSink,
   RING_CAP,
   type ActivationTraceInput,
 } from '../src/viz/activation-sink';
@@ -184,5 +185,61 @@ describe('MockActivationTraceSink', () => {
     expect(sink.traces).toHaveLength(1);
     sink.reset();
     expect(sink.traces).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SwitchableActivationTraceSink — runtime flag toggle (WR-04)
+// ---------------------------------------------------------------------------
+
+describe('SwitchableActivationTraceSink', () => {
+  const setFlag = (db: Database.Database, v: string): void => {
+    db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('viz_trace_enabled', v);
+  };
+  const count = (db: Database.Database): number =>
+    (db.prepare('SELECT COUNT(*) as cnt FROM activation_trace').get() as { cnt: number }).cnt;
+
+  it('flag absent at construction → defaults to Noop (fail-closed): emit writes nothing', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SwitchableActivationTraceSink(db, new FakeClock(1000));
+    sink.emit({ query_id: 'q', seeds: ['a'], hops: [] });
+    expect(count(db)).toBe(0);
+  });
+
+  it('flag = "1" at construction → emit writes to activation_trace', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    setFlag(db, '1');
+    const sink = new SwitchableActivationTraceSink(db, new FakeClock(1000));
+    sink.emit({ query_id: 'q', seeds: ['a'], hops: [] });
+    expect(count(db)).toBe(1);
+  });
+
+  it('WR-04: picks up an OFF→ON toggle on refresh() without reconstruction', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SwitchableActivationTraceSink(db, new FakeClock(1000));
+    // Starts disabled — nothing written.
+    sink.emit({ query_id: 'q1', seeds: ['a'], hops: [] });
+    expect(count(db)).toBe(0);
+    // `brain viz` flips the flag AFTER the (long-running) process is already up.
+    setFlag(db, '1');
+    expect(sink.refresh()).toBe(true);
+    sink.emit({ query_id: 'q2', seeds: ['b'], hops: [] });
+    expect(count(db)).toBe(1);
+  });
+
+  it('picks up an ON→OFF toggle on refresh(): stops writing after the flag clears', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    setFlag(db, '1');
+    const sink = new SwitchableActivationTraceSink(db, new FakeClock(1000));
+    sink.emit({ query_id: 'q1', seeds: ['a'], hops: [] });
+    expect(count(db)).toBe(1);
+    setFlag(db, '0');
+    expect(sink.refresh()).toBe(false);
+    sink.emit({ query_id: 'q2', seeds: ['b'], hops: [] });
+    expect(count(db)).toBe(1); // unchanged — Noop after the flag cleared
   });
 });

@@ -40,7 +40,7 @@ import { DefaultIMessageChannel, DefaultOsascriptSender } from '../channel/imess
 import { DefaultChatDbReader } from '../channel/chat-db-reader';
 import { TelegramChannel, DefaultTelegramTransport } from '../channel/telegram-channel';
 import { acquireLock, releaseLock } from './lockfile';
-import { SQLiteActivationTraceSink, NoopActivationTraceSink } from '../viz/activation-sink';
+import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 
 const LOG_PATH = '/tmp/brain-memory-watcher.log';
 
@@ -207,22 +207,14 @@ export async function main(): Promise<void> {
     embedConfig: config,
   });
 
-  // VIZ-01: inject SQLite trace sink iff viz_trace_enabled='1' (set by `brain viz`, Plan 03).
-  // Same flag-check pattern as recall-cli.ts. Default OFF: Noop when key absent or '0'.
-  //
-  // KNOWN LIMITATION (WR-04): the flag is read ONCE here, at watcher startup, and the
-  // sink is bound for the watcher's entire (long-running launchd KeepAlive) lifetime.
-  // If `brain viz` enables tracing AFTER the watcher is already running, this process
-  // keeps the Noop sink and Telegram-driven retrieval/recall will NOT appear in the
-  // live visualization until the watcher is restarted. Per-tick re-checking would
-  // change persistent-process behavior and is deferred as a human decision.
-  const traceFlagRaw = db.prepare(
-    "SELECT value FROM meta WHERE key = 'viz_trace_enabled'"
-  ).get() as { value: string } | undefined;
-  const vizTraceEnabled = traceFlagRaw?.value === '1';
-  const traceSink = vizTraceEnabled
-    ? new SQLiteActivationTraceSink(db, realClock)
-    : new NoopActivationTraceSink();
+  // VIZ-01 / WR-04: inject a switchable trace sink driven by viz_trace_enabled
+  // (set by `brain viz`, Plan 03). Default OFF (Noop) until the flag reads '1'.
+  // Because this watcher is a long-running launchd KeepAlive process, the sink
+  // re-checks the flag once per poll tick (see refresh() in the loop below) and
+  // flips between SQLite and Noop on transition — so enabling `brain viz` AFTER
+  // the watcher is already running makes Telegram-driven retrieval/recall appear
+  // in the live visualization WITHOUT a restart.
+  const traceSink = new SwitchableActivationTraceSink(db, realClock);
 
   const retrieval = new RetrievalEngine(db, realClock, config, retriever, store, strength, gate, traceSink);
   const recall    = new RecallEngine(db, realClock, config, provider, retriever, store, strength, episodes, traceSink);
@@ -256,6 +248,8 @@ export async function main(): Promise<void> {
     500
   );
   setInterval(() => {
+    // WR-04: cheap indexed meta read — pick up `brain viz` toggles without restart.
+    traceSink.refresh();
     void runLockedTick(channel, responder, 'watcher-session', log);
   }, intervalMs);
 
