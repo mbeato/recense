@@ -432,6 +432,11 @@ brainContainment.initialize = () => {};
 Graph.d3Force('brainContainment', brainContainment);
 Graph.d3ReheatSimulation();
 
+// Frame the camera on the brain-scaled cloud. The cloud is now fixed at BRAIN_SCALE
+// (not the library's default natural size), so set an explicit distance that shows the
+// whole brain + stem instead of relying on 3d-force-graph's default camera.
+Graph.cameraPosition({ x: 0, y: 0, z: BRAIN_SCALE * 3.8 });
+
 // Tooltip follows cursor
 document.addEventListener('mousemove', e => {
   tooltipEl.style.left = (e.clientX + 12) + 'px';
