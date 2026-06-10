@@ -20,3 +20,10 @@ STLLoader.js (same directory) is from three.js r171
 (https://github.com/mrdoob/three.js, MIT License); its bare `from 'three'` import
 was rewritten to the local `./three.module.js` to preserve the single-THREE-instance
 vendoring approach (D-93).
+
+3d-force-graph.min.js (v1.76.0, MIT) carries one local patch: the animation cycle
+ticked its internal `e.layout` without a null check, throwing "Cannot read properties
+of undefined (reading 'tick')" and blanking the canvas whenever `layout` was momentarily
+unset (mid-digest, or a slow-render timing race). The call site
+`e.layout[s?"tick":"step"]()` was guarded to `e.layout&&e.layout[s?"tick":"step"]()`.
+Re-apply this guard if the bundle is ever re-vendored.

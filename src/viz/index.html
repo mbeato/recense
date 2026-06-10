@@ -419,9 +419,13 @@ new STLLoader().load('./vendor/brain-model.stl', (geometry) => {
 // the brain center each tick — so the whole cloud takes the brain shape while keeping
 // its cluster structure. The shell tracks the cloud centroid so model + nodes stay
 // co-located, and its world matrix IS the world→normalized map the occupancy test uses.
+// Applied via onEngineTick, NOT Graph.d3Force(name, fn): the two-arg d3Force SETTER
+// re-digests 3d-force-graph and nulls its internal `layout` mid-animation, which throws
+// "Cannot read properties of undefined (reading 'tick')" and blanks the canvas. onEngineTick
+// runs each simulation tick without touching force registration.
 const _inv = new THREE.Matrix4();
 const _q = new THREE.Vector3();
-function brainContainment(alpha) {
+function brainContainment() {
   const nodes = Graph.graphData().nodes;
   if (!brainVol || !nodes.length) return;
   let cx = 0, cy = 0, cz = 0;
@@ -430,18 +434,16 @@ function brainContainment(alpha) {
   hullGroup.position.set(cx, cy, cz);
   hullGroup.updateMatrixWorld(true);
   _inv.copy(hullGroup.matrixWorld).invert();   // world → normalized brain space
-  const k = CONTAIN_STRENGTH * alpha;
   for (const n of nodes) {
     _q.set(n.x || 0, n.y || 0, n.z || 0).applyMatrix4(_inv);
     if (!brainOccupied(_q.x, _q.y, _q.z)) {
-      n.vx = (n.vx || 0) + (cx - (n.x || 0)) * k;
-      n.vy = (n.vy || 0) + (cy - (n.y || 0)) * k;
-      n.vz = (n.vz || 0) + (cz - (n.z || 0)) * k;
+      n.vx = (n.vx || 0) + (cx - (n.x || 0)) * CONTAIN_STRENGTH;
+      n.vy = (n.vy || 0) + (cy - (n.y || 0)) * CONTAIN_STRENGTH;
+      n.vz = (n.vz || 0) + (cz - (n.z || 0)) * CONTAIN_STRENGTH;
     }
   }
 }
-brainContainment.initialize = () => {};
-Graph.d3Force('brainContainment', brainContainment);
+Graph.onEngineTick(brainContainment);
 Graph.d3ReheatSimulation();
 
 // Frame the camera on the brain-scaled cloud. The cloud is now fixed at BRAIN_SCALE
