@@ -26,6 +26,10 @@ npm install
 npm run init
 ```
 
+> **node-gyp prerequisite:** `npm install` compiles better-sqlite3 from source. This requires Python 3 and C++ build tools. On macOS: `xcode-select --install`. On Ubuntu/Debian: `sudo apt install build-essential python3`. If install fails with a `node-gyp` error, install these first and retry.
+
+> **Local development (npm link):** To use the `brain` CLI from a local clone without a global npm install, run `npm link` once after `npm install`. This creates a global symlink to your working tree so `brain` resolves to `dist/src/adapter/brain.js` in your clone. Run `npm unlink brain` to remove it. `npm link` does NOT auto-rebuild — run `npm run build` after making source changes.
+
 `npm run build` compiles the TypeScript source to `dist/`. `npm run init` runs the build then launches `brain init` — a guided wizard that:
 
 1. Prompts for your DB path (where `brain.db` will live)

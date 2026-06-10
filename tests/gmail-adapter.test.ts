@@ -162,7 +162,7 @@ describe('GmailAdapter.pull() — basic fetch and cursor write', () => {
     });
 
     const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
 
     expect(records).toHaveLength(2);
     expect(records[0]!.external_id).toBe('id-1');
@@ -176,8 +176,11 @@ describe('GmailAdapter.pull() — basic fetch and cursor write', () => {
     });
 
     const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
-    await adapter.pull();
+    const { commitCursor } = await adapter.pull();
 
+    // M-6: cursor NOT written until commitCursor() is called
+    expect(store.getMeta('cursor:gmail')).toBeNull();
+    commitCursor();
     expect(store.getMeta('cursor:gmail')).toBe('h-42');
   });
 
@@ -188,8 +191,8 @@ describe('GmailAdapter.pull() — basic fetch and cursor write', () => {
     });
 
     const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
-    await adapter.pull();
-
+    const { commitCursor: commitNull } = await adapter.pull();
+    commitNull(); // null newHistoryId → commitCursor is a no-op
     expect(store.getMeta('cursor:gmail')).toBeNull();
   });
 });
@@ -244,7 +247,7 @@ describe('GmailAdapter.pull() — D-61 origin guard', () => {
     });
 
     const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
 
     for (const record of records) {
       expect(record.origin).not.toBe('asserted_by_user');

@@ -278,22 +278,25 @@ export class TranscriptAdapter implements SourceAdapter {
   /**
    * Pull all new transcript turns since cursor:granola.
    *
-   * Fails safe: returns [] immediately when transcripts.dir is empty or the
-   * directory cannot be resolved (D-69 fail-safe default).
+   * Returns { records, commitCursor } where commitCursor() persists the new mtime.
+   * M-6: the cursor write is deferred — the orchestrator calls commitCursor() ONLY after
+   * appendBatch succeeds. A crash between walk and commit means re-walk on next run
+   * (at-least-once delivery; UNIQUE(source,external_id) deduplicated on replay).
+   * Returns records=[] when transcripts.dir is empty or the directory cannot be resolved.
    *
    * Async-before-sync: all filesystem I/O completes here; the caller may wrap
    * results in a synchronous db.transaction without await escaping into the
    * write path (async-before-sync pattern, mirrors Phase 2).
    */
-  async pull(): Promise<NormalizedRecord[]> {
+  async pull(): Promise<{ records: NormalizedRecord[]; commitCursor: () => void }> {
     const dir = this.config.transcripts.dir;
-    if (!dir) return []; // disabled — fail-safe (D-69)
+    if (!dir) return { records: [], commitCursor: () => {} }; // disabled — fail-safe (D-69)
 
     let realRootDir: string;
     try {
       realRootDir = fs.realpathSync(path.resolve(dir));
     } catch {
-      return []; // directory doesn't exist or isn't accessible
+      return { records: [], commitCursor: () => {} }; // directory doesn't exist or isn't accessible
     }
 
     const cursorStr = this.meta.getMeta('cursor:granola');
@@ -366,11 +369,14 @@ export class TranscriptAdapter implements SourceAdapter {
 
     walkDir(realRootDir, '');
 
-    // Advance cursor to cover all files we just processed (D-67)
-    if (maxMtime > cursor) {
-      this.meta.setMeta('cursor:granola', String(maxMtime));
-    }
+    // M-6: capture maxMtime for the deferred cursor commit (NOT written here).
+    // commitCursor is a thunk — called by the orchestrator after appendBatch succeeds.
+    const commitCursor = (): void => {
+      if (maxMtime > cursor) {
+        this.meta.setMeta('cursor:granola', String(maxMtime));
+      }
+    };
 
-    return records;
+    return { records, commitCursor };
   }
 }

@@ -42,6 +42,15 @@
  * pattern then safely ignores (preventing double-marker on the same token).
  */
 const SECRET_PATTERNS: ReadonlyArray<{ pattern: RegExp; marker: string }> = [
+  // Anthropic API keys: sk-ant-<type>-<value> — the hyphen-delimited segments break the generic
+  // sk-[A-Za-z0-9]{20,} match below. This entry must come FIRST so the full hyphenated key
+  // is captured as one marker and the generic sk- pattern does not match a fragment.
+  // Idempotency: the marker '[REDACTED:API_KEY]' contains no 'sk-ant-' run so it is safe on replay.
+  // (M-12)
+  {
+    pattern: /sk-ant-[A-Za-z0-9-]{20,}/g,
+    marker: '[REDACTED:API_KEY]',
+  },
   // OpenAI-style API keys: sk- prefix, ≥ 20 alphanumeric chars
   {
     pattern: /sk-[A-Za-z0-9]{20,}/g,

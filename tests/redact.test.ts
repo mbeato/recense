@@ -10,6 +10,26 @@ import { redactSecrets } from '../src/source/redact';
 
 describe('redactSecrets — secret class redaction (D-63)', () => {
 
+  // ── Anthropic API key (M-12) ──────────────────────────────────────────────
+
+  it('strips full Anthropic key (sk-ant-api03-… with internal hyphens)', () => {
+    const key = 'sk-ant-api03-AbC0123456789defGHIjkl_xyz';
+    const input = `my key is ${key} — please keep it safe`;
+    const result = redactSecrets(input);
+    expect(result).not.toContain('sk-ant-api03');
+    expect(result).toContain('[REDACTED:API_KEY]');
+    expect(result).toContain('my key is');
+    expect(result).toContain('please keep it safe');
+  });
+
+  it('Anthropic key redaction is idempotent (second pass leaves only the marker)', () => {
+    const key = 'sk-ant-api03-AbC0123456789defGHIjkl_xyz';
+    const once = redactSecrets(`key: ${key}`);
+    expect(once).not.toContain('sk-ant-api03');
+    const twice = redactSecrets(once);
+    expect(twice).toBe(once);
+  });
+
   // ── OpenAI API key ────────────────────────────────────────────────────────
 
   it('strips OpenAI API key (sk- prefix + 20+ chars)', () => {

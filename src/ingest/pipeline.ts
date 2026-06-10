@@ -17,6 +17,7 @@
 import type { EpisodeRow, EpisodeRole, Origin } from '../lib/types';
 import { AllocationGate } from '../gate/allocation-gate';
 import { EpisodicStore } from '../db/episode-store';
+import { redactSecrets } from '../source/redact';
 
 export { AllocationGate } from '../gate/allocation-gate';
 export { EpisodicStore } from '../db/episode-store';
@@ -65,11 +66,16 @@ export class IngestionPipeline {
    * 4. Returns the stored EpisodeRow (honest salience persisted, D-03; dedup-aware, D-59).
    */
   recordEvent(e: RecordEventParams): EpisodeRow {
+    // M-12: redact secrets at the pipeline boundary so conversation-capture content
+    // (turn-capture/stop → pipeline → append) cannot store raw API keys or secrets.
+    // redactSecrets is idempotent — source adapters that already call it at their own
+    // boundary (D-63) are unaffected by this second pass.
+    const content = redactSecrets(e.content);
     // Resolve source so all callers default to 'claude-code' without code changes
     const source = e.source ?? 'claude-code';
-    const { salience, hardKeep } = this.gate.score(e.content, e.role, source);
+    const { salience, hardKeep } = this.gate.score(content, e.role, source);
     return this.store.append({
-      content: e.content,
+      content,
       role: e.role,
       origin: e.origin,
       session_id: e.sessionId,

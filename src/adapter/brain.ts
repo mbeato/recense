@@ -78,10 +78,13 @@ switch (cmd) {
   }
 
   // ── CLIs with require.main guard — dispatch via subprocess ───────────────────
-  case 'sleep-pass': spawnScript('sleep-pass-cli.js', rest); break;
-  case 'seed':       spawnScript('seed-cli.js',       rest); break;
-  case 'ingest':     spawnScript('ingest-cli.js',     rest); break;
-  case 'watcher':    spawnScript('watcher-cli.js',    rest); break;
+  // H-1: forward argv[3..] (process.argv.slice(3)) so the child receives all
+  // positional args and flags (e.g. `brain ingest gmail` or `brain seed --db /x`).
+  // The local `rest = slice(4)` is intentionally NOT used here — it drops argv[3].
+  case 'sleep-pass': spawnScript('sleep-pass-cli.js', process.argv.slice(3)); break;
+  case 'seed':       spawnScript('seed-cli.js',       process.argv.slice(3)); break;
+  case 'ingest':     spawnScript('ingest-cli.js',     process.argv.slice(3)); break;
+  case 'watcher':    spawnScript('watcher-cli.js',    process.argv.slice(3)); break;
 
   // ── Default: fail closed (T-09-08) ───────────────────────────────────────────
   default:

@@ -338,4 +338,28 @@ describe('IngestionPipeline: recordEvent end-to-end slice', () => {
     expect(retrieved!.origin).toBe('inferred');
     expect(retrieved!.session_id).toBe('sess-check');
   });
+
+  // M-12: pipeline redacts secrets at the boundary (conversation-capture path)
+  it('M-12: recordEvent redacts Anthropic key from content before storing', () => {
+    const rawKey = 'sk-ant-api03-AbC0123456789defGHIjkl';
+    const row = pipeline.recordEvent({
+      content: `my key is ${rawKey} — treat as sensitive`,
+      role: 'user',
+      origin: 'observed',
+      sessionId: 'sess-m12',
+    });
+    expect(row.content).not.toContain(rawKey);
+    expect(row.content).toContain('[REDACTED:API_KEY]');
+  });
+
+  it('M-12: recordEvent leaves already-redacted content unchanged (idempotent)', () => {
+    const alreadyRedacted = 'my key is [REDACTED:API_KEY] — already clean';
+    const row = pipeline.recordEvent({
+      content: alreadyRedacted,
+      role: 'user',
+      origin: 'observed',
+      sessionId: 'sess-m12-idempotent',
+    });
+    expect(row.content).toBe(alreadyRedacted);
+  });
 });

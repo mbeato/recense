@@ -149,12 +149,21 @@ export function startVizServer(dbPath: string, port: number): http.Server {
       // seeds/hops are TEXT columns holding JSON-encoded strings (written via
       // JSON.stringify in activation-sink.ts). Parse them server-side so the SSE
       // wire contract ships real arrays, not nested JSON strings (CR-01).
+      // L-4: guard corrupt rows — invalid JSON must not kill the setInterval callback.
+      let seeds: unknown;
+      let hops: unknown;
+      try {
+        seeds = JSON.parse(row.seeds);
+        hops  = JSON.parse(row.hops);
+      } catch {
+        continue; // skip corrupt row, keep polling and streaming
+      }
       const payload = `event: trace\ndata: ${JSON.stringify({
         id: row.id,
         ts: row.ts,
         query_id: row.query_id,
-        seeds: JSON.parse(row.seeds),
-        hops: JSON.parse(row.hops),
+        seeds,
+        hops,
       })}\n\n`;
       for (const res of clients) {
         res.write(payload);
@@ -167,6 +176,16 @@ export function startVizServer(dbPath: string, port: number): http.Server {
 
   const server = http.createServer((req, res) => {
     const url = (req.url ?? '/').split('?')[0]!;
+
+    // L-5: DNS rebinding guard — only accept Host headers that match the loopback bind
+    // address (T-10-09). A mismatched Host (e.g. attacker.com pointing to 127.0.0.1 via
+    // DNS rebinding) is rejected 403; the server never acts as a proxy for external origins.
+    const requestHost = req.headers['host'] ?? '';
+    if (requestHost !== `127.0.0.1:${port}` && requestHost !== `localhost:${port}`) {
+      res.writeHead(403, { 'content-type': 'text/plain' });
+      res.end('forbidden');
+      return;
+    }
 
     // ── /graph ─────────────────────────────────────────────────────────────
     if (url === '/graph') {

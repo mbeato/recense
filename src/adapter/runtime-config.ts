@@ -38,13 +38,31 @@ export function sleepEnvPath(): string {
  * Pinning `--db` into the settings.json hook commands (done by `brain init`)
  * makes the init-configured DB authoritative regardless of the env Claude Code
  * launches the hook process with.
+ *
+ * M-8: `opts.fallbackToDefault` controls the no-match case.
+ *   - Omitted / true (default): returns `string` — falls back to `defaultDbPath()` when
+ *     neither --db nor env is set. Correct for hooks (session-start, stop, doctor, viz)
+ *     that must always resolve a path.
+ *   - false: returns `string | undefined` — returns `undefined` when neither --db nor env
+ *     is set. Writer CLIs (watcher, ingest, sleep-pass, seed, recall, snapshot) use this
+ *     so they can `process.exit(0)` on a missing path instead of silently using the wrong DB.
+ *
+ * Overloads ensure callers without opts (or with fallbackToDefault=true) get `string` back.
  */
-export function resolveDbPath(argv: string[] = process.argv): string {
+export function resolveDbPath(argv?: string[], opts?: { fallbackToDefault?: true }): string;
+export function resolveDbPath(argv: string[], opts: { fallbackToDefault: false }): string | undefined;
+export function resolveDbPath(
+  argv: string[] = process.argv,
+  opts: { fallbackToDefault?: boolean } = {},
+): string | undefined {
   const i = argv.indexOf('--db');
   if (i !== -1 && typeof argv[i + 1] === 'string' && argv[i + 1] !== '') {
     return argv[i + 1] as string;
   }
-  return process.env['BRAIN_MEMORY_DB'] ?? defaultDbPath();
+  const fromEnv = process.env['BRAIN_MEMORY_DB'];
+  if (fromEnv !== undefined) return fromEnv;
+  if (opts.fallbackToDefault !== false) return defaultDbPath();
+  return undefined;
 }
 
 /**

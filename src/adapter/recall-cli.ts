@@ -31,6 +31,8 @@ import { DefaultModelProvider } from '../model/provider';
 import { RecallEngine } from '../recall';
 import { releaseLock, acquireLockWithRetry } from './lockfile';
 import { SQLiteActivationTraceSink, NoopActivationTraceSink } from '../viz/activation-sink';
+import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
+import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 
 const LOG_PATH = '/tmp/brain-memory-recall.log';
 
@@ -38,16 +40,10 @@ const LOG_PATH = '/tmp/brain-memory-recall.log';
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] recall-cli: ${msg}\n`);
 
-/**
- * Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var.
- * Returns undefined if neither is supplied.
- */
+// M-8: delegate to the shared resolveDbPath with fallbackToDefault=false so a missing
+// --db flag / BRAIN_MEMORY_DB env causes the missing-path exit (process.exit(0) below).
 function resolveDbPath(): string | undefined {
-  const idx = process.argv.indexOf('--db');
-  if (idx !== -1 && process.argv[idx + 1]) {
-    return process.argv[idx + 1];
-  }
-  return process.env['BRAIN_MEMORY_DB'];
+  return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
 }
 
 /**
@@ -126,9 +122,13 @@ async function main(): Promise<void> {
     const strength = new StrengthDecayManager(db, realClock, config);
     const retriever = new CandidateRetriever(db);
 
-    // T-04-03-K / T-05-02-KEY: keys read from process.env by SDK inside DefaultModelProvider.
-    // Resolved provider names are logged by the caller (never secrets).
-    const provider = new DefaultModelProvider({ generateConfig: config, judgeConfig: config, embedConfig: config });
+    // M-7: apply provider overlay so BRAIN_MEMORY_MODEL_PROVIDER / role-specific provider
+    // env vars route generate+judge to the configured provider. embed stays base config.
+    // Log resolved provider NAMES only (never keys — T-04-03-K / T-05-02-KEY).
+    const generateConfig = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER') };
+    const judgeConfig    = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_JUDGE_PROVIDER') };
+    log('providers — generate: ' + generateConfig.modelProvider + ' | judge: ' + judgeConfig.modelProvider);
+    const provider = new DefaultModelProvider({ generateConfig, judgeConfig, embedConfig: config });
 
     // VIZ-01: inject SQLite trace sink iff viz_trace_enabled='1' (set by `brain viz`, Plan 03).
     // Default OFF: when the meta key is absent or '0' the Noop sink is used — zero extra cost.

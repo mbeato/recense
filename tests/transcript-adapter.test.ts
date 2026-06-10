@@ -253,14 +253,14 @@ describe('TranscriptAdapter', () => {
   it('returns [] when transcripts.dir is empty string (fail-safe)', async () => {
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig(''), meta);
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records).toEqual([]);
   });
 
   it('returns [] when transcripts.dir does not exist', async () => {
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig('/nonexistent/path/xyz'), meta);
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records).toEqual([]);
   });
 
@@ -269,7 +269,7 @@ describe('TranscriptAdapter', () => {
     fs.writeFileSync(path.join(dir, 'meeting.txt'), 'Max: hi\nAlice: hey\nMax: bye');
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig(dir), meta);
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records).toHaveLength(3);
     const [r0, r1, r2] = records;
     expect(r0!.source).toBe('granola');
@@ -295,7 +295,7 @@ describe('TranscriptAdapter', () => {
     fs.writeFileSync(path.join(sub, 'call.vtt'), vtt);
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig(dir), meta);
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     // 2 turns from top.txt + 1 turn from subdir/call.vtt
     expect(records).toHaveLength(3);
     const ids = records.map(r => r.external_id);
@@ -315,7 +315,7 @@ describe('TranscriptAdapter', () => {
     fs.writeFileSync(path.join(dir, 'legit.txt'), 'Max: legitimate');
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig(dir), meta);
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     // Only the legitimate file should produce records; symlink is skipped
     expect(records).toHaveLength(1);
     expect(records[0]!.external_id).toMatch(/^legit\.txt#[0-9a-f]{16}$/);
@@ -328,13 +328,16 @@ describe('TranscriptAdapter', () => {
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig(dir), meta);
 
-    // First pull — should return records and set cursor
-    const first = await adapter.pull();
+    // First pull — should return records; commit cursor to persist it
+    const { records: first, commitCursor: cc1 } = await adapter.pull();
     expect(first).toHaveLength(1);
+    // M-6: cursor NOT written until commitCursor() is called
+    expect(meta.getMeta('cursor:granola')).toBeNull();
+    cc1();
     expect(meta.getMeta('cursor:granola')).not.toBeNull();
 
     // Second pull — cursor covers the file, no new records
-    const second = await adapter.pull();
+    const { records: second } = await adapter.pull();
     expect(second).toHaveLength(0);
   });
 
@@ -343,7 +346,8 @@ describe('TranscriptAdapter', () => {
     fs.writeFileSync(path.join(dir, 'a.txt'), 'Max: first');
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig(dir), meta);
-    await adapter.pull();
+    const { commitCursor } = await adapter.pull();
+    commitCursor();
     const cursor = meta.getMeta('cursor:granola');
     expect(cursor).not.toBeNull();
     // cursor should be a numeric ms timestamp
@@ -354,8 +358,9 @@ describe('TranscriptAdapter', () => {
     const dir = makeTmpDir();
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig(dir), meta);
-    await adapter.pull();
-    // No files → cursor stays unset
+    const { commitCursor } = await adapter.pull();
+    commitCursor();
+    // No files → cursor stays unset even after commitCursor (no-op when no records)
     expect(meta.getMeta('cursor:granola')).toBeNull();
   });
 
@@ -366,7 +371,7 @@ describe('TranscriptAdapter', () => {
     fs.writeFileSync(path.join(dir, 'meeting.txt'), 'Max: real transcript');
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig(dir), meta);
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     // Only the .txt file should be processed
     expect(records).toHaveLength(1);
     expect(records[0]!.external_id).toMatch(/^meeting\.txt#[0-9a-f]{16}$/);
@@ -383,7 +388,7 @@ describe('TranscriptAdapter', () => {
     fs.writeFileSync(path.join(dir, 'meeting.txt'), `Max: use this token: ${token}`);
     const meta = makeMeta();
     const adapter = new TranscriptAdapter(makeConfig(dir), meta);
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records[0]!.content).not.toContain(token);
     expect(records[0]!.content).toContain('[REDACTED:API_KEY]');
   });

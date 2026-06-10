@@ -42,6 +42,7 @@ import { TranscriptAdapter } from '../source/transcript-adapter';
 import { ObsidianAdapter } from '../source/obsidian-adapter';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { acquireLock, releaseLock } from './lockfile';
+import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 
 const LOG_PATH = '/tmp/brain-memory-ingest.log';
 
@@ -49,17 +50,11 @@ const LOG_PATH = '/tmp/brain-memory-ingest.log';
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] brain-ingest: ${msg}\n`);
 
-/**
- * Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var.
- * Returns undefined if neither is supplied.
- * Identical to sleep-pass-cli.resolveDbPath (T-03-2-Dpath: argv array element, never shell string).
- */
+// M-8: delegate to the shared resolveDbPath with fallbackToDefault=false so a missing
+// --db flag / BRAIN_MEMORY_DB env causes the missing-path exit (process.exit(0) below).
+// T-03-2-Dpath: argv array element, never shell string.
 function resolveDbPath(): string | undefined {
-  const dbArgIdx = process.argv.indexOf('--db');
-  if (dbArgIdx !== -1 && process.argv[dbArgIdx + 1]) {
-    return process.argv[dbArgIdx + 1];
-  }
-  return process.env['BRAIN_MEMORY_DB'];
+  return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
 }
 
 /**
@@ -125,9 +120,11 @@ export async function runPullPhase(
 ): Promise<void> {
   for (const adapter of adapters) {
     // ── async pull (I/O completes before any sync write) ────────────────────
+    // M-6: pull() returns { records, commitCursor } — cursor is NOT written here.
     let records: NormalizedRecord[];
+    let commitCursor: () => void;
     try {
-      records = await adapter.pull();
+      ({ records, commitCursor } = await adapter.pull());
     } catch (err) {
       // T-06-25: log the error STRING + adapter source only — never the token.
       log(`adapter ${adapter.source} failed: ${String(err)}`);
@@ -151,6 +148,11 @@ export async function runPullPhase(
       }
     });
     appendBatch(records);
+
+    // M-6: commit the cursor ONLY after appendBatch succeeds (fetch/commit split).
+    // If appendBatch threw, commitCursor is never called — re-fetch on next run.
+    // D-66: per-adapter isolation — one adapter's cursor failure cannot block others.
+    commitCursor();
 
     log(`${adapter.source}: pulled ${records.length} records, appended ${appended}`);
   }

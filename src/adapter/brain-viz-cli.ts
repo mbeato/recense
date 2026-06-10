@@ -49,6 +49,13 @@ async function main(): Promise<void> {
   // D-80: owner-agnostic path resolution via resolveDbPath() (never hardcoded).
   const dbPath = resolveDbPath();
 
+  // L-10: guard against silently creating an empty DB on an unconfigured machine.
+  // If brain.db does not exist yet, the user must run `brain init` first.
+  if (!existsSync(dbPath)) {
+    process.stderr.write(`brain viz: DB not found at ${dbPath} — run \`brain init\` first\n`);
+    process.exit(1);
+  }
+
   // ── 1. Open write handle for flag flip (meta table only) ────────────────────
   const db = new Database(dbPath);
   initSchema(db);
