@@ -120,9 +120,11 @@ export async function runPullPhase(
 ): Promise<void> {
   for (const adapter of adapters) {
     // ── async pull (I/O completes before any sync write) ────────────────────
+    // M-6: pull() returns { records, commitCursor } — cursor is NOT written here.
     let records: NormalizedRecord[];
+    let commitCursor: () => void;
     try {
-      records = await adapter.pull();
+      ({ records, commitCursor } = await adapter.pull());
     } catch (err) {
       // T-06-25: log the error STRING + adapter source only — never the token.
       log(`adapter ${adapter.source} failed: ${String(err)}`);
@@ -146,6 +148,11 @@ export async function runPullPhase(
       }
     });
     appendBatch(records);
+
+    // M-6: commit the cursor ONLY after appendBatch succeeds (fetch/commit split).
+    // If appendBatch threw, commitCursor is never called — re-fetch on next run.
+    // D-66: per-adapter isolation — one adapter's cursor failure cannot block others.
+    commitCursor();
 
     log(`${adapter.source}: pulled ${records.length} records, appended ${appended}`);
   }

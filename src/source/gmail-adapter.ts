@@ -301,14 +301,15 @@ export class GmailAdapter implements SourceAdapter {
   /**
    * Pull all new messages since cursor:gmail (or full query-backfill if no cursor).
    *
-   * Async-before-sync: all network I/O completes (await fetcher.fetchMessages) before
-   * any synchronous writes (meta.setMeta). This lets the orchestrator run pull() outside
-   * any DB transaction and batch the returned records into a sync write (CONSOL-03 / T-04-ASYNC).
+   * Returns { records, commitCursor } where commitCursor() persists the new historyId.
+   * M-6: the cursor write is deferred — the orchestrator calls commitCursor() ONLY after
+   * appendBatch succeeds. A crash between fetch and commit means re-fetch on next run
+   * (at-least-once delivery; UNIQUE(source,external_id) deduplicated on replay).
    *
    * Throws if OAuth creds are missing (only when using the default real fetcher — D-68).
    * The orchestrator catches per-adapter errors and continues with other adapters (D-66).
    */
-  async pull(): Promise<NormalizedRecord[]> {
+  async pull(): Promise<{ records: NormalizedRecord[]; commitCursor: () => void }> {
     // Read cursor:gmail — null means no prior pull; real fetcher will do query-backfill (D-67)
     const cursor = this.meta.getMeta('cursor:gmail');
 
@@ -321,11 +322,14 @@ export class GmailAdapter implements SourceAdapter {
     // Normalise: pure synchronous mapping (no await)
     const records = messages.map(msg => normalizeGmailMessage(msg, this.config));
 
-    // Advance cursor AFTER all async work is done (sync write, D-67)
-    if (newHistoryId !== null) {
-      this.meta.setMeta('cursor:gmail', newHistoryId);
-    }
+    // M-6: capture newHistoryId for the deferred cursor commit (NOT written here).
+    // commitCursor is a thunk — called by the orchestrator after appendBatch succeeds.
+    const commitCursor = (): void => {
+      if (newHistoryId !== null) {
+        this.meta.setMeta('cursor:gmail', newHistoryId);
+      }
+    };
 
-    return records;
+    return { records, commitCursor };
   }
 }

@@ -217,14 +217,17 @@ export class ObsidianAdapter implements SourceAdapter {
   /**
    * Pull all new/modified vault notes since cursor:obsidian.
    *
-   * Returns NormalizedRecord[] — one record per note section.
-   * Returns [] immediately if config.obsidian.dir is empty (fail-safe disabled state).
-   * Returns [] if the vault root does not exist or is not readable.
+   * Returns { records, commitCursor } where commitCursor() persists the new mtime.
+   * M-6: the cursor write is deferred — the orchestrator calls commitCursor() ONLY after
+   * appendBatch succeeds. A crash between walk and commit means re-walk on next run
+   * (at-least-once delivery; UNIQUE(source,external_id) deduplicated on replay).
+   * Returns records=[] immediately if config.obsidian.dir is empty (fail-safe disabled state).
+   * Returns records=[] if the vault root does not exist or is not readable.
    */
-  async pull(): Promise<NormalizedRecord[]> {
+  async pull(): Promise<{ records: NormalizedRecord[]; commitCursor: () => void }> {
     const dir = this.config.obsidian.dir;
     // Fail-safe: empty dir means the adapter is disabled (D-56).
-    if (!dir) return [];
+    if (!dir) return { records: [], commitCursor: () => {} };
 
     // Resolve + path-guard the vault root (T-04-PATH first level).
     const resolvedDir = path.resolve(dir);
@@ -232,7 +235,7 @@ export class ObsidianAdapter implements SourceAdapter {
     try {
       realRoot = fs.realpathSync(resolvedDir);
     } catch {
-      return []; // vault dir doesn't exist or is not accessible
+      return { records: [], commitCursor: () => {} }; // vault dir doesn't exist or is not accessible
     }
 
     // Read cursor — ms timestamp (may have sub-ms fractional component); default 0.
@@ -251,12 +254,15 @@ export class ObsidianAdapter implements SourceAdapter {
       if (mtime > maxMtime) maxMtime = mtime;
     });
 
-    // Advance cursor to max mtime seen (D-67).
-    if (maxMtime > cursor) {
-      this.meta.setMeta('cursor:obsidian', String(maxMtime));
-    }
+    // M-6: capture maxMtime for the deferred cursor commit (NOT written here).
+    // commitCursor is a thunk — called by the orchestrator after appendBatch succeeds.
+    const commitCursor = (): void => {
+      if (maxMtime > cursor) {
+        this.meta.setMeta('cursor:obsidian', String(maxMtime));
+      }
+    };
 
-    return records;
+    return { records, commitCursor };
   }
 
   // ── Private walk helper ──────────────────────────────────────────────────

@@ -252,7 +252,7 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
 
   it('returns [] immediately when config.obsidian.dir is empty string (fail-safe disabled)', async () => {
     const adapter = new ObsidianAdapter(makeConfig(''), makeMockMeta());
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records).toHaveLength(0);
   });
 
@@ -268,7 +268,7 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
     fs.writeFileSync(path.join(tempDir, 'beta.md'), 'Content of beta.');
 
     const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records).toHaveLength(2);
     expect(records.some(r => r.external_id.startsWith('alpha.md'))).toBe(true);
     expect(records.some(r => r.external_id.startsWith('beta.md'))).toBe(true);
@@ -285,7 +285,7 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
     fs.writeFileSync(path.join(sub2, 'deep-note.md'), 'Deep nested note.');
 
     const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records).toHaveLength(3);
     const externalIds = records.map(r => r.external_id);
     expect(externalIds.some(id => id.includes('root-note.md'))).toBe(true);
@@ -303,7 +303,7 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
     fs.writeFileSync(path.join(tempDir, 'real-note.md'), 'This is a real vault note.');
 
     const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records).toHaveLength(1);
     expect(records[0]!.external_id).toContain('real-note.md');
     expect(records.every(r => !r.external_id.includes('.obsidian'))).toBe(true);
@@ -316,7 +316,7 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
     fs.writeFileSync(path.join(tempDir, 'big-note.md'), oversized);
 
     const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     // Should produce 2+ records (one per section)
     expect(records.length).toBeGreaterThanOrEqual(2);
     // All records belong to big-note.md but with different section indices
@@ -333,7 +333,7 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
     fs.writeFileSync(path.join(tempDir, 'note.md'), oversized);
 
     const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records.every(r => r.origin === 'asserted_by_user')).toBe(true);
     expect(records.every(r => r.source === 'obsidian')).toBe(true);
   });
@@ -355,7 +355,7 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
 
     try {
       const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
-      const records = await adapter.pull();
+      const { records } = await adapter.pull();
       // Only the legitimate note should be returned — symlink escape is skipped
       expect(records).toHaveLength(1);
       expect(records[0]!.external_id).toContain('legit.md');
@@ -375,17 +375,21 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
     const adapter = new ObsidianAdapter(makeConfig(tempDir), meta);
 
     // First pull — cursor is 0, should return the note
-    const first = await adapter.pull();
+    const { records: first, commitCursor: cc1 } = await adapter.pull();
     expect(first).toHaveLength(1);
 
-    // cursor:obsidian should be set to the note's mtime
+    // M-6: cursor NOT written until commitCursor() is called
+    expect(meta.store.get('cursor:obsidian')).toBeUndefined();
+    cc1();
+
+    // cursor:obsidian should be set to the note's mtime after commit
     const cursorAfterFirst = meta.store.get('cursor:obsidian');
     expect(cursorAfterFirst).toBeDefined();
     expect(parseInt(cursorAfterFirst!, 10)).toBeGreaterThan(0);
 
     // Second pull with same meta (cursor is now set) — note mtime unchanged
     const adapter2 = new ObsidianAdapter(makeConfig(tempDir), meta);
-    const second = await adapter2.pull();
+    const { records: second } = await adapter2.pull();
     expect(second).toHaveLength(0); // unchanged note is skipped
   });
 
@@ -402,7 +406,8 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
 
     const meta = makeMockMeta();
     const adapter = new ObsidianAdapter(makeConfig(tempDir), meta);
-    await adapter.pull();
+    const { commitCursor } = await adapter.pull();
+    commitCursor();
 
     // cursor should be >= b.md's actual mtime after the mtime bump
     const cursor = parseFloat(meta.store.get('cursor:obsidian')!);
@@ -418,7 +423,7 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
     fs.writeFileSync(path.join(tempDir, 'real.md'), 'Real note.');
 
     const adapter = new ObsidianAdapter(makeConfig(tempDir), makeMockMeta());
-    const records = await adapter.pull();
+    const { records } = await adapter.pull();
     expect(records).toHaveLength(1);
     expect(records[0]!.external_id).toContain('real.md');
   });
@@ -484,7 +489,7 @@ describe('EpisodicStore + ObsidianAdapter E2E: edit re-ingests, unchanged dedupe
 
     // ── Step 1: initial ingest ───────────────────────────────────────────────
     fs.writeFileSync(notePath, 'Jane runs Acme coaching.');
-    const records1 = await adapter.pull();
+    const { records: records1 } = await adapter.pull();
     expect(records1).toHaveLength(1);
     appendRecord(records1[0]!);
     expect(countEpisodes()).toBe(1);
@@ -492,7 +497,7 @@ describe('EpisodicStore + ObsidianAdapter E2E: edit re-ingests, unchanged dedupe
     // ── Step 2: edit the note ───────────────────────────────────────────────
     fs.writeFileSync(notePath, 'Jane runs Acme coaching — updated 2026.');
     meta.store.set('cursor:obsidian', '0'); // reset cursor so the file is re-read
-    const records2 = await adapter.pull();
+    const { records: records2 } = await adapter.pull();
     expect(records2).toHaveLength(1);
 
     // Content-addressed: edit → different hash → different external_id → NOT deduped
@@ -502,7 +507,7 @@ describe('EpisodicStore + ObsidianAdapter E2E: edit re-ingests, unchanged dedupe
 
     // ── Step 3: re-read unchanged file → same external_id → deduped ────────
     meta.store.set('cursor:obsidian', '0');
-    const records3 = await adapter.pull();
+    const { records: records3 } = await adapter.pull();
     expect(records3).toHaveLength(1);
     expect(records3[0]!.external_id).toBe(records2[0]!.external_id); // unchanged content
     appendRecord(records3[0]!);

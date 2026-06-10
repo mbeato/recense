@@ -151,21 +151,27 @@ export interface SourceAdapter {
   readonly source: string;
 
   /**
-   * Pull all new records since the last cursor position.
+   * Pull all new records since the last cursor position and return a deferred cursor
+   * commit thunk (M-6: fetch/commit split, mirrors Channel.fetch() / commitCursor()).
    *
-   * Returns NormalizedRecord[] where each record is:
-   *  - Already redacted (secrets stripped via redactSecrets, D-63).
-   *  - Already chunked to ≤ maxContentBytes (D-58).
-   *  - Already prefixed with an inline provenance header (D-59).
+   * Returned shape: `{ records, commitCursor }` where:
+   *  - `records` — NormalizedRecord[] with each record already:
+   *      - Redacted (secrets stripped via redactSecrets, D-63).
+   *      - Chunked to ≤ maxContentBytes (D-58).
+   *      - Prefixed with an inline provenance header (D-59).
+   *  - `commitCursor` — zero-arg thunk that persists the new cursor position via
+   *      the adapter's MetaStore. The orchestrator calls this ONLY AFTER a successful
+   *      appendBatch so that a crash between network fetch and DB commit does NOT
+   *      permanently skip records (re-fetch on next run = at-least-once delivery).
    *
    * Async: ALL network / filesystem I/O completes here (async-before-sync pattern).
    * The orchestrator batches results into a synchronous db.transaction — no await
-   * may escape into the write path (mirrors async-before-sync established in Phase 2).
+   * may escape into the write path.
    *
    * Isolation: a thrown error from one adapter MUST NOT block other adapters or the
    * sleep-pass consolidation (D-66). Orchestrators catch per-adapter and continue.
    */
-  pull(): Promise<NormalizedRecord[]>;
+  pull(): Promise<{ records: NormalizedRecord[]; commitCursor: () => void }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,13 +181,20 @@ export interface SourceAdapter {
 /**
  * Deterministic mock for unit tests.
  *
- * Takes a scripted NormalizedRecord[] at construction and returns it verbatim from pull().
+ * Takes a scripted NormalizedRecord[] at construction and returns it via pull().
  * No network, no filesystem, no credentials at new time.
  * Mirrors MockModelProvider / MockClaimExtractor script-queue discipline.
+ *
+ * M-6: pull() now returns { records, commitCursor }. The `committed` flag tracks
+ * whether the orchestrator called commitCursor — set to false initially, true after
+ * commitCursor is invoked. Tests assert committed=false on append failure and
+ * committed=true on success.
  */
 export class MockSourceAdapter implements SourceAdapter {
   readonly source: string;
   private readonly script: NormalizedRecord[];
+  /** True after commitCursor() is called; false before or when pull() has not been invoked. */
+  public committed = false;
 
   /**
    * @param source - The adapter identifier (e.g. 'gmail', 'obsidian').
@@ -192,8 +205,11 @@ export class MockSourceAdapter implements SourceAdapter {
     this.script = [...script];
   }
 
-  /** Returns the scripted records; always resolves, never throws. */
-  async pull(): Promise<NormalizedRecord[]> {
-    return this.script;
+  /** Returns the scripted records plus a commitCursor thunk; always resolves, never throws. */
+  async pull(): Promise<{ records: NormalizedRecord[]; commitCursor: () => void }> {
+    return {
+      records: this.script,
+      commitCursor: () => { this.committed = true; },
+    };
   }
 }

@@ -117,7 +117,7 @@ describe('runPullPhase — failure isolation (D-66)', () => {
     // Adapter 1: always throws on pull() — simulates a network/auth failure
     const failingAdapter: SourceAdapter = {
       source: 'failing-source',
-      async pull(): Promise<NormalizedRecord[]> {
+      async pull(): Promise<{ records: NormalizedRecord[]; commitCursor: () => void }> {
         throw new Error('network timeout');
       },
     };
@@ -145,7 +145,7 @@ describe('runPullPhase — failure isolation (D-66)', () => {
   it('failure log contains error string but never exposes secret-like values', async () => {
     const secretAdapter: SourceAdapter = {
       source: 'gmail',
-      async pull(): Promise<NormalizedRecord[]> {
+      async pull(): Promise<{ records: NormalizedRecord[]; commitCursor: () => void }> {
         throw new Error('Missing GMAIL_CLIENT_SECRET credentials');
       },
     };
@@ -249,5 +249,58 @@ describe('runPullPhase — dedup via source/external_id (D-59)', () => {
 
     // Both should insert (uniqueness key is (source, external_id) not just external_id)
     expect(store.listUnconsolidated()).toHaveLength(2);
+  });
+});
+
+// ─── (d) runPullPhase — M-6 deferred cursor commit ───────────────────────────
+
+describe('runPullPhase — deferred cursor commit (M-6)', () => {
+  let db: Database.Database;
+  let store: EpisodicStore;
+  let pipeline: IngestionPipeline;
+  const logs: string[] = [];
+  const capLog = (msg: string) => { logs.push(msg); };
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initSchema(db);
+    const clock = new FakeClock(3_000_000);
+    store = new EpisodicStore(db, clock, TEST_CONFIG);
+    const gate = new AllocationGate(TEST_CONFIG);
+    pipeline = new IngestionPipeline(gate, store);
+    logs.length = 0;
+  });
+
+  afterEach(() => {
+    // db may already be closed by the 'appendBatch throws' test — guard the close
+    try { db.close(); } catch { /* already closed */ }
+  });
+
+  it('happy path: MockSourceAdapter.committed is true after runPullPhase succeeds', async () => {
+    const adapter = new MockSourceAdapter('granola', [makeRecord(50)]);
+    expect(adapter.committed).toBe(false); // false before any pull
+
+    await runPullPhase([adapter], pipeline, db, capLog);
+
+    // commitCursor() was called after appendBatch succeeded
+    expect(adapter.committed).toBe(true);
+  });
+
+  it('appendBatch throws (closed db) → MockSourceAdapter.committed stays false', async () => {
+    const adapter = new MockSourceAdapter('granola', [makeRecord(99)]);
+
+    // Close the db so appendBatch (db.transaction) throws
+    db.close();
+
+    let threw = false;
+    try {
+      await runPullPhase([adapter], pipeline, db, capLog);
+    } catch {
+      threw = true;
+    }
+
+    // appendBatch threw → commitCursor never called → cursor not advanced
+    expect(threw).toBe(true);
+    expect(adapter.committed).toBe(false);
   });
 });
