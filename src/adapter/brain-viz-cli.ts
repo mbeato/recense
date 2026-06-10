@@ -26,6 +26,7 @@
  */
 
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
@@ -73,28 +74,32 @@ async function main(): Promise<void> {
   // The server's http.createServer().listen() keeps the event loop alive.
 
   // ── 4. Open a chromeless app-window (D-103) ─────────────────────────────────
-  // macOS: 'open -a "Google Chrome" --args --app=<url>'
-  // On failure (Chrome not installed, non-macOS, etc.) fall back to a plain browser tab.
-  try {
-    const appChild = spawn('open', ['-a', 'Google Chrome', '--args', `--app=${url}`], {
-      detached: true,
-      stdio: 'ignore',
-    });
-    // WR-03: spawn failures (ENOENT on non-darwin, missing Chrome) arrive async via
-    // the 'error' event, NOT as a sync throw — an unhandled 'error' crashes the
-    // process. Swallow it; the URL is already printed to stdout below.
-    appChild.on('error', () => { /* non-macOS or Chrome missing — URL already printed */ });
-    appChild.unref();
-  } catch {
-    // Browser-tab fallback: 'open <url>' uses the system default browser.
+  // Launch the Chrome binary DIRECTLY with --app=<url>. The previous form,
+  // `open -a "Google Chrome" --args --app=<url>`, silently DROPS --args when Chrome
+  // is already running (macOS just activates the running app), leaving a blank,
+  // URL-less window — the user had to paste the URL by hand. Invoking the executable
+  // navigates reliably whether or not Chrome is already open. Falls back to the system
+  // default browser if Chrome isn't at the standard path or the launch errors.
+  const CHROME_BIN = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  const openDefaultBrowser = (): void => {
     try {
-      const tabChild = spawn('open', [url], { detached: true, stdio: 'ignore' });
-      // WR-03: same async 'error' guard as the app-window spawn above.
-      tabChild.on('error', () => { /* non-macOS — URL already printed */ });
-      tabChild.unref();
+      const tab = spawn('open', [url], { detached: true, stdio: 'ignore' });
+      // WR-03: async spawn 'error' (not a sync throw) would otherwise crash the process.
+      tab.on('error', () => { /* non-macOS — URL already printed to stdout */ });
+      tab.unref();
+    } catch { /* headless/CI — URL already printed to stdout below */ }
+  };
+  if (existsSync(CHROME_BIN)) {
+    try {
+      const app = spawn(CHROME_BIN, [`--app=${url}`], { detached: true, stdio: 'ignore' });
+      // WR-03: on async launch error, fall back to the default browser (still navigates).
+      app.on('error', openDefaultBrowser);
+      app.unref();
     } catch {
-      // Headless/CI — URL already printed to stdout below; nothing more to do.
+      openDefaultBrowser();
     }
+  } else {
+    openDefaultBrowser();
   }
 
   // ── 5. Print URL to stdout (headless/CI usability) ─────────────────────────
