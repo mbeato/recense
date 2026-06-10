@@ -329,3 +329,118 @@ describe('mcp-server memory_add (episodic-only write)', () => {
     expect(tools.length).toBe(3);
   }, 15_000);
 });
+
+// ---------------------------------------------------------------------------
+// memory_ask — { answer, origin } shape (D-09), no-answer null, per-call lock
+// ---------------------------------------------------------------------------
+
+describe('mcp-server memory_ask (responder mapping)', () => {
+  let tmpDir: string;
+  let dbPath: string;
+  let client: Client | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'brain-mcp-ask-'));
+    dbPath = join(tmpDir, 'test.db');
+    // Hermetic lock: memory_ask acquires the single-writer lock (the responder's
+    // facts-first branch appends one inferred/salience-0 episode — a write).
+    process.env['BRAIN_MEMORY_LOCK_PATH'] = join(tmpDir, 'test.lock');
+  });
+
+  afterEach(async () => {
+    await client?.close();
+    client = undefined;
+    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns { answer, origin } with origin=fact when a stored fact answers (D-09)', async () => {
+    // Seed one fact node + unit-vector embedding so retrieval hits it, then let
+    // the scripted generate compose the grounded answer (origin 'fact').
+    const db = new Database(dbPath);
+    initSchema(db);
+    const config = { ...DEFAULT_CONFIG, dbPath };
+    const store = new SemanticStore(db, realClock, config);
+    const id = newId();
+    store.upsertNode({
+      id,
+      type: 'fact',
+      value: 'Max prefers TypeScript',
+      origin: 'observed',
+      tombstoned: false,
+    });
+    const vec = new Float32Array(config.embeddingDimensions);
+    vec[0] = 1.0;
+    store.setEmbedding(id, vec);
+    db.close();
+
+    const mock = new MockModelProvider({
+      embedFn: () => {
+        const v = new Float32Array(config.embeddingDimensions);
+        v[0] = 1.0;
+        return v;
+      },
+      generateScript: ['Max prefers TypeScript.'],
+    });
+    client = await connectClient({ dbPath, provider: mock });
+
+    const result = await client.callTool({
+      name: 'memory_ask',
+      arguments: { query: 'what language does Max prefer?' },
+    });
+    expect(result.isError ?? false).toBe(false);
+    const sc = result.structuredContent as { answer: string | null; origin: string };
+    // Exactly the D-09 contract keys — no episodeId, no channel markers
+    expect(Object.keys(sc).sort()).toEqual(['answer', 'origin']);
+    expect(sc.answer).toBe('Max prefers TypeScript.');
+    expect(sc.origin).toBe('fact');
+  });
+
+  it("no-answer maps to { answer: null, origin: 'none' } — never channel phrasing (D-09)", async () => {
+    // Empty DB + empty generateScript: neither a grounded fact nor a schema-prior
+    // exists. The responder's honest no-answer text is Telegram channel
+    // presentation — MCP must surface a structured null instead.
+    const mock = new MockModelProvider({
+      embedFn: () => new Float32Array([0.1, 0.2, 0.3]),
+    });
+    client = await connectClient({ dbPath, provider: mock });
+
+    const result = await client.callTool({
+      name: 'memory_ask',
+      arguments: { query: 'something the memory has never seen' },
+    });
+    expect(result.isError ?? false).toBe(false);
+    const sc = result.structuredContent as { answer: string | null; origin: string };
+    expect(sc.answer).toBeNull();
+    expect(sc.origin).toBe('none');
+  });
+
+  it('origin is always one of fact|inferred|none', async () => {
+    const mock = new MockModelProvider({
+      embedFn: () => new Float32Array([0.1, 0.2, 0.3]),
+    });
+    client = await connectClient({ dbPath, provider: mock });
+    const result = await client.callTool({
+      name: 'memory_ask',
+      arguments: { query: 'anything' },
+    });
+    expect(result.isError ?? false).toBe(false);
+    const sc = result.structuredContent as { answer: string | null; origin: string };
+    expect(['fact', 'inferred', 'none']).toContain(sc.origin);
+  });
+
+  it('returns isError when the lock is held, and the server keeps running', async () => {
+    const mock = new MockModelProvider({
+      embedFn: () => new Float32Array([0.1, 0.2, 0.3]),
+    });
+    client = await connectClient({ dbPath, provider: mock });
+    writeFileSync(process.env['BRAIN_MEMORY_LOCK_PATH']!, String(process.pid));
+    const result = await client.callTool({
+      name: 'memory_ask',
+      arguments: { query: 'blocked?' },
+    });
+    expect(result.isError).toBe(true);
+    const { tools } = await client.listTools();
+    expect(tools.length).toBe(3); // server alive — no process.exit
+  }, 15_000);
+});
