@@ -356,8 +356,8 @@ function makeNodeObject(node) {
   if (node.__mesh) return node.__mesh;
   const isTomb = !!node.tombstoned;
   let r, op;
-  if (node.__cat === 'schema')    { r = 3.5 + Math.sqrt(node.__members || 0) * 2.2; op = 0.95; }
-  else if (node.__cat === 'haze') { r = 0.7 + node.s * 0.8;                          op = 0.16; }
+  if (node.__cat === 'schema')    { r = 2.2 + Math.sqrt(node.__members || 0) * 1.3; op = 0.95; }
+  else if (node.__cat === 'haze') { r = 1 + node.s * 1.2;                            op = 0.32; }
   else                            { r = 1.1 + node.s * 2;                            op = 0.85; }
   const base  = isTomb ? new THREE.Color(TOMBSTONE_COLOR) : new THREE.Color(TYPE_COLOR[node.type] || TYPE_COLOR.entity);
   const mat   = new THREE.MeshBasicMaterial({ color: base.clone(), transparent: true, opacity: isTomb ? 0.4 : op });
