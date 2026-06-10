@@ -12,7 +12,7 @@ A faithful brain-inspired memory engine for AI agents — a two-store (fast epis
 - **Tech stack**: TypeScript engine (better-sqlite3, API-based embed/LLM/judge) — the integration surface (Claude Code hooks) is TS, and v1 has no heavy compute. Python training sidecar bolts on at v3 behind the ModelProvider/ConsolidationSink seams. — Keeps the hot integration path in-process; isolates ML to a separable service.
 - **Performance**: online paths (SessionStart inject, retrieval) must stay LLM-free and fast; all LLM/embedding cost lives in the offline sleep pass. — The hook blocks the user; latency there is felt every session.
 - **Correctness**: never delete an evidence-backed fact via decay; never let inferred output strengthen a fact (self-confirmation); graph is source of truth, vector is a derived cache. — These are the load-bearing guards from the adversarial review.
-- **Faithfulness**: design choices trace to the verified foundation; demoted ideas (myelination→cache) must not creep back as memory mechanisms.
+- **Faithfulness (engine mechanisms only)**: design choices trace to the verified foundation; demoted ideas (myelination→cache) must not creep back as memory **mechanisms** (data model, algorithms, decay/consolidation). This governs the engine, NOT the presentation layer: the `brain viz` visualization intentionally renders a 3D "second brain" (anatomical mesh + lit nodes/pathways) as decorative chrome — it does not imply the engine models neuroanatomy, and node positions are not semantic. The old VIZ-06 anatomical-term ban was dropped as overkill (2026-06-10); brain imagery in the viz is allowed.
 <!-- GSD:project-end -->
 
 <!-- GSD:stack-start source:STACK.md -->
