@@ -313,10 +313,10 @@ function tick(now) {
     if (!node.__mat || !node.__mesh) { active.delete(node); continue; }
     node.__act -= dt * 0.6;                              // ~1.6s decay
     if (node.__act <= 0.001) { node.__act = 0; active.delete(node); continue; }
-    const a = Math.max(0, node.__act);
-    node.__mat.color.copy(node.__base).lerp(HOT, a);
-    node.__mat.opacity = 0.78 + a * 0.22;
-    node.__mesh.scale.setScalar(1 + a * 0.7);           // subtle node glow — the moving pulses carry the signal
+    const a = Math.max(0, node.__act) * (node.__actGain || 1);
+    node.__mat.color.copy(node.__base).lerp(HOT, a * 0.8);
+    node.__mat.opacity = Math.min(1, node.__baseOp + a * 0.4);   // boost from each node's own base, not a jump to full
+    node.__mesh.scale.setScalar(1 + a * 0.35);          // subtle glow — the pathway light carries the signal
   }
   // advance traveling pulses (sample live node positions so they track the layout)
   for (let i = pulses.length - 1; i >= 0; i--) {
@@ -446,6 +446,8 @@ function makeNodeObject(node) {
   node.__base  = base;
   node.__mat   = mat;
   node.__act   = 0;
+  node.__baseOp  = isTomb ? 0.4 : op;
+  node.__actGain = node.__cat === 'schema' ? 0.4 : 1;   // schemas are already prominent — dampen their blink
   const mesh   = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 8), mat);
   node.__mesh  = mesh;
   node.__baseR = r;
