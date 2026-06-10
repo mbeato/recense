@@ -1,11 +1,11 @@
 /**
- * Tests for schema v4 — activation_trace table (Task 1) and ActivationTraceSink seam (Task 2).
+ * Tests for activation_trace table (VIZ-02) and ActivationTraceSink seam.
  *
  * Coverage:
- *   - initSchema creates activation_trace idempotently (v4 migration, VIZ-02)
- *   - schema_version meta stamps 4 after migration
+ *   - initSchema creates activation_trace idempotently
+ *   - schema_version meta stamps SCHEMA_VERSION (5) after initSchema
  *   - activation_trace columns: id, ts, query_id, seeds, hops
- *   - existing v3 node/edge/episode data is untouched by v4 migration
+ *   - existing v3 node/edge/episode data is untouched by migration
  *   - SQLiteActivationTraceSink.emit writes a row; seeds/hops round-trip as JSON
  *   - emit uses clock.nowMs() when ts omitted; uses caller ts when provided
  *   - ring eviction: after 60 emits, COUNT = 50, surviving rows are top-50 ids
@@ -30,7 +30,7 @@ import {
 // Schema v4 tests (Task 1)
 // ---------------------------------------------------------------------------
 
-describe('activation_trace table (schema v4)', () => {
+describe('activation_trace table', () => {
   it('initSchema creates activation_trace idempotently — calling twice does not throw', () => {
     const db = new Database(':memory:');
     initSchema(db);
@@ -41,13 +41,14 @@ describe('activation_trace table (schema v4)', () => {
     expect(tables).toHaveLength(1);
   });
 
-  it('schema_version meta is 4 after initSchema', () => {
+  it('schema_version meta equals SCHEMA_VERSION (5) after initSchema', () => {
     const db = new Database(':memory:');
     initSchema(db);
     const row = db
       .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string } | undefined;
-    expect(row?.value).toBe('4');
+    expect(row?.value).toBe(String(SCHEMA_VERSION));
+    expect(SCHEMA_VERSION).toBe(5);
   });
 
   it('activation_trace has expected columns (id, ts, query_id, seeds, hops)', () => {
@@ -87,8 +88,8 @@ describe('activation_trace table (schema v4)', () => {
     expect(epCount.cnt).toBe(1);
   });
 
-  it('SCHEMA_VERSION constant equals 4', () => {
-    expect(SCHEMA_VERSION).toBe(4);
+  it('SCHEMA_VERSION constant equals 5', () => {
+    expect(SCHEMA_VERSION).toBe(5);
   });
 });
 

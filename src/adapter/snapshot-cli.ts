@@ -146,7 +146,9 @@ async function main(): Promise<void> {
         return;
       }
 
-      const id = recordSnapshot(db, { query, expectedAnswer: blessed, ts: Date.now() });
+      // L-8 clock-seam: mint the snapshot ts via the injected clock (realClock.nowMs()) so
+      // tests can substitute FakeClock. The raw Date class must not be called on data paths.
+      const id = recordSnapshot(db, { query, expectedAnswer: blessed, ts: realClock.nowMs() });
       process.stdout.write(JSON.stringify({ recorded: id }));
       db.close();
 

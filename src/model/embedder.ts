@@ -13,6 +13,7 @@
  *    OpenAIEmbedder never prints or exposes the client or key to any output stream.
  */
 import OpenAI from 'openai';
+import { SDK_TIMEOUT_MS, SDK_MAX_RETRIES } from './anthropic-client';
 
 /**
  * Batch text embeddings — index-aligned, awaited fully BEFORE any DB write phase.
@@ -36,7 +37,8 @@ export class OpenAIEmbedder implements Embedder {
     // T-02-KEY: OpenAI() reads OPENAI_API_KEY from process.env automatically.
     // Do not pass the key as a literal argument.
     // Do not log this.client or any key-bearing value.
-    this.client = new OpenAI();
+    // M-4: explicit timeout/maxRetries so a hung embed call can't hold the lock indefinitely.
+    this.client = new OpenAI({ timeout: SDK_TIMEOUT_MS, maxRetries: SDK_MAX_RETRIES });
     this.model = model;
     this.dims = dims;
   }

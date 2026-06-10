@@ -66,7 +66,7 @@ export interface EdgeRow {
   src: string;
   dst: string;
   rel: string;
-  /** Edge strength — Hebbian + lazy decay, same rules as node.s. */
+  /** Edge strength — Hebbian increment only; NO lazy decay is implemented for edges (unlike node.s). */
   w: number;
   last_access: number;
   kind: EdgeKind;

@@ -284,4 +284,43 @@ describe('RetrievalEngine', () => {
       expect(noArgs.results).toEqual(cueless.results);
     });
   });
+
+  // ─── L-2 topk side: dimension-mismatch safety ───────────────────────────────
+
+  describe('topk dimension-mismatch safety (L-2 topk side)', () => {
+    it('skips mismatched-dim nodes — returns only matching-dim node without throwing or NaN', () => {
+      // Insert a correctly-dimensioned node (16-dim basisVec via the normal write path)
+      addEmbeddedNode('good-dim', 'correctly embedded node', basisVec(0), 0.9);
+
+      // Insert a second node with a DIFFERENT embedding dimension via raw SQL.
+      // This bypasses the plan-2 setEmbedding dims-assert, simulating legacy/provider-switch data.
+      const mismatchId = 'bad-dim';
+      store.upsertNode({
+        id: mismatchId,
+        type: 'fact',
+        value: 'mismatched dims node',
+        origin: 'observed',
+        s: 0.9,
+      });
+      // 8-dim Float32Array → 32 bytes; query will be 16-dim → mismatch must be skipped
+      const shortVec = new Float32Array(8);
+      shortVec[0] = 1.0;
+      const shortBuf = Buffer.from(shortVec.buffer.slice(0));
+      db.prepare(
+        'UPDATE node SET embedding=?, embedded_hash=? WHERE id=?'
+      ).run(shortBuf, 'fake-hash', mismatchId);
+
+      const queryVec = basisVec(0); // 16-dim query
+      const results = retriever.topk(queryVec, 10);
+
+      // The correctly-dimensioned node must appear
+      expect(results.find(r => r.id === 'good-dim')).toBeDefined();
+      // The mismatched-dim node must be silently skipped (no throw, not present)
+      expect(results.find(r => r.id === 'bad-dim')).toBeUndefined();
+      // No NaN scores
+      for (const r of results) {
+        expect(Number.isNaN(r.score)).toBe(false);
+      }
+    });
+  });
 });

@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import type OpenAI from 'openai';
-import { resolveModelId } from '../src/model/anthropic-client';
+import { resolveModelId, SDK_TIMEOUT_MS, SDK_MAX_RETRIES } from '../src/model/anthropic-client';
 import { OllamaClient } from '../src/model/ollama-client';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
@@ -15,6 +15,28 @@ const baseConfig: EngineConfig = {
   ...DEFAULT_CONFIG,
   dbPath: ':memory:',
 };
+
+// ── M-4: SDK timeout/retry constants ─────────────────────────────────────────
+
+describe('SDK_TIMEOUT_MS / SDK_MAX_RETRIES (M-4)', () => {
+  it('SDK_TIMEOUT_MS is exported and is a positive finite number', () => {
+    expect(typeof SDK_TIMEOUT_MS).toBe('number');
+    expect(Number.isFinite(SDK_TIMEOUT_MS)).toBe(true);
+    expect(SDK_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+
+  it('SDK_MAX_RETRIES is exported and is a non-negative integer', () => {
+    expect(typeof SDK_MAX_RETRIES).toBe('number');
+    expect(Number.isInteger(SDK_MAX_RETRIES)).toBe(true);
+    expect(SDK_MAX_RETRIES).toBeGreaterThanOrEqual(0);
+  });
+
+  it('SDK_TIMEOUT_MS is at most 120_000 ms (bounded — prevents indefinite lock holds)', () => {
+    // The timeout must be finite and short enough to release the lock well before
+    // the 30-min stale window (H-4). 120 s is a generous upper bound.
+    expect(SDK_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
+  });
+});
 
 describe('resolveModelId', () => {
   it('returns anthropicModel when modelProvider is anthropic (default)', () => {

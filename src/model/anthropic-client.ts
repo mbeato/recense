@@ -32,6 +32,18 @@ export type AnthropicLike = {
 };
 
 /**
+ * SDK-level timeout and retry bounds (M-4).
+ *
+ * A hung API call holds the global single-writer lock. With default timeouts (~10 min)
+ * the hold can approach the 30-min stale window where H-4's lock reclaim fires.
+ * 60 s + 2 retries = at most ~3 min worst-case, well within the stale window.
+ *
+ * Applied to: Anthropic SDK, AnthropicVertex SDK, OpenAI SDK (embedder + local Ollama).
+ */
+export const SDK_TIMEOUT_MS = 60_000;
+export const SDK_MAX_RETRIES = 2;
+
+/**
  * Pure helper — returns the correct model id string for the configured provider.
  * No client construction; safe to call in tests without credentials.
  */
@@ -57,9 +69,16 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
   if (config.modelProvider === 'vertex') {
     // Build options only for non-empty values; the SDK reads the env vars natively
     // for anything left out. Never log or expose these values.
-    const opts: { projectId?: string; region?: string } = {};
+    const opts: {
+      projectId?: string;
+      region?: string;
+      timeout?: number;
+      maxRetries?: number;
+    } = {};
     if (config.vertexProjectId) opts.projectId = config.vertexProjectId;
     if (config.vertexRegion) opts.region = config.vertexRegion;
+    opts.timeout = SDK_TIMEOUT_MS;
+    opts.maxRetries = SDK_MAX_RETRIES;
     const client = new AnthropicVertex(opts);
     return { client, model };
   }
@@ -67,12 +86,17 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
   if (config.modelProvider === 'local') {
     // Local path: OpenAI-compatible Ollama endpoint. Dummy api key 'ollama' (Ollama
     // ignores it); never log the client. Wrapped in OllamaClient to satisfy AnthropicLike.
-    const openai = new OpenAI({ baseURL: config.localBaseUrl, apiKey: 'ollama' });
+    const openai = new OpenAI({
+      baseURL: config.localBaseUrl,
+      apiKey: 'ollama',
+      timeout: SDK_TIMEOUT_MS,
+      maxRetries: SDK_MAX_RETRIES,
+    });
     const client = new OllamaClient(openai);
     return { client, model };
   }
 
   // Default: direct Anthropic SDK — reads ANTHROPIC_API_KEY from env automatically.
-  const client = new Anthropic();
+  const client = new Anthropic({ timeout: SDK_TIMEOUT_MS, maxRetries: SDK_MAX_RETRIES });
   return { client, model };
 }

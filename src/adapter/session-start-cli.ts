@@ -7,6 +7,9 @@
  * Design invariants:
  *  - consumeStdin() MUST be called first — the hook harness blocks on write if not drained.
  *  - LLM-free and embedding-free: only RetrievalEngine + synchronous SQLite reads.
+ *  - READ-ONLY (M-3): opens the DB with {readonly:true, fileMustExist:true}; never runs
+ *    initSchema or any DDL. Writer CLIs (sleep-pass, recall, brain init) own migrations.
+ *    On missing DB or schema_version mismatch, emits empty context and exits 0 cleanly.
  *  - Output is token-budgeted: engine already bounds the set; final string is also
  *    defensively truncated to injectionTokenBudget × 4 chars (T-03-3-I) and hard-capped
  *    at HARD_CAP (10,000 chars) per the Claude Code hook contract (RESEARCH §1.1).
@@ -19,13 +22,12 @@
  *  - T-03-3-I: dual char cap (budget × 4 and hard 10,000) prevents context bloat.
  *  - T-03-3-D: pure synchronous SQLite reads (~100-150ms); no LLM/embedding calls.
  *  - T-03-3-T: emitContext uses one JSON.stringify payload; catch-all emits '' and exits 0.
- *  - T-03-3-E: RetrievalEngine is 100% read-only (Plan 01 guarantee); no write primitives
- *              invoked beyond initSchema DDL.
+ *  - T-03-3-E: RetrievalEngine is 100% read-only; no write primitives invoked (M-3 locked).
  */
 import { appendFileSync } from 'fs';
 import Database from 'better-sqlite3';
 import { resolveDbPath } from './runtime-config';
-import { initSchema } from '../db/schema';
+import { SCHEMA_VERSION } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
 import { SemanticStore } from '../db/semantic-store';
@@ -83,8 +85,39 @@ async function main(): Promise<void> {
   // CR-01: --db (pinned by `brain init`) > BRAIN_MEMORY_DB env > shared default.
   const dbPath = resolveDbPath();
   const config = { ...DEFAULT_CONFIG, dbPath };
-  const db = new Database(dbPath);
-  initSchema(db);
+
+  // M-3 LOCKED: open read-only — never run DDL or initSchema on the hot hook path.
+  // A missing DB (fresh install, writer not yet run) or a schema_version mismatch (binary
+  // older/newer than the DB) emits empty context and exits 0 cleanly.
+  // Writer CLIs (brain init / sleep-pass / recall) own migrations.
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  } catch (err) {
+    appendFileSync(
+      ERROR_LOG,
+      `[${new Date().toISOString()}] session-start-cli: DB unavailable (${dbPath}): ${err} — run a writer CLI (brain init / brain sleep-pass) to initialise; emitting empty context\n`
+    );
+    emitContext('');
+    process.exit(0);
+  }
+
+  // Schema-version check: if the DB was created by a newer binary, the reader must bail out
+  // rather than operate on an unknown schema. If the DB is stale (older binary stamped it),
+  // bail out so a writer CLI can migrate first (M-3 + M-9 companion).
+  const vRow = db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as
+    { value: string } | undefined;
+  if (!vRow || Number(vRow.value) !== SCHEMA_VERSION) {
+    appendFileSync(
+      ERROR_LOG,
+      `[${new Date().toISOString()}] session-start-cli: schema_version mismatch ` +
+      `(stored=${vRow?.value ?? 'absent'}, binary=${SCHEMA_VERSION}) — ` +
+      `run a writer CLI (brain init / brain sleep-pass) to migrate; emitting empty context\n`
+    );
+    db.close();
+    emitContext('');
+    process.exit(0);
+  }
 
   // Instantiate all engine deps — LLM-free by construction (no Embedder/Judge instantiated)
   const clock = realClock;
