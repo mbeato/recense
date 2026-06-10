@@ -278,13 +278,15 @@ ncountEl.textContent = String(allNodes.length);
 if (!loadErr) logEvent('init', `graph loaded: ${allNodes.length} nodes / ${allLinks.length} edges`);
 
 // ---------- spreading-activation pulses (slow electric energy traveling node → node) ----------
-const PULSE_MS = 1100;
-const pulses = [];                                  // {from, to, t0, mesh}
-const _pulseGeo = new THREE.SphereGeometry(3, 10, 10);
+const PULSE_MS = 1500;                              // slow — the pathway fills with light over this time
+const pulses = [];                                 // {from, to, t0, mesh}
+const _pulseGeo = new THREE.CylinderGeometry(2.2, 2.2, 1, 6, 1);   // glowing "wire" along +Y, scaled per edge
+const _pa = new THREE.Vector3(), _pb = new THREE.Vector3(), _ptip = new THREE.Vector3();
+const _pmid = new THREE.Vector3(), _pdir = new THREE.Vector3(), _pup = new THREE.Vector3(0, 1, 0);
 let pulseGroup = null;                              // created after Graph init (needs the scene)
 function spawnPulse(from, to) {
   if (!pulseGroup || !from || !to) return;
-  const mat = new THREE.MeshBasicMaterial({ color: 0xcdefff, transparent: true, opacity: 0.9,
+  const mat = new THREE.MeshBasicMaterial({ color: 0xcdefff, transparent: true, opacity: 0,
     blending: THREE.AdditiveBlending, depthWrite: false });
   const mesh = new THREE.Mesh(_pulseGeo, mat);
   pulseGroup.add(mesh);
@@ -321,15 +323,19 @@ function tick(now) {
     const p = pulses[i];
     const k = (now - p.t0) / PULSE_MS;
     if (k >= 1) { pulseGroup.remove(p.mesh); p.mesh.material.dispose(); pulses.splice(i, 1); continue; }
-    const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;   // easeInOut
-    p.mesh.position.set(
-      (p.from.x || 0) + ((p.to.x || 0) - (p.from.x || 0)) * e,
-      (p.from.y || 0) + ((p.to.y || 0) - (p.from.y || 0)) * e,
-      (p.from.z || 0) + ((p.to.z || 0) - (p.from.z || 0)) * e,
-    );
-    const glow = Math.sin(k * Math.PI);                 // fade in over the trip, out at the end
-    p.mesh.material.opacity = 0.3 + glow * 0.65;
-    p.mesh.scale.setScalar(0.6 + glow * 0.9);
+    // the lit segment sweeps from source toward dest, filling the pathway with light
+    _pa.set(p.from.x || 0, p.from.y || 0, p.from.z || 0);
+    _pb.set(p.to.x || 0, p.to.y || 0, p.to.z || 0);
+    const grow = Math.min(1, k * 1.7);
+    _ptip.copy(_pb).sub(_pa).multiplyScalar(grow).add(_pa);
+    const len = _pa.distanceTo(_ptip);
+    _pmid.copy(_pa).add(_ptip).multiplyScalar(0.5);
+    p.mesh.position.copy(_pmid);
+    _pdir.copy(_ptip).sub(_pa);
+    if (len > 1e-4) { _pdir.multiplyScalar(1 / len); p.mesh.quaternion.setFromUnitVectors(_pup, _pdir); }
+    p.mesh.scale.set(1, Math.max(0.01, len), 1);
+    const fade = k < 0.55 ? 1 : Math.max(0, 1 - (k - 0.55) / 0.45);    // hold lit, then fade the whole wire
+    p.mesh.material.opacity = 0.9 * fade;
   }
   requestAnimationFrame(tick);
 }
@@ -378,11 +384,9 @@ function applyTrace(seedIds) {
   waves.forEach((wave, h) => {
     const intensity = Math.max(0.3, 1 - (h + 1) * 0.18);
     setTimeout(() => {
-      wave.forEach(({ edge, from, to }, i) => setTimeout(() => {
-        spawnPulse(from, to);                                       // slow electric pulse, node → node
-        const link = edge._mirror || edge;
-        try { Graph.emitParticle(link); } catch (e) {}
-        setTimeout(() => activate(to, intensity), PULSE_MS * 0.8);  // light the node as the pulse arrives
+      wave.forEach(({ from, to }, i) => setTimeout(() => {
+        spawnPulse(from, to);                                       // the pathway lights up, source → dest
+        setTimeout(() => activate(to, intensity), PULSE_MS * 0.6);  // light the node as the light reaches it
       }, i * 35));
     }, h * HOP_MS);
   });

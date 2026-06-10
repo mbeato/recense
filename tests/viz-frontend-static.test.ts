@@ -81,8 +81,8 @@ describe('render', () => {
     expect(tickBody).not.toContain('Graph.refresh()');
   });
 
-  it('calls Graph.emitParticle (particle flow along activation edges)', () => {
-    expect(html).toContain('emitParticle');
+  it('lights activation pathways (spawnPulse) along edges on a trace', () => {
+    expect(html).toContain('spawnPulse');
   });
 
   it('has entity type color 0x5b8dff', () => {
