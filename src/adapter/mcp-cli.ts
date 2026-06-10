@@ -6,9 +6,10 @@
  * the server because require.main would stay brain.js).
  *
  * Exposes exactly three snake_case tools (D-01/D-03/D-04):
- *   memory_search — embed query → RetrievalEngine.retrieve(cueVec) → structured provenance
- *                   rows. LLM-free (embedding only, zero generation calls — D-08).
- *                   Read-only: no lock acquisition (spec §8).
+ *   memory_search — embed query → retriever.topk(cueVec, SEARCH_TOP_K) → drop hits below
+ *                   SEARCH_SCORE_FLOOR → ranked structured provenance rows. LLM-free
+ *                   (embedding only, zero generation calls — D-08). Read-only: no lock
+ *                   acquisition (spec §8). Live nodes only (topk excludes tombstoned).
  *   memory_add    — episodic-only write via IngestionPipeline.recordEvent (source='mcp',
  *                   externalId=null — D-06/D-07). NEVER touches the graph (MCP-03: the
  *                   sleep pass stays the sole graph writer). Origin clamped via
@@ -69,6 +70,23 @@ const MAX_QUERY_BYTES = 4_000;
 
 /** T-11-03: bound memory_add content at the handler boundary (DoS cap). */
 const MAX_CONTENT_CHARS = 8_000;
+
+/**
+ * Max ranked results memory_search returns. Search wants more breadth than the
+ * judge's candidateK (5); bounded to keep the response size sane.
+ */
+const SEARCH_TOP_K = 10;
+
+/**
+ * Minimum cosine for a hit to surface in memory_search. Aligns with the existing
+ * "extremely dissimilar" cutpoint (unrelatedSimilarityThreshold = 0.3) and sits
+ * well below deletedSimilarityThreshold (0.7): real queries score 0.4–0.6
+ * (UAT-measured — "telegram" best 0.485) so they surface, while genuine noise
+ * (<0.3) is excluded. Owned by the search path — deliberately NOT read from
+ * config and NOT to be conflated with deletedSimilarityThreshold, whose D-29
+ * deleted-classification semantics are a separate concern.
+ */
+const SEARCH_SCORE_FLOOR = 0.3;
 
 /**
  * D-05 origin clamp (defense in depth behind the zod enum, T-11-01): a client can
@@ -170,17 +188,23 @@ export async function createBrainMcpServer(
         if (!cueVec) {
           return { content: [{ type: 'text' as const, text: '[]' }], structuredContent: { results: [] } };
         }
-        // Read-only path: NO lock acquisition (spec §8); retrieve never writes.
-        const { results } = retrieval.retrieve(cueVec);
-        const rows = results.map(r => {
-          const node = store.getNode(r.id);
-          return {
-            value: r.value,
-            origin: node?.origin ?? 'unknown',
-            score: r.score,
-            lastUpdatedMs: node?.last_access ?? 0,
-          };
-        });
+        // Read-only path: NO lock acquisition (spec §8); topk never writes.
+        // topk returns descending-sorted LIVE hits only (tombstoned = 0 at the
+        // SQL level) — search inherits tombstone exclusion for free.
+        const hits = retriever.topk(cueVec, SEARCH_TOP_K);
+        const rows = hits
+          .filter(hit => hit.score >= SEARCH_SCORE_FLOOR)
+          .flatMap(hit => {
+            // Defensive: skip any id whose node row vanished between scan and lookup.
+            const node = store.getNode(hit.id);
+            if (!node) return [];
+            return [{
+              value: node.value,
+              origin: node.origin,
+              score: hit.score,
+              lastUpdatedMs: node.last_access,
+            }];
+          });
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(rows) }],
           structuredContent: { results: rows },
