@@ -132,7 +132,10 @@ export function startVizServer(dbPath: string, port: number): http.Server {
   const clients = new Set<http.ServerResponse>();
 
   // Highest activation_trace.id already broadcast (monotonically increasing AUTOINCREMENT).
-  let cursor = 0;
+  // WR-01: seed the cursor at the current max id so retained historical rows (the
+  // table is a persistent ring buffer) are NOT replayed as "live" on first connect —
+  // only genuinely new traces stream.
+  let cursor = (db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM activation_trace').get() as { m: number }).m;
 
   // D-98: poll activation_trace every POLL_MS ms and push new rows to all SSE clients.
   const pollInterval = setInterval(() => {
@@ -143,7 +146,16 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     if (!fresh.length) return;
     cursor = fresh[fresh.length - 1]!.id;
     for (const row of fresh) {
-      const payload = `event: trace\ndata: ${JSON.stringify(row)}\n\n`;
+      // seeds/hops are TEXT columns holding JSON-encoded strings (written via
+      // JSON.stringify in activation-sink.ts). Parse them server-side so the SSE
+      // wire contract ships real arrays, not nested JSON strings (CR-01).
+      const payload = `event: trace\ndata: ${JSON.stringify({
+        id: row.id,
+        ts: row.ts,
+        query_id: row.query_id,
+        seeds: JSON.parse(row.seeds),
+        hops: JSON.parse(row.hops),
+      })}\n\n`;
       for (const res of clients) {
         res.write(payload);
       }
