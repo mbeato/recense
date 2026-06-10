@@ -23,6 +23,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { initSchema } from '../src/db/schema';
 import { startVizServer } from '../src/viz/server';
+import { SQLiteActivationTraceSink } from '../src/viz/activation-sink';
+import { FakeClock } from '../src/lib/clock';
 
 // ---------------------------------------------------------------------------
 // Helper: create a temp file DB path (better-sqlite3 cannot open :memory: readonly)
@@ -95,6 +97,68 @@ function getHeaders(port: number, urlPath: string): Promise<{ statusCode: number
       if (err.code === 'ECONNRESET') return;
       reject(err);
     });
+    req.end();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helper: open the SSE stream, fire onOpen once the client is registered, and
+// resolve with the parsed `data:` payload of the first `event: trace` frame.
+// (SSE-safe: keeps the connection open, then destroys it once a frame arrives.)
+// ---------------------------------------------------------------------------
+
+interface SseTracePayload {
+  id: number;
+  ts: number;
+  query_id: string;
+  seeds: unknown;
+  hops: unknown;
+}
+
+function collectTraceEvent(
+  port: number,
+  onOpen: () => void,
+  timeoutMs = 3000,
+): Promise<SseTracePayload> {
+  return new Promise((resolve, reject) => {
+    let buf = '';
+    let settled = false;
+    let timer: NodeJS.Timeout;
+
+    const req = http.request(
+      { hostname: '127.0.0.1', port, path: '/events', method: 'GET' },
+      (res) => {
+        // Headers received → the server has already run clients.add(res) synchronously,
+        // so a trace written now will be picked up by the next poll (≤ POLL_MS).
+        onOpen();
+        res.on('data', (chunk: Buffer) => {
+          buf += chunk.toString();
+          // SSE frames are separated by a blank line.
+          for (const frame of buf.split('\n\n')) {
+            if (!frame.startsWith('event: trace')) continue;
+            const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
+            if (!dataLine) continue;
+            try {
+              const parsed = JSON.parse(dataLine.slice('data: '.length)) as SseTracePayload;
+              if (!settled) {
+                settled = true;
+                clearTimeout(timer);
+                res.destroy();
+                resolve(parsed);
+              }
+            } catch { /* partial frame still buffering — wait for more data */ }
+          }
+        });
+      },
+    );
+    req.on('error', (err: NodeJS.ErrnoException) => {
+      // ECONNRESET after our own res.destroy() is expected; ignore once settled.
+      if (settled && err.code === 'ECONNRESET') return;
+      if (!settled) { settled = true; clearTimeout(timer); reject(err); }
+    });
+    timer = setTimeout(() => {
+      if (!settled) { settled = true; req.destroy(); reject(new Error('timed out waiting for SSE trace event')); }
+    }, timeoutMs);
     req.end();
   });
 }
@@ -194,6 +258,42 @@ describe('GET /events', () => {
   it('returns cache-control: no-cache', async () => {
     const { headers } = await getHeaders(port, '/events');
     expect(headers['cache-control']).toContain('no-cache');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SSE payload shape — CR-01 regression (IN-04)
+//
+// Pre-fix, the server forwarded the raw activation_trace row, so seeds/hops crossed
+// the wire as JSON *strings* and the frontend's `.join()` threw — the live-tail never
+// rendered. This asserts the server emits them as real arrays. Header-only tests
+// (above) could not catch this; only inspecting a real `event: trace` frame does.
+// ---------------------------------------------------------------------------
+
+describe('GET /events — trace payload shape (CR-01 regression)', () => {
+  it('streams seeds and hops as real arrays, not JSON strings', async () => {
+    const seeds = ['n1', 'n2'];
+    // WR-02 honest contract: score is null when only rank order is known.
+    const hops = [{ node_id: 'n2', score: null, hop: 1 }];
+
+    const parsed = await collectTraceEvent(port, () => {
+      // Emit via the real SQLite sink once the SSE client is registered, so the
+      // live poll picks up a genuinely-new row (cursor was seeded at max id == 0).
+      const writeDb = new Database(tmpDbPath);
+      const sink = new SQLiteActivationTraceSink(writeDb, new FakeClock(1000));
+      sink.emit({ query_id: 'q1', seeds, hops });
+      writeDb.close();
+    });
+
+    // CR-01: seeds must arrive as an array, NOT the JSON string '["n1","n2"]'.
+    expect(Array.isArray(parsed.seeds)).toBe(true);
+    expect(parsed.seeds).toEqual(seeds);
+    // The exact frontend operation that threw pre-fix must now succeed.
+    expect((parsed.seeds as string[]).join(',')).toBe('n1,n2');
+
+    // hops likewise an array; the honest null score survives serialization.
+    expect(Array.isArray(parsed.hops)).toBe(true);
+    expect(parsed.hops).toEqual(hops);
   });
 });
 
