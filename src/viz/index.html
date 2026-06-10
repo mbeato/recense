@@ -129,7 +129,7 @@ const HULL_ROT_Z = 0;
 // Brain world scale: the normalized brain (median axis spans ±1) maps to ±BRAIN_SCALE
 // world units. Drives BOTH the visible shell and the containment volume, so they stay
 // aligned. Bigger = roomier cloud (more space between nodes); smaller = denser.
-const BRAIN_SCALE = 380;
+const BRAIN_SCALE = 460;
 const HOVER_SCALE = 1.8;   // node mesh scale-up while hovered
 // Containment pull: how hard a node that drifts outside the brain volume is drawn back
 // toward the center each tick. Higher = crisper brain edge, more surface clumping.
@@ -324,7 +324,7 @@ function applyTrace(seedIds) {
 
 // ---------- nodeThreeObject factory ----------
 function makeNodeObject(node) {
-  const r    = 1.3 + node.s * 2.2;
+  const r    = 1.1 + node.s * 2;
   const isTomb = !!node.tombstoned;
   const base  = isTomb ? new THREE.Color(TOMBSTONE_COLOR) : new THREE.Color(TYPE_COLOR[node.type] || TYPE_COLOR.entity);
   const op    = isTomb ? 0.45 : 0.78;
@@ -376,7 +376,7 @@ Graph = ForceGraph3D()(document.getElementById('graph'))
 const chargeForce = Graph.d3Force('charge');
 if (chargeForce) chargeForce.strength(-15);
 const linkForce = Graph.d3Force('link');
-if (linkForce) linkForce.distance(20);
+if (linkForce) linkForce.distance(14);
 Graph.d3ReheatSimulation();
 
 // ---------- real brain mesh hull (CC BY-SA, Nevit Dilmen) ----------
@@ -452,7 +452,7 @@ Graph.d3ReheatSimulation();
 // Frame the camera on the brain-scaled cloud. The cloud is now fixed at BRAIN_SCALE
 // (not the library's default natural size), so set an explicit distance that shows the
 // whole brain + stem instead of relying on 3d-force-graph's default camera.
-Graph.cameraPosition({ x: 0, y: 0, z: BRAIN_SCALE * 3.8 });
+Graph.cameraPosition({ x: 0, y: 0, z: BRAIN_SCALE * 4.1 });
 
 // Tooltip follows cursor
 document.addEventListener('mousemove', e => {
