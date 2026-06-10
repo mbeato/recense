@@ -185,7 +185,9 @@ describe('engine: RecallEngine trace wiring', () => {
       expect(h).toHaveProperty('node_id');
       expect(typeof h.node_id).toBe('string');
       expect(h).toHaveProperty('score');
-      expect(typeof h.score).toBe('number');
+      // WR-02: recall has only rank order, no measured activation/similarity
+      // magnitude — it emits an honest null rather than a fabricated number.
+      expect(h.score).toBeNull();
       expect(h.hop).toBe(1);
     });
   });
