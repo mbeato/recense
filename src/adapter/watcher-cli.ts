@@ -7,18 +7,29 @@
  * Design invariants:
  *  - Validate args BEFORE lock (WR-02: lock leak prevention).
  *  - All logging goes to LOG_PATH (file only); never stdout except JSON/empty.
- *  - Acquires the O_EXCL lock before the inferred-episode append (D-75).
+ *  - channel.fetch() runs UNLOCKED — network/db read, no cursor write (LOCK-CHANNEL-SPLIT).
+ *  - The single-writer lock is acquired only when there is work (non-null commitTo or
+ *    non-empty messages). Idle ticks never contend with `brain recall` (T-LOCK-02).
+ *  - commitCursor() is called UNDER the lock, AFTER processing — cursor advances only after
+ *    successful (or allowlist-skipped) handling of all messages in the batch (D-75/inv #2).
+ *  - Lock-deferred ticks (lock held after retries) return WITHOUT advancing the cursor —
+ *    next tick re-fetches the same messages (no-loss invariant #2 preserved).
+ *  - tickInFlight guard serializes overlapping setInterval ticks (in-process, T-LOCK-02).
  *  - Releases lock before any process.exit — see WR-02.
  *  - Allowlist read from config; default empty = fail-closed (D-74).
  *  - Inbound questions NEVER written as observed/asserted (D-75 self-confirmation guard).
  *
  * Threat mitigations:
- *  - WR-02: acquireLock() AFTER arg validation; releaseLock() in finally.
+ *  - WR-02: arg validation BEFORE first acquireLockWithRetry(); releaseLock() in finally.
  *  - T-04-03-I: question text treated as data only; never shell-interpolated.
  *  - T-04-03-K: DefaultModelProvider reads API keys from env via SDK defaults.
  *  - T-07-06: inbound question text is never written as observed/asserted_by_user (D-75).
  *  - T-07-07: pollIntervalMs floored at 500ms; lock skipped (not blocked) on contention;
  *    unconfigured watcher idles without polling, no KeepAlive restart thrash.
+ *  - T-LOCK-01: commitCursor is the only cursor writer, called under the lock after processing.
+ *  - T-LOCK-02: tickInFlight prevents overlapping ticks; busy_timeout=5000 waits on SQLITE_BUSY.
+ *  - T-LOCK-03: lock-deferred ticks re-fetch (no-loss); at-least-once (duplicate reply on crash
+ *    between send and commit — accepted, documented in LOCK-REFACTOR-DESIGN.md invariant #2).
  */
 import { appendFileSync } from 'fs';
 import Database from 'better-sqlite3';
@@ -34,12 +45,12 @@ import { DefaultModelProvider } from '../model/provider';
 import { RetrievalEngine } from '../retrieval/engine';
 import { RecallEngine } from '../recall';
 import { HybridResponder } from '../responder';
-import type { Channel } from '../channel/channel';
+import type { Channel, InboundMessage } from '../channel/channel';
 import type { ResponderResult } from '../responder';
 import { DefaultIMessageChannel, DefaultOsascriptSender } from '../channel/imessage-channel';
 import { DefaultChatDbReader } from '../channel/chat-db-reader';
 import { TelegramChannel, DefaultTelegramTransport } from '../channel/telegram-channel';
-import { acquireLock, releaseLock } from './lockfile';
+import { acquireLockWithRetry, releaseLock } from './lockfile';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 
 const LOG_PATH = '/tmp/brain-memory-watcher.log';
@@ -81,24 +92,40 @@ export function resolveDbPath(): string | undefined {
   return process.env['BRAIN_MEMORY_DB'];
 }
 
+// ---------------------------------------------------------------------------
+// In-process tick serialization guard (T-LOCK-02)
+// ---------------------------------------------------------------------------
+
 /**
- * Pure per-tick body: receive → respond → send (no lock, no DB concerns).
+ * Set to true while a runLockedTick call is in flight; prevents a second setInterval
+ * tick from overlapping with the first. Cleared in the outermost finally of runLockedTick
+ * so it resets even on the lock-deferred (early-return) path.
+ *
+ * This is the in-process complement to the O_EXCL lockfile: fetch() moving off the lock
+ * removes the implicit serialization the lock previously provided, so we need this guard.
+ */
+let tickInFlight = false;
+
+/**
+ * Pure per-tick respond loop: iterates the pre-fetched message list and responds.
+ * Does NOT call channel.fetch() or channel.commitCursor() — those are owned by the caller
+ * (runLockedTick) for precise lock control.
  * Exported for unit testing.
  *
  * T-07-04: on respond() returning null, stay silent (safe-null discipline — never
  *   send a raw error to the channel).
  * T-07-06: inbound question text is never appended as observed/asserted (D-75).
- * Errors from receive() or respond() are caught and logged — never rethrown.
+ * Errors from respond() are caught and logged — never rethrown.
  */
 export async function runTick(
   channel: Channel,
+  messages: InboundMessage[],
   responder: { respond(question: string, sessionId: string): Promise<ResponderResult> },
   sessionId: string,
   logFn: (msg: string) => void,
 ): Promise<void> {
   try {
-    const msgs = await channel.receive();
-    for (const m of msgs) {
+    for (const m of messages) {
       try {
         const res = await responder.respond(m.text, sessionId);
         if (res.reply !== null) {
@@ -115,16 +142,23 @@ export async function runTick(
 }
 
 /**
- * Lock-guarded tick: acquires the shared single-writer lock (same file as sleep pass,
- * D-75/D-43), runs runTick, releases the lock in finally.
+ * Fetch-before-lock tick: fetches messages UNLOCKED, then acquires the lock only when
+ * there is work to do, processes the messages, and commits the cursor under the lock.
  *
- * The lock is acquired BEFORE receive() — the channel's cursor advance inside receive()
- * is a brain.db meta write, so acquiring first and skipping the entire tick on contention
- * guarantees no message is consumed-then-dropped. This per-tick scope mirrors recall-cli
- * (lock across the whole recall) and is released in finally before the next tick — it is
- * NEVER held across the long-running poll loop.
+ * Flow (LOCK-WATCHER-REWORK):
+ *  1. channel.fetch() — UNLOCKED network/db read, no write.
+ *  2. commitTo === null && messages.length === 0 → return (idle tick, lock never touched).
+ *  3. tickInFlight guard — if already in-flight, log + return (in-process serialization).
+ *  4. acquireLockWithRetry() — if lock held after retries, log + return WITHOUT committing
+ *     cursor (re-fetch on next tick → no message loss, invariant #2 preserved).
+ *  5. Under the lock:
+ *     a. Re-read live cursor via currentCursor() and drop messages with id <= cursor (stale).
+ *     b. If commitTo <= cursor (monotonic), skip the commitCursor call.
+ *     c. runTick() — respond loop over filtered messages.
+ *     d. channel.commitCursor(commitTo) if not skipping.
+ *  6. releaseLock() in finally (always, even on error).
  *
- * Exported so tests can verify the lock-skip branch.
+ * Exported so tests can verify the lock-skip and tickInFlight-skip branches.
  */
 export async function runLockedTick(
   channel: Channel,
@@ -132,14 +166,62 @@ export async function runLockedTick(
   sessionId: string,
   logFn: (msg: string) => void,
 ): Promise<void> {
-  if (!acquireLock()) {
-    logFn('lock held — skipping tick');
+  // ── 1. Fetch UNLOCKED — network/db read, no cursor write (LOCK-CHANNEL-SPLIT) ─
+  const { messages, commitTo } = await channel.fetch();
+
+  // ── 2. Idle check — nothing to do, never touch the lock ──────────────────────
+  if (commitTo === null && messages.length === 0) {
     return;
   }
+
+  // ── 3. In-process tick guard (T-LOCK-02) ─────────────────────────────────────
+  // fetch() moved off the lock removes its implicit serialization; this guard
+  // prevents overlapping setInterval ticks from racing each other.
+  if (tickInFlight) {
+    logFn('tick already in flight — skipping re-entry');
+    return;
+  }
+  tickInFlight = true;
+
   try {
-    await runTick(channel, responder, sessionId, logFn);
+    // ── 4. Acquire the single-writer lock ──────────────────────────────────────
+    // If the lock stays held (sleep-pass or another long holder), defer this tick:
+    // the cursor is NOT advanced so the next tick re-fetches the same messages (inv #2).
+    if (!(await acquireLockWithRetry())) {
+      logFn('lock held after retries — tick deferred, cursor NOT advanced');
+      return; // tickInFlight reset in outer finally
+    }
+
+    try {
+      // ── 5a. Re-read live cursor to drop stale messages ──────────────────────
+      // A previous tick may have committed the cursor between our unlocked fetch()
+      // and now. Drop any message whose id <= the current committed cursor.
+      const cursor = channel.currentCursor();
+      const filtered = cursor !== null
+        ? messages.filter(m => Number(m.id) > Number(cursor))
+        : messages;
+
+      // ── 5b. Monotonic commit check ──────────────────────────────────────────
+      // If commitTo <= cursor, the cursor already covers this batch — skip the commit
+      // call. Still run the respond loop (filtered messages will be empty if all stale).
+      const skipCommit =
+        commitTo !== null && cursor !== null && Number(commitTo) <= Number(cursor);
+
+      // ── 5c. Respond loop (pure: send only, no cursor write) ─────────────────
+      await runTick(channel, filtered, responder, sessionId, logFn);
+
+      // ── 5d. Commit cursor AFTER processing, under the lock ──────────────────
+      // Cold start: commitTo is non-null with an empty messages array — persists the
+      // baseline so the next tick fetches only genuinely new messages (D-71).
+      if (!skipCommit && commitTo !== null) {
+        channel.commitCursor(commitTo);
+      }
+    } finally {
+      releaseLock();
+    }
   } finally {
-    releaseLock();
+    // Always reset the in-process guard — even on the lock-deferred return path
+    tickInFlight = false;
   }
 }
 
@@ -157,7 +239,7 @@ export async function main(): Promise<void> {
   // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──────
   // process.exit() inside a try/finally does NOT unwind the stack, so exiting while
   // the lock is held leaks it for up to LOCK_STALE_MS (5 min). Validate here —
-  // before the first acquireLock() — so this exit is always lock-free.
+  // before the first acquireLockWithRetry() — so this exit is always lock-free.
   const dbPath = resolveDbPath();
   if (!dbPath) {
     log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
@@ -238,10 +320,12 @@ export async function main(): Promise<void> {
   }
 
   // ── 6. Poll loop ─────────────────────────────────────────────────────────────
-  // Per-tick lock: acquires the shared single-writer lock (same brain-memory-sleep.lock
-  // as the sleep pass, D-75) around the whole receive()→respond()→send() cycle.
-  // Acquiring FIRST means the channel cursor advance (inside receive()) is also under
-  // the lock — if contended, skip the entire tick (no message consumed then dropped).
+  // Per-tick: channel.fetch() runs UNLOCKED (network/db read only — no cursor write).
+  // The single-writer lock is acquired only when there is work to do (non-null commitTo
+  // or non-empty messages), keeping idle ticks from contending with `brain recall`.
+  // Cursor is committed via channel.commitCursor() UNDER the lock, AFTER processing —
+  // lock-deferred ticks re-fetch the same messages on the next tick (no-loss, D-75).
+  // tickInFlight guard prevents overlapping setInterval ticks (in-process serialization).
   // Floor at 500ms to prevent excessive syscalls (T-07-07).
   const intervalMs = Math.max(
     telegramReady ? config.telegram.pollIntervalMs : config.channel.pollIntervalMs,

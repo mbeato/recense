@@ -127,6 +127,7 @@ export function initSchema(db: Database.Database): void {
   db.pragma('journal_mode = WAL');       // concurrent reads + offline pass
   db.pragma('foreign_keys = ON');        // enforce REFERENCES constraints
   db.pragma('synchronous = NORMAL');     // safe with WAL; faster than FULL
+  db.pragma('busy_timeout = 5000');      // wait up to 5s on write collision rather than throwing SQLITE_BUSY (T-LOCK-02 defense-in-depth)
 
   // DDL runs unconditionally — all statements use IF NOT EXISTS
   db.exec(DDL);

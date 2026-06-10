@@ -7,10 +7,10 @@
  * osascript — just the Telegram Bot API over HTTPS.
  *
  * Design (mirrors DefaultIMessageChannel):
- *  - Fail-closed allowlist: empty allowlist → receive() returns [] (answers no one).
+ *  - Fail-closed allowlist: empty allowlist → fetch() returns {messages:[],commitTo:null}.
  *  - cursor:telegram in the meta store dedups updates (getUpdates offset semantics).
- *  - Cold start (no cursor): baseline at the current max update_id and answer nothing
- *    pending — never replay a backlog Telegram queued while the watcher was offline.
+ *  - Cold start (no cursor): fetch() returns {messages:[],commitTo:<baseline>} and performs
+ *    NO write — the caller writes the baseline under the single-writer lock.
  *  - Cursor advanced past ALL scanned updates (listed or not) so unlisted updates are
  *    confirmed and not re-fetched.
  *
@@ -20,12 +20,14 @@
  *  - Info disclosure: the bot token lives in BRAIN_MEMORY_TELEGRAM_TOKEN (env), is part
  *    of the API path only, and is never logged.
  *  - Fail-closed: empty allowlist answers no one; unlisted senders are silently ignored.
+ *  - T-LOCK-01: fetch() is write-free; commitCursor() is the only cursor writer,
+ *    called by the watcher under the lock (LOCK-CHANNEL-SPLIT).
  *
  * Structure: TelegramTransport seam + DefaultTelegramTransport (fetch, zero deps) +
  *            MockTelegramTransport (scripted) + TelegramChannel (Channel impl).
  */
 
-import type { Channel, InboundMessage } from './channel';
+import type { Channel, InboundMessage, FetchResult } from './channel';
 import type { EngineConfig } from '../lib/config';
 
 // ---------------------------------------------------------------------------
@@ -166,30 +168,32 @@ export class TelegramChannel implements Channel {
   }
 
   /**
-   * Poll Telegram for new allowlisted messages.
+   * Poll Telegram for new allowlisted messages. Performs NO write (T-LOCK-01).
    *
-   * Fail-closed: empty allowlist → []. Cold start (no cursor): baseline at the current
-   * max update_id and answer nothing pending. Otherwise fetch updates after the cursor,
-   * advance the cursor past ALL of them, and return only allowlisted text messages.
+   * Fail-closed: empty allowlist → {messages:[], commitTo:null} — idle, lock never touched.
+   * Cold start (no cursor): fetches baseline, returns {messages:[], commitTo:<baseline>} with
+   *   the meta cursor STILL NULL — the caller writes it under the lock via commitCursor().
+   * Normal: fetches updates after the cursor; if zero → {messages:[], commitTo:null} (idle);
+   *   otherwise returns the allowlisted InboundMessage[] and the max scanned update_id as commitTo.
+   *   commitTo covers ALL scanned updates (listed or not) so unlisted ones are confirmed.
    */
-  async receive(): Promise<InboundMessage[]> {
-    // Fail-closed — empty allowlist answers no one
+  async fetch(): Promise<FetchResult> {
+    // Fail-closed — empty allowlist answers no one; commitTo=null signals idle (no lock needed)
     if (this.config.telegram.allowlist.length === 0) {
-      return [];
+      return { messages: [], commitTo: null };
     }
 
     const cursorRaw = this.meta.getMeta('cursor:telegram');
 
     // Cold start (first-ever boot — no cursor persisted): baseline at the current max
     // update_id and answer NOTHING. Telegram queues updates for ~24h; without this, a
-    // first boot would replay/answer the whole backlog. A restart keeps its persisted
-    // cursor, so it still answers messages received during downtime.
+    // first boot would replay/answer the whole backlog. The baseline write is deferred to
+    // commitCursor() so it lands under the single-writer lock (T-LOCK-01).
     if (cursorRaw === null) {
       const pending = await this.transport.getUpdates(0);
       const baseline = pending.reduce((max, u) => Math.max(max, u.update_id), 0);
-      this.meta.setMeta('cursor:telegram', String(baseline));
-      this.log('cold start: baselined telegram cursor at update_id ' + String(baseline) + ' — skipping backlog');
-      return [];
+      this.log('cold start: telegram baseline at update_id ' + String(baseline) + ' — backlog skipped (write deferred to commitCursor)');
+      return { messages: [], commitTo: String(baseline) };
     }
 
     const cursor = parseInt(cursorRaw, 10);
@@ -197,12 +201,13 @@ export class TelegramChannel implements Channel {
     // offset = cursor + 1 → fetch updates with update_id > cursor (Telegram confirms <= cursor)
     const updates = await this.transport.getUpdates(cursor + 1);
     if (updates.length === 0) {
-      return [];
+      // No new updates — return commitTo:null to signal idle (caller skips lock acquisition)
+      return { messages: [], commitTo: null };
     }
 
-    // Advance the cursor past ALL scanned updates (listed or not) so they are confirmed.
+    // commitTo covers ALL scanned updates (listed or not) — unlisted ones are confirmed so
+    // they are not re-fetched on the next tick. (Same invariant as before, now in commitTo.)
     const maxId = updates.reduce((max, u) => Math.max(max, u.update_id), cursor);
-    this.meta.setMeta('cursor:telegram', String(maxId));
 
     const allow = new Set(this.config.telegram.allowlist.map(s => s.trim()));
 
@@ -226,7 +231,26 @@ export class TelegramChannel implements Channel {
       }
     }
 
-    return result;
+    return { messages: result, commitTo: String(maxId) };
+  }
+
+  /**
+   * Advance cursor:telegram past commitTo. Called under the single-writer lock (T-LOCK-01).
+   *
+   * Belt-and-suspenders monotonicity: if commitTo <= the stored cursor, does nothing.
+   */
+  commitCursor(commitTo: string): void {
+    const current = this.meta.getMeta('cursor:telegram');
+    if (current !== null && Number(commitTo) <= Number(current)) return; // monotonic — no regression
+    this.meta.setMeta('cursor:telegram', commitTo);
+  }
+
+  /**
+   * Return the currently persisted cursor:telegram value, or null if unset (first boot).
+   * Read by the watcher under the lock to drop stale messages and check monotonicity.
+   */
+  currentCursor(): string | null {
+    return this.meta.getMeta('cursor:telegram');
   }
 
   /**
