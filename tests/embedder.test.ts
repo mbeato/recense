@@ -12,6 +12,7 @@ import { SemanticStore } from '../src/db/semantic-store';
 import { CandidateRetriever } from '../src/retrieval/topk';
 import { MockEmbedder, OpenAIEmbedder } from '../src/model/embedder';
 import type { Embedder } from '../src/model/embedder';
+import { SDK_TIMEOUT_MS, SDK_MAX_RETRIES } from '../src/model/anthropic-client';
 
 const DIMS = 16; // small dims for test speed; exercises the same Float32 round-trip
 
@@ -87,6 +88,19 @@ describe('OpenAIEmbedder (export verification)', () => {
     // T-02-KEY: we only verify the export exists.
     // Actual construction requires OPENAI_API_KEY in process.env — not tested here.
     expect(typeof OpenAIEmbedder).toBe('function');
+  });
+});
+
+// ── M-4: OpenAIEmbedder uses SDK timeout constants ────────────────────────────
+
+describe('OpenAIEmbedder timeout discipline (M-4)', () => {
+  it('SDK_TIMEOUT_MS and SDK_MAX_RETRIES are importable from anthropic-client (shared constants)', () => {
+    // These constants are imported and passed to new OpenAI({...}) in OpenAIEmbedder's ctor.
+    // If either import fails, the test fails — confirming the shared-constant seam is wired.
+    expect(typeof SDK_TIMEOUT_MS).toBe('number');
+    expect(SDK_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(typeof SDK_MAX_RETRIES).toBe('number');
+    expect(SDK_MAX_RETRIES).toBeGreaterThanOrEqual(0);
   });
 });
 

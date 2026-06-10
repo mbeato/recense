@@ -20,6 +20,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { EngineConfig } from '../lib/config';
 import { createAnthropicClient } from './anthropic-client';
+import type { AnthropicLike } from './anthropic-client';
 import { OpenAIEmbedder } from './embedder';
 import { AnthropicJudge } from './judge';
 import type { JudgeVerdict } from './judge';
@@ -67,6 +68,7 @@ export class DefaultModelProvider implements ModelProvider {
   private readonly judgeConfig: EngineConfig;
   private readonly embedConfig: EngineConfig;
 
+  private _generateClient: { client: AnthropicLike; model: string } | null = null;
   private _embedder: OpenAIEmbedder | null = null;
   private _judge: AnthropicJudge | null = null;
 
@@ -85,9 +87,14 @@ export class DefaultModelProvider implements ModelProvider {
   }
 
   async generate(prompt: string, opts?: { maxTokens?: number }): Promise<string> {
-    // Transport is resolved below: createAnthropicClient reads env creds automatically.
+    // L-12: cache the generate client — createAnthropicClient was called per-call,
+    // defeating connection reuse across the per-episode extract loop in the sleep pass.
+    // Mirror the lazy-init pattern used by _embedder and _judge.
     // Never log `client` or expose it — T-05-KEY.
-    const { client, model } = createAnthropicClient(this.generateConfig);
+    if (!this._generateClient) {
+      this._generateClient = createAnthropicClient(this.generateConfig);
+    }
+    const { client, model } = this._generateClient;
     const msg = await client.messages.create({
       model,
       max_tokens: opts?.maxTokens ?? 1024,

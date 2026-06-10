@@ -58,19 +58,28 @@ export class CandidateRetriever {
   /**
    * Return the top-k nodes by cosine similarity to `queryVec`, sorted descending.
    * Nodes with null embedding are excluded (read-only on the graph).
+   *
+   * L-2 (topk side): rows whose decoded length !== queryVec.length are silently skipped.
+   * This guards against legacy data or a future embed-provider change that produces a
+   * different dimensionality — a mismatched cosine would yield NaN and scramble the sort.
+   * The write-side dims assertion (plan 2 setEmbedding guard) prevents new mismatches;
+   * this guard handles any pre-existing ones.
    */
   topk(queryVec: Float32Array, k: number): Array<{ id: string; score: number }> {
     const rows = this.stmtSelectEmbedded.all() as Array<{ id: string; embedding: Buffer }>;
 
     return rows
-      .map(row => ({
-        id: row.id,
+      .flatMap(row => {
         // Pitfall 5: pass byteOffset + length to handle Buffer slices correctly
-        score: cosineSimF32(
-          queryVec,
-          new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4)
-        ),
-      }))
+        const v = new Float32Array(
+          row.embedding.buffer,
+          row.embedding.byteOffset,
+          row.embedding.byteLength / 4,
+        );
+        // L-2: skip dimension-mismatched vectors rather than producing NaN scores
+        if (v.length !== queryVec.length) return [];
+        return [{ id: row.id, score: cosineSimF32(queryVec, v) }];
+      })
       .sort((a, b) => b.score - a.score)
       .slice(0, k);
   }
@@ -78,20 +87,23 @@ export class CandidateRetriever {
   /**
    * Return the top-k TOMBSTONED nodes by cosine similarity to `queryVec`, sorted descending.
    * Used for the 'deleted' classification second scan (D-29/RET-02).
-   * Mirrors topk() exactly — same Float32Array decode (Pitfall 5), same sort+slice.
+   * Mirrors topk() exactly — same Float32Array decode (Pitfall 5), same dim guard (L-2), same sort+slice.
    */
   topkTombstoned(queryVec: Float32Array, k: number): Array<{ id: string; score: number }> {
     const rows = this.stmtSelectTombstoned.all() as Array<{ id: string; embedding: Buffer }>;
 
     return rows
-      .map(row => ({
-        id: row.id,
+      .flatMap(row => {
         // Pitfall 5: byteOffset + length (Buffer slices may have nonzero byteOffset)
-        score: cosineSimF32(
-          queryVec,
-          new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4)
-        ),
-      }))
+        const v = new Float32Array(
+          row.embedding.buffer,
+          row.embedding.byteOffset,
+          row.embedding.byteLength / 4,
+        );
+        // L-2: skip dimension-mismatched vectors
+        if (v.length !== queryVec.length) return [];
+        return [{ id: row.id, score: cosineSimF32(queryVec, v) }];
+      })
       .sort((a, b) => b.score - a.score)
       .slice(0, k);
   }

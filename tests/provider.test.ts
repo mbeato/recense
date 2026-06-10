@@ -7,10 +7,31 @@
  *  2. Swap-embed-independence (SEAM-01 SC1): swapping embedFn leaves
  *     generate() and judge() outputs byte-identical.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { MockModelProvider, DefaultModelProvider } from '../src/model/provider';
 import type { ModelProvider } from '../src/model/provider';
 import type { JudgeVerdict } from '../src/model/judge';
+import { DEFAULT_CONFIG } from '../src/lib/config';
+
+// ── L-12: spy on createAnthropicClient to verify generate() caches the client ──
+// vi.hoisted so the spy reference is available inside vi.mock's factory.
+const { createClientSpy } = vi.hoisted(() => ({
+  createClientSpy: vi.fn(() => ({
+    client: {
+      messages: {
+        create: vi.fn(async () => ({
+          content: [{ type: 'text', text: 'cached-response' }],
+        })),
+      },
+    },
+    model: 'test-model',
+  })),
+}));
+
+vi.mock('../src/model/anthropic-client', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../src/model/anthropic-client')>();
+  return { ...original, createAnthropicClient: createClientSpy };
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -175,5 +196,27 @@ describe('DefaultModelProvider (export verification)', () => {
     // T-05-KEY: only verifying export exists — no actual instantiation
     // (would require ANTHROPIC_API_KEY / OPENAI_API_KEY in environment)
     expect(typeof DefaultModelProvider).toBe('function');
+  });
+});
+
+// ── L-12: generate() caches the SDK client across calls ─────────────────────
+
+describe('DefaultModelProvider — generate() client cache (L-12)', () => {
+  it('createAnthropicClient is called once even when generate() is called twice', async () => {
+    createClientSpy.mockClear();
+
+    const config = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+    const provider = new DefaultModelProvider({
+      generateConfig: config,
+      judgeConfig: config,
+      embedConfig: config,
+    });
+
+    // First generate call — should build the client
+    await provider.generate('first prompt');
+    // Second generate call — must reuse the cached client
+    await provider.generate('second prompt');
+
+    expect(createClientSpy).toHaveBeenCalledTimes(1);
   });
 });
