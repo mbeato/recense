@@ -119,7 +119,14 @@ export class SemanticStore {
 
     // ── Transaction — defined once, called in upsertNode ─────────────────────
     // IMPORTANT: no async/await inside; better-sqlite3 transactions are synchronous.
-    this.txUpsertNode = db.transaction((params: UpsertNodeParams): void => {
+    // M-5: wrap in lambda that calls rawTx.immediate(params) so every upsertNode runs in
+    // IMMEDIATE mode. This prevents SQLITE_BUSY_SNAPSHOT in WAL mode — the deferred read
+    // inside this transaction (stmtGetNode.get) + following write creates an upgrade race
+    // when a concurrent writer holds a SHARED lock. IMMEDIATE acquires a RESERVED lock
+    // upfront, serialising all upsertNode calls correctly.
+    // better-sqlite3 API: rawTx.immediate(params) calls the transaction in IMMEDIATE mode.
+    // The wrapper keeps the stored type as (params) => void so call sites are unchanged.
+    const rawTxUpsertNode = db.transaction((params: UpsertNodeParams): void => {
       const newHash = sha256(params.value);
       const existing = this.stmtGetNode.get(params.id) as NodeRow | undefined;
 
@@ -165,6 +172,7 @@ export class SemanticStore {
         training_eligible: trainingEligible,
       });
     });
+    this.txUpsertNode = (params: UpsertNodeParams) => rawTxUpsertNode.immediate(params);
   }
 
   // ── Public write primitive ──────────────────────────────────────────────
@@ -183,10 +191,33 @@ export class SemanticStore {
    * Store an embedding for node `id` and mark it clean (embedded_hash = value_hash).
    * The ONLY writer of node.embedding — never called from outside SemanticStore (T-01-DIRTY).
    * Pitfall 5: stores Buffer from vec.buffer with correct byteOffset + byteLength.
+   *
+   * L-1: stale-vector guard — optional `expectedValueHash` parameter.
+   * When provided, compares against the node's current value_hash. If they differ the
+   * node's value changed between when the caller captured it for embedding and now; the
+   * vector is for a stale value and must NOT be stamped. No-op on mismatch.
+   * Callers that capture `value_hash` at read time MUST pass it here to close the race.
+   *
+   * L-2: embedding dims stamp — first call writes `embedding_dims` to meta; subsequent calls
+   * assert the same dimensionality. Throws on mismatch to catch misconfigured providers early.
    */
-  setEmbedding(id: string, vec: Float32Array): void {
+  setEmbedding(id: string, vec: Float32Array, expectedValueHash?: string): void {
     const existing = this.stmtGetNode.get(id) as NodeRow | undefined;
     if (!existing) return; // no-op if node doesn't exist
+
+    // L-1: stale-vector guard — skip if value changed between capture and write-back
+    if (expectedValueHash !== undefined && existing.value_hash !== expectedValueHash) return;
+
+    // L-2: stamp embedding dims on first write; assert consistency on subsequent writes
+    const dims = vec.length;
+    const storedDims = this.getMeta('embedding_dims');
+    if (storedDims === null) {
+      this.setMeta('embedding_dims', String(dims));
+    } else if (parseInt(storedDims, 10) !== dims) {
+      throw new Error(
+        `embedding_dims mismatch: stored=${storedDims}, received=${dims} for node ${id} — provider dimensionality changed`
+      );
+    }
 
     // Float32Array → Buffer: preserve byteOffset so the round-trip is correct (Pitfall 5)
     const buf = Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength);

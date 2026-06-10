@@ -133,9 +133,14 @@ export class Consolidator {
    * After this runs, newly appended/changed nodes are nominable via topk.
    */
   private async reembedDirty(): Promise<void> {
+    // L-1: capture value_hash alongside id+value so we can guard against stale-vector
+    // race in setEmbedding. Between this SELECT and the setEmbedding call, another writer
+    // (e.g. a concurrent reconcile) could update the node's value, making the freshly-
+    // computed embedding stale. Passing expectedValueHash lets setEmbedding no-op if that
+    // happens — the node stays dirty (embedded_hash IS NULL) and will be re-embedded next pass.
     const dirtyRows = this.db
-      .prepare('SELECT id, value FROM node WHERE embedded_hash IS NULL')
-      .all() as Array<{ id: string; value: string }>;
+      .prepare('SELECT id, value, value_hash FROM node WHERE embedded_hash IS NULL')
+      .all() as Array<{ id: string; value: string; value_hash: string }>;
 
     if (dirtyRows.length === 0) return;
 
@@ -144,7 +149,8 @@ export class Consolidator {
 
     // Synchronous writes after the await (T-02-ASYNC: no await inside any write)
     for (let i = 0; i < dirtyRows.length; i++) {
-      this.store.setEmbedding(dirtyRows[i]!.id, vecs[i]!);
+      // L-1: pass captured value_hash — setEmbedding skips if the value changed (stale guard)
+      this.store.setEmbedding(dirtyRows[i]!.id, vecs[i]!, dirtyRows[i]!.value_hash);
     }
   }
 
@@ -271,7 +277,9 @@ export class Consolidator {
         //        was the only branch that previously blocked this; confirm/extend/unrelated did not.
         // Backfill persists above for the audit trail; no claims are extracted for either class.
         if (episode.origin === 'inferred' || echoSourceId !== null) {
-          this.db.transaction(() => this.episodes.markConsolidated(episode.id))();
+          // M-5: .immediate() prevents SQLITE_BUSY_SNAPSHOT in WAL mode on upgrade race.
+          // better-sqlite3 API: transaction.immediate() calls the transaction in IMMEDIATE mode.
+          this.db.transaction(() => this.episodes.markConsolidated(episode.id)).immediate();
           continue;
         }
 
@@ -348,13 +356,20 @@ export class Consolidator {
         // All decisions for this episode + markConsolidated in ONE atomic transaction.
         // No await inside (T-02-ASYNC). If a later episode's Phase A crashes, this
         // episode's checkpoint is already committed and will not be re-applied.
+        // M-5: .immediate() — this is the critical multi-statement write transaction;
+        // DEFERRED mode in WAL can fail with SQLITE_BUSY_SNAPSHOT when another connection
+        // holds a SHARED lock (e.g. retrieval running in another process) and this
+        // transaction tries to upgrade from DEFERRED→EXCLUSIVE at first write statement.
         const episodeId = episode.id;
+        // M-5: .immediate() — better-sqlite3 API: transaction.immediate() calls the transaction
+        // in IMMEDIATE mode (acquires RESERVED lock upfront, preventing SQLITE_BUSY_SNAPSHOT
+        // on upgrade race in WAL mode when a concurrent reader holds a SHARED lock).
         this.db.transaction(() => {
           for (const decision of decisions) {
             this.applyDecision(decision, episodeId);
           }
           this.episodes.markConsolidated(episodeId);
-        })();
+        }).immediate();
       } catch (err) {
         // H-2: poison-episode isolation — log and quarantine without marking consolidated.
         // The episode will be retried on the next pass. One bad episode must not abort the

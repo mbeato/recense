@@ -85,7 +85,10 @@ export class StrengthDecayManager {
     nowMs: number,
     lambda: number
   ): number {
-    const deltaDays = (nowMs - lastAccessMs) / 86_400_000;
+    // L-8: clamp Δt to ≥ 0 — clock rollback (NTP correction, VM resume, FakeClock rewind)
+    // would produce negative deltaDays → exp(+λ·Δdays) → effective_s > s. Clamping to 0
+    // treats rollback as "no time passed" (s unchanged) — correct and safe.
+    const deltaDays = Math.max(0, nowMs - lastAccessMs) / 86_400_000;
     return s * Math.exp(-lambda * deltaDays);
   }
 

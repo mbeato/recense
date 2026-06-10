@@ -58,6 +58,20 @@ describe('STR-01: lazy decay — effectiveStrength (pure function)', () => {
     expect(manager.effectiveStrength(0.8, t, t, 0.05)).toBe(0.8);
   });
 
+  it('L-8: clock rollback (nowMs < lastAccessMs) does NOT inflate s (deltaDays clamped to 0)', () => {
+    // nowMs < lastAccessMs simulates NTP correction, VM resume, or FakeClock rewind.
+    // Without clamp: deltaDays < 0 → exp(+λ·|Δdays|) > 1 → effective_s > s (wrong).
+    // With clamp: deltaDays = 0 → exp(0) = 1 → effective_s = s (no-op — safest behavior).
+    const s = 0.7;
+    const lambda = 0.05;
+    const lastAccessMs = 1_000_000_000; // some future time
+    const nowMs = 500_000_000;          // earlier than lastAccess — clock rolled back
+    const effective = manager.effectiveStrength(s, lastAccessMs, nowMs, lambda);
+    // Must equal s (not exceed it, not be negative or NaN)
+    expect(effective).toBe(s);
+    expect(effective).toBeLessThanOrEqual(s);
+  });
+
   it('positive elapsed time monotonically decreases s', () => {
     const s = 0.7;
     const lambda = 0.05;
