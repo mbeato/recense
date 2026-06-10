@@ -173,6 +173,28 @@ describe('eval-snapshot', () => {
     });
   });
 
+  // ─── L-8: clock-seam — recordSnapshot stores the ts it receives ───────────
+
+  describe('recordSnapshot ts clock-seam (L-8)', () => {
+    it('stores the exact ts passed in — no Date.now() drift inside recordSnapshot', () => {
+      // Simulate snapshot-cli.ts calling recordSnapshot(db, { ..., ts: realClock.nowMs() })
+      // by injecting a FakeClock-derived ts and asserting it round-trips unchanged.
+      const fakeClock = new FakeClock(Date.UTC(2026, 5, 4, 12, 0, 0)); // 2026-06-04T12:00:00Z
+      const tsFromClock = fakeClock.nowMs();
+
+      const id = recordSnapshot(db, {
+        query: 'clock-seam check query',
+        expectedAnswer: 'expected answer',
+        ts: tsFromClock,
+      });
+
+      const row = db.prepare('SELECT ts FROM eval_snapshot WHERE id = ?').get(id) as
+        { ts: number } | undefined;
+      expect(row).toBeDefined();
+      expect(row!.ts).toBe(tsFromClock);
+    });
+  });
+
   // ─── Task 2: round-trip on real brain.db copy ──────────────────────────────
   // Guarded: skipped when brain.db absent or OPENAI_API_KEY not set
 
