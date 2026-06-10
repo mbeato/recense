@@ -185,6 +185,114 @@ describe('mcp-server memory_search provenance (populated DB)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// memory_search top-k semantics (sub-0.7 scores) — UAT Gap 1 regression
+// ---------------------------------------------------------------------------
+//
+// The live failure: RetrievalEngine.retrieve() is a point-lookup gated at
+// deletedSimilarityThreshold (0.7); real queries score 0.4–0.6 ("telegram"
+// best 0.485, "what email address does max use" best 0.592) so every realistic
+// search returned []. These tests pin multi-result, sub-0.7 top-k semantics.
+//
+// Deterministic cosines: query q has q[0]=1 (all else 0, |q|=1). A node
+// embedding n = [c, sqrt(1-c^2), 0, …] has |n|=1, so cosine(q, n) = c exactly.
+//
+// Test D (zero generation, D-08): the mock's generateScript stays [] — any
+// provider.generate() call would throw "queue exhausted" and surface as
+// isError. Green Tests A/B below therefore prove zero generation calls.
+
+describe('mcp-server memory_search top-k semantics (sub-0.7 scores)', () => {
+  let tmpDir: string;
+  let client: Client;
+
+  /** Seed nodes with exact target cosines against q=[1,0,…], then connect. */
+  async function seedAndConnect(nodes: Array<{ value: string; cosine: number }>): Promise<void> {
+    const dbPath = join(tmpDir, 'test.db');
+    const db = new Database(dbPath);
+    initSchema(db);
+    const config = { ...DEFAULT_CONFIG, dbPath };
+    const store = new SemanticStore(db, realClock, config);
+    for (const { value, cosine } of nodes) {
+      const id = newId();
+      store.upsertNode({ id, type: 'fact', value, origin: 'observed', tombstoned: false });
+      const vec = new Float32Array(config.embeddingDimensions);
+      vec[0] = cosine;
+      vec[1] = Math.sqrt(1 - cosine * cosine); // unit vector → cosine(q, vec) = cosine
+      store.setEmbedding(id, vec);
+    }
+    db.close();
+
+    // generateScript intentionally [] — proves the search path never generates (D-08).
+    const mock = new MockModelProvider({
+      embedFn: () => {
+        const q = new Float32Array(DEFAULT_CONFIG.embeddingDimensions);
+        q[0] = 1.0;
+        return q;
+      },
+    });
+    client = await connectClient({ dbPath, provider: mock });
+  }
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'brain-mcp-topk-'));
+  });
+
+  afterEach(async () => {
+    await client.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('THE regression: a node at cosine 0.5 (sub-0.7, above floor) is returned', async () => {
+    // The exact case the old 0.7 point-lookup gate dropped: best live cosine 0.5.
+    await seedAndConnect([
+      { value: 'max queries the memory over a telegram bot', cosine: 0.5 },
+    ]);
+    const result = await client.callTool({
+      name: 'memory_search',
+      arguments: { query: 'telegram' },
+    });
+    expect(result.isError ?? false).toBe(false);
+    const structured = result.structuredContent as { results: SearchRow[] };
+    expect(structured.results.length).toBe(1);
+    const row = structured.results[0]!;
+    expect(row.value).toBe('max queries the memory over a telegram bot');
+    expect(row.score).toBeCloseTo(0.5, 6); // between the 0.3 floor and 0.7
+    expect(row.origin).toBe('observed');
+    expect(row.lastUpdatedMs).toBeGreaterThan(0);
+  });
+
+  it('returns multiple above-floor hits ranked by descending score; below-floor absent', async () => {
+    await seedAndConnect([
+      { value: 'weak match below the floor', cosine: 0.1 },
+      { value: 'moderate match', cosine: 0.4 },
+      { value: 'strong match', cosine: 0.6 },
+    ]);
+    const result = await client.callTool({
+      name: 'memory_search',
+      arguments: { query: 'ranked search' },
+    });
+    expect(result.isError ?? false).toBe(false);
+    const structured = result.structuredContent as { results: SearchRow[] };
+    expect(structured.results.length).toBe(2);
+    expect(structured.results[0]!.value).toBe('strong match');
+    expect(structured.results[0]!.score).toBeCloseTo(0.6, 6);
+    expect(structured.results[1]!.value).toBe('moderate match');
+    expect(structured.results[1]!.score).toBeCloseTo(0.4, 6);
+    expect(structured.results.some(r => r.value === 'weak match below the floor')).toBe(false);
+  });
+
+  it('a single node below the 0.3 floor yields { results: [] } — not the global best', async () => {
+    await seedAndConnect([{ value: 'genuine noise', cosine: 0.2 }]);
+    const result = await client.callTool({
+      name: 'memory_search',
+      arguments: { query: 'unrelated query' },
+    });
+    expect(result.isError ?? false).toBe(false);
+    const structured = result.structuredContent as { results: SearchRow[] };
+    expect(structured.results.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Row-count helpers — second handle on the SAME temp-file DB the server writes
 // ---------------------------------------------------------------------------
 
