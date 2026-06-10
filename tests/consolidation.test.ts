@@ -606,7 +606,7 @@ describe('Consolidator', () => {
     expect(unconsolidated).toHaveLength(0);
   });
 
-  it('CONSOL-02 resumable: partial pass (throw on 2nd episode) — 1st episode committed, resume does not double-apply', async () => {
+  it('CONSOL-02 resumable: partial pass (2nd episode generate throws) — 1st committed, 2nd quarantined, resume consolidates 2nd', async () => {
     const nodeId1 = newId();
     const nodeId2 = newId();
     const val1 = 'first confirm node';
@@ -665,8 +665,8 @@ describe('Consolidator', () => {
       h.db, h.episodes, h.store, h.strength, h.retriever, throwingProvider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
-    // First pass — throws on second episode
-    await expect(consolidator.consolidate()).rejects.toThrow('simulated crash on second episode');
+    // First pass — H-2: error on 2nd episode is caught; consolidate() resolves (no throw)
+    await expect(consolidator.consolidate()).resolves.toBeUndefined();
 
     // First episode must already be consolidated=1
     const ep1Row = h.episodes.getEpisode(ep1.id)!;
@@ -1231,6 +1231,206 @@ describe('Consolidator', () => {
 
     // The original engineerNodeId remains tombstoned (it was tombstoned in pass 1)
     expect(allNodesAfterPass2.find(n => n.id === engineerNodeId)!.tombstoned).toBe(1);
+  });
+  // ── C-2: assistant-role episodes never strengthen (self-confirmation guard) ────
+  //
+  // An assistant-role episode whose claim exact-matches an existing node must NOT
+  // increase s or c (the memory's own restated output cannot strengthen itself).
+  // A user-role episode with the same exact match MUST increase s (regression guard).
+  // In both cases a 'confirm' sink event is emitted (for audit trail).
+
+  it('C-2: assistant-role confirm does NOT strengthen (s and c unchanged)', async () => {
+    const nodeId = newId();
+    const nodeValue = 'always use TypeScript';
+
+    h.store.upsertNode({ id: nodeId, type: 'fact', value: nodeValue, origin: 'observed', s: 0.3, c: 0.5 });
+    const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
+    const [vec] = await embedder.embed([nodeValue]);
+    h.store.setEmbedding(nodeId, vec!);
+
+    const sBefore = h.store.getNode(nodeId)!.s;
+    const cBefore = h.store.getNode(nodeId)!.c;
+
+    const provider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: nodeValue }])], // D-17 fast path
+      judgeScript: [],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider,
+      makeNoOpSchemaInducer(h), h.config, h.clock, sink,
+    );
+
+    // Assistant-role episode: must not strengthen even on exact match
+    h.episodes.append({
+      content: 'assistant confirming content',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'assistant',
+      session_id: 'session-c2-assistant',
+    });
+
+    await consolidator.consolidate();
+
+    const nodeAfter = h.store.getNode(nodeId)!;
+    // s and c must be UNCHANGED — assistant confirm does not strengthen
+    expect(nodeAfter.s).toBe(sBefore);
+    expect(nodeAfter.c).toBe(cBefore);
+    // confirm event still emitted for audit trail
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]!.event_type).toBe('confirm');
+  });
+
+  // ── H-2: per-episode poison isolation ───────────────────────────────────────
+  //
+  // A poison episode (generate throws) must not block LATER episodes in the same pass.
+  // The failing episode is quarantined (NOT marked consolidated) so it is retried next pass.
+
+  it('H-2: poison episode does NOT block later episodes — second episode consolidated, first retryable', async () => {
+    const nodeId2 = newId();
+    const val2 = 'second episode value for H-2 test';
+    h.store.upsertNode({ id: nodeId2, type: 'fact', value: val2, origin: 'observed', s: 0.3, c: 0.5 });
+    const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
+    const [vec2] = await embedder.embed([val2]);
+    h.store.setEmbedding(nodeId2, vec2!);
+
+    // First episode: generate REJECTS (poison)
+    const poisonEp = h.episodes.append({
+      content: 'poison episode content',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-h2-poison',
+    });
+
+    // Second episode: generate succeeds with a valid claim
+    const goodEp = h.episodes.append({
+      content: 'good episode content',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-h2-good',
+    });
+
+    let generateCalls = 0;
+    const poisonProvider: ModelProvider = {
+      async embed(texts: string[]): Promise<Float32Array[]> {
+        return texts.map(embedder.fn);
+      },
+      async generate(_prompt: string): Promise<string> {
+        generateCalls++;
+        if (generateCalls === 1) {
+          throw new Error('H-2 simulated poison episode');
+        }
+        return JSON.stringify([{ type: 'fact', value: val2 }]);
+      },
+      async judge(): Promise<never> {
+        throw new Error('judge should not be called');
+      },
+    };
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, poisonProvider,
+      makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    // H-2: consolidate() must NOT throw even though the first episode's generate rejects
+    await expect(consolidator.consolidate()).resolves.toBeUndefined();
+
+    // First (poison) episode must NOT be consolidated — it should be retried next pass
+    const poisonRow = h.episodes.getEpisode(poisonEp.id)!;
+    expect(poisonRow.consolidated).toBe(0);
+
+    // Second episode MUST be consolidated — poison must not block it
+    const goodRow = h.episodes.getEpisode(goodEp.id)!;
+    expect(goodRow.consolidated).toBe(1);
+  });
+
+  it('H-2 + L-4: corrupt pending_contradictions does not abort the pass', async () => {
+    // Seed a node with a deliberately corrupt pending_contradictions column
+    const nodeId = newId();
+    const nodeValue = 'test node for corrupt JSON';
+    h.store.upsertNode({ id: nodeId, type: 'fact', value: nodeValue, origin: 'observed', s: 0.5, c: 0.7 });
+    const sameEmbedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmbedder.embed([nodeValue]);
+    h.store.setEmbedding(nodeId, vec!);
+    // Corrupt the pending_contradictions column directly via SQL
+    h.db.prepare('UPDATE node SET pending_contradictions = ? WHERE id = ?').run('{not json', nodeId);
+
+    // Contradict HOLD band: magnitude=0.1, resistance = 0.5 * 0.7 = 0.35, ratio < 0.8 → HOLD
+    const holdVerdict: JudgeVerdict = {
+      best_candidate_id: nodeId,
+      relation: 'contradict',
+      magnitude: 0.1,
+    };
+    const provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'contradict the corrupt node' }])],
+      judgeScript: [holdVerdict],
+    });
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider,
+      makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'contradicting episode',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-l4-corrupt',
+      source_inference_id: null,
+    });
+
+    // Must not throw — corrupt JSON is repaired to [] and the pass completes
+    await expect(consolidator.consolidate()).resolves.toBeUndefined();
+
+    // The node's pending_contradictions should now be valid JSON (repaired by defensive parse)
+    const updatedNode = h.store.getNode(nodeId)!;
+    expect(() => JSON.parse(updatedNode.pending_contradictions)).not.toThrow();
+  });
+
+  it('C-2 regression guard: user-role confirm DOES strengthen (user-role still works)', async () => {
+    const nodeId = newId();
+    const nodeValue = 'always use TypeScript';
+
+    h.store.upsertNode({ id: nodeId, type: 'fact', value: nodeValue, origin: 'observed', s: 0.3, c: 0.5 });
+    const embedder = makeSyntheticEmbedder(h.config.embeddingDimensions);
+    const [vec] = await embedder.embed([nodeValue]);
+    h.store.setEmbedding(nodeId, vec!);
+
+    const sBefore = h.store.getNode(nodeId)!.s;
+
+    const provider = new MockModelProvider({
+      embedFn: embedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: nodeValue }])], // D-17 fast path
+      judgeScript: [],
+    });
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider,
+      makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    // User-role episode: confirm MUST strengthen
+    h.episodes.append({
+      content: 'user confirming content',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-c2-user',
+    });
+
+    await consolidator.consolidate();
+
+    const sAfter = h.store.getNode(nodeId)!.s;
+    expect(sAfter).toBeGreaterThan(sBefore);
   });
 });
 

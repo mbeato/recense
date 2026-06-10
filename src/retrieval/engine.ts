@@ -63,6 +63,9 @@ export class RetrievalEngine {
   // stmtGetGlobalNodeIds:  node IDs whose ALL supporting episodes have cwd='' (global facts).
   private readonly stmtGetProjectNodeIds: Database.Statement;
   private readonly stmtGetGlobalNodeIds: Database.Statement;
+  // H-5: set of node_ids that have AT LEAST ONE consolidation_event row (event-backed).
+  // Nodes absent from this set (orphan/seeded nodes) are unioned in as global.
+  private readonly stmtGetEventBackedNodeIds: Database.Statement;
 
   constructor(
     db: Database.Database,
@@ -84,9 +87,10 @@ export class RetrievalEngine {
     // D-97: derive once so the Noop hot path pays zero per-call work (no instanceof per query).
     this.traceEnabled = !(traceSink instanceof NoopActivationTraceSink);
 
-    // Read all non-tombstoned nodes for cue-less rank
+    // Read all non-tombstoned nodes for cue-less rank.
+    // origin included for L-6: inferred-origin nodes are excluded from hard_keep pinning.
     this.stmtGetAllLiveNodes = db.prepare(
-      'SELECT id, value, s, last_access FROM node WHERE tombstoned = 0'
+      'SELECT id, value, s, last_access, origin FROM node WHERE tombstoned = 0'
     );
 
     // DEBT-06 Option A: cwd soft filter helpers (T-09-05: cwd bound as param, never interpolated).
@@ -109,6 +113,14 @@ export class RetrievalEngine {
       GROUP BY ce.node_id
       HAVING MAX(CASE WHEN e.cwd != '' THEN 1 ELSE 0 END) = 0
     `);
+
+    // H-5: returns ALL node_ids that appear in at least one consolidation_event row.
+    // Used to distinguish "event-backed" nodes (explicitly scoped to a project or global)
+    // from "orphan" nodes (seeded corpus, pre-SEAM-02 consolidations) which have no event rows.
+    // Orphan nodes are treated as global and always surface in cwd-scoped retrieval.
+    this.stmtGetEventBackedNodeIds = db.prepare(
+      'SELECT DISTINCT node_id FROM consolidation_event WHERE node_id IS NOT NULL'
+    );
   }
 
   /**
@@ -139,13 +151,16 @@ export class RetrievalEngine {
       value: string;
       s: number;
       last_access: number;
+      origin: string;
     }>;
 
-    // ── DEBT-06 cwd soft filter (Option A / D-93) ───────────────────────────────
+    // ── DEBT-06 cwd soft filter (Option A / D-93) + H-5 orphan union ──────────────
     // When cwd is provided, restrict the candidate set to:
     //   - project-specific nodes: ≥1 supporting episode with matching cwd, AND
     //   - global nodes: all supporting episodes have cwd='' (evidence-backed global facts).
-    // Orphan nodes (no consolidation_event entries) are excluded in cwd-scoped calls.
+    //   - orphan (event-less) nodes treated as global (H-5): seeded corpus + pre-SEAM-02 nodes
+    //     have zero consolidation_event rows and were previously invisible in cwd-scoped calls,
+    //     silently gating 83% of the live graph. They are now unioned in unconditionally.
     // When cwd is empty/undefined, behavior is identical to today (all live nodes).
     if (cwd) {
       const projectIds = new Set<string>(
@@ -156,11 +171,22 @@ export class RetrievalEngine {
         (this.stmtGetGlobalNodeIds.all() as Array<{ node_id: string }>)
           .map(r => r.node_id),
       );
-      rows = rows.filter(r => projectIds.has(r.id) || globalIds.has(r.id));
+      // H-5: build event-backed set; nodes absent from it are orphans → treated as global.
+      const eventBackedIds = new Set<string>(
+        (this.stmtGetEventBackedNodeIds.all() as Array<{ node_id: string }>)
+          .map(r => r.node_id),
+      );
+      rows = rows.filter(r =>
+        projectIds.has(r.id) ||
+        globalIds.has(r.id) ||
+        !eventBackedIds.has(r.id)  // orphan (event-less) nodes treated as global (H-5)
+      );
     }
 
     const scores = new Map<string, number>();
     const nodeValues = new Map<string, string>();
+    // L-6: track origin per node so inferred nodes can be excluded from hard_keep pinning.
+    const nodeOrigins = new Map<string, string>();
 
     for (const row of rows) {
       const eff = this.strength.effectiveStrength(
@@ -176,6 +202,7 @@ export class RetrievalEngine {
 
       scores.set(row.id, this.config.rankWeightS * eff + this.config.rankWeightR * recency);
       nodeValues.set(row.id, row.value);
+      nodeOrigins.set(row.id, row.origin);
     }
 
     // ── Step 2: 1-hop spreading activation from top base-ranked seeds ──────────
@@ -248,7 +275,10 @@ export class RetrievalEngine {
 
     for (const [id, score] of finalRanked) {
       const value = nodeValues.get(id)!;
-      if (this.gate.score(value, 'user').hardKeep) {
+      // L-6: inferred-origin nodes are excluded from hard_keep pinning — they must not
+      // re-inject assistant-minted content unconditionally (amplifies the C-2 loop).
+      // Only user/tool-origin (observed/asserted_by_user) nodes with directive vocabulary pin.
+      if (this.gate.score(value, 'user').hardKeep && nodeOrigins.get(id) !== 'inferred') {
         hardKeep.push({ id, value, score });
       } else {
         regular.push({ id, value, score });

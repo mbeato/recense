@@ -58,6 +58,20 @@ describe('STR-01: lazy decay — effectiveStrength (pure function)', () => {
     expect(manager.effectiveStrength(0.8, t, t, 0.05)).toBe(0.8);
   });
 
+  it('L-8: clock rollback (nowMs < lastAccessMs) does NOT inflate s (deltaDays clamped to 0)', () => {
+    // nowMs < lastAccessMs simulates NTP correction, VM resume, or FakeClock rewind.
+    // Without clamp: deltaDays < 0 → exp(+λ·|Δdays|) > 1 → effective_s > s (wrong).
+    // With clamp: deltaDays = 0 → exp(0) = 1 → effective_s = s (no-op — safest behavior).
+    const s = 0.7;
+    const lambda = 0.05;
+    const lastAccessMs = 1_000_000_000; // some future time
+    const nowMs = 500_000_000;          // earlier than lastAccess — clock rolled back
+    const effective = manager.effectiveStrength(s, lastAccessMs, nowMs, lambda);
+    // Must equal s (not exceed it, not be negative or NaN)
+    expect(effective).toBe(s);
+    expect(effective).toBeLessThanOrEqual(s);
+  });
+
   it('positive elapsed time monotonically decreases s', () => {
     const s = 0.7;
     const lambda = 0.05;
@@ -300,30 +314,29 @@ describe('STR-03: AND-gated eviction sweep', () => {
     manager = new StrengthDecayManager(db, clock, config);
   });
 
-  it('truth table — only tombstoned+low_s+low_c is evicted', () => {
-    // Should evict: tombstoned=1, effective_s=0.001 < 0.05, c=0.001 < 0.15
+  it('truth table — only tombstoned+low_s+old_age is evicted (M-1: c-threshold replaced by age gate)', () => {
+    // Seed nodes; all last_access = clock.nowMs() at creation time.
+    // Should evict: tombstoned=1, effective_s=0.001 < 0.05, age > 30d (advance clock 31d below)
     store.upsertNode({ id: 'should-evict', type: 'fact', value: 'old', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
 
-    // Should NOT evict: tombstoned=0 (gate closed)
+    // Should NOT evict: tombstoned=0 (gate closed — live nodes are always protected)
     store.upsertNode({ id: 'no-tombstone', type: 'fact', value: 'live', origin: 'observed', s: 0.001, c: 0.001, tombstoned: false });
-
-    // Should NOT evict: tombstoned=1 but c=0.9 (above evictionCThreshold=0.15)
-    store.upsertNode({ id: 'high-c', type: 'fact', value: 'high-c', origin: 'observed', s: 0.001, c: 0.9, tombstoned: true });
 
     // Should NOT evict: tombstoned=1 but effective_s=0.9 (above evictionSThreshold=0.05)
     store.upsertNode({ id: 'high-s', type: 'fact', value: 'high-s', origin: 'observed', s: 0.9, c: 0.001, tombstoned: true });
+
+    // Advance clock 31 days so age > EVICTION_TOMBSTONE_AGE_MS (30d) for all nodes
+    clock.advanceDays(31);
 
     const evicted = manager.runEvictionSweep();
 
     expect(evicted).toContain('should-evict');
     expect(evicted).not.toContain('no-tombstone');
-    expect(evicted).not.toContain('high-c');
     expect(evicted).not.toContain('high-s');
 
     // Verify DB state
     expect(store.getNode('should-evict')).toBeNull();
     expect(store.getNode('no-tombstone')).not.toBeNull();
-    expect(store.getNode('high-c')).not.toBeNull();
     expect(store.getNode('high-s')).not.toBeNull();
   });
 
@@ -336,10 +349,11 @@ describe('STR-03: AND-gated eviction sweep', () => {
     expect(store.getNode('live')).not.toBeNull();
   });
 
-  it('tombstoned=1, low s, low c, 30 days — IS evicted', () => {
-    // Acceptance criterion from plan: {tombstoned:1, s:0.001, c:0.001} after 30 FakeClock days IS evicted
+  it('tombstoned=1, low s, low c, 31 days — IS evicted (age gate: > 30d, strict)', () => {
+    // M-1 age gate: predicate is (nowMs - last_access) > EVICTION_TOMBSTONE_AGE_MS (30d).
+    // Strict >: exactly 30d is NOT evicted; 31d IS. Use 31d to be unambiguous.
     store.upsertNode({ id: 'dead', type: 'fact', value: 'stale', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
-    clock.advanceDays(30);
+    clock.advanceDays(31);
     const evicted = manager.runEvictionSweep();
     expect(evicted).toContain('dead');
     expect(store.getNode('dead')).toBeNull();
@@ -363,20 +377,61 @@ describe('STR-03: AND-gated eviction sweep', () => {
     expect(evicted).toHaveLength(0);
   });
 
-  it('eviction predicate contains all three AND terms (tombstoned, sThreshold, cThreshold)', () => {
-    // Verify each condition is independently required by testing all partial combinations
+  it('M-1 FK-safe: evicts tombstoned node with edges — no SQLITE_CONSTRAINT_FOREIGNKEY throw', () => {
+    // Seed: one node to evict (tombstoned=1, low s), one live anchor (tombstoned=0)
+    store.upsertNode({ id: 'evict-me', type: 'fact', value: 'stale', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
+    store.upsertNode({ id: 'anchor',   type: 'fact', value: 'alive', origin: 'observed', s: 0.9,   c: 0.5,   tombstoned: false });
 
-    // tombstoned=1, low s, HIGH c — should NOT evict
-    store.upsertNode({ id: 'test-c', type: 'fact', value: 'v', origin: 'observed', s: 0.001, c: 0.9, tombstoned: true });
-    // tombstoned=1, HIGH s, low c — should NOT evict
+    // Insert edges referencing evict-me in both directions to exercise src AND dst cleanup
+    const nowMs = clock.nowMs();
+    db.prepare('INSERT INTO edge (src, dst, rel, w, last_access, kind) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('evict-me', 'anchor', 'rel-fwd', 0.5, nowMs, 'relation');
+    db.prepare('INSERT INTO edge (src, dst, rel, w, last_access, kind) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('anchor', 'evict-me', 'rel-bwd', 0.5, nowMs, 'relation');
+
+    // Advance past age gate (strict > 30d)
+    clock.advanceDays(31);
+
+    // Must not throw — FK-safe: edges deleted before node in .immediate() transaction
+    let evicted: string[] = [];
+    expect(() => { evicted = manager.runEvictionSweep(); }).not.toThrow();
+
+    // evict-me must be gone from the node table
+    expect(evicted).toContain('evict-me');
+    expect(store.getNode('evict-me')).toBeNull();
+
+    // Both edges referencing evict-me must be deleted (no orphaned FK refs)
+    const remainingEdges = db.prepare(
+      "SELECT * FROM edge WHERE src = 'evict-me' OR dst = 'evict-me'"
+    ).all();
+    expect(remainingEdges).toHaveLength(0);
+
+    // Anchor node is unaffected — tombstoned=0 protects it
+    expect(store.getNode('anchor')).not.toBeNull();
+  });
+
+  it('eviction predicate contains all three AND terms (tombstoned, sThreshold, age > 30d)', () => {
+    // M-1: c-threshold replaced by tombstone-age gate. Verify each condition independently.
+    // Seed all "old" nodes at t=0:
+    // tombstoned=1, HIGH s, old age — should NOT evict (s above threshold)
     store.upsertNode({ id: 'test-s', type: 'fact', value: 'v2', origin: 'observed', s: 0.9, c: 0.001, tombstoned: true });
-    // tombstoned=0, low s, low c — should NOT evict
+    // tombstoned=0, low s, old age — should NOT evict (tombstoned=0 gate closure)
     store.upsertNode({ id: 'test-t', type: 'fact', value: 'v3', origin: 'observed', s: 0.001, c: 0.001, tombstoned: false });
-    // All three — should evict
+    // All three met — should evict (tombstoned=1, low s, age > 30d)
     store.upsertNode({ id: 'test-all', type: 'fact', value: 'v4', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
 
+    // Advance 31 days — old nodes are now over the age gate
+    clock.advanceDays(31);
+
+    // Seed a YOUNG tombstoned node AFTER the advance — age = 0, should NOT evict
+    store.upsertNode({ id: 'test-young', type: 'fact', value: 'v5', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
+
     const evicted = manager.runEvictionSweep();
-    expect(evicted).toEqual(['test-all']);
+    // Only test-all satisfies all three conditions
+    expect(evicted).toContain('test-all');
+    expect(evicted).not.toContain('test-s');
+    expect(evicted).not.toContain('test-t');
+    expect(evicted).not.toContain('test-young');
   });
 });
 
@@ -440,12 +495,13 @@ describe('STR-03 INVARIANT: 30-day simulated month — no evidence-backed node e
     expect(store.getNode('weak-asc')).not.toBeNull();
   });
 
-  it('tombstoned nodes with low s and c ARE evicted (sweep is not completely inert)', () => {
-    // Verifies the sweep does something — tombstoned nodes still get cleaned up
+  it('tombstoned nodes with low s and c ARE evicted after 31 days (sweep is not completely inert)', () => {
+    // Verifies the sweep does something — tombstoned nodes get cleaned up after the age gate.
+    // Use 31d (strict > 30d) so the predicate is satisfied unambiguously.
     store.upsertNode({ id: 'stale1', type: 'fact', value: 'old claim', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
     store.upsertNode({ id: 'stale2', type: 'fact', value: 'another old', origin: 'asserted_by_user', s: 0.001, c: 0.001, tombstoned: true });
 
-    clock.advanceDays(30);
+    clock.advanceDays(31);
     const evicted = manager.runEvictionSweep();
 
     expect(evicted).toContain('stale1');

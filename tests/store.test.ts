@@ -180,6 +180,48 @@ describe('SemanticStore', () => {
         expect(decoded[i]).toBeCloseTo(vec[i]!, 5);
       }
     });
+
+    it('L-1: setEmbedding with correct expectedValueHash — embeds successfully', () => {
+      store.upsertNode({ id: 'n1', type: 'fact', value: 'hello', origin: 'observed' });
+      const node = store.getNode('n1')!;
+      const vec = new Float32Array([0.1, 0.2, 0.3, 0.4]);
+      // Pass the captured value_hash — no race, should embed
+      store.setEmbedding('n1', vec, node.value_hash);
+      expect(store.getNode('n1')!.embedded_hash).toBe(node.value_hash);
+    });
+
+    it('L-1: setEmbedding with WRONG expectedValueHash is a no-op (stale-vector guard)', () => {
+      store.upsertNode({ id: 'n1', type: 'fact', value: 'hello', origin: 'observed' });
+      const vec = new Float32Array([0.1, 0.2, 0.3, 0.4]);
+      // Pass a hash that does not match current value_hash — simulates race where value changed
+      store.setEmbedding('n1', vec, 'stale-hash-that-does-not-match');
+      // embedded_hash must remain null (dirty) — embedding was skipped
+      expect(store.getNode('n1')!.embedded_hash).toBeNull();
+      expect(store.getNode('n1')!.embedding).toBeNull();
+    });
+
+    it('L-2: first setEmbedding stamps embedding_dims in meta', () => {
+      store.upsertNode({ id: 'n1', type: 'fact', value: 'dims test', origin: 'observed' });
+      const vec = new Float32Array(8); // 8-dim
+      store.setEmbedding('n1', vec);
+      expect(store.getMeta('embedding_dims')).toBe('8');
+    });
+
+    it('L-2: second setEmbedding with same dims succeeds', () => {
+      store.upsertNode({ id: 'n1', type: 'fact', value: 'a', origin: 'observed' });
+      store.upsertNode({ id: 'n2', type: 'fact', value: 'b', origin: 'observed' });
+      store.setEmbedding('n1', new Float32Array(8));
+      // Same dims — should not throw
+      expect(() => store.setEmbedding('n2', new Float32Array(8))).not.toThrow();
+    });
+
+    it('L-2: setEmbedding with different dims than first write throws (provider mismatch guard)', () => {
+      store.upsertNode({ id: 'n1', type: 'fact', value: 'a', origin: 'observed' });
+      store.upsertNode({ id: 'n2', type: 'fact', value: 'b', origin: 'observed' });
+      store.setEmbedding('n1', new Float32Array(8)); // stamps dims=8
+      // Different dims — must throw
+      expect(() => store.setEmbedding('n2', new Float32Array(4))).toThrow(/embedding_dims mismatch/);
+    });
   });
 
   // ── training_eligible ───────────────────────────────────────────────────
@@ -244,6 +286,28 @@ describe('SemanticStore', () => {
       store.upsertNode({ id: 'n1', type: 'fact', value: 'v', origin: 'observed' });
       const contradictions = JSON.parse(store.getNode('n1')!.pending_contradictions) as PendingContradiction[];
       expect(contradictions[0]!.episode_id).toBe('ep_001');
+    });
+
+    it('L-4: recordContradiction on a node with corrupt pending_contradictions does not throw', () => {
+      // L-4: a corrupt pending_contradictions column must be treated as empty (reset to [])
+      // and the new entry written back, repairing the column.
+      store.upsertNode({ id: 'n-corrupt', type: 'fact', value: 'v', origin: 'observed' });
+      // Corrupt the column directly via SQL (bypassing the store's write primitive)
+      db.prepare("UPDATE node SET pending_contradictions = ? WHERE id = ?").run('{not json', 'n-corrupt');
+
+      // Must not throw
+      expect(() => {
+        store.recordContradiction('n-corrupt', { episode_id: 'ep-repair', session_id: 'sess-r', origin: 'observed' });
+      }).not.toThrow();
+
+      // Column must now be valid JSON with one entry (the new contradiction)
+      const node = store.getNode('n-corrupt')!;
+      let contradictions: PendingContradiction[] | undefined;
+      expect(() => {
+        contradictions = JSON.parse(node.pending_contradictions) as PendingContradiction[];
+      }).not.toThrow();
+      expect(contradictions).toHaveLength(1);
+      expect(contradictions![0]!.episode_id).toBe('ep-repair');
     });
   });
 

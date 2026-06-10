@@ -152,6 +152,31 @@ describe('RetrievalEngine cwd scoping (DEBT-06 / D-93)', () => {
     expect(ids).not.toContain('node-b');
   });
 
+  // ─── H-5: orphan nodes (zero consolidation_event rows) surface as global ────
+
+  it('H-5: orphan node (no consolidation_event rows) surfaces in cwd-scoped retrieval', () => {
+    // Orphan: seeded node with ZERO consolidation_event rows — no episode linkage at all.
+    // Pre-fix: orphan was invisible in cwd-scoped retrieval (83% of live graph affected for
+    // fresh installs with seeded corpus but no consolidation pass run yet).
+    // Post-fix: orphan treated as global — surfaces in all cwd-scoped queries.
+    store.upsertNode({ id: 'node-orphan', type: 'fact', value: 'orphan fact', origin: 'observed', s: 0.5 });
+
+    // Also seed a cross-project node (has an event, but wrong cwd — still excluded)
+    addNodeWithEpisode('node-cross', 'cross-project fact', '/proj/B');
+
+    const engine = makeEngine();
+    const result = retrieveWithCwd(engine, '/proj/A');
+
+    const ids = result.results.map(r => r.id);
+    expect(result.status).toBe('ok');
+
+    // H-5 fix: orphan (event-less) node treated as global → appears for any cwd
+    expect(ids).toContain('node-orphan');
+
+    // Cross-project bleed guard regression: node backed by /proj/B events still excluded
+    expect(ids).not.toContain('node-cross');
+  });
+
   // ─── backward-compat: no cwd arg → returns all live nodes ───────────────────
 
   it('no-arg (backward-compat): retrieveCueless() with no cwd returns all live nodes', () => {
