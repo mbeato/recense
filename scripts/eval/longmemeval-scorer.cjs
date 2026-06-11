@@ -131,27 +131,70 @@ function parseJudgeVerdict(text) {
   return { label: 0, parseOk: false };
 }
 
-// ---- judge functions --------------------------------------------------------
+// ---- judge prompt construction (ported verbatim from LongMemEval) -----------
+//
+// Source: https://github.com/xiaowu0162/LongMemEval/blob/main/src/evaluation/evaluate_qa.py
+// Function: get_anscheck_prompt(task, question, answer, response, abstention)
+//
+// The official evaluate_qa.py sends a single user message (no system prompt) and
+// uses temperature=0, max_tokens=10. We follow the same structure.
+// Abstention questions are identified by question_id suffix "_abs" — their
+// question_type is one of the 6 regular types, not a distinct category.
 
-const JUDGE_SYSTEM_PROMPT = `You are evaluating a question-answering memory system.
-Given the gold answer to a question and the system's hypothesis, determine if the hypothesis is correct.
-The hypothesis does not need to match the exact phrasing — it just needs to convey the same factual information.
-Reply with only "yes" if the hypothesis is correct, or "no" if it is incorrect.`;
+/**
+ * Build the per-question-type judge prompt verbatim from the official LongMemEval
+ * evaluate_qa.py implementation (get_anscheck_prompt).
+ *
+ * @param {string}  questionType  - LongMemEval question_type field
+ * @param {string}  question      - The question text
+ * @param {string}  goldAnswer    - The gold/reference answer (or rubric for preference)
+ * @param {string}  hypothesis    - The system's generated response
+ * @param {boolean} isAbstention  - true when question_id ends with "_abs"
+ * @returns {string} Full prompt to send as the user message (no system prompt)
+ */
+function buildJudgePrompt(questionType, question, goldAnswer, hypothesis, isAbstention) {
+  if (isAbstention) {
+    // Abstention template — verbatim from evaluate_qa.py
+    return `I will give you an unanswerable question, an explanation, and a response from a model. Please answer yes if the model correctly identifies the question as unanswerable. The model could say that the information is incomplete, or some other information is given but the asked information is not.\n\nQuestion: ${question}\n\nExplanation: ${goldAnswer}\n\nModel Response: ${hypothesis}\n\nDoes the model correctly identify the question as unanswerable? Answer yes or no only.`;
+  }
+
+  if (questionType === 'temporal-reasoning') {
+    // Temporal-reasoning template — verbatim from evaluate_qa.py (off-by-one leniency)
+    return `I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no. In addition, do not penalize off-by-one errors for the number of days. If the question asks for the number of days/weeks/months, etc., and the model makes off-by-one errors (e.g., predicting 19 days when the answer is 18), the model's response is still correct. \n\nQuestion: ${question}\n\nCorrect Answer: ${goldAnswer}\n\nModel Response: ${hypothesis}\n\nIs the model response correct? Answer yes or no only.`;
+  }
+
+  if (questionType === 'knowledge-update') {
+    // Knowledge-update template — verbatim from evaluate_qa.py
+    // Accepts "previous information along with an updated answer" as correct
+    return `I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response contains some previous information along with an updated answer, the response should be considered as correct as long as the updated answer is the required answer.\n\nQuestion: ${question}\n\nCorrect Answer: ${goldAnswer}\n\nModel Response: ${hypothesis}\n\nIs the model response correct? Answer yes or no only.`;
+  }
+
+  if (questionType === 'single-session-preference') {
+    // Preference template — verbatim from evaluate_qa.py (rubric-based)
+    return `I will give you a question, a rubric for desired personalized response, and a response from a model. Please answer yes if the response satisfies the desired response. Otherwise, answer no. The model does not need to reflect all the points in the rubric. The response is correct as long as it recalls and utilizes the user's personal information correctly.\n\nQuestion: ${question}\n\nRubric: ${goldAnswer}\n\nModel Response: ${hypothesis}\n\nIs the model response correct? Answer yes or no only.`;
+  }
+
+  // Default template — verbatim from evaluate_qa.py
+  // Covers: single-session-user, single-session-assistant, multi-session-reasoning, and any other type
+  return `I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no. \n\nQuestion: ${question}\n\nCorrect Answer: ${goldAnswer}\n\nModel Response: ${hypothesis}\n\nIs the model response correct? Answer yes or no only.`;
+}
+
+// ---- judge functions --------------------------------------------------------
 
 /**
  * Calls GPT-4o-2024-08-06 to judge whether hypothesis is correct given the gold answer.
+ * Uses the official LongMemEval per-question-type prompt (no system prompt, temperature=0).
  * Returns autoeval_label: 1 (correct) or 0 (incorrect).
  */
-async function judgeWithGpt4o(client, question, goldAnswer, hypothesis) {
-  const userContent = `Question: ${question}\nGold answer: ${goldAnswer}\nSystem hypothesis: ${hypothesis}`;
+async function judgeWithGpt4o(client, questionType, question, goldAnswer, hypothesis, isAbstention) {
+  const prompt = buildJudgePrompt(questionType, question, goldAnswer, hypothesis, isAbstention);
   try {
     const response = await client.chat.completions.create({
       model: JUDGE_MODEL,
       max_tokens: 16,
       temperature: 0,
       messages: [
-        { role: 'system', content: JUDGE_SYSTEM_PROMPT },
-        { role: 'user',   content: userContent },
+        { role: 'user', content: prompt },
       ],
     });
     const text = response.choices?.[0]?.message?.content ?? '';
@@ -163,11 +206,37 @@ async function judgeWithGpt4o(client, question, goldAnswer, hypothesis) {
 }
 
 /**
- * Mock judge: case-insensitive substring match of goldAnswer in hypothesis.
- * Zero API calls — used in CI / --mock mode.
+ * Mock judge: for abstention questions, correct iff hypothesis contains no-information
+ * language. For all other types, uses case-insensitive substring match of goldAnswer
+ * in hypothesis. Zero API calls — used in CI / --mock mode.
  */
-function judgeWithMock(goldAnswer, hypothesis) {
-  if (!hypothesis || hypothesis === 'dry-run-stub-answer') return { label: 0, raw: 'mock-no-match', parseOk: true };
+function judgeWithMock(questionType, goldAnswer, hypothesis, isAbstention) {
+  if (!hypothesis || hypothesis === 'dry-run-stub-answer') {
+    return { label: 0, raw: 'mock-no-answer', parseOk: true };
+  }
+
+  if (isAbstention) {
+    // Correct iff hypothesis indicates no-information (mirrors abstention judge criteria)
+    const lower = hypothesis.toLowerCase();
+    const noInfoSignals = [
+      "don't have information",
+      "do not have information",
+      "no information",
+      "not available",
+      "cannot find",
+      "can't find",
+      "i don't know",
+      "i do not know",
+      "unable to find",
+      "no relevant",
+      "unanswerable",
+      "not mentioned",
+      "not found",
+    ];
+    const label = noInfoSignals.some(s => lower.includes(s)) ? 1 : 0;
+    return { label, raw: label ? 'mock-abstain-correct' : 'mock-abstain-incorrect', parseOk: true };
+  }
+
   const label = hypothesis.toLowerCase().includes(goldAnswer.toLowerCase()) ? 1 : 0;
   return { label, raw: label ? 'mock-match' : 'mock-no-match', parseOk: true };
 }
@@ -231,12 +300,14 @@ function judgeWithMock(goldAnswer, hypothesis) {
     const goldAnswer   = gold.answer   || '';
     const questionType = gold.question_type || hyp.question_type || 'unknown';
     const hypothesis   = hyp.hypothesis || hyp.error || '';
+    // Abstention questions are identified by question_id suffix "_abs" (not question_type)
+    const isAbstention = typeof qid === 'string' && qid.endsWith('_abs');
 
     let result;
     if (IS_MOCK) {
-      result = judgeWithMock(goldAnswer, hypothesis);
+      result = judgeWithMock(questionType, goldAnswer, hypothesis, isAbstention);
     } else {
-      result = await judgeWithGpt4o(openaiClient, question, goldAnswer, hypothesis);
+      result = await judgeWithGpt4o(openaiClient, questionType, question, goldAnswer, hypothesis, isAbstention);
     }
 
     perQuestion.push({
