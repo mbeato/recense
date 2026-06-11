@@ -242,7 +242,14 @@ export function checkNodeAbi(): CheckResult {
   if (!nodeBin) {
     return fail('BRAIN_MEMORY_NODE_BIN not set — run `brain init`');
   }
-  const result = spawnSync(nodeBin, ['-e', "require('better-sqlite3')"], { stdio: 'pipe' });
+  // IN-04: print the SPAWNED binary's NODE_MODULE_VERSION before loading the addon.
+  // Reporting process.versions.modules here would show the doctor process's NMV —
+  // misleading exactly when the two binaries differ (the scenario this check exists for).
+  const result = spawnSync(
+    nodeBin,
+    ['-e', "process.stdout.write(String(process.versions.modules)); require('better-sqlite3')"],
+    { stdio: 'pipe' },
+  );
   if (result.status !== 0) {
     const stderr = (result.stderr?.toString() ?? '');
     if (stderr.includes('NODE_MODULE_VERSION')) {
@@ -250,7 +257,8 @@ export function checkNodeAbi(): CheckResult {
     }
     return fail(`better-sqlite3 load error: ${stderr.slice(0, 200)}`);
   }
-  return pass(`Node ABI match: NMV=${process.versions.modules}, bin=${nodeBin}`);
+  const nmv = (result.stdout?.toString() ?? '').trim();
+  return pass(`Node ABI match: NMV=${nmv}, bin=${nodeBin}`);
 }
 
 // ── Dimension 6: Serve token presence + env file mode ────────────────────────
