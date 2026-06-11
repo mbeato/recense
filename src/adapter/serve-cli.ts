@@ -27,7 +27,7 @@ import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { ModelProvider } from '../model/provider';
-import { wireMemoryEngine, registerMemoryTools, MemoryBusyError } from './memory-ops';
+import { wireMemoryEngine, registerMemoryTools, MemoryBusyError, type MemoryOps } from './memory-ops';
 import { resolveExistingEnv, writeEnvFile } from './brain-init';
 import { resolveDbPath, sleepEnvPath } from './runtime-config';
 
@@ -197,6 +197,35 @@ function jsonError(res: http.ServerResponse, status: number, body: unknown): voi
 }
 
 // ---------------------------------------------------------------------------
+// buildMcpServer — per-request McpServer construction (WR-03)
+// ---------------------------------------------------------------------------
+
+/**
+ * Construct a fresh McpServer with the three memory tools registered.
+ *
+ * WR-03: the stateless StreamableHTTPServerTransport tracks in-flight
+ * request→response mappings keyed by JSON-RPC request id, so the SDK requires a
+ * NEW server + transport per request (see the SDK's simpleStatelessStreamableHttp
+ * example) — a shared instance misroutes/drops responses when concurrent clients
+ * reuse ids (two independent clients both starting at id 1 is the normal case).
+ * The engine/ops stay shared (D-02); only this cheap MCP wrapper is per-request.
+ */
+function buildMcpServer(ops: MemoryOps): McpServer {
+  const mcpServer = new McpServer(
+    { name: 'brain-memory', version: '0.1.0' },
+    {
+      instructions:
+        'brain-memory tools: memory_search (LLM-free semantic retrieval), memory_add ' +
+        '(record a fact/observation), memory_ask (question answering over memory). ' +
+        'Writes land as episodes; abstraction/consolidation runs in the hourly sleep pass, not inline.',
+    },
+  );
+  // Register the same three tools as the stdio MCP surface (same ops → one engine instance, D-02).
+  registerMemoryTools(mcpServer, ops);
+  return mcpServer;
+}
+
+// ---------------------------------------------------------------------------
 // createBrainHttpServer — factory (D-01/D-02)
 // ---------------------------------------------------------------------------
 
@@ -220,29 +249,7 @@ export async function createBrainHttpServer(
     separateReadHandle: true,
   });
 
-  // ── 2. MCP server + stateless transport (D-03: sessionIdGenerator: undefined) ──
-  const mcpServer = new McpServer(
-    { name: 'brain-memory', version: '0.1.0' },
-    {
-      instructions:
-        'brain-memory tools: memory_search (LLM-free semantic retrieval), memory_add ' +
-        '(record a fact/observation), memory_ask (question answering over memory). ' +
-        'Writes land as episodes; abstraction/consolidation runs in the hourly sleep pass, not inline.',
-    },
-  );
-  // Register the same three tools as the stdio MCP surface (same ops → one engine instance, D-02).
-  registerMemoryTools(mcpServer, ops);
-
-  // T-12-09: sessionIdGenerator: undefined → stateless mode; no Mcp-Session-Id lifecycle.
-  // enableJsonResponse: true → each POST /mcp gets a direct application/json response
-  // instead of an SSE stream, which is more suitable for REST-style callers (Tonos, curl).
-  // The Accept header must still include both application/json and text/event-stream per the
-  // SDK spec; the transport selects JSON when enableJsonResponse is true.
-  const mcpTransport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true,
-  });
-  await mcpServer.connect(mcpTransport);
+  // ── 2. MCP server + transport are created PER REQUEST in the /mcp handler (WR-03) ──
 
   // ── 3. Read package.json version for /health (fallback to '0.1.0') ─────────
   let pkgVersion = '0.1.0';
@@ -394,6 +401,18 @@ export async function createBrainHttpServer(
       // The transport handles JSON-RPC parsing, method dispatch, and the response.
       // Status/duration logging after handleRequest returns (transport writes the response).
       try {
+        // WR-03: fresh McpServer + transport per request — stateless mode requires it.
+        // T-12-09: sessionIdGenerator: undefined → stateless; no Mcp-Session-Id lifecycle.
+        // enableJsonResponse: true → direct application/json response instead of an SSE
+        // stream (more suitable for REST-style callers — Tonos, curl). The Accept header
+        // must still include both application/json and text/event-stream per the SDK spec.
+        const mcpServer = buildMcpServer(ops);
+        const mcpTransport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true,
+        });
+        res.on('close', () => { void mcpTransport.close(); void mcpServer.close(); });
+        await mcpServer.connect(mcpTransport);
         await mcpTransport.handleRequest(req, res, parsedBody);
         logRequest('POST', url, res.statusCode ?? 200, Date.now() - start);
       } catch (err) {
@@ -433,10 +452,10 @@ export async function createBrainHttpServer(
   server.requestTimeout = 30_000;  // 30s: drop connections that don't complete a request
   server.headersTimeout = 15_000;  // 15s: drop connections that don't finish headers
 
-  // ── 6. close() — drain server → close MCP transport → close engine ────────
+  // ── 6. close() — drain server → close engine ───────────────────────────────
+  // (No shared MCP transport to close — per-request transports close on res 'close', WR-03.)
   async function close(): Promise<void> {
     await new Promise<void>(r => server.close(() => r()));
-    try { await (mcpTransport as unknown as { close?: () => Promise<void> }).close?.(); } catch { /* best-effort */ }
     closeEngine();
   }
 
