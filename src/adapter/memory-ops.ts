@@ -105,6 +105,13 @@ export interface SearchRow {
   value: string;
   origin: string;
   score: number;
+  /**
+   * IN-08: sourced from the node's `last_access` timestamp (refreshed by retrieval/
+   * recall touches), NOT a content-update time — an accessed-but-unchanged fact looks
+   * freshly "updated" here. The name is part of the published Phase-11 MCP contract
+   * (docs/mcp.md: "lastUpdatedMs — last-access timestamp"), so the semantics are
+   * documented rather than the field renamed.
+   */
   lastUpdatedMs: number;
 }
 
