@@ -1,0 +1,189 @@
+[
+  {
+    "case_id": 1,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana runs 5 miles every morning before breakfast",
+    "contradicting_fact": "Ana now runs 4 miles every morning — she shortened her route after a minor knee strain",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.3,
+    "query_probe": "How many miles does Ana run in the morning?",
+    "expected_answer_hint": "4 miles"
+  },
+  {
+    "case_id": 2,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana meditates for 30 minutes each morning",
+    "contradicting_fact": "Ana cut her daily meditation down to 20 minutes because of her new work schedule",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.3,
+    "query_probe": "How long does Ana meditate each day?",
+    "expected_answer_hint": "20 minutes"
+  },
+  {
+    "case_id": 3,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana has visited 23 countries on her travels",
+    "contradicting_fact": "Ana has now visited 26 countries after her recent trip to Southeast Asia",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.3,
+    "query_probe": "How many countries has Ana visited?",
+    "expected_answer_hint": "26 countries"
+  },
+  {
+    "case_id": 4,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana lives in Portland, Oregon",
+    "contradicting_fact": "Ana moved to Denver, Colorado last spring to be closer to the mountains",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.55,
+    "query_probe": "Where does Ana live?",
+    "expected_answer_hint": "Denver, Colorado"
+  },
+  {
+    "case_id": 5,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana teaches yoga at a community center every Tuesday evening",
+    "contradicting_fact": "Ana switched to teaching yoga at a private studio on Saturday mornings",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.55,
+    "query_probe": "When and where does Ana teach yoga?",
+    "expected_answer_hint": "private studio on Saturday mornings"
+  },
+  {
+    "case_id": 6,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana's favorite travel destination is Japan",
+    "contradicting_fact": "Ana now says Iceland is her favorite travel destination after her trip last autumn",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.5,
+    "query_probe": "What is Ana's favorite travel destination?",
+    "expected_answer_hint": "Iceland"
+  },
+  {
+    "case_id": 7,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana publishes her travel articles in The Wanderer magazine",
+    "contradicting_fact": "Ana stopped writing for The Wanderer and now publishes exclusively in Nomad Journal",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.6,
+    "query_probe": "Where does Ana publish her travel articles?",
+    "expected_answer_hint": "Nomad Journal"
+  },
+  {
+    "case_id": 8,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana speaks Spanish as a second language",
+    "contradicting_fact": "Ana dropped Spanish and switched to learning Portuguese, which is now her second language",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.6,
+    "query_probe": "What second language does Ana speak?",
+    "expected_answer_hint": "Portuguese"
+  },
+  {
+    "case_id": 9,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana prefers budget backpacking when she travels",
+    "contradicting_fact": "After a back injury last year, Ana switched to staying at boutique hotels instead of backpacking",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.55,
+    "query_probe": "How does Ana prefer to travel — backpacking or hotels?",
+    "expected_answer_hint": "boutique hotels"
+  },
+  {
+    "case_id": 10,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana is a vegetarian",
+    "contradicting_fact": "Ana started eating meat again last year and is no longer vegetarian",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.9,
+    "query_probe": "Is Ana vegetarian?",
+    "expected_answer_hint": "no longer vegetarian, eats meat"
+  },
+  {
+    "case_id": 11,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana is a certified yoga instructor and teaches yoga professionally",
+    "contradicting_fact": "Ana quit teaching yoga two years ago and now works full-time as a software developer",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.85,
+    "query_probe": "What does Ana do professionally?",
+    "expected_answer_hint": "software developer"
+  },
+  {
+    "case_id": 12,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana is married to her partner Stefan Kowalski",
+    "contradicting_fact": "Ana and Stefan divorced last year; she now lives alone",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.9,
+    "query_probe": "Is Ana still married to Stefan?",
+    "expected_answer_hint": "divorced, no longer married to Stefan"
+  },
+  {
+    "case_id": 13,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana has a dog named Biscuit",
+    "contradicting_fact": "Ana no longer has any pets — she gave Biscuit to her sister when she moved to Denver",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.85,
+    "query_probe": "Does Ana still have her dog Biscuit?",
+    "expected_answer_hint": "no longer has pets, gave Biscuit away"
+  },
+  {
+    "case_id": 14,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana runs 5 miles every morning before breakfast",
+    "contradicting_fact": "Ana goes on a 5-mile run each morning as part of her fitness routine",
+    "control_type": "confirm",
+    "expected_relation": "confirm",
+    "magnitude": 0,
+    "query_probe": "How far does Ana run in the morning?",
+    "expected_answer_hint": "5 miles"
+  },
+  {
+    "case_id": 15,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana lives in Portland, Oregon",
+    "contradicting_fact": "Ana's home is in Portland, Oregon, in the Pacific Northwest",
+    "control_type": "confirm",
+    "expected_relation": "confirm",
+    "magnitude": 0,
+    "query_probe": "What city does Ana call home?",
+    "expected_answer_hint": "Portland, Oregon"
+  },
+  {
+    "case_id": 16,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana is a vegetarian",
+    "contradicting_fact": "Ana has been vegetarian since college and also avoids buying leather products as part of her values",
+    "control_type": "extend",
+    "expected_relation": "extend",
+    "magnitude": 0,
+    "query_probe": "What else do we know about Ana's vegetarian practice beyond her diet?",
+    "expected_answer_hint": "vegetarian since college, avoids leather products"
+  },
+  {
+    "case_id": 17,
+    "persona": "Ana Kowalski",
+    "initial_fact": "Ana meditates for 30 minutes each morning",
+    "contradicting_fact": "Ana follows the Vipassana meditation technique in her daily 30-minute practice",
+    "control_type": "extend",
+    "expected_relation": "extend",
+    "magnitude": 0,
+    "query_probe": "What meditation technique does Ana use?",
+    "expected_answer_hint": "Vipassana technique"
+  }
+]
