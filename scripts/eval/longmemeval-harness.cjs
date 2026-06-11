@@ -16,6 +16,13 @@
  *   # Dry-run mode: zero API calls, validates fixture parsing + scratch DB
  *   node scripts/eval/longmemeval-harness.cjs --dry-run
  *
+ *   # Concurrency: bound parallel workers (default 8, min 1)
+ *   node scripts/eval/longmemeval-harness.cjs --concurrency 16
+ *
+ *   # Resume: if OUT_FILE already exists, question_ids already present are skipped
+ *   node scripts/eval/longmemeval-harness.cjs --out results/my-run.jsonl
+ *   # (re-running appends only the missing questions; error lines also count as done)
+ *
  * Dataset download (NOT committed — ~3 GB):
  *   curl -L "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.jsonl" \
  *        -o scripts/eval/longmemeval-s.jsonl
@@ -26,6 +33,9 @@
  *  - runConsolidation() is called ONCE per question, AFTER all session appends (Pitfall 4).
  *  - --probe runs exactly 10 questions, reports $/question and wall-clock, then exits 0.
  *  - --dry-run reads the mini fixture, skips all LLM steps, writes fixed answers, exits 0.
+ *  - Each completed question is appended to OUT_FILE immediately (incremental output).
+ *  - On startup, existing OUT_FILE is parsed; already-present question_ids are skipped.
+ *    Error lines written by a prior run also count as done for resume purposes.
  */
 
 'use strict';
@@ -64,6 +74,11 @@ const arg = (k, d) => {
 
 const IS_DRY_RUN = process.argv.includes('--dry-run');
 const IS_PROBE   = process.argv.includes('--probe');
+
+// --concurrency N (default 8, min 1). Each question has its own scratch DB and no
+// shared state, so in-process parallelism is safe. Probe token accumulation uses
+// plain += after each await — safe because Node.js is single-threaded.
+const CONCURRENCY = Math.max(1, parseInt(arg('--concurrency', '8'), 10) || 8);
 
 // --dry-run defaults to the committed mini fixture; normal/probe default to the downloaded dataset
 const EVAL_DEFAULT = IS_DRY_RUN
@@ -155,6 +170,28 @@ function formatSession(session) {
     .join('\n');
 }
 
+// ---- bounded concurrency pool -----------------------------------------------
+
+/**
+ * Runs fn(item) for each item in items, with at most `concurrency` in-flight at once.
+ * Items are processed in queue order; workers race to grab the next item.
+ * Node.js single-threaded event loop guarantees idx++ is atomic between awaits.
+ */
+async function runBoundedPool(items, concurrency, fn) {
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const item = items[idx++];
+      await fn(item);
+    }
+  }
+  const workers = [];
+  for (let i = 0; i < Math.min(concurrency, items.length); i++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+}
+
 // ---- main -------------------------------------------------------------------
 
 (async () => {
@@ -191,15 +228,37 @@ function formatSession(session) {
   const limit     = IS_PROBE ? PROBE_LIMIT : allQuestions.length;
   const questions = allQuestions.slice(0, limit);
 
-  if (IS_DRY_RUN) {
-    console.log(`[dry-run] Loaded ${questions.length} question(s) from ${EVAL_FILE} (zero API mode)`);
-  } else if (IS_PROBE) {
-    console.log(`[probe] Running ${questions.length} questions to estimate cost and latency`);
-  } else {
-    console.log(`Running ${questions.length} questions from ${EVAL_FILE}`);
+  // ---- resume: skip question_ids already present in OUT_FILE ----------------
+  // Error lines written by prior runs also count as done — prevents retrying
+  // a deterministically-failing question on every resume (T-14-DSV).
+  const doneIds = new Set();
+  if (fs.existsSync(OUT_FILE)) {
+    const existingLines = fs.readFileSync(OUT_FILE, 'utf8').split('\n').filter(l => l.trim());
+    for (const line of existingLines) {
+      try {
+        const rec = JSON.parse(line);
+        if (rec.question_id) doneIds.add(rec.question_id);
+      } catch {}
+    }
+    if (doneIds.size > 0) {
+      console.log(`[resume] Skipping ${doneIds.size} already-complete question(s) (errors count as done)`);
+    }
   }
 
-  // ---- probe tracking -------------------------------------------------------
+  const pendingQuestions = questions.filter(q => !doneIds.has(q.question_id));
+
+  if (IS_DRY_RUN) {
+    console.log(`[dry-run] Loaded ${questions.length} question(s) from ${EVAL_FILE} (zero API mode, ${pendingQuestions.length} pending)`);
+  } else if (IS_PROBE) {
+    console.log(`[probe] Running ${pendingQuestions.length} questions to estimate cost and latency`);
+  } else {
+    console.log(`Running ${pendingQuestions.length} pending question(s) from ${EVAL_FILE} (concurrency=${CONCURRENCY})`);
+  }
+
+  // ---- output dir setup -----------------------------------------------------
+  fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true });
+
+  // ---- probe tracking (race-safe: += after each await, Node is single-threaded)
   const probeStats = { inputTokens: 0, outputTokens: 0 };
 
   // ---- embedder (real mode only) -------------------------------------------
@@ -210,20 +269,20 @@ function formatSession(session) {
   // ---- anthropic client (real mode only) ------------------------------------
   const anthropicClient = IS_DRY_RUN ? null : new Anthropic();
 
-  // ---- output setup ---------------------------------------------------------
-  fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true });
-  const outLines = [];
+  // ---- telemetry state (shared across workers, safe: += after await) --------
+  let completedCount = 0;
+  const wallStart = Date.now();
 
-  // ---- main question loop ---------------------------------------------------
-  process.stdout.write(`Processing`);
-
-  for (const q of questions) {
+  // ---- per-question pipeline ------------------------------------------------
+  async function processQuestion(q) {
+    const qStart = Date.now();
     const questionId   = q.question_id;
     const questionType = q.question_type;
     const questionText = q.question;
     const haystackSessions = Array.isArray(q.haystack_sessions) ? q.haystack_sessions : [];
 
     const scratch = makeScratchDb();
+    let result;
 
     try {
       if (IS_DRY_RUN) {
@@ -239,7 +298,7 @@ function formatSession(session) {
             session_id: `${questionId}-s${i}`,
           });
         }
-        outLines.push({ question_id: questionId, question_type: questionType, hypothesis: DRY_RUN_STUB_ANSWER });
+        result = { question_id: questionId, question_type: questionType, hypothesis: DRY_RUN_STUB_ANSWER };
       } else {
         // Real mode: full pipeline
 
@@ -261,7 +320,7 @@ function formatSession(session) {
           scratch.db,
           scratch.dbPath,
           process.env,
-          (msg) => {} // suppress sleep-pass logs; use stderr if debugging
+          (_msg) => {} // suppress sleep-pass logs; use stderr if debugging
         );
 
         // Step 3: embed the question
@@ -291,35 +350,47 @@ function formatSession(session) {
           .join('')
           .trim();
 
-        // Accumulate probe tokens
+        // Accumulate probe tokens (race-safe: += after await, Node single-threaded)
         if (IS_PROBE && answerResponse.usage) {
           probeStats.inputTokens  += answerResponse.usage.input_tokens  || 0;
           probeStats.outputTokens += answerResponse.usage.output_tokens || 0;
         }
 
-        outLines.push({ question_id: questionId, question_type: questionType, hypothesis });
+        result = { question_id: questionId, question_type: questionType, hypothesis };
       }
     } catch (e) {
       // Per-question failure: record error, continue batch (T-14-DSV)
-      outLines.push({ question_id: questionId, question_type: questionType, error: String(e.message || e).slice(0, 300) });
+      result = { question_id: questionId, question_type: questionType, error: String(e.message || e).slice(0, 300) };
     } finally {
       scratch.cleanup();
     }
 
-    process.stdout.write('.');
+    // Append result immediately (incremental output — safe: fs.appendFileSync is synchronous)
+    fs.appendFileSync(OUT_FILE, JSON.stringify(result) + '\n');
+
+    // Telemetry to stderr: question_id, elapsed, running ETA
+    const elapsedSec = (Date.now() - qStart) / 1000;
+    completedCount++;
+    const wallElapsedMs = Date.now() - wallStart;
+    const avgMsPerQ = wallElapsedMs / completedCount;
+    const remaining = pendingQuestions.length - completedCount;
+    const etaSec = Math.round((remaining * avgMsPerQ) / 1000);
+    process.stderr.write(
+      `[${questionId}] ${elapsedSec.toFixed(1)}s | ETA ~${etaSec}s (${completedCount}/${pendingQuestions.length})\n`
+    );
   }
 
-  console.log(''); // newline after dots
+  // ---- run the pool ---------------------------------------------------------
+  if (pendingQuestions.length > 0) {
+    await runBoundedPool(pendingQuestions, CONCURRENCY, processQuestion);
+  }
 
-  // ---- write output JSONL ---------------------------------------------------
-  const jsonlContent = outLines.map(l => JSON.stringify(l)).join('\n') + '\n';
-  fs.writeFileSync(OUT_FILE, jsonlContent);
-  console.log(`Wrote ${outLines.length} result(s) -> ${OUT_FILE}`);
-
+  // ---- summary --------------------------------------------------------------
+  const totalInFile = doneIds.size + completedCount;
   const elapsedMs = Date.now() - tStart;
 
   if (IS_DRY_RUN) {
-    console.log(`[dry-run] Done. Elapsed: ${(elapsedMs / 1000).toFixed(1)}s`);
+    console.log(`[dry-run] Done. ${completedCount} new result(s) appended to ${OUT_FILE} (${totalInFile} total, ${doneIds.size} skipped). Elapsed: ${(elapsedMs / 1000).toFixed(1)}s`);
     process.exit(0);
   }
 
@@ -328,13 +399,13 @@ function formatSession(session) {
     const inputCost  = (probeStats.inputTokens  / 1_000_000) * HAIKU_INPUT_COST_PER_M;
     const outputCost = (probeStats.outputTokens / 1_000_000) * HAIKU_OUTPUT_COST_PER_M;
     const totalCost  = inputCost + outputCost;
-    const perQuestion = questions.length > 0 ? totalCost / questions.length : 0;
+    const perQuestion = completedCount > 0 ? totalCost / completedCount : 0;
     const elapsedMin  = elapsedMs / 60_000;
-    console.log(`\nProbe: ${questions.length} questions, $${totalCost.toFixed(4)} total (answer-gen only), ~$${perQuestion.toFixed(4)}/question, ~${elapsedMin.toFixed(1)} min`);
+    console.log(`\nProbe: ${completedCount} questions, $${totalCost.toFixed(4)} total (answer-gen only), ~$${perQuestion.toFixed(4)}/question, ~${elapsedMin.toFixed(1)} min`);
     console.log('Note: consolidation costs (extraction + judge calls) are not measured here — check your API billing for the full cost.');
     console.log(`Re-run without --probe to evaluate the full set.`);
     process.exit(0);
   }
 
-  console.log(`Elapsed: ${(elapsedMs / 1000).toFixed(1)}s | ${(elapsedMs / questions.length / 1000).toFixed(2)}s/question`);
+  console.log(`Done. ${completedCount} new result(s) appended to ${OUT_FILE} (${totalInFile} total, ${doneIds.size} skipped). Elapsed: ${(elapsedMs / 1000).toFixed(1)}s | ${completedCount > 0 ? (elapsedMs / completedCount / 1000).toFixed(2) : 'n/a'}s/question`);
 })();

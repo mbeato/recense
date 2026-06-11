@@ -9,6 +9,7 @@
  *     precede consolidation: consolidated=0 on all rows).
  *  3. Consolidation + retrieval pipeline runs under Consolidator + MockModelProvider
  *     (scripted extract/judge/embed) with zero API calls and produces node-table state.
+ *  4. Harness --dry-run resume: pre-seeded OUT_FILE entries are skipped on re-run.
  *
  * Uses the same harness pattern as tests/consolidation.test.ts:
  *  in-memory Database, initSchema, FakeClock, DEFAULT_CONFIG, MockModelProvider.
@@ -19,7 +20,9 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import Database from 'better-sqlite3';
 import { describe, it, expect } from 'vitest';
 import { initSchema } from '../src/db/schema';
@@ -262,6 +265,47 @@ describe('eval-harness-smoke', () => {
     // The episode is now marked consolidated
     const epAfter = h.db.prepare('SELECT consolidated FROM episode').all() as Array<{ consolidated: number }>;
     expect(epAfter.every(r => r.consolidated === 1)).toBe(true);
+  });
+
+  // ── Test 4: Resume — harness skips already-present question_ids ───────────
+  //
+  // Runs the .cjs harness as a subprocess with --dry-run. Pre-seeds OUT_FILE with
+  // one question_id; verifies the harness skips it and processes the rest.
+  // Requires the dist/ build (pretest runs `npm run build` so this is always present in CI).
+
+  it('harness --dry-run resumes: skips question_ids already present in OUT_FILE', () => {
+    const OUT = path.join(os.tmpdir(), `harness-resume-test-${Date.now()}-${process.pid}.jsonl`);
+
+    // Pre-seed: mini-001 already done (simulates a prior partial run)
+    const preSeedLine = JSON.stringify({ question_id: 'mini-001', question_type: 'single-hop', hypothesis: 'pre-existing' });
+    fs.writeFileSync(OUT, preSeedLine + '\n');
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.resolve(__dirname, '../scripts/eval/longmemeval-harness.cjs'),
+          '--dry-run',
+          '--out', OUT,
+          '--eval', FIXTURE_PATH,
+        ],
+        { encoding: 'utf8', cwd: path.resolve(__dirname, '..'), timeout: 30_000 },
+      );
+
+      expect(result.status).toBe(0);
+      // Harness must log that it skipped at least 1 question
+      expect(result.stdout).toContain('skipped');
+
+      // OUT_FILE must still contain the pre-existing line
+      const allLines = fs.readFileSync(OUT, 'utf8').split('\n').filter(l => l.trim());
+      const ids = allLines.map(l => { try { return JSON.parse(l).question_id; } catch { return null; } });
+      expect(ids).toContain('mini-001');
+
+      // At least one new question must have been processed (mini fixture has ≥2 questions)
+      expect(allLines.length).toBeGreaterThan(1);
+    } finally {
+      try { fs.unlinkSync(OUT); } catch {}
+    }
   });
 
 });

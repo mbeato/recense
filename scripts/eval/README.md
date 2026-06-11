@@ -223,7 +223,16 @@ npm run eval:longmemeval
 ```
 
 Flags: `--probe` (10-question cost estimate), `--dry-run` (zero API, MockModelProvider),
-`--eval <path>` (override fixture), `--out <path>` (override results file).
+`--eval <path>` (override fixture), `--out <path>` (override results file),
+`--concurrency N` (parallel workers, default 8, min 1).
+
+#### Resume
+
+If `--out` already exists, question_ids already present in the file are skipped on re-run.
+Error lines written by a prior run also count as done — re-running will not retry a
+deterministically-failing question. Each completed question is appended to OUT_FILE
+immediately rather than written in one batch at the end, so a killed run loses at most
+the in-flight question(s), not the entire batch.
 
 ### CI smoke (zero API)
 
