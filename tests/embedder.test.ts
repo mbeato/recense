@@ -10,7 +10,7 @@ import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import { SemanticStore } from '../src/db/semantic-store';
 import { CandidateRetriever } from '../src/retrieval/topk';
-import { MockEmbedder, OpenAIEmbedder } from '../src/model/embedder';
+import { MockEmbedder, OpenAIEmbedder, EMBEDDER_INPUT_MAX_CHARS } from '../src/model/embedder';
 import type { Embedder } from '../src/model/embedder';
 import { SDK_TIMEOUT_MS, SDK_MAX_RETRIES } from '../src/model/anthropic-client';
 
@@ -101,6 +101,32 @@ describe('OpenAIEmbedder timeout discipline (M-4)', () => {
     expect(SDK_TIMEOUT_MS).toBeGreaterThan(0);
     expect(typeof SDK_MAX_RETRIES).toBe('number');
     expect(SDK_MAX_RETRIES).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ── Phase 14: EMBEDDER_INPUT_MAX_CHARS guard ──────────────────────────────────
+
+describe('EMBEDDER_INPUT_MAX_CHARS input guard (Phase 14)', () => {
+  it('EMBEDDER_INPUT_MAX_CHARS is exported and positive', () => {
+    expect(typeof EMBEDDER_INPUT_MAX_CHARS).toBe('number');
+    expect(EMBEDDER_INPUT_MAX_CHARS).toBeGreaterThan(0);
+  });
+
+  it('EMBEDDER_INPUT_MAX_CHARS is at least 8000 chars (larger than maxContentBytes default)', () => {
+    // Must be comfortably larger than DEFAULT_CONFIG.maxContentBytes (8000 bytes)
+    // so normal episodes are never truncated.
+    expect(EMBEDDER_INPUT_MAX_CHARS).toBeGreaterThanOrEqual(8_000);
+  });
+
+  it('MockEmbedder accepts and embeds an oversized string without rejecting (guard behavior sanity)', async () => {
+    // MockEmbedder has no guard (it is the mock), but this test verifies the seam:
+    // a caller passing a string of length > EMBEDDER_INPUT_MAX_CHARS should not throw
+    // at the embedder interface level. OpenAIEmbedder truncates; MockEmbedder passes through.
+    const oversized = 'x'.repeat(EMBEDDER_INPUT_MAX_CHARS + 1000);
+    const mock = new MockEmbedder(() => new Float32Array(4));
+    const results = await mock.embed([oversized]);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toBeInstanceOf(Float32Array);
   });
 });
 
