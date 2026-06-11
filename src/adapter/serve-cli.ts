@@ -228,7 +228,14 @@ export async function createBrainHttpServer(
   registerMemoryTools(mcpServer, ops);
 
   // T-12-09: sessionIdGenerator: undefined → stateless mode; no Mcp-Session-Id lifecycle.
-  const mcpTransport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  // enableJsonResponse: true → each POST /mcp gets a direct application/json response
+  // instead of an SSE stream, which is more suitable for REST-style callers (Tonos, curl).
+  // The Accept header must still include both application/json and text/event-stream per the
+  // SDK spec; the transport selects JSON when enableJsonResponse is true.
+  const mcpTransport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+  });
   await mcpServer.connect(mcpTransport);
 
   // ── 3. Read package.json version for /health (fallback to '0.1.0') ─────────
