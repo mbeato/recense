@@ -1,12 +1,40 @@
 # brain-memory
 
-A brain-inspired memory engine for AI agents. It runs a two-store system (fast episodic + slow semantic graph + vector) that does more than recall facts — it **learns**: it abstracts general schemas from experience, reasons over them to handle novel situations, and updates stored beliefs the way the brain does (prediction-error-gated reconsolidation) instead of accumulating stale duplicates.
+Memory that stays correct. When a fact changes, brain-memory updates the belief in place — prediction-error-gated, tombstoned, auditable — instead of storing both versions and hoping retrieval picks the right one.
 
-This is **open-source, self-hosted, single-user, bring-your-own-keys**. You clone it, wire your own API keys, and run it on your own machine. It is NOT a hosted product — no data ever leaves your machine to a brain-memory service.
+Open-source, self-hosted, single-user, bring-your-own-keys. You clone it, wire your own API keys, and run it on your own machine. Memory never leaves your machine to a brain-memory service.
 
 ---
 
-## Prerequisites
+## The problem with AI memory
+
+| The complaint | What brain-memory does instead | Evidence |
+|---------------|-------------------------------|----------|
+| Stale facts coexist with new ones — memory never corrects itself ([mem0 #4896](https://github.com/mem0ai/mem0/issues/4896): semantically contradictory facts stored side-by-side, MD5 dedup only) | PE-gated reconsolidation: a contradiction triggers a judge call; the old belief is tombstoned in place and the new one written — one surviving belief, not two | EVAL-02: belief-correction suite |
+| Self-confirmation loops inflate noise ([mem0 #4573](https://github.com/mem0ai/mem0/issues/4573): one hallucinated fact became 808 duplicates because recalled output was re-extracted as new input) | Provenance enforcement: the engine's own inferred output can never count as evidence; the self-confirmation loop is closed by construction, not by prompt | Architecture invariant — `source_inference_id` flag blocks the loop at the write path |
+| Junk accumulates without limit — boot-file restated 200+ times, 97.8% junk rate in production (mem0 #4573) | Allocation gate + salience-gated dedup: repeated inputs strengthen the existing node's confidence score instead of inserting copies; strength-based decay prunes unused facts | EVAL-02 stale-recall and duplicate-count metrics |
+| No forgetting, no decay — stale entries degrade retrieval over time ([mem0 #5330](https://github.com/mem0ai/mem0/issues/5330)) | Strength-based lazy decay + AND-gated eviction guard: unused facts fade; an evidence-backed fact can never be deleted | Decay invariant: eviction requires zero evidence AND below-threshold strength |
+| Stores facts, doesn't learn — "user prefers Python" stored 100 times but no pattern abstraction ([Ask HN](https://news.ycombinator.com/item?id=46891715)) | Schema induction in the sleep pass: recurring patterns are abstracted into first-class schema nodes — generalizations the user never explicitly stated, applied to novel cues | Sleep-pass consolidation |
+
+---
+
+## Benchmark results
+
+See [docs/evals.md](docs/evals.md) for full methodology, case-set description, judge-validation evidence, and caveats.
+
+| Eval | brain-memory | Comparison | Methodology | Run date | Repro |
+|------|-------------|------------|-------------|----------|-------|
+| LongMemEval-S (headline) | TBD — recorded in 14-05 | mem0: 94.4% (self-reported); Mastra: 95% (self-reported, Gemini 2.5 Flash) | end-to-end QA, GPT-4o-2024-08-06 binary judge | TBD | `npm run eval:longmemeval` (~$TBD, ~TBD min) |
+| LongMemEval-S (knowledge-update sub-score) | TBD — recorded in 14-05 | agentmemory: 95.2% (self-reported, **retrieval-only R@5** — not end-to-end QA) | end-to-end QA, GPT-4o-2024-08-06 binary judge | TBD | `npm run eval:longmemeval` (same run) |
+| EVAL-02: Correctness suite (belief-correction) | TBD — recorded in 14-05 | ADD-only baseline: 0% (same cases, no consolidation) | end-to-end engine, scratch DB, 17 fictional-persona cases | TBD | `npm run eval:correctness` (~$TBD, ~TBD min) |
+
+Note on comparison numbers: competitor figures are self-reported from vendor documentation and differ in methodology. agentmemory's 95.2% is a retrieval-only R@5 score, not end-to-end question answering — methodology is not equivalent to the other rows. GPT-4o (60.6%) and ChatGPT (57.73%) are LongMemEval paper baselines, included for context.
+
+---
+
+## Quickstart
+
+### Prerequisites
 
 - **Node.js 22 or later** — required for the native module (better-sqlite3 ABI)
 - **Anthropic API key** — Claude compose + judge heads
@@ -15,9 +43,7 @@ This is **open-source, self-hosted, single-user, bring-your-own-keys**. You clon
 Optional (macOS only):
 - **Telegram bot token** — always-on query bot; create one via [@BotFather](https://t.me/BotFather)
 
----
-
-## Install
+### Install
 
 ```sh
 git clone https://github.com/<owner>/brain-memory.git
@@ -48,6 +74,172 @@ After init, verify the install:
 brain doctor
 ```
 
+### BYO-keys
+
+`brain init` creates and writes `~/.config/brain-memory/sleep.env` with `chmod 600`. **You do not need to create this file manually** unless you prefer to skip the wizard.
+
+If you set it up manually, create `~/.config/brain-memory/sleep.env` (`chmod 600`) with:
+
+```sh
+ANTHROPIC_API_KEY=your-anthropic-key-here
+OPENAI_API_KEY=your-openai-key-here
+```
+
+For the Telegram channel (macOS), also add:
+
+```sh
+BRAIN_MEMORY_TELEGRAM_TOKEN=123456:ABC-your-bot-token-here
+```
+
+Keys are never logged or stored outside this file. The scheduler and hooks read keys from the environment at runtime via the SDK defaults.
+
+### Cold-start seed
+
+Before the sleep pass can consolidate anything there must be nodes in the graph. `brain init` offers a one-shot seed at the end of the wizard (`[y/N]` — default No). You can also run it later:
+
+```sh
+brain seed
+```
+
+The seed reads your existing memory files (configured via `BRAIN_MEMORY_COLD_START_MEMORY_DIR` and `BRAIN_MEMORY_COLD_START_CLAUDE_FILE`), extracts entity and fact claims, and writes them into the SQLite graph.
+
+**One-shot:** once the seeder finishes successfully it sets a `seeded` meta flag. Re-running against the same database is a no-op — it exits 0 without re-extracting anything.
+
+**Safe no-op on misconfiguration:** if neither source path resolves to any files (e.g. you ran it before setting the env vars), the seeder exits 0 *without* burning the one-shot flag. Fix the paths and re-run.
+
+**Lock-guarded:** `brain seed` acquires the shared single-writer lock before opening the database. It is safe to run while the Telegram watcher or the hourly sleep-pass is active — they will wait or skip their cycle rather than colliding.
+
+---
+
+## Interfaces
+
+brain-memory is a pure memory system — any agent or channel can sit on top of it. Three tiers of reach:
+
+| Tier | How | Deploy needed? |
+|------|-----|----------------|
+| Local | Claude Code hooks (ambient), stdio MCP server (deliberate) | No |
+| Channel | Telegram bot (always-on watcher, macOS) | No |
+| Remote | `brain serve` HTTP API / MCP-over-HTTP | Yes — same clone, any host |
+
+### Claude Code hooks
+
+The hooks wire ambient memory into every Claude Code session. The SessionStart hook injects relevant memory at session start (LLM-free, fast); turn capture feeds the episodic log as you work. Wired automatically by `brain init`. See the command reference below.
+
+### MCP server (stdio)
+
+`brain mcp` starts a stdio MCP server that gives any local MCP client (Claude Code, Claude Desktop, standalone agents) deliberate on-demand access to the same `brain.db` the hooks use. The client spawns the process per its config entry — zero deployment. Three tools: `memory_search`, `memory_add`, `memory_ask`. See [docs/mcp.md](docs/mcp.md) for registration config and full tool semantics.
+
+If you are coming from `@modelcontextprotocol/server-memory`, here is how the vocabularies map:
+
+| server-memory tool | brain equivalent | Notes |
+|--------------------|-----------------|-------|
+| `search_nodes` | `memory_search` | Find nodes by query; brain uses graph+vector, not raw JSON |
+| `open_nodes` | — no equivalent | Nodes engine-internal; search is the read interface by design |
+| `add_observations` | `memory_add` | brain writes are episodic; becomes a graph fact after hourly consolidation |
+| `create_entities` | — no equivalent | No CRUD; brain builds entities via consolidation |
+| `read_graph` | — no equivalent | Graph is engine-internal by design |
+| `delete_entities` | — no equivalent | No user-initiated deletes; tombstone via sleep pass |
+| `delete_observations` | — no equivalent | No user-initiated deletes |
+| `delete_relations` | — no equivalent | No user-initiated deletes |
+| (new) | `memory_ask` | LLM-composed answer over stored knowledge; no server-memory equivalent |
+
+Our `memory_add` ≈ server-memory's `add_observations`, except writes are episodic and consolidation is deferred to the hourly sleep pass — brain has no user-initiated CRUD or deletes by design.
+
+### Reference client
+
+brain-memory is a pure memory system — any agent or channel can sit on top of it by calling the REST interface. The reference client shows the template: receive a message → call `/v1/ask` or `/v1/search` with a Bearer token → present provenance correctly → fail closed when configuration is absent. See [docs/reference-client.md](docs/reference-client.md).
+
+### Telegram channel
+
+The Telegram channel is the recommended query surface on macOS. You DM your bot a question and get a memory-grounded answer.
+
+> **macOS only.** The always-on watcher (`brain watcher` / `setup-watcher.sh`) uses launchd and is not supported on Linux in v2.0.
+
+**Step 1 — Create a bot**
+
+1. Open Telegram and message [@BotFather](https://t.me/BotFather)
+2. Send `/newbot` and follow the prompts
+3. BotFather gives you a token that looks like `123456:ABC-telegram-token` — copy it
+
+**Step 2 — Get your numeric user ID**
+
+Message [@userinfobot](https://t.me/userinfobot) on Telegram. It replies with your numeric user ID (e.g. `123456789`). You will need this for the allowlist.
+
+**Step 3 — Put the token in sleep.env**
+
+Add the line to `~/.config/brain-memory/sleep.env`:
+
+```sh
+BRAIN_MEMORY_TELEGRAM_TOKEN=123456:ABC-your-bot-token-here
+```
+
+**Step 4 — Configure the channel in `src/lib/config.ts`**
+
+Open `src/lib/config.ts` and find the `telegram` section in `DEFAULT_CONFIG`. Set:
+
+```ts
+telegram: {
+  enable: true,
+  allowlist: [123456789],   // your numeric Telegram user ID
+  pollIntervalMs: 2_000,
+},
+```
+
+**The allowlist is fail-closed.** An empty `allowlist` (`[]`) means the watcher answers no one — it starts fully silent until you add at least one ID. Unlisted senders are silently ignored; no reply is sent, so the surface never confirms it exists to an unknown sender.
+
+After editing, rebuild: `npm run build`.
+
+**Step 5 — Install the always-on watcher**
+
+```sh
+bash scripts/setup-watcher.sh
+```
+
+`setup-watcher.sh` does the following:
+
+1. Builds the project (`npm run build`) and verifies the compiled watcher CLI exists
+2. Adds `BRAIN_MEMORY_WATCHER_JS` to `~/.config/brain-memory/sleep.env` (additive — does not clobber your existing API keys or token)
+3. Renders the launchd plist template, lints it with `plutil`, and bootstraps the `com.brain-memory.watcher` KeepAlive job via `launchctl`
+4. Prints rollback instructions
+
+The watcher runs as a `KeepAlive` job — launchd restarts it automatically if it exits.
+
+Alternatively, run it directly in a terminal (with sleep.env sourced):
+
+```sh
+source ~/.config/brain-memory/sleep.env
+node dist/src/adapter/watcher-cli.js --db /Users/<you>/.config/brain-memory/brain.db
+```
+
+**Step 6 — Verify**
+
+DM your bot a question. You should receive a reply within a few seconds. Schema-grounded inferences carry a trailing `(inferred)` marker; direct fact recalls are unmarked.
+
+To check the watcher log:
+
+```sh
+tail -f /tmp/brain-memory-watcher.log
+```
+
+Note: the bot only answers while your Mac is awake — this is a local self-hosted service, not a cloud process.
+
+### Optional: iMessage channel (advanced)
+
+The iMessage channel is macOS-only and requires Full Disk Access for the `node` binary to read `~/Library/Messages/chat.db`.
+
+**Important caveat:** if you use your own phone number on the same Apple ID as the Mac, the watcher will see its own outbound replies as new inbound messages — a self-echo loop. To avoid this, the iMessage channel realistically needs a dedicated Apple ID with a separate handle. This is why the Telegram channel is the recommended surface.
+
+To use iMessage:
+
+1. Grant Full Disk Access to your `node` binary: **System Settings → Privacy & Security → Full Disk Access**, add `$(which node)`
+2. In `src/lib/config.ts`, set `channel.enable = true`, `channel.chatDbPath`, and `channel.allowlist` with your E.164 handle(s) or Apple ID email(s)
+3. Rebuild: `npm run build`
+4. Re-run `bash scripts/setup-watcher.sh` — the watcher auto-selects iMessage when Telegram is not configured
+
+### Privacy stance
+
+brain-memory is a **read-only query surface**. It answers questions from allowlisted senders; it never ingests your message history. The only write the watcher performs per query is an ephemeral inferred episode logged under the single-writer lock (origin `inferred`, salience 0, never promoted to a graph fact). Your conversation history is never read by the memory engine — the channel delivers only the inbound question text.
+
 ---
 
 ## Command reference
@@ -74,7 +266,7 @@ brain doctor
 
 | Platform | Scheduler | Claude Code hooks | Query channel |
 |----------|-----------|-------------------|---------------|
-| **macOS** (full support) | launchd — always-on, survives reboots | ✓ | Telegram (launchd KeepAlive) · iMessage (optional, see [below](#optional-imessage-channel-advanced)) |
+| **macOS** (full support) | launchd — always-on, survives reboots | ✓ | Telegram (launchd KeepAlive) · iMessage (optional, see above) |
 | **Linux** | `brain scheduler run` — foreground, stops with process¹ | ✓³ | — (channel watcher is macOS-only in v2.0) |
 | **Windows** | WSL — community-supported² | WSL² | WSL² |
 
@@ -86,172 +278,22 @@ brain doctor
 
 ---
 
-## BYO-keys
+## What this is not
 
-`brain init` creates and writes `~/.config/brain-memory/sleep.env` with `chmod 600`. **You do not need to create this file manually** unless you prefer to skip the wizard.
-
-If you set it up manually, create `~/.config/brain-memory/sleep.env` (`chmod 600`) with:
-
-```sh
-ANTHROPIC_API_KEY=your-anthropic-key-here
-OPENAI_API_KEY=your-openai-key-here
-```
-
-For the Telegram channel (macOS), also add:
-
-```sh
-BRAIN_MEMORY_TELEGRAM_TOKEN=123456:ABC-your-bot-token-here
-```
-
-Keys are never logged or stored outside this file. The scheduler and hooks read keys from the environment at runtime via the SDK defaults.
+- **Single-user, single-tenant only.** Not built for multi-user or production traffic. "Someone hosts memory for their product's users" means N separate deployments, one per user. Namespace-based multi-tenancy is not in scope.
+- **Hourly consolidation latency.** A fact added now is not searchable until the next sleep pass — up to 60 minutes. The episodic log captures it immediately, but graph consolidation (where belief-correction and schema induction run) is deferred. Within-session "I just told you that" recall of *new* facts is a real UX gap vs write-on-message systems.
+- **Extraction is an LLM prompt.** Claim extraction quality depends on the extraction model. Ambiguous, ironic, or non-binary input may produce noisy or empty claims. The allocation gate and provenance guards bound the damage, but garbage in → garbage in the graph.
+- **Scale ceiling ~thousands of nodes.** Retrieval is brute-force cosine over a single SQLite file in one Node process. Works well up to ~5K nodes; at higher volume, a vector index (sqlite-vec) is needed. Not designed for high-volume agent fleets.
+- **One maintainer, best-effort.** Not backed by a company. Issue response time is best-effort. Standard OSS bus-factor caveats apply.
 
 ---
 
-## Cold-start seed
+## Deep links
 
-Before the sleep pass can consolidate anything there must be nodes in the graph. `brain init` offers a one-shot seed at the end of the wizard (`[y/N]` — default No). You can also run it later:
-
-```sh
-brain seed
-```
-
-The seed reads your existing memory files (configured via `BRAIN_MEMORY_COLD_START_MEMORY_DIR` and `BRAIN_MEMORY_COLD_START_CLAUDE_FILE`), extracts entity and fact claims, and writes them into the SQLite graph.
-
-### Semantics
-
-**One-shot:** once the seeder finishes successfully it sets a `seeded` meta flag. Re-running against the same database is a no-op — it exits 0 without re-extracting anything.
-
-**Safe no-op on misconfiguration:** if neither source path resolves to any files (e.g. you ran it before setting the env vars), the seeder exits 0 *without* burning the one-shot flag. Fix the paths and re-run.
-
-**Lock-guarded:** `brain seed` acquires the shared single-writer lock before opening the database. It is safe to run while the Telegram watcher or the hourly sleep-pass is active — they will wait or skip their cycle rather than colliding.
-
----
-
-## Telegram channel setup
-
-The Telegram channel is the recommended query surface on macOS. You DM your bot a question and get a memory-grounded answer.
-
-> **macOS only.** The always-on watcher (`brain watcher` / `setup-watcher.sh`) uses launchd and is not supported on Linux in v2.0.
-
-### Step 1 — Create a bot
-
-1. Open Telegram and message [@BotFather](https://t.me/BotFather)
-2. Send `/newbot` and follow the prompts
-3. BotFather gives you a token that looks like `123456:ABC-telegram-token` — copy it
-
-### Step 2 — Get your numeric user ID
-
-Message [@userinfobot](https://t.me/userinfobot) on Telegram. It replies with your numeric user ID (e.g. `123456789`). You will need this for the allowlist.
-
-### Step 3 — Put the token in sleep.env
-
-Add the line to `~/.config/brain-memory/sleep.env`:
-
-```sh
-BRAIN_MEMORY_TELEGRAM_TOKEN=123456:ABC-your-bot-token-here
-```
-
-### Step 4 — Configure the channel in `src/lib/config.ts`
-
-Open `src/lib/config.ts` and find the `telegram` section in `DEFAULT_CONFIG`. Set:
-
-```ts
-telegram: {
-  enable: true,
-  allowlist: [123456789],   // your numeric Telegram user ID
-  pollIntervalMs: 2_000,
-},
-```
-
-**The allowlist is fail-closed.** An empty `allowlist` (`[]`) means the watcher answers no one — it starts fully silent until you add at least one ID. Unlisted senders are silently ignored; no reply is sent, so the surface never confirms it exists to an unknown sender.
-
-After editing, rebuild: `npm run build`.
-
-### Step 5 — Install the always-on watcher
-
-```sh
-bash scripts/setup-watcher.sh
-```
-
-`setup-watcher.sh` does the following:
-
-1. Builds the project (`npm run build`) and verifies the compiled watcher CLI exists
-2. Adds `BRAIN_MEMORY_WATCHER_JS` to `~/.config/brain-memory/sleep.env` (additive — does not clobber your existing API keys or token)
-3. Renders the launchd plist template, lints it with `plutil`, and bootstraps the `com.brain-memory.watcher` KeepAlive job via `launchctl`
-4. Prints rollback instructions
-
-The watcher runs as a `KeepAlive` job — launchd restarts it automatically if it exits.
-
-Alternatively, run it directly in a terminal (with sleep.env sourced):
-
-```sh
-source ~/.config/brain-memory/sleep.env
-node dist/src/adapter/watcher-cli.js --db /Users/<you>/.config/brain-memory/brain.db
-```
-
-### Step 6 — Verify
-
-DM your bot a question. You should receive a reply within a few seconds. Schema-grounded inferences carry a trailing `(inferred)` marker; direct fact recalls are unmarked.
-
-To check the watcher log:
-
-```sh
-tail -f /tmp/brain-memory-watcher.log
-```
-
-Note: the bot only answers while your Mac is awake — this is a local self-hosted service, not a cloud process.
-
----
-
-## MCP server
-
-`brain mcp` starts a stdio MCP server that gives any local MCP client (Claude Code, Claude Desktop, standalone agents) deliberate on-demand access to the same `brain.db` the hooks use — the client spawns the process per its config entry, so there is zero deployment. The server exposes exactly three tools: `memory_search`, `memory_add`, and `memory_ask`. See [docs/mcp.md](docs/mcp.md) for registration config and full tool semantics.
-
-If you are coming from `@modelcontextprotocol/server-memory`, here is how the vocabularies map:
-
-| server-memory tool | brain equivalent | Notes |
-|--------------------|-----------------|-------|
-| `search_nodes` | `memory_search` | Find nodes by query; brain uses graph+vector, not raw JSON |
-| `open_nodes` | — no equivalent | Nodes engine-internal; search is the read interface by design |
-| `add_observations` | `memory_add` | brain writes are episodic; becomes a graph fact after hourly consolidation |
-| `create_entities` | — no equivalent | No CRUD; brain builds entities via consolidation |
-| `read_graph` | — no equivalent | Graph is engine-internal by design |
-| `delete_entities` | — no equivalent | No user-initiated deletes; tombstone via sleep pass |
-| `delete_observations` | — no equivalent | No user-initiated deletes |
-| `delete_relations` | — no equivalent | No user-initiated deletes |
-| (new) | `memory_ask` | LLM-composed answer over stored knowledge; no server-memory equivalent |
-
-Our `memory_add` ≈ server-memory's `add_observations`, except writes are episodic and consolidation is deferred to the hourly sleep pass — brain has no user-initiated CRUD or deletes by design (the graph is engine-internal; the sleep pass is the sole graph writer).
-
----
-
-## Reference client
-
-brain-memory is a pure memory system — any agent or channel can sit on top of it by
-calling the REST interface. The reference client shows the template: receive a message →
-call `/v1/ask` or `/v1/search` with a Bearer token → present provenance correctly → fail
-closed when configuration is absent. See [docs/reference-client.md](docs/reference-client.md).
-
----
-
-## Privacy stance
-
-brain-memory is a **read-only query surface**. It answers questions from allowlisted senders; it never ingests your message history. The only write the watcher performs per query is an ephemeral inferred episode logged under the single-writer lock (origin `inferred`, salience 0, never promoted to a graph fact). Your conversation history is never read by the memory engine — the channel delivers only the inbound question text.
-
----
-
-## Optional: iMessage channel (advanced)
-
-The iMessage channel is macOS-only and requires Full Disk Access for the `node` binary to read `~/Library/Messages/chat.db`.
-
-**Important caveat:** if you use your own phone number on the same Apple ID as the Mac, the watcher will see its own outbound replies as new inbound messages — a self-echo loop. To avoid this, the iMessage channel realistically needs a dedicated Apple ID with a separate handle. This is why the Telegram channel is the recommended surface.
-
-To use iMessage:
-
-1. Grant Full Disk Access to your `node` binary: **System Settings → Privacy & Security → Full Disk Access**, add `$(which node)`
-2. In `src/lib/config.ts`, set `channel.enable = true`, `channel.chatDbPath`, and `channel.allowlist` with your E.164 handle(s) or Apple ID email(s)
-3. Rebuild: `npm run build`
-4. Re-run `bash scripts/setup-watcher.sh` — the watcher auto-selects iMessage when Telegram is not configured
+- [docs/evals.md](docs/evals.md) — full eval methodology, case-set description, judge-validation evidence, and caveats
+- [docs/mcp.md](docs/mcp.md) — MCP server registration config and tool semantics
+- [docs/server-mode.md](docs/server-mode.md) — `brain serve` HTTP API reference
+- [docs/reference-client.md](docs/reference-client.md) — reference client template and provenance handling
 
 ---
 
