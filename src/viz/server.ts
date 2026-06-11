@@ -59,9 +59,11 @@ interface GraphPayload {
 // Path-traversal-safe static file serving
 // ---------------------------------------------------------------------------
 
-/** Allowed root directories for static serving (src/viz/ and src/viz/vendor/). */
+/** Allowed root directories for static serving (src/viz/ and subdirectories). */
 const VIZ_ROOT = path.resolve(__dirname);
-const VENDOR_ROOT = path.resolve(__dirname, 'vendor');
+const VENDOR_ROOT = path.resolve(VIZ_ROOT, 'vendor');
+const MODULES_ROOT = path.resolve(VIZ_ROOT, 'modules');
+const CSS_ROOT = path.resolve(VIZ_ROOT, 'css');
 
 /**
  * Serve a file from the filesystem with:
@@ -79,6 +81,7 @@ function serveFile(res: http.ServerResponse, fp: string): void {
     const mime =
       ext === '.html' ? 'text/html' :
       (ext === '.js' || ext === '.mjs') ? 'text/javascript' :
+      ext === '.css' ? 'text/css' :
       'text/plain';
     res.writeHead(200, { 'content-type': mime });
     res.end(buf);
@@ -254,6 +257,34 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         return;
       }
       serveFile(res, safePath);
+      return;
+    }
+
+    // ── Static: /modules/*.js ───────────────────────────────────────────────
+    if (url.startsWith('/modules/')) {
+      const segment = url.slice('/modules/'.length);
+      const resolved = path.resolve(MODULES_ROOT, segment);
+      if (resolved !== MODULES_ROOT && !resolved.startsWith(MODULES_ROOT + path.sep)) {
+        // T-10-07: path escapes modules root → 403
+        res.writeHead(403, { 'content-type': 'text/plain' });
+        res.end('forbidden');
+        return;
+      }
+      serveFile(res, resolved);
+      return;
+    }
+
+    // ── Static: /css/*.css ──────────────────────────────────────────────────
+    if (url.startsWith('/css/')) {
+      const segment = url.slice('/css/'.length);
+      const resolved = path.resolve(CSS_ROOT, segment);
+      if (resolved !== CSS_ROOT && !resolved.startsWith(CSS_ROOT + path.sep)) {
+        // T-10-07: path escapes css root → 403
+        res.writeHead(403, { 'content-type': 'text/plain' });
+        res.end('forbidden');
+        return;
+      }
+      serveFile(res, resolved);
       return;
     }
 
