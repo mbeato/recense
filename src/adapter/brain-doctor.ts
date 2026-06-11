@@ -169,7 +169,7 @@ export function checkScheduler(): CheckResult {
     return pass('brain scheduler run process detected');
   }
   // Not running is informational on Linux (D-92) — not a hard failure
-  return pass('scheduler: not running (start with `brain scheduler run`; Linux reboot-survival is v2.1)');
+  return pass('scheduler: not running (start with `brain scheduler run`; for reboot-survival on Linux install the brain-scheduler systemd unit — see docs/server-mode.md)');
 }
 
 // ── Dimension 4: Hooks wired in settings.json ─────────────────────────────────
