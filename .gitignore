@@ -1,5 +1,9 @@
 node_modules/
 dist/
+# Eval PENDING files (intermediate staging; dated result files committed manually per D-10)
+scripts/eval/results/*PENDING*
+# LongMemEval-S dataset (~3 GB; download at eval time, not committed)
+scripts/eval/longmemeval-s.jsonl
 *.db
 *.db-wal
 *.db-shm

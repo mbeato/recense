@@ -1,0 +1,267 @@
+/**
+ * Smoke tests for the LongMemEval harness (EVAL-01).
+ * Validates fixture schema and harness wiring under MockModelProvider — zero API calls.
+ *
+ * Covers:
+ *  1. Mini fixture loads and has correct schema (question_id, question_type, question,
+ *     answer, haystack_sessions) with at least one knowledge-update question.
+ *  2. Scratch-DB init + multi-session episode append (one episode per session; appends
+ *     precede consolidation: consolidated=0 on all rows).
+ *  3. Consolidation + retrieval pipeline runs under Consolidator + MockModelProvider
+ *     (scripted extract/judge/embed) with zero API calls and produces node-table state.
+ *
+ * Uses the same harness pattern as tests/consolidation.test.ts:
+ *  in-memory Database, initSchema, FakeClock, DEFAULT_CONFIG, MockModelProvider.
+ *
+ * Pattern note: Consolidator + MockModelProvider is the correct wiring for CI;
+ * runConsolidation() is used only in the .cjs harness for full runs (it builds
+ * DefaultModelProvider internally and cannot be mocked here).
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import Database from 'better-sqlite3';
+import { describe, it, expect } from 'vitest';
+import { initSchema } from '../src/db/schema';
+import { FakeClock } from '../src/lib/clock';
+import { DEFAULT_CONFIG } from '../src/lib/config';
+import type { EngineConfig } from '../src/lib/config';
+import { EpisodicStore } from '../src/db/episode-store';
+import { SemanticStore } from '../src/db/semantic-store';
+import { StrengthDecayManager } from '../src/strength/decay';
+import { CandidateRetriever } from '../src/retrieval/topk';
+import { MockModelProvider } from '../src/model/provider';
+import type { NodeRow } from '../src/lib/types';
+import { Consolidator } from '../src/consolidation/consolidator';
+import { SchemaInducer } from '../src/consolidation/schema-induction';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const FIXTURE_PATH = path.resolve(__dirname, '../scripts/eval/fixtures/longmemeval-mini.jsonl');
+
+// ---------------------------------------------------------------------------
+// Shared harness (mirrors tests/consolidation.test.ts makeHarness)
+// ---------------------------------------------------------------------------
+
+interface Harness {
+  db: Database.Database;
+  clock: FakeClock;
+  episodes: EpisodicStore;
+  store: SemanticStore;
+  strength: StrengthDecayManager;
+  retriever: CandidateRetriever;
+  config: EngineConfig;
+}
+
+function makeHarness(): Harness {
+  const db = new Database(':memory:');
+  initSchema(db);
+  const clock = new FakeClock(Date.UTC(2026, 0, 1));
+  const config: EngineConfig = {
+    ...DEFAULT_CONFIG,
+    dbPath: ':memory:',
+    consolSkipThreshold:         0.2,
+    unrelatedSimilarityThreshold: 0.3,
+    candidateK: 5,
+  };
+  const store    = new SemanticStore(db, clock, config);
+  const episodes = new EpisodicStore(db, clock, config);
+  const strength = new StrengthDecayManager(db, clock, config);
+  const retriever = new CandidateRetriever(db);
+  return { db, clock, episodes, store, strength, retriever, config };
+}
+
+/** No-op SchemaInducer for consolidation tests (mirrors consolidation.test.ts). */
+function makeNoOpSchemaInducer(h: Harness): SchemaInducer {
+  return new SchemaInducer(
+    h.db, h.store, h.strength, h.retriever,
+    new MockModelProvider(),
+    h.config, h.clock,
+    async (_values: string[]) => 'no-op-schema',
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+interface LongMemEvalQuestion {
+  question_id: string;
+  question_type: string;
+  question: string;
+  answer: string;
+  question_date?: string;
+  haystack_sessions: Array<Array<{ role: string; content: string; has_answer?: boolean }>>;
+  answer_session_ids?: string[];
+}
+
+function loadFixture(): LongMemEvalQuestion[] {
+  const lines = fs.readFileSync(FIXTURE_PATH, 'utf8').split('\n').filter(l => l.trim());
+  return lines.map(l => JSON.parse(l) as LongMemEvalQuestion);
+}
+
+/** Concatenate all turns in a session into a single content string. */
+function formatSession(session: Array<{ role: string; content: string }>): string {
+  return session
+    .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
+    .join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('eval-harness-smoke', () => {
+
+  // ── Test 1: Fixture schema validation ─────────────────────────────────────
+
+  it('mini fixture loads and has correct schema fields on every question', () => {
+    const questions = loadFixture();
+
+    expect(questions.length).toBeGreaterThanOrEqual(2);
+
+    for (const q of questions) {
+      expect(q).toHaveProperty('question_id');
+      expect(typeof q.question_id).toBe('string');
+      expect(q.question_id.length).toBeGreaterThan(0);
+
+      expect(q).toHaveProperty('question_type');
+      expect(typeof q.question_type).toBe('string');
+
+      expect(q).toHaveProperty('question');
+      expect(typeof q.question).toBe('string');
+      expect(q.question.length).toBeGreaterThan(0);
+
+      expect(q).toHaveProperty('answer');
+      expect(typeof q.answer).toBe('string');
+      expect(q.answer.length).toBeGreaterThan(0);
+
+      expect(q).toHaveProperty('haystack_sessions');
+      expect(Array.isArray(q.haystack_sessions)).toBe(true);
+      expect(q.haystack_sessions.length).toBeGreaterThanOrEqual(1);
+
+      // Each session is an array of turns
+      for (const session of q.haystack_sessions) {
+        expect(Array.isArray(session)).toBe(true);
+        for (const turn of session) {
+          expect(turn).toHaveProperty('role');
+          expect(turn).toHaveProperty('content');
+        }
+      }
+    }
+
+    // At least one knowledge-update question (EVAL-01 positioning requirement)
+    const kuCount = questions.filter(q => q.question_type === 'knowledge-update').length;
+    expect(kuCount).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Test 2: Scratch-DB init + multi-session episode append ────────────────
+
+  it('scratch-DB init works and multi-session appends land before consolidation', () => {
+    const h = makeHarness();
+    const questions = loadFixture();
+
+    // Find a question with multiple sessions (mini-002 has 2 sessions)
+    const multiSessionQ = questions.find(q => q.haystack_sessions.length > 1);
+    expect(multiSessionQ).toBeDefined();
+
+    const q = multiSessionQ!;
+    const sessionCount = q.haystack_sessions.length;
+
+    // Append ONE episode per session (the harness-pattern contract)
+    for (const [i, session] of q.haystack_sessions.entries()) {
+      h.episodes.append({
+        content:    formatSession(session),
+        origin:     'observed',
+        salience:   1.0,
+        hard_keep:  1,
+        role:       'user',
+        session_id: `smoke-${q.question_id}-s${i}`,
+      });
+    }
+
+    // All episodes must be in the table
+    const rows = h.db.prepare('SELECT * FROM episode').all() as Array<{ consolidated: number }>;
+    expect(rows).toHaveLength(sessionCount);
+
+    // consolidated = 0: appends precede the sleep pass (Pitfall 4 / CONSOL-02)
+    for (const row of rows) {
+      expect(row.consolidated).toBe(0);
+    }
+  });
+
+  // ── Test 3: Consolidation pipeline under MockModelProvider ────────────────
+
+  it('ingest + Consolidator + MockModelProvider pipeline produces node-table state (zero API)', async () => {
+    const h = makeHarness();
+    const questions = loadFixture();
+
+    // Use the single-session question (mini-001) for simplicity
+    const q = questions.find(qn => qn.question_id === 'mini-001') ?? questions[0];
+    if (!q) throw new Error('Mini fixture returned no questions');
+
+    const firstSession = q.haystack_sessions[0];
+    if (!firstSession) throw new Error('Expected at least one haystack_session in mini-001');
+
+    // Append the first session as one episode
+    h.episodes.append({
+      content:    formatSession(firstSession),
+      origin:     'observed',
+      salience:   1.0,
+      hard_keep:  1,
+      role:       'user',
+      session_id: `smoke-pipeline-${q.question_id}-s0`,
+    });
+
+    // Pre-condition: episode exists, no nodes yet
+    const epRows = h.db.prepare('SELECT * FROM episode').all();
+    expect(epRows).toHaveLength(1);
+    const nodesBefore = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    expect(nodesBefore).toHaveLength(0);
+
+    // Wire MockModelProvider with scripted responses (zero network calls)
+    const provider = new MockModelProvider({
+      generateScript: [
+        // One extraction call per processed episode
+        JSON.stringify([{ type: 'fact', value: 'Alex Chen lives in Portland' }]),
+      ],
+      judgeScript: [
+        // One judge verdict in case of candidate lookup (safe: relation=unrelated, no DB write)
+        { best_candidate_id: null, relation: 'unrelated' as const, magnitude: 0 },
+      ],
+      embedFn: (_t: string) => {
+        // Deterministic unit vector — all items share the same embedding to exercise
+        // the similarity path without requiring multiple distinct vectors
+        const vec = new Float32Array(DEFAULT_CONFIG.embeddingDimensions);
+        vec[0] = 1.0;
+        return vec;
+      },
+    });
+
+    const consolidator = new Consolidator(
+      h.db,
+      h.episodes,
+      h.store,
+      h.strength,
+      h.retriever,
+      provider,
+      makeNoOpSchemaInducer(h),
+      h.config,
+      h.clock,
+    );
+
+    // Run the pipeline — should not throw
+    await expect(consolidator.consolidate()).resolves.not.toThrow();
+
+    // Post-condition: at least one node extracted from the episode
+    const nodesAfter = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    expect(nodesAfter.length).toBeGreaterThanOrEqual(1);
+
+    // The episode is now marked consolidated
+    const epAfter = h.db.prepare('SELECT consolidated FROM episode').all() as Array<{ consolidated: number }>;
+    expect(epAfter.every(r => r.consolidated === 1)).toBe(true);
+  });
+
+});
