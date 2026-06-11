@@ -449,8 +449,12 @@ if (require.main === module) {
     // T-11-04 pattern: explicit DB path required — never silently open a default DB.
     const dbPath = resolveDbPath(process.argv, { fallbackToDefault: false });
     if (!dbPath) {
+      // WR-02: a long-running server must fail LOUDLY on misconfiguration. Exit-0 with
+      // log-file-only output is the hook convention; under systemd (Restart=on-failure)
+      // it meant silent service death with nothing in journalctl.
+      process.stderr.write('brain serve: no DB path supplied (--db <path> or BRAIN_MEMORY_DB) — exiting\n');
       log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
-      process.exit(0);
+      process.exit(1);
     }
 
     // Generate or read token (first run: print once; subsequent runs: silent).
