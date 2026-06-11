@@ -1,0 +1,32 @@
+# brain-serve.service.template — systemd unit for `brain serve` (SERVE-03 / D-14)
+#
+# Placeholders to fill before installing:
+#   <YOUR_USER>           — the Linux user account that owns the brain-memory install
+#   <BRAIN_MEMORY_DIR>    — absolute path to the brain-memory repo root (e.g. /home/user/brain-memory)
+#   <BRAIN_MEMORY_NODE_BIN> — absolute path to the pinned Node.js binary (output of `brain doctor`)
+#   <BRAIN_JS>            — absolute path to the compiled entry point
+#                           (e.g. /home/user/brain-memory/dist/src/adapter/brain.js)
+#   <PORT>                — port for brain serve to listen on (default: 7701)
+#   <HOME>                — absolute path to the user's home directory (e.g. /home/user)
+#
+# Instantiate with envsubst or sed — see docs/server-mode.md for a copy-paste command.
+
+[Unit]
+Description=brain-memory HTTP server
+After=network.target
+
+[Service]
+Type=simple
+User=<YOUR_USER>
+WorkingDirectory=<BRAIN_MEMORY_DIR>
+ExecStart=<BRAIN_MEMORY_NODE_BIN> <BRAIN_JS> serve --host 0.0.0.0 --port <PORT>
+# Pin the Node.js binary so better-sqlite3 loads with the matching ABI (NODE_MODULE_VERSION).
+# A bare `node` from /usr/bin resolves a different binary and breaks the native addon on restart.
+Environment=BRAIN_MEMORY_NODE_BIN=<BRAIN_MEMORY_NODE_BIN>
+# Source BRAIN_SERVE_TOKEN and API keys from the chmod-600 env file written by `brain init`.
+EnvironmentFile=<HOME>/.config/brain-memory/sleep.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

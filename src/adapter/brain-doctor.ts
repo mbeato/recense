@@ -28,12 +28,13 @@
 
 import Database from 'better-sqlite3';
 import { spawnSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { SCHEMA_VERSION } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
-import { resolveDbPath } from './runtime-config';
+import { resolveExistingEnv } from './brain-init';
+import { resolveDbPath, sleepEnvPath } from './runtime-config';
 
 // ── Check result type ─────────────────────────────────────────────────────────
 
@@ -248,6 +249,45 @@ export function checkNodeAbi(): CheckResult {
   return pass(`Node ABI match: NMV=${process.versions.modules}, bin=${nodeBin}`);
 }
 
+// ── Dimension 6: Serve token presence + env file mode ────────────────────────
+
+/**
+ * Check whether BRAIN_SERVE_TOKEN is set in sleep.env and that the env file
+ * is chmod-600.
+ *
+ * Three outcomes:
+ *  - env file absent → pass (token only needed when running `brain serve`)
+ *  - env file present, mode != 0600 → fail with the actual mode and hint
+ *  - env file present, 0600, no BRAIN_SERVE_TOKEN → pass (will generate on first serve)
+ *  - env file present, 0600, BRAIN_SERVE_TOKEN set → pass
+ *
+ * T-12-10: the token VALUE is NEVER written to stdout; detail reports presence only.
+ *
+ * @param envPath — override sleep.env path for testing.
+ * @exported — used by tests to exercise all branches without touching real env file.
+ */
+export function checkServeToken(envPath: string = sleepEnvPath()): CheckResult {
+  if (!existsSync(envPath)) {
+    return pass('BRAIN_SERVE_TOKEN not set (no serve token needed unless running `brain serve`)');
+  }
+  try {
+    const { mode } = statSync(envPath);
+    // eslint-disable-next-line no-bitwise
+    if ((mode & 0o777) !== 0o600) {
+      return fail(`env file mode is ${(mode & 0o777).toString(8)}, want 0600 — run \`brain init\``);
+    }
+  } catch (e) {
+    return fail(`cannot stat env file: ${e}`);
+  }
+  const env = resolveExistingEnv(envPath);
+  const token = env.get('BRAIN_SERVE_TOKEN');
+  if (!token) {
+    return pass('BRAIN_SERVE_TOKEN not set (will generate on first `brain serve` run)');
+  }
+  // T-12-10: report presence only — token value is never included in the detail string.
+  return pass('BRAIN_SERVE_TOKEN set, env file mode 0600');
+}
+
 // ── Main run ──────────────────────────────────────────────────────────────────
 
 interface DoctorDimension {
@@ -263,11 +303,12 @@ async function runDoctor(): Promise<void> {
   const dbPath = resolveDbPath();
 
   const dimensions: DoctorDimension[] = [
-    { name: 'DB',       result: checkDb(dbPath)    },
-    { name: 'API keys', result: checkApiKeys()      },
-    { name: 'Scheduler',result: checkScheduler()   },
-    { name: 'Hooks',    result: checkHooks()        },
-    { name: 'Node ABI', result: checkNodeAbi()      },
+    { name: 'DB',          result: checkDb(dbPath)      },
+    { name: 'API keys',    result: checkApiKeys()        },
+    { name: 'Scheduler',   result: checkScheduler()      },
+    { name: 'Hooks',       result: checkHooks()          },
+    { name: 'Node ABI',    result: checkNodeAbi()        },
+    { name: 'Serve token', result: checkServeToken()     },
   ];
 
   process.stdout.write('brain doctor:\n');

@@ -89,12 +89,13 @@ switch (cmd) {
   // `require.main === module` — a bare require() here would never fire the guard
   // (require.main stays brain.js) and the server would never start.
   case 'mcp':        spawnScript('mcp-cli.js',        process.argv.slice(3)); break;
+  case 'serve':      spawnScript('serve-cli.js',      process.argv.slice(3)); break;
 
   // ── Default: fail closed (T-09-08) ───────────────────────────────────────────
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, snapshot, watcher, scheduler, mcp\n',
+      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, snapshot, watcher, scheduler, mcp, serve\n',
     );
     process.exit(1);
 }
