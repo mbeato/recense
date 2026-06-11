@@ -108,9 +108,20 @@ export function resolveServeToken(envPath: string = sleepEnvPath()): string {
   writeEnvFile(envPath, vars); // atomic chmod-600 write, preserves existing keys/comments
 
   // T-12-05: print once to stdout for the operator; never to LOG_PATH.
-  process.stdout.write('\nbrain serve: token generated.\n');
-  process.stdout.write(`  BRAIN_SERVE_TOKEN=${token}\n`);
-  process.stdout.write('  Record this token — it will NOT be printed again.\n\n');
+  // WR-06: ONLY on an interactive TTY. Under systemd, stdout IS a persistent log
+  // (journald retains it indefinitely, readable by root/adm and included in journal
+  // exports) — printing the token there violates the "never in logs" invariant.
+  // Non-TTY runs are pointed at sleep.env, the token's canonical chmod-600 home.
+  if (process.stdout.isTTY) {
+    process.stdout.write('\nbrain serve: token generated.\n');
+    process.stdout.write(`  BRAIN_SERVE_TOKEN=${token}\n`);
+    process.stdout.write('  Record this token — it will NOT be printed again.\n\n');
+  } else {
+    process.stdout.write(
+      `\nbrain serve: token generated and stored in ${envPath} ` +
+      `(not printed — stdout is not a TTY; read it with: grep '^BRAIN_SERVE_TOKEN=' ${envPath})\n\n`,
+    );
+  }
   return token;
 }
 

@@ -85,7 +85,9 @@ node dist/src/adapter/brain.js serve --db ~/.config/brain-memory/brain.db
 ```
 
 The token is stored in `~/.config/brain-memory/sleep.env` (chmod 600, never
-committed). On subsequent runs the token is read silently.
+committed). On subsequent runs the token is read silently. If stdout is not a TTY
+(e.g. first run happens under systemd), the token is **not** printed — read it from
+sleep.env instead: `grep '^BRAIN_SERVE_TOKEN=' ~/.config/brain-memory/sleep.env`.
 
 ---
 
@@ -233,21 +235,30 @@ tail -f /tmp/brain-memory-sleep.log
 
 ## Token rotation
 
-To rotate `BRAIN_SERVE_TOKEN`:
+To rotate `BRAIN_SERVE_TOKEN`, set a **new value directly** in sleep.env — never delete
+the line under systemd. A deleted line makes `brain serve` regenerate the token at
+startup, and under systemd stdout is journald: a persistent log that would retain the
+token indefinitely, violating the "token never in logs" invariant. (The server also
+refuses to print the token when stdout is not a TTY, so journal capture would not work
+anyway — it points you at sleep.env instead.)
 
-1. Edit `~/.config/brain-memory/sleep.env` — delete the `BRAIN_SERVE_TOKEN=...` line
-   (or set it to a new value).
+1. Write a fresh token in place:
+
+   ```sh
+   sed -i "s/^BRAIN_SERVE_TOKEN=.*/BRAIN_SERVE_TOKEN=$(openssl rand -hex 32)/" ~/.config/brain-memory/sleep.env
+   ```
+
 2. Restart the serve unit:
 
    ```sh
    sudo systemctl restart brain-serve
    ```
 
-3. If you deleted the line, `brain serve` generates a new token on startup and prints
-   it once to stdout. Capture it from the journal:
+3. Read the new token from sleep.env (its canonical chmod-600 home) and update your
+   consumers:
 
    ```sh
-   journalctl -u brain-serve -n 20 | grep BRAIN_SERVE_TOKEN
+   grep '^BRAIN_SERVE_TOKEN=' ~/.config/brain-memory/sleep.env
    ```
 
 4. Verify the token and env file mode with `brain doctor`:
