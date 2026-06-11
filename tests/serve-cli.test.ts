@@ -138,8 +138,6 @@ beforeEach(async () => {
   serverResult = await createBrainHttpServer({
     dbPath: tmpDbPath,
     token: TEST_TOKEN,
-    port,
-    host: '127.0.0.1',
     provider: new MockModelProvider({ embedFn: () => new Float32Array([0.1, 0.2, 0.3]) }),
   });
 
