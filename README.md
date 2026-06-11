@@ -225,6 +225,15 @@ Our `memory_add` ≈ server-memory's `add_observations`, except writes are episo
 
 ---
 
+## Reference client
+
+brain-memory is a pure memory system — any agent or channel can sit on top of it by
+calling the REST interface. The reference client shows the template: receive a message →
+call `/v1/ask` or `/v1/search` with a Bearer token → present provenance correctly → fail
+closed when configuration is absent. See [docs/reference-client.md](docs/reference-client.md).
+
+---
+
 ## Privacy stance
 
 brain-memory is a **read-only query surface**. It answers questions from allowlisted senders; it never ingests your message history. The only write the watcher performs per query is an ephemeral inferred episode logged under the single-writer lock (origin `inferred`, salience 0, never promoted to a graph fact). Your conversation history is never read by the memory engine — the channel delivers only the inbound question text.
