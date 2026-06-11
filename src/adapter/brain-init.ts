@@ -366,6 +366,18 @@ async function promptAndValidateKey(
 // ── Main interactive wizard (D-89 spine) ─────────────────────────────────────
 
 async function main(): Promise<void> {
+  // Non-TTY guard: fail loudly before any side effects (T-12-05-02).
+  // When stdin is not a TTY (piped, scripted, non-interactive) the readline prompts
+  // never resolve and the wizard exits 0 mid-run — partial state, no env written.
+  // Explicit exit 1 replaces that silent failure mode (12-VERIFICATION Gap 1).
+  if (!process.stdin.isTTY) {
+    process.stderr.write(
+      'brain init requires an interactive terminal (stdin is not a TTY)' +
+      ' — run it directly in a terminal, not piped or scripted\n',
+    );
+    process.exit(1);
+  }
+
   const envPath =
     process.env['BRAIN_MEMORY_SLEEP_ENV'] ??
     join(homedir(), '.config', 'brain-memory', 'sleep.env');
