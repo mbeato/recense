@@ -34,6 +34,33 @@ npm run eval:longmemeval:probe
 # Expected output: estimated spend and wall-clock before you commit to the full run
 ```
 
+### Rate-limit behavior and concurrency guidance
+
+The harness parallelises questions (each on its own scratch DB). Every parallel question
+triggers consolidation, embedding, and answer-gen API calls simultaneously. At high
+concurrency (≥ 8) the Anthropic API returns 70–80% 429s, which fail even with the SDK's
+retry-after backoff.
+
+**Default concurrency is 4** (`--concurrency 4`). The SDK is configured with 10 retries
+for eval runs (vs. production default of 2), allowing it to absorb short bursts via
+retry-after backoff without immediately failing. Raise concurrency only after a `--probe`
+run completes with **zero error lines and zero quarantined episodes**.
+
+```sh
+# Tune the SDK retry budget (default 10 for eval runs):
+BRAIN_MEMORY_SDK_MAX_RETRIES=15 npm run eval:longmemeval:probe
+```
+
+**Quarantine errors** — if an episode fails to consolidate (e.g. a 429 survives all
+retries), the H-2 quarantine guard isolates that episode and the harness records:
+- `episodes_quarantined: N` — the count of isolated episodes
+- `error: "N episode(s) quarantined during consolidation — memory incomplete"` — marks
+  the question result as invalid
+
+Questions with `error` fields are **excluded from scoring** (the scorer skips them and
+reports the count in `questions_skipped_error`). They are re-attempted when running with
+`--retry-errors`. A published score must come from a run with zero errors and zero quarantines.
+
 ### Run the full eval
 
 ```sh

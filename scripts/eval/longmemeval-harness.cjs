@@ -84,10 +84,12 @@ const IS_DRY_RUN     = process.argv.includes('--dry-run');
 const IS_PROBE       = process.argv.includes('--probe');
 const RETRY_ERRORS   = process.argv.includes('--retry-errors');
 
-// --concurrency N (default 8, min 1). Each question has its own scratch DB and no
+// --concurrency N (default 4, min 1). Each question has its own scratch DB and no
 // shared state, so in-process parallelism is safe. Probe token accumulation uses
 // plain += after each await — safe because Node.js is single-threaded.
-const CONCURRENCY = Math.max(1, parseInt(arg('--concurrency', '8'), 10) || 8);
+// Start at 4; raise only after a probe completes with 0 errors AND 0 quarantines.
+// At concurrency 8+ the Anthropic API returns 70-80% 429s even with 10 retries.
+const CONCURRENCY = Math.max(1, parseInt(arg('--concurrency', '4'), 10) || 4);
 
 // --dry-run defaults to the committed mini fixture; normal/probe default to the downloaded dataset
 const EVAL_DEFAULT = IS_DRY_RUN

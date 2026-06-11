@@ -224,8 +224,32 @@ npm run eval:longmemeval
 
 Flags: `--probe` (10-question cost estimate), `--dry-run` (zero API, MockModelProvider),
 `--eval <path>` (override fixture), `--out <path>` (override results file),
-`--concurrency N` (parallel workers, default 8, min 1),
+`--concurrency N` (parallel workers, default 4, min 1),
 `--retry-errors` (re-attempt question_ids whose existing line has an `error` field).
+
+#### Rate-limit behavior and concurrency guidance
+
+The harness runs each question's engine pipeline (consolidation → embedding → answer) in
+parallel. The Anthropic API returns 429s when too many calls hit concurrently. The SDK
+honors `retry-after` headers, so retries self-throttle — but at high concurrency (≥ 8)
+the backpressure overwhelms the retry budget.
+
+**Default concurrency is 4.** At 4, the SDK's retry-after backoff absorbs normal burst
+traffic from multiple simultaneous questions. Raise it only after a probe run completes
+with **0 error lines and 0 quarantined episodes**.
+
+To override the SDK retry budget (default 10 for eval runs, 2 for production):
+
+```sh
+BRAIN_MEMORY_SDK_MAX_RETRIES=15 node scripts/eval/longmemeval-harness.cjs --probe
+```
+
+**Quarantine errors** — if consolidation fails for an episode (e.g. a 429 survives all
+retries), the harness records `episodes_quarantined: N` and sets `error: "N episode(s)
+quarantined during consolidation — memory incomplete"` on that question's result line.
+Questions with `error` fields are skipped by the scorer (never counted as a valid
+measurement) and can be re-attempted with `--retry-errors`. A clean run must finish with
+**zero error lines and zero quarantined episodes** before scores are published.
 
 #### Resume
 
@@ -244,7 +268,7 @@ node scripts/eval/longmemeval-harness.cjs --out <same-file> --retry-errors
 ```
 
 This drops the error lines from `--out`, then appends fresh results. The recorded run
-should finish with **0 errors** before scores are published.
+should finish with **0 errors and 0 quarantines** before scores are published.
 
 ### CI smoke (zero API)
 

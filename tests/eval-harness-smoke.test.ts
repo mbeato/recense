@@ -364,6 +364,72 @@ describe('eval-harness-smoke', () => {
     expect(firstRow.content).toContain('Portland');
   });
 
+  // ── Test 7: Quarantine log pattern — H-2 quarantine surfaces via log callback ─
+  //
+  // Verifies that a Consolidator with a throwing MockModelProvider emits the
+  // "episode <id> skipped (consolidation error)" log message that the harness
+  // callback pattern matches and counts.
+  //
+  // The harness uses: msg.includes('skipped (consolidation error)')
+  // This test verifies both sides: the consolidator emits the correct format,
+  // and the pattern counting returns the right number.
+
+  it('consolidation failure logs skipped-episode message matching harness quarantine pattern', async () => {
+    const h = makeHarness();
+
+    // Append one episode with content that passes eligibility (salience=1.0, observed, user role)
+    h.episodes.append({
+      content:    'User: Mia recently moved to Seattle',
+      origin:     'observed',
+      salience:   1.0,
+      hard_keep:  1,
+      role:       'user',
+      session_id: 'smoke-quarantine-s0',
+    });
+
+    // Empty generateScript → generate() throws "queue exhausted" on first call.
+    // That triggers H-2 quarantine for the episode. embed must succeed so Phase C
+    // (reembedDirty) can run — use the same unit-vector fn as other tests.
+    const throwingProvider = new MockModelProvider({
+      generateScript: [],
+      embedFn: (_t: string) => {
+        const v = new Float32Array(DEFAULT_CONFIG.embeddingDimensions);
+        v[0] = 1.0;
+        return v;
+      },
+      judgeScript: [],
+    });
+
+    const logMessages: string[] = [];
+    const consolidator = new Consolidator(
+      h.db,
+      h.episodes,
+      h.store,
+      h.strength,
+      h.retriever,
+      throwingProvider,
+      makeNoOpSchemaInducer(h),
+      h.config,
+      h.clock,
+      undefined,                          // sink — use default NoopConsolidationSink
+      (msg: string) => logMessages.push(msg),
+    );
+
+    // H-2 quarantine must NOT propagate as a thrown error — loop continues
+    await expect(consolidator.consolidate()).resolves.not.toThrow();
+
+    // Consolidator must log the H-2 quarantine message with the pattern the harness matches
+    const quarantineMessages = logMessages.filter(m => m.includes('skipped (consolidation error)'));
+    expect(quarantineMessages.length).toBe(1);
+
+    // Harness callback pattern counting must return 1 for this log output
+    let harnessCount = 0;
+    for (const msg of logMessages) {
+      if (msg.includes('skipped (consolidation error)')) harnessCount++;
+    }
+    expect(harnessCount).toBe(1);
+  });
+
   // ── Test 6: Resume + --retry-errors — error lines are re-attempted ────────
   //
   // Pre-seeds OUT_FILE with one successful line and one error line.
