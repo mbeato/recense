@@ -8,3 +8,4 @@ dist/
 .env.*
 sleep.env
 *.sleep.env
+scripts/eval/results/

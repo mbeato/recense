@@ -21,6 +21,7 @@
     "smoke": "tsx scripts/smoke.ts",
     "smoke:dogfood": "tsx scripts/smoke-dogfood.ts",
     "eval:judge": "node scripts/eval/judge-eval-runner.cjs --eval scripts/eval/judge-eval-set.json",
+    "eval:correctness": "node scripts/eval/correctness-harness.cjs",
     "build:client": "tsc -p clients/telegram/tsconfig.json"
   },
   "dependencies": {
