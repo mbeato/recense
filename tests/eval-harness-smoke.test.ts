@@ -171,9 +171,9 @@ describe('eval-harness-smoke', () => {
     const sessionCount = q.haystack_sessions.length;
 
     // Append ONE episode per session (the harness-pattern contract)
-    for (let i = 0; i < sessionCount; i++) {
+    for (const [i, session] of q.haystack_sessions.entries()) {
       h.episodes.append({
-        content:    formatSession(q.haystack_sessions[i]),
+        content:    formatSession(session),
         origin:     'observed',
         salience:   1.0,
         hard_keep:  1,
@@ -199,11 +199,15 @@ describe('eval-harness-smoke', () => {
     const questions = loadFixture();
 
     // Use the single-session question (mini-001) for simplicity
-    const q = questions.find(qn => qn.question_id === 'mini-001') ?? questions[0]!;
+    const q = questions.find(qn => qn.question_id === 'mini-001') ?? questions[0];
+    if (!q) throw new Error('Mini fixture returned no questions');
+
+    const firstSession = q.haystack_sessions[0];
+    if (!firstSession) throw new Error('Expected at least one haystack_session in mini-001');
 
     // Append the first session as one episode
     h.episodes.append({
-      content:    formatSession(q.haystack_sessions[0]!),
+      content:    formatSession(firstSession),
       origin:     'observed',
       salience:   1.0,
       hard_keep:  1,
