@@ -41,8 +41,9 @@ the hourly sleep-pass, and BYO API keys that never touch the repo.
    ```
 
    `brain init` writes `BRAIN_MEMORY_NODE_BIN` into sleep.env, initialises the DB
-   schema, and wires the hooks. On headless Linux the hooks step can be skipped — it
-   fails silently if `~/.claude/settings.json` is absent.
+   schema, and wires the hooks. On headless Linux the hooks step writes a fresh
+   `~/.claude/settings.json` (creating the file if it is absent); without Claude Code
+   installed the file is inert — harmless to leave in place.
 
 4. **Pin `BRAIN_MEMORY_NODE_BIN`**
 
