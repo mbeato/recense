@@ -1,0 +1,336 @@
+/* ============================================================================
+   brain-memory · activations — design system
+   Bioluminescent deep-sea palette (D-03): near-black background, cyan/teal/
+   soft-green accents, warm amber activation flares against the cool dark.
+   ============================================================================ */
+
+/* ── Reset + layout skeleton ─────────────────────────────────────────────── */
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #060a0f;
+  color: #b0c8dc;
+  /* UI chrome: system sans (D-16) */
+  font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* WebGL canvas host — hidden until the layout settles; JS fades it in */
+#graph {
+  position: fixed;
+  inset: 0;
+  opacity: 0;
+}
+
+/* ── Detail panel: right-edge, hidden by default (D-15) ─────────────────── */
+#detail {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  display: none;
+  width: 340px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: rgba(4, 9, 18, 0.93);
+  border: 1px solid rgba(0, 210, 230, 0.15);
+  border-radius: 12px;
+  padding: 14px 16px;
+  backdrop-filter: blur(12px);
+  transform: translateX(16px);
+  opacity: 0;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              opacity  0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Slide-in class — added by JS on open (D-15 smooth reveal) */
+#detail.panel-open {
+  display: block;
+  transform: translateX(0);
+  opacity: 1;
+}
+
+/* ── Tooltip ─────────────────────────────────────────────────────────────── */
+#tooltip {
+  position: fixed;
+  z-index: 20;
+  display: none;
+  pointer-events: none;
+  background: rgba(4, 9, 18, 0.88);
+  border: 1px solid rgba(0, 210, 230, 0.2);
+  border-radius: 8px;
+  padding: 4px 9px;
+  font-size: 11px;
+  color: #8cc8dc;
+  backdrop-filter: blur(6px);
+}
+
+/* ── Backdrop: fullscreen tap-to-dismiss layer ───────────────────────────── */
+#backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  display: none;
+}
+
+/* ── Control strip — recedes to ambient opacity by default (D-13) ────────── */
+#panel {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  width: 230px;
+  background: rgba(4, 9, 18, 0.72);
+  border: 1px solid rgba(0, 185, 210, 0.12);
+  border-radius: 10px;
+  padding: 10px 13px;
+  backdrop-filter: blur(10px);
+  opacity: 0.52;
+  transition: opacity 0.2s ease;
+}
+
+/* Reveal on hover (D-13 — chrome recedes, surfaces on attention) */
+#panel:hover,
+#panel.panel-open {
+  opacity: 1;
+}
+
+/* ── Typography: system-ui for UI, monospace for data (D-16) ────────────── */
+h1 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #00cce0;
+  margin: 0 0 8px;
+}
+
+button {
+  background: rgba(0, 180, 210, 0.08);
+  color: #6cc8dc;
+  border: 1px solid rgba(0, 180, 210, 0.22);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  margin: 2px 0;
+}
+
+button:hover {
+  background: rgba(0, 180, 210, 0.18);
+  border-color: rgba(0, 180, 210, 0.45);
+}
+
+.btn-sm {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0;
+}
+
+.lbl {
+  color: #4a6878;
+  font-size: 11px;
+}
+
+/* Live stat values — mono data feel */
+.stat {
+  color: #00d4b0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+/* Data values: node ids, strength/confidence numbers, log lines (D-16) */
+.meta-val,
+.data-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #88c4d8;
+  word-break: break-all;
+}
+
+/* Event log — monospace, hidden by default (D-14 demoted surface) */
+#log {
+  display: none;
+  margin-top: 8px;
+  max-height: 160px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: #38566a;
+  border-top: 1px solid rgba(0, 180, 210, 0.1);
+  padding-top: 6px;
+  white-space: pre-wrap;
+}
+
+/* ── SSE status dot ──────────────────────────────────────────────────────── */
+#sse-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffd166;
+  flex-shrink: 0;
+}
+
+/* ── Node type legend ────────────────────────────────────────────────────── */
+.legend {
+  font-size: 11px;
+  color: #4a6878;
+  margin-top: 5px;
+}
+
+/* Bioluminescent palette — distinct hues per semantic type (D-03) */
+.dot-entity { color: #00e5ff; }  /* cyan   — facts about specific entities */
+.dot-fact   { color: #00ff9d; }  /* green  — general semantic facts */
+.dot-schema { color: #9b7ddf; }  /* violet — learned abstraction schemas */
+
+/* ── Initializing indicator ──────────────────────────────────────────────── */
+#detail-loading {
+  display: none;
+  font-size: 11px;
+  color: #4a6878;
+  margin-top: 6px;
+}
+
+/* ── Hull credit (fixed, non-interactive) ────────────────────────────────── */
+#hull-credit {
+  position: fixed;
+  bottom: 8px;
+  right: 12px;
+  z-index: 10;
+  font-size: 10px;
+  color: #263544;
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+
+/* ── Detail panel internals ──────────────────────────────────────────────── */
+#detail-close {
+  float: right;
+  background: none;
+  border: none;
+  color: #4a6878;
+  font-size: 18px;
+  padding: 0 2px;
+  margin: 0;
+  cursor: pointer;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+
+#detail-close:hover {
+  color: #00e5ff;
+}
+
+#detail-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: #cce8f4;
+  margin: 8px 0 6px;
+  line-height: 1.3;
+  clear: both;
+  word-break: break-word;
+}
+
+.meta-grid {
+  font-size: 11px;
+  margin: 4px 0;
+}
+
+.meta-row {
+  display: flex;
+  gap: 8px;
+  margin: 2px 0;
+}
+
+.meta-key {
+  color: #4a6878;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.divider {
+  border: none;
+  border-top: 1px solid rgba(0, 180, 210, 0.12);
+  margin: 10px 0;
+}
+
+#detail-body {
+  font-size: 13px;
+  color: #88c4d8;
+  max-height: 240px;
+  overflow-y: auto;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+#detail-conns-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #3d7a90;
+  margin: 0 0 5px;
+}
+
+.conn-link {
+  display: block;
+  color: #00b8cc;
+  cursor: pointer;
+  font-size: 13px;
+  margin: 2px 0;
+  transition: color 0.15s ease;
+}
+
+.conn-link:hover {
+  color: #00e5ff;
+}
+
+#detail-conns-more {
+  font-size: 11px;
+  color: #4a6878;
+  margin-top: 4px;
+}
+
+/* ── Toast / badge: visible error surfacing (D-14) ──────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  background: rgba(220, 60, 60, 0.14);
+  border: 1px solid rgba(220, 60, 60, 0.38);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: #f08080;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.toast.toast-visible {
+  opacity: 1;
+}
+
+.error-badge {
+  display: inline-block;
+  background: rgba(220, 60, 60, 0.18);
+  border: 1px solid rgba(220, 60, 60, 0.48);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: #f08080;
+}
