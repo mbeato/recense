@@ -265,15 +265,30 @@ function judgeWithMock(questionType, goldAnswer, hypothesis, isAbstention) {
   const evalMap = new Map(evalQuestions.map(q => [q.question_id, q]));
   const hypMap  = new Map(hypotheses.map(h => [h.question_id, h]));
 
-  // Pairs: only questions that have both a hypothesis and a gold answer
+  // Pairs: only questions that have both a hypothesis and a gold answer.
+  // Skip hypotheses with an error field — degraded memory (harness quarantine or
+  // pipeline failure) is not a valid measurement; including it would inflate the
+  // denominator with a guaranteed-0 or unreliable score.
   const pairs = [];
+  let skippedHarnessErrors = 0;
   for (const [qid, hyp] of hypMap.entries()) {
     const gold = evalMap.get(qid);
     if (!gold) {
       console.warn(`[warn] hypothesis ${qid} has no matching gold question — skipped`);
       continue;
     }
+    if (hyp.error) {
+      skippedHarnessErrors++;
+      continue;
+    }
     pairs.push({ qid, hyp, gold });
+  }
+
+  if (skippedHarnessErrors > 0) {
+    console.warn(
+      `[warn] Skipped ${skippedHarnessErrors} hypothesis(es) with error field — degraded memory runs excluded from scoring.\n` +
+      `       Re-run harness with --retry-errors to repair, then re-score.`
+    );
   }
 
   if (!pairs.length) {
@@ -373,12 +388,13 @@ function judgeWithMock(questionType, goldAnswer, hypothesis, isAbstention) {
   // ---- build output envelope ------------------------------------------------
 
   const meta = {
-    eval:            'longmemeval-s',
-    date:            new Date().toISOString().slice(0, 10),
-    commit:          getCommit(),
-    engine_version:  getEngineVersion(),
-    questions_total: perQuestion.length,
-    judge_model:     IS_MOCK ? 'mock-substring' : JUDGE_MODEL,
+    eval:                    'longmemeval-s',
+    date:                    new Date().toISOString().slice(0, 10),
+    commit:                  getCommit(),
+    engine_version:          getEngineVersion(),
+    questions_total:         perQuestion.length,
+    questions_skipped_error: skippedHarnessErrors,
+    judge_model:             IS_MOCK ? 'mock-substring' : JUDGE_MODEL,
   };
 
   const scores = { headline, by_category: finalByCategory };

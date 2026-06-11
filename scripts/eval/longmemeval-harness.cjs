@@ -394,12 +394,19 @@ async function runBoundedPool(items, concurrency, fn) {
           });
         }
 
-        // Step 2: run ONE sleep pass AFTER all appends (Pitfall 4)
+        // Step 2: run ONE sleep pass AFTER all appends (Pitfall 4).
+        // Count H-2 quarantine events via the log callback so questions with
+        // incomplete memory are excluded from scoring rather than silently
+        // degrading the result. The consolidator logs:
+        //   "episode <id> skipped (consolidation error): <err>"
+        let quarantineCount = 0;
         await runConsolidation(
           scratch.db,
           scratch.dbPath,
           process.env,
-          (_msg) => {} // suppress sleep-pass logs; use stderr if debugging
+          (msg) => {
+            if (msg.includes('skipped (consolidation error)')) quarantineCount++;
+          }
         );
 
         // Step 3: embed the question
@@ -445,7 +452,18 @@ async function runBoundedPool(items, concurrency, fn) {
           probeStats.outputTokens += answerResponse.usage.output_tokens || 0;
         }
 
-        result = { question_id: questionId, question_type: questionType, hypothesis };
+        // If any episodes were quarantined during consolidation, the memory is
+        // incomplete — mark the result as an error so --retry-errors re-attempts it
+        // and the scorer excludes it from headline scoring.
+        result = {
+          question_id: questionId,
+          question_type: questionType,
+          hypothesis,
+          episodes_quarantined: quarantineCount,
+          ...(quarantineCount > 0
+            ? { error: `${quarantineCount} episode(s) quarantined during consolidation — memory incomplete` }
+            : {}),
+        };
       }
     } catch (e) {
       // Per-question failure: record error, continue batch (T-14-DSV)
