@@ -23,7 +23,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
-import { checkDb, checkNodeAbi, checkHooks } from '../src/adapter/brain-doctor';
+import { checkDb, checkNodeAbi, checkHooks, checkServeToken } from '../src/adapter/brain-doctor';
 
 // ---------------------------------------------------------------------------
 // checkDb
@@ -202,6 +202,53 @@ describe('checkHooks', () => {
     expect(result.ok).toBe(true);
 
     try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkServeToken
+// ---------------------------------------------------------------------------
+
+describe('checkServeToken', () => {
+  const { join } = require('path') as typeof import('path');
+  const { tmpdir } = require('os') as typeof import('os');
+  const { writeFileSync, chmodSync, unlinkSync } = require('fs') as typeof import('fs');
+
+  const makeTempEnvPath = () =>
+    join(tmpdir(), `brain-doctor-token-${process.pid}-${Date.now()}.env`);
+
+  it('(j) passes when env file does not exist', () => {
+    const result = checkServeToken('/tmp/brain-doctor-nonexistent-env-99999-never.env');
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('no serve token needed');
+  });
+
+  it('(k) passes when env file at 0600 with BRAIN_SERVE_TOKEN set; token value absent from detail', () => {
+    const envPath = makeTempEnvPath();
+    const SECRET_TOKEN = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
+    writeFileSync(envPath, `BRAIN_SERVE_TOKEN=${SECRET_TOKEN}\n`, 'utf8');
+    chmodSync(envPath, 0o600);
+
+    const result = checkServeToken(envPath);
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('BRAIN_SERVE_TOKEN set');
+    expect(result.detail).toContain('0600');
+    // T-12-10: token value must NEVER appear in the detail string
+    expect(result.detail).not.toContain(SECRET_TOKEN);
+
+    try { unlinkSync(envPath); } catch { /* ignore */ }
+  });
+
+  it('(l) fails when env file exists at non-0600 mode', () => {
+    const envPath = makeTempEnvPath();
+    writeFileSync(envPath, 'BRAIN_SERVE_TOKEN=sometoken\n', 'utf8');
+    chmodSync(envPath, 0o644);
+
+    const result = checkServeToken(envPath);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('0600');
+
+    try { unlinkSync(envPath); } catch { /* ignore */ }
   });
 });
 
