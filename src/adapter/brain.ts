@@ -66,7 +66,6 @@ switch (cmd) {
   case 'snapshot': require('./snapshot-cli'); break;
 
   // ── Forward-declared commands (implemented in later plans) ───────────────────
-  case 'doctor': require('./brain-doctor'); break;
   case 'viz':    require('./brain-viz-cli'); break;
 
   // ── Scheduler (exports runSchedulerCommand; not auto-invoking) ───────────────
@@ -93,6 +92,9 @@ switch (cmd) {
   // (require.main stays brain.js) and the server would never start.
   case 'mcp':        spawnScript('mcp-cli.js',        process.argv.slice(3)); break;
   case 'serve':      spawnScript('serve-cli.js',      process.argv.slice(3)); break;
+  // brain-doctor exports check helpers for unit tests, so its entry is guarded by
+  // `require.main === module` (WR-01) — spawn so the guard fires in the child.
+  case 'doctor':     spawnScript('brain-doctor.js',   process.argv.slice(3)); break;
 
   // ── Default: fail closed (T-09-08) ───────────────────────────────────────────
   default:

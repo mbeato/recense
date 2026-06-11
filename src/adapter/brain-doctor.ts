@@ -334,7 +334,12 @@ async function runDoctor(): Promise<void> {
   process.exitCode = failures > 0 ? 1 : 0;
 }
 
-runDoctor().catch((err: unknown) => {
-  process.stderr.write(`brain doctor fatal: ${err}\n`);
-  process.exitCode = 1;
-});
+// WR-01: only run when executed as the main module (dispatched via spawnScript from
+// brain.ts). A bare top-level run fired on every `require()` — unit tests importing the
+// check helpers triggered live API calls, process spawns, and exitCode mutation.
+if (require.main === module) {
+  runDoctor().catch((err: unknown) => {
+    process.stderr.write(`brain doctor fatal: ${err}\n`);
+    process.exitCode = 1;
+  });
+}
