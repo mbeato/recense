@@ -18,7 +18,7 @@ const destDir = join(root, 'dist', 'src', 'viz');
 
 mkdirSync(destDir, { recursive: true });
 
-const assets = ['index.html', 'vendor'];
+const assets = ['index.html', 'vendor', 'css', 'modules'];
 for (const name of assets) {
   const from = join(srcDir, name);
   if (!existsSync(from)) {
@@ -28,4 +28,4 @@ for (const name of assets) {
   cpSync(from, join(destDir, name), { recursive: true });
 }
 
-console.log('copy-viz-assets: copied index.html + vendor → dist/src/viz/');
+console.log('copy-viz-assets: copied index.html + vendor + css + modules → dist/src/viz/');
