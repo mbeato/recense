@@ -13,6 +13,7 @@
  *   gmail              → email-noise guidance (strip signatures, pleasantries, logistics)
  *   granola/otter/zoom → speaker-attribution guidance (decisions and action items)
  *   obsidian           → EXTRACTION_PROMPT verbatim (curated-markdown extractor)
+ *   conversation       → casual-chat prompt (durable facts + personal episodic details)
  *   claude-code / default / unknown → EXTRACTION_PROMPT (existing conversation extractor)
  *
  * Threat mitigation (T-06-09): unknown/spoofed source values fall back to
@@ -79,6 +80,44 @@ Example:
 Document type: `;
 
 /**
+ * Conversation-source extraction prompt.
+ *
+ * Targets casual personal chat sessions where the default EXTRACTION_PROMPT
+ * under-extracts personal episodic details (events, purchases, durations,
+ * quantities, plans, preferences, places, dates). Verified missing fact:
+ * "45 minutes each way" commute detail never became a node from a 13KB chat
+ * session under the default prompt.
+ *
+ * Values must be self-contained third-person claims so they are meaningful
+ * when recalled without surrounding context ("User's daily commute is 45
+ * minutes each way" not "commute is 45 min").
+ *
+ * Output contract identical to EXTRACTION_PROMPT so parseClaims handles
+ * the response without modification (D-62).
+ */
+const CONVERSATION_EXTRACTION_PROMPT = `You are a knowledge extraction assistant. Extract all structured knowledge from the given memory document.
+
+For each item extract:
+- "type": "entity" for named people, projects, tools, technologies, and organizations; "fact" for rules, preferences, capabilities, durable facts, and personal episodic details
+- "value": a concise, self-contained third-person claim (e.g. "User's daily commute is 45 minutes each way" not just "commute is 45 min")
+- "links": an array of OTHER item values referenced via [[WikiLink]] syntax in the document, provided WITHOUT the double brackets (omit if none)
+
+Extract BOTH durable facts AND personal episodic details: events attended, purchases made, durations and quantities ("commute is 45 minutes each way"), places visited or mentioned, plans and intentions, dates and schedules, personal preferences, and any fact that the user would want remembered. Values must be self-contained so they are meaningful when recalled without surrounding context.
+
+Return ONLY a valid JSON array — no preamble, no explanation, no markdown fences.
+
+Example:
+[
+  {"type":"entity","value":"Jane Doe is the founder","links":["brain-memory project"]},
+  {"type":"fact","value":"User's daily commute is 45 minutes each way"},
+  {"type":"fact","value":"User attended the React Summit conference in Amsterdam"},
+  {"type":"fact","value":"User prefers dark roast coffee in the morning"},
+  {"type":"entity","value":"brain-memory project"}
+]
+
+Document type: `;
+
+/**
  * Return the extraction prompt prefix for a given episode source.
  *
  * The consolidator concatenates the returned string with:
@@ -92,6 +131,8 @@ Document type: `;
 export function promptForSource(source: string): string {
   if (source === 'gmail') return GMAIL_EXTRACTION_PROMPT;
   if (TRANSCRIPT_SOURCES.has(source)) return TRANSCRIPT_EXTRACTION_PROMPT;
+  if (source === 'conversation') return CONVERSATION_EXTRACTION_PROMPT;
   // obsidian, claude-code, and all unknown sources → existing conversation extractor
+  // (T-06-09: unknown/spoofed source values fall back safely — no crash, no privilege gain)
   return EXTRACTION_PROMPT;
 }

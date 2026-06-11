@@ -378,6 +378,7 @@ async function runBoundedPool(items, concurrency, fn) {
             salience:   1.0,
             hard_keep:  1,
             role:       'user',
+            source:     'conversation',
             session_id: `${questionId}-s${i}`,
             ...(tsMs != null ? { ts: tsMs } : {}),
           });
@@ -390,6 +391,8 @@ async function runBoundedPool(items, concurrency, fn) {
         // haystack_dates[i] is prefixed into the content and used as the episode ts
         // so the engine's temporal ordering reflects the historical conversation timeline
         // (critical for temporal-reasoning and knowledge-update questions).
+        // source='conversation' routes extraction through the conversation prompt (D-62),
+        // which captures personal episodic details that the default prompt misses.
         for (let i = 0; i < haystackSessions.length; i++) {
           const session = haystackSessions[i];
           const dateStr = haystackDates[i] || null;
@@ -400,6 +403,7 @@ async function runBoundedPool(items, concurrency, fn) {
             salience:   1.0,
             hard_keep:  1,
             role:       'user',
+            source:     'conversation',
             session_id: `${questionId}-s${i}`,
             ...(tsMs != null ? { ts: tsMs } : {}),
           });

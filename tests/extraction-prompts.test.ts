@@ -68,4 +68,25 @@ describe('promptForSource', () => {
     expect(promptForSource('unknown-source-xyz')).toBe(EXTRACTION_PROMPT);
     expect(promptForSource('')).toBe(EXTRACTION_PROMPT);
   });
+
+  // ── 6. conversation source (Phase 14) ────────────────────────────────────
+
+  it('conversation prompt differs from EXTRACTION_PROMPT (dedicated episodic prompt)', () => {
+    expect(promptForSource('conversation')).not.toBe(EXTRACTION_PROMPT);
+  });
+
+  it('conversation prompt contains episodic-detail guidance', () => {
+    const prompt = promptForSource('conversation');
+    expect(prompt).toContain('personal episodic details');
+  });
+
+  it('conversation prompt contains the JSON-array output contract', () => {
+    const prompt = promptForSource('conversation');
+    expect(prompt).toContain('Return ONLY a valid JSON array');
+  });
+
+  it('conversation prompt instructs self-contained third-person values', () => {
+    const prompt = promptForSource('conversation');
+    expect(prompt).toContain('self-contained');
+  });
 });
