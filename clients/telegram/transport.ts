@@ -10,8 +10,8 @@ export interface TelegramUpdate {
     message_id: number;
     /** Sender — matched (by numeric id) against the allowlist. */
     from?: { id: number; is_bot?: boolean; username?: string };
-    /** Conversation — replies are sent back to chat.id. */
-    chat?: { id: number };
+    /** Conversation — replies are sent back to chat.id; type gates private-only replies. */
+    chat?: { id: number; type?: string };
     /** Unix seconds. */
     date: number;
     /** Message body; non-text updates (stickers, photos) have no text and are ignored. */

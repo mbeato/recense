@@ -36,6 +36,9 @@ let tickInFlight = false;
  * Poll Telegram for new allowlisted messages. Performs NO state write (T-LOCK-01).
  *
  * Fail-closed: empty allowlist → {messages:[], commitTo:null} — idle, no ask call made.
+ * Private chats only: the allowlist authorizes the SENDER, but replies go to the CHAT —
+ *   a group update from an allowlisted sender would broadcast memory content to unlisted
+ *   members, so non-private chats are skipped (still confirmed via commitTo).
  * Cold start (no cursor): paginates to exhaustion (L-9), returns baseline commitTo with
  *   empty messages so the caller can commit the baseline and skip the backlog.
  * Normal: fetches updates after cursor; zero new → idle; otherwise returns allowlisted
@@ -100,16 +103,24 @@ export async function fetchMessages(
         continue;
       }
       const fromId = String(msg.from.id);
-      if (allow.has(fromId)) {
-        messages.push({
-          id: String(u.update_id),
-          sender: String(msg.chat.id), // reply target
-          text: msg.text,
-          ts: msg.date * 1000, // Telegram date is Unix seconds → ms
-        });
-      } else {
+      if (!allow.has(fromId)) {
         log('ignored unlisted telegram sender');
+        continue;
       }
+      // Private chats only: in a Telegram private chat, chat.id === from.id — require
+      // both the declared type and the id equality so a group reply target can never
+      // leak memory content to unlisted chat members. Skipped updates stay covered by
+      // commitTo (computed above), so they are confirmed and not re-fetched.
+      if (msg.chat.type !== 'private' || String(msg.chat.id) !== fromId) {
+        log('ignored non-private telegram chat');
+        continue;
+      }
+      messages.push({
+        id: String(u.update_id),
+        sender: String(msg.chat.id), // reply target (=== sender id in a private chat)
+        text: msg.text,
+        ts: msg.date * 1000, // Telegram date is Unix seconds → ms
+      });
     }
 
     return { messages, commitTo: String(maxId) };

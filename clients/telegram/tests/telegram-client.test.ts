@@ -22,6 +22,7 @@
  *     (j) cold-start baseline committed, backlog NOT answered
  *     (k) null/origin:'none' ask reply → no Telegram send
  *     (l) non-null reply → exactly one send
+ *     (m) group-chat update from allowlisted sender → no ask, no send, cursor advances
  *     D-04 no-loss: serve returns 503 → cursor NOT advanced, no reply sent
  *     C-1 never-throw: serve error resolves (does not reject) runClientTick
  *   DefaultTelegramTransport:
@@ -56,7 +57,13 @@ function makeUpdate(
     message:
       text === undefined
         ? undefined
-        : { message_id: update_id, from: { id: fromId }, chat: { id: fromId }, date, text },
+        : {
+            message_id: update_id,
+            from: { id: fromId },
+            chat: { id: fromId, type: 'private' },
+            date,
+            text,
+          },
   };
 }
 
@@ -478,6 +485,40 @@ describe('runClientTick', () => {
       await runClientTick(cfg, t, mc);
       expect(t.sent).toHaveLength(1);
       expect(t.sent[0]).toEqual({ chatId: 111, text: 'your training load is 42' });
+    } finally {
+      rmFile(sp);
+    }
+  });
+
+  // ── (m) Group-chat update from allowlisted sender → skipped (private-only) ──
+
+  it('(m) allowlisted sender in a group chat → no ask, no send, cursor still advances', async () => {
+    const sp = uniqueStatePath();
+    writeStateCursor(sp, '0');
+    scriptedAskReply = { answer: 'memory reply', origin: 'fact' };
+    // Allowlisted sender (111) posting in a group chat: chat.id !== from.id, type 'group'.
+    // Replying here would broadcast memory content to every (unlisted) group member.
+    const t = new MockTelegramTransport([{
+      update_id: 10,
+      message: {
+        message_id: 10,
+        from: { id: 111 },
+        chat: { id: -987654, type: 'group' },
+        date: 1_700_000_000,
+        text: 'what is my load?',
+      },
+    }]);
+    const cfg = makeConfig({
+      allowlist: [ALLOWED_ID],
+      statePath: sp,
+      serveUrl: `http://127.0.0.1:${mockPort}`,
+    });
+    const mc = createMemoryClient(cfg.serveUrl, cfg.serveToken);
+    try {
+      await runClientTick(cfg, t, mc);
+      expect(askRequestCount).toBe(0); // never asked the memory
+      expect(t.sent).toHaveLength(0); // nothing leaked into the group
+      expect(readStateCursor(sp)).toBe('10'); // update confirmed — not re-fetched
     } finally {
       rmFile(sp);
     }
