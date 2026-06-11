@@ -161,6 +161,9 @@ export PORT=7701
 export HOME=/home/user
 ```
 
+Both templates use `${VAR}` placeholders that `envsubst` expands from the exported shell
+variables defined above — the exported names must match exactly for substitution to work.
+
 Instantiate and install:
 
 ```sh
