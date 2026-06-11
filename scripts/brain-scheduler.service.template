@@ -1,0 +1,24 @@
+# brain-scheduler.service.template — systemd unit for `brain scheduler run` (SERVE-03 / D-14)
+#
+# Companion to brain-serve.service.template. Runs the hourly sleep-pass (consolidation)
+# so the semantic graph stays current on a headless Linux host.
+#
+# Same placeholder set as brain-serve.service.template — fill all at once with the
+# envsubst command in docs/server-mode.md.
+
+[Unit]
+Description=brain-memory scheduler (hourly sleep pass)
+After=network.target
+
+[Service]
+Type=simple
+User=<YOUR_USER>
+WorkingDirectory=<BRAIN_MEMORY_DIR>
+ExecStart=<BRAIN_MEMORY_NODE_BIN> <BRAIN_JS> scheduler run
+Environment=BRAIN_MEMORY_NODE_BIN=<BRAIN_MEMORY_NODE_BIN>
+EnvironmentFile=<HOME>/.config/brain-memory/sleep.env
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
