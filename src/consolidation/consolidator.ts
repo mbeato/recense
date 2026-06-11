@@ -63,6 +63,37 @@ function safeParseContradictions(json: string): PendingContradiction[] {
   }
 }
 
+/**
+ * Eligibility predicate for claim-extraction prefetch (Phase A optimization).
+ *
+ * Returns true when an episode should have its claims extracted. Duplicates the
+ * two cheap sync guards that precede the extract call in the ordered per-episode loop
+ * so both sites cannot drift:
+ *   - CONSOL-01: skip below salience threshold (per-source override or per-role default)
+ *   - WR-01: inferred-origin episodes never produce graph effects (hard structural guard)
+ *
+ * Echo detection (D-44/D-45) is async and cannot be evaluated here; episodes that
+ * later fail echo detection waste one prefetched extraction — acceptable in practice
+ * because echo only triggers when recent inferred episodes exist.
+ */
+function isEligibleForExtraction(episode: EpisodeRow, config: EngineConfig): boolean {
+  const skipThreshold =
+    config.salience.consolSkipThresholdBySource[episode.source] ??
+    (episode.role === 'assistant'
+      ? config.consolSkipThresholdAssistant
+      : config.consolSkipThreshold);
+  if (episode.salience < skipThreshold && episode.hard_keep === 0) {
+    return false;
+  }
+  if (episode.origin === 'inferred') {
+    return false;
+  }
+  return true;
+}
+
+/** Concurrency for the Phase A extraction prefetch pool. */
+const PREFETCH_CONCURRENCY = 4;
+
 // ---------------------------------------------------------------------------
 // Internal types — collect Phase A results into plain arrays before any DB write
 // ---------------------------------------------------------------------------
@@ -123,6 +154,49 @@ export class Consolidator {
     this.clock = clock;
     this.sink = sink;
     this.log = log;
+  }
+
+  // ── Private helper: prefetch claim extractions in parallel ──────────────
+
+  /**
+   * Phase A optimization: extract claims for all eligible episodes through a
+   * bounded pool (PREFETCH_CONCURRENCY=4) BEFORE the ordered per-episode loop.
+   *
+   * Claim extraction depends ONLY on episode content/source/role — never on graph
+   * state — so it is safe to run out-of-order relative to other episodes.
+   *
+   * Results are keyed by episode.id. A failed extraction stores the Error so the
+   * ordered loop can rethrow it, quarantining that episode with H-2 semantics.
+   * Episodes that fail echo detection later waste one prefetched extraction (acceptable).
+   *
+   * T-02-ASYNC and CONSOL-02 are unaffected: all writes still happen in the ordered
+   * per-episode loop's synchronous Phase B transaction.
+   */
+  private async prefetchExtractions(episodes: EpisodeRow[]): Promise<Map<string, string | Error>> {
+    const results = new Map<string, string | Error>();
+    let idx = 0;
+
+    const workerFn = async (): Promise<void> => {
+      while (idx < episodes.length) {
+        const episode = episodes[idx++]!;
+        try {
+          const text = await this.provider.generate(
+            promptForSource(episode.source) + episode.role + '\n\nDocument content:\n' + episode.content,
+            { maxTokens: 2048 },
+          );
+          results.set(episode.id, text);
+        } catch (err) {
+          results.set(episode.id, err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+    };
+
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < Math.min(PREFETCH_CONCURRENCY, episodes.length); i++) {
+      workers.push(workerFn());
+    }
+    await Promise.all(workers);
+    return results;
   }
 
   // ── Private helper: re-embed dirty nodes in batch ───────────────────────
@@ -236,6 +310,15 @@ export class Consolidator {
     // Quarantined episodes are NOT marked consolidated — they will be retried next pass.
     const quarantine = new Set<string>();
 
+    // ── Phase A optimization: prefetch claim extractions ────────────────────
+    // Extraction depends only on episode content/source/role — never on graph state.
+    // Hoist it before the ordered loop with a bounded pool (PREFETCH_CONCURRENCY=4).
+    // Episodes are still processed in order below (EPISODE ORDER IS SEMANTICS: episode N's
+    // claims are judged against graph state written by episodes 1..N-1). Only extraction
+    // is parallelised; echo detection, embedding, judging, and all writes remain in order.
+    const eligibleForPrefetch = unconsolidated.filter(ep => isEligibleForExtraction(ep, this.config));
+    const prefetchedExtractions = await this.prefetchExtractions(eligibleForPrefetch);
+
     for (let episode of unconsolidated) {
       // H-2: per-episode isolation — mirrors the per-adapter isolation in D-66 (runPullPhase).
       // A deterministically-failing episode (bad API 400 on its content, corrupt DB row)
@@ -286,12 +369,21 @@ export class Consolidator {
         // ── Per-episode Phase A: all async work into plain array ───────────
         const claimOrigin: Origin = episode.origin; // inherit episode origin (T-02-SELFCONF)
         // Claim extraction via ModelProvider.generate (SEAM-01, D-46):
-        // promptForSource(source) selects the per-source extraction prefix (D-62);
-        // role + content suffix is identical across every source — zero new extract plumbing.
-        const extractText = await this.provider.generate(
-          promptForSource(episode.source) + episode.role + '\n\nDocument content:\n' + episode.content,
-          { maxTokens: 2048 },
-        );
+        // Consume prefetched result when available (see prefetchExtractions above).
+        // If extraction failed for this episode, rethrow the stored error so H-2 quarantine
+        // applies. Fallback to inline extraction if not in map (defensive — should not occur
+        // for eligible episodes, but guards against unexpected eligibility-predicate drift).
+        const prefetched = prefetchedExtractions.get(episode.id);
+        let extractText: string;
+        if (prefetched !== undefined) {
+          if (prefetched instanceof Error) throw prefetched;
+          extractText = prefetched;
+        } else {
+          extractText = await this.provider.generate(
+            promptForSource(episode.source) + episode.role + '\n\nDocument content:\n' + episode.content,
+            { maxTokens: 2048 },
+          );
+        }
         const claims = parseClaims(extractText);
         const decisions: ClaimDecision[] = [];
 
