@@ -199,3 +199,98 @@ configs both need per-call-type routing (= the Phase 5 ModelProvider split):
 - **All-local ($0):** extraction→qwen2.5:7b, judge→qwen3.6:35b-a3b — accept the offline/overnight grind.
 - **Cost-optimized (fast):** extraction→qwen2.5:7b (free), judge→Haiku (fast, strong, small spend; judge
   outputs are tiny). Best latency; reintroduces minor judge spend.
+
+---
+
+## EVAL-01: LongMemEval-S harness (`longmemeval-harness.cjs`)
+
+End-to-end benchmark measuring how well brain-memory answers questions over a long conversation
+history. Uses the LongMemEval-S question set (`scripts/eval/fixtures/longmemeval-mini.jsonl` for
+smoke; full `longmemeval-s.jsonl` for the real run). Each question runs the full engine path:
+ingest sessions → sleep pass consolidation → retrieval → answer. GPT-4o scores the final answer
+against the gold label (yes/no/value match).
+
+See full documentation in `docs/evals.md`.
+
+### Run (cost probe first — required before full run)
+
+```sh
+# Step 1: probe — 10 questions, prints cost estimate, exits
+npm run eval:longmemeval:probe
+
+# Step 2: full run (only after probe confirms budget)
+npm run eval:longmemeval
+```
+
+Flags: `--probe` (10-question cost estimate), `--dry-run` (zero API, MockModelProvider),
+`--eval <path>` (override fixture), `--out <path>` (override results file).
+
+### CI smoke (zero API)
+
+```sh
+npm run build && node scripts/eval/longmemeval-harness.cjs --dry-run --eval scripts/eval/fixtures/longmemeval-mini.jsonl
+```
+
+### Scorer
+
+GPT-4o scores each answer (`exact`, `substring`, `semantic`, `no`). The headline metric is
+**exact + substring recall** on the full question set. The knowledge-update sub-score
+(questions requiring a contradicted fact to be updated) is reported separately — this is the
+dimension where brain-memory's PE-gated reconsolidation is expected to outperform ADD-only systems.
+
+**Two caveats (do not drop):**
+
+1. **The scorer is GPT-4o, not a fixed oracle.** Evaluation cost scales with question count (~$0.01–0.02/question at full scale). Always run `--probe` first.
+2. **LongMemEval-S is a subset.** The mini fixture (`longmemeval-mini.jsonl`) is the CI smoke set — it does not produce a reportable headline score. Full score requires the full 500-question set.
+
+---
+
+## EVAL-02: Correctness suite (`correctness-harness.cjs`)
+
+Measures belief-correction rate: when a user states a fact, then later contradicts it, does
+brain-memory update the stored belief and suppress the stale one? Runs each fictional-persona
+case end-to-end through the real engine on a scratch DB. Compares against an ADD-only baseline
+(no sleep pass — both facts accumulate, stale recall is guaranteed).
+
+See full documentation in `docs/evals.md`.
+
+### Run
+
+```sh
+npm run eval:correctness
+```
+
+Dry-run (zero API — CI smoke mode):
+
+```sh
+npm run eval:correctness:dry
+```
+
+Flags: `--dry-run` (MockModelProvider, zero API), `--cases <path>` (override fixture),
+`--out <path>` (override results file).
+
+### Cases
+
+`scripts/eval/cases/correctness-cases.json` — fictional personas (Ana Kowalski, etc.),
+each with an `initial_fact`, a `contradicting_fact`, a `query_probe`, and an `expected_answer_hint`.
+~17 cases: ~13 contradictions + 4 controls (confirm/extend), magnitude spread 0.3–0.9.
+
+### Scorecard metrics
+
+| metric | description |
+| ------ | ----------- |
+| `belief-correction rate` | fraction of contradiction cases where retrieval returns the new fact (not the old one) |
+| `stale-recall rate` | fraction of cases where the old (stale) fact still surfaces — lower is better |
+| `tombstone presence` | fraction where the engine created a tombstone for the old belief |
+| ADD-only baseline | always 0% correction, 100% stale — both facts are always present |
+
+### CI smoke (zero API)
+
+```sh
+npm run build && node scripts/eval/correctness-harness.cjs --dry-run
+```
+
+**Two caveats (do not drop):**
+
+1. **Fictional cases are clear-cut.** The case set uses unambiguous value changes (numeric drift, categorical reversal) — real-world contradictions are harder. This measures the lower bound of the belief-correction mechanism, not production accuracy on noisy input.
+2. **ADD-only is a weak baseline.** It is the floor, not a competitor. The correctness suite establishes that brain-memory clears the bar of "does anything at all" on belief correction; a stronger comparison requires running mem0 or similar against the same cases.
