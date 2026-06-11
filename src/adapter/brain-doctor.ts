@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 /**
- * brain doctor — 5-dimension install health audit (INSTALL-04).
+ * brain doctor — 6-dimension install health audit (INSTALL-04; dimension 6 added in Phase 12).
  *
- * Checks five fixed dimensions and prints a human-readable pass/fail per
+ * Checks six fixed dimensions and prints a human-readable pass/fail per
  * dimension. Exits non-zero if any dimension fails. `--json` is deferred
  * to INSTALL-07.
  *
- * Dimensions (INSTALL-04):
+ * Dimensions (INSTALL-04; 6 from Phase 12):
  *   1. DB reachability + schema version
  *   2. API key validity via live calls (Anthropic + OpenAI)
  *   3. Scheduler registered + running
  *   4. Hooks wired in ~/.claude/settings.json
  *   5. Node ABI match (BRAIN_MEMORY_NODE_BIN vs better-sqlite3 build)
+ *   6. Serve token presence + env file mode (BRAIN_SERVE_TOKEN in chmod-600 sleep.env)
  *
  * Design invariants:
  *  - DB opened readonly only — never writes the graph (T-09-10).
