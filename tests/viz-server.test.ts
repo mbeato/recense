@@ -380,6 +380,53 @@ describe('corrupt activation_trace row (L-4)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// New static routes: /modules/ and /css/ (Plan 15-01)
+// ---------------------------------------------------------------------------
+
+describe('/vendor/addons/* static route', () => {
+  it('GET /vendor/addons/postprocessing/Pass.js returns 200 with text/javascript', async () => {
+    const res = await get(port, '/vendor/addons/postprocessing/Pass.js');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/javascript');
+  });
+});
+
+describe('/modules/ static route', () => {
+  it('GET /modules/nonexistent.js returns 404 (route wired, file absent)', async () => {
+    const res = await get(port, '/modules/nonexistent.js');
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('GET /modules/../server.ts returns 403 (traversal guard T-10-07)', async () => {
+    const res = await get(port, '/modules/../server.ts');
+    expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('/css/ static route', () => {
+  it('GET /css/../server.ts returns 403 (traversal guard T-10-07)', async () => {
+    const res = await get(port, '/css/../server.ts');
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('GET /css/*.css returns 200 with text/css MIME type', async () => {
+    // server.ts resolves CSS_ROOT = path.resolve(__dirname, 'css') where __dirname
+    // is src/viz/ when run via vitest/tsx. From the test file (tests/), navigate up.
+    const cssDir = path.resolve(__dirname, '../src/viz/css');
+    fs.mkdirSync(cssDir, { recursive: true });
+    const cssFile = path.join(cssDir, 'test-plan15.css');
+    fs.writeFileSync(cssFile, 'body { color: teal; }');
+    try {
+      const res = await get(port, '/css/test-plan15.css');
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/css');
+    } finally {
+      fs.unlinkSync(cssFile);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Path-traversal rejection (T-10-07)
 // ---------------------------------------------------------------------------
 
