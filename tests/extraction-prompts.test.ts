@@ -89,4 +89,55 @@ describe('promptForSource', () => {
     const prompt = promptForSource('conversation');
     expect(prompt).toContain('self-contained');
   });
+
+  // ── 7. web source (Phase 14) ─────────────────────────────────────────────
+
+  it('web prompt differs from EXTRACTION_PROMPT', () => {
+    expect(promptForSource('web')).not.toBe(EXTRACTION_PROMPT);
+  });
+
+  it('web prompt contains article/publication guidance', () => {
+    expect(promptForSource('web')).toContain('publication');
+  });
+
+  it('web prompt contains the JSON-array output contract', () => {
+    expect(promptForSource('web')).toContain('Return ONLY a valid JSON array');
+  });
+
+  // ── 8. document source (Phase 14) ────────────────────────────────────────
+
+  it('document prompt differs from EXTRACTION_PROMPT', () => {
+    expect(promptForSource('document')).not.toBe(EXTRACTION_PROMPT);
+  });
+
+  it('document prompt contains structured-document guidance (definitions/decisions)', () => {
+    const prompt = promptForSource('document');
+    expect(prompt).toContain('definitions');
+  });
+
+  it('document prompt contains the JSON-array output contract', () => {
+    expect(promptForSource('document')).toContain('Return ONLY a valid JSON array');
+  });
+
+  // ── 9. code-diff source (Phase 14) ───────────────────────────────────────
+
+  it('code-diff prompt differs from EXTRACTION_PROMPT', () => {
+    expect(promptForSource('code-diff')).not.toBe(EXTRACTION_PROMPT);
+  });
+
+  it('code-diff prompt contains change/rationale guidance', () => {
+    const prompt = promptForSource('code-diff');
+    expect(prompt).toContain('changed');
+  });
+
+  it('code-diff prompt contains the JSON-array output contract', () => {
+    expect(promptForSource('code-diff')).toContain('Return ONLY a valid JSON array');
+  });
+
+  // ── 10. unknown fallback unchanged (regression guard) ────────────────────
+
+  it('web/document/code-diff routing does not change the unknown fallback', () => {
+    expect(promptForSource('random-unknown')).toBe(EXTRACTION_PROMPT);
+    expect(promptForSource('notasource')).toBe(EXTRACTION_PROMPT);
+  });
 });

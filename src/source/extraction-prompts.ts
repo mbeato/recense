@@ -118,6 +118,94 @@ Example:
 Document type: `;
 
 /**
+ * Web-article extraction prompt.
+ *
+ * Targets web pages and online articles: claims, named entities, publication
+ * context (author, source, date). Focuses on verifiable facts rather than
+ * opinion, and extracts entities that give the claim provenance context.
+ * Output contract identical to EXTRACTION_PROMPT so parseClaims handles
+ * the response without modification (D-62).
+ */
+const WEB_EXTRACTION_PROMPT = `You are a knowledge extraction assistant. Extract all structured knowledge from the given memory document.
+
+For each item extract:
+- "type": "entity" for named people, organizations, products, technologies, and publications; "fact" for claims, findings, statistics, and verifiable statements
+- "value": a concise, self-contained string — include enough context to be meaningful without the surrounding article (e.g. "According to TechCrunch, OpenAI raised $6.6 billion in October 2024" not just "raised $6.6 billion")
+- "links": an array of OTHER item values referenced via [[WikiLink]] syntax in the document, provided WITHOUT the double brackets (omit if none)
+
+Extract claims, findings, named entities, and publication context (author, source, publication date). Prefer verifiable facts over opinion.
+
+Return ONLY a valid JSON array — no preamble, no explanation, no markdown fences.
+
+Example:
+[
+  {"type":"entity","value":"OpenAI","links":[]},
+  {"type":"fact","value":"OpenAI raised $6.6 billion in a funding round in October 2024","links":["OpenAI"]},
+  {"type":"fact","value":"The article was published by TechCrunch on 2024-10-02","links":[]}
+]
+
+Document type: `;
+
+/**
+ * Document extraction prompt (PDFs, formal docs, reports).
+ *
+ * Targets structured documents: definitions, decisions, requirements, and
+ * formal facts. Extracts section-level structure and key terms with their
+ * definitions so recalled nodes are immediately useful without re-reading
+ * the full document.
+ * Output contract identical to EXTRACTION_PROMPT so parseClaims handles
+ * the response without modification (D-62).
+ */
+const DOCUMENT_EXTRACTION_PROMPT = `You are a knowledge extraction assistant. Extract all structured knowledge from the given memory document.
+
+For each item extract:
+- "type": "entity" for named people, organizations, products, systems, and defined terms; "fact" for decisions, requirements, definitions, findings, and formal statements
+- "value": a concise, self-contained string capturing the complete meaning (e.g. "The document defines 'episodic memory' as short-term storage of recent events" not just "episodic memory definition")
+- "links": an array of OTHER item values referenced via [[WikiLink]] syntax in the document, provided WITHOUT the double brackets (omit if none)
+
+Extract structured facts, definitions, decisions, requirements, and key terms. Each value must be self-contained — meaningful when read in isolation without the source document.
+
+Return ONLY a valid JSON array — no preamble, no explanation, no markdown fences.
+
+Example:
+[
+  {"type":"entity","value":"EpisodicStore","links":["brain-memory project"]},
+  {"type":"fact","value":"EpisodicStore enforces append-only writes with no deletes","links":["EpisodicStore"]},
+  {"type":"fact","value":"The spec requires all SQL to use parameterized statements (T-02-SQL)","links":[]}
+]
+
+Document type: `;
+
+/**
+ * Code-diff extraction prompt.
+ *
+ * Targets git diffs, patch files, and code-change descriptions. Extracts
+ * what changed, which files and components were affected, and the rationale
+ * when present. Avoids extracting raw code syntax as claims.
+ * Output contract identical to EXTRACTION_PROMPT so parseClaims handles
+ * the response without modification (D-62).
+ */
+const CODE_DIFF_EXTRACTION_PROMPT = `You are a knowledge extraction assistant. Extract all structured knowledge from the given memory document.
+
+For each item extract:
+- "type": "entity" for named files, modules, components, functions, classes, and systems; "fact" for changes made, behaviors modified, bugs fixed, and rationale stated
+- "value": a concise, self-contained string describing the change in plain language (e.g. "The consolidator's prefetch map type changed from Map<string,string> to Map<string,ExtractedClaim[]>" not raw code)
+- "links": an array of OTHER item values referenced via [[WikiLink]] syntax in the document, provided WITHOUT the double brackets (omit if none)
+
+Extract what changed, which files and components are affected, and the stated rationale or motivation. Describe changes in plain language — do not copy raw code as values.
+
+Return ONLY a valid JSON array — no preamble, no explanation, no markdown fences.
+
+Example:
+[
+  {"type":"entity","value":"consolidator.ts","links":[]},
+  {"type":"fact","value":"consolidator.ts: prefetch map now stores ExtractedClaim[] instead of raw strings","links":["consolidator.ts"]},
+  {"type":"fact","value":"maxTokens raised to 8192 in all extraction generate() calls to prevent truncation","links":[]}
+]
+
+Document type: `;
+
+/**
  * Return the extraction prompt prefix for a given episode source.
  *
  * The consolidator concatenates the returned string with:
@@ -126,12 +214,16 @@ Document type: `;
  *
  * Unknown / unrecognised sources fall back to EXTRACTION_PROMPT (T-06-09 safe fallback).
  *
- * @param source - Source adapter name (e.g. 'gmail', 'granola', 'obsidian', 'claude-code').
+ * @param source - Source adapter name (e.g. 'gmail', 'granola', 'obsidian', 'claude-code',
+ *                 'conversation', 'web', 'document', 'code-diff').
  */
 export function promptForSource(source: string): string {
   if (source === 'gmail') return GMAIL_EXTRACTION_PROMPT;
   if (TRANSCRIPT_SOURCES.has(source)) return TRANSCRIPT_EXTRACTION_PROMPT;
   if (source === 'conversation') return CONVERSATION_EXTRACTION_PROMPT;
+  if (source === 'web') return WEB_EXTRACTION_PROMPT;
+  if (source === 'document') return DOCUMENT_EXTRACTION_PROMPT;
+  if (source === 'code-diff') return CODE_DIFF_EXTRACTION_PROMPT;
   // obsidian, claude-code, and all unknown sources → existing conversation extractor
   // (T-06-09: unknown/spoofed source values fall back safely — no crash, no privilege gain)
   return EXTRACTION_PROMPT;
