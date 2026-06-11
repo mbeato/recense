@@ -72,8 +72,9 @@ const arg = (k, d) => {
   return i !== -1 ? process.argv[i + 1] : d;
 };
 
-const IS_DRY_RUN = process.argv.includes('--dry-run');
-const IS_PROBE   = process.argv.includes('--probe');
+const IS_DRY_RUN     = process.argv.includes('--dry-run');
+const IS_PROBE       = process.argv.includes('--probe');
+const RETRY_ERRORS   = process.argv.includes('--retry-errors');
 
 // --concurrency N (default 8, min 1). Each question has its own scratch DB and no
 // shared state, so in-process parallelism is safe. Probe token accumulation uses
@@ -161,13 +162,36 @@ function parseJsonl(filePath) {
 }
 
 /**
- * Concatenates all turns in a haystack session into a single content string
- * suitable for EpisodicStore.append().
+ * Parse a LongMemEval haystack_date string to milliseconds since epoch.
+ * Handles both ISO-like "2023/05/20 02:21" and annotated "2023/05/20 (Sat) 02:21" formats.
+ * Returns null on parse failure so callers fall back to clock.nowMs().
  */
-function formatSession(session) {
-  return session
+function parseSessionDate(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  // Strip day-of-week annotation: "(Sat)", "(Mon)", etc.
+  const cleaned = dateStr.replace(/\s*\([A-Za-z]+\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  // Normalise date separators: "2023/05/20 02:21" -> "2023-05-20 02:21"
+  const normalized = cleaned.replace(/\//g, '-');
+  const ms = Date.parse(normalized);
+  return isNaN(ms) ? null : ms;
+}
+
+/**
+ * Concatenates all turns in a haystack session into a single content string
+ * suitable for EpisodicStore.append(). Optionally prefixes with the session date
+ * so temporal-reasoning and knowledge-update questions see chronological context.
+ *
+ * @param {Array}  session  Array of {role, content} turn objects.
+ * @param {string} [date]   Optional date string from haystack_dates[i]. If provided
+ *                          (and non-empty), the first line of the output is
+ *                          "[Session date: {date}]". Omitted when date is falsy
+ *                          so fixture rows without the field are handled gracefully.
+ */
+function formatSession(session, date) {
+  const turns = session
     .map(turn => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`)
     .join('\n');
+  return date ? `[Session date: ${date}]\n${turns}` : turns;
 }
 
 // ---- bounded concurrency pool -----------------------------------------------
@@ -229,19 +253,49 @@ async function runBoundedPool(items, concurrency, fn) {
   const questions = allQuestions.slice(0, limit);
 
   // ---- resume: skip question_ids already present in OUT_FILE ----------------
-  // Error lines written by prior runs also count as done — prevents retrying
-  // a deterministically-failing question on every resume (T-14-DSV).
-  const doneIds = new Set();
+  // By default, error lines written by prior runs count as done — prevents
+  // silently retrying a deterministically-failing question on every resume.
+  // Pass --retry-errors to re-attempt questions whose existing line has an
+  // `error` field (the error lines are dropped from OUT_FILE at startup so
+  // the fresh result supersedes them).
+  const doneIds  = new Set();
+  const errorIds = new Set();
   if (fs.existsSync(OUT_FILE)) {
     const existingLines = fs.readFileSync(OUT_FILE, 'utf8').split('\n').filter(l => l.trim());
     for (const line of existingLines) {
       try {
         const rec = JSON.parse(line);
-        if (rec.question_id) doneIds.add(rec.question_id);
+        if (rec.question_id) {
+          if (rec.error) {
+            errorIds.add(rec.question_id);
+          } else {
+            doneIds.add(rec.question_id);
+          }
+        }
       } catch {}
     }
-    if (doneIds.size > 0) {
-      console.log(`[resume] Skipping ${doneIds.size} already-complete question(s) (errors count as done)`);
+
+    if (RETRY_ERRORS && errorIds.size > 0) {
+      // Drop error lines from OUT_FILE so fresh results can be appended
+      const keptLines = existingLines.filter(line => {
+        try {
+          const rec = JSON.parse(line);
+          return !(rec.error && rec.question_id && errorIds.has(rec.question_id));
+        } catch { return true; }
+      });
+      fs.writeFileSync(OUT_FILE, keptLines.map(l => l + '\n').join(''));
+      console.log(`[retry-errors] Dropped ${errorIds.size} error line(s) from ${OUT_FILE} — will retry`);
+    } else {
+      // Default: error lines count as done (don't retry)
+      for (const id of errorIds) doneIds.add(id);
+    }
+
+    const totalSkipped = RETRY_ERRORS ? doneIds.size : doneIds.size;
+    if (totalSkipped > 0 || (!RETRY_ERRORS && errorIds.size > 0)) {
+      const errNote = !RETRY_ERRORS && errorIds.size > 0
+        ? ` (${errorIds.size} error line(s) counted as done; use --retry-errors to re-attempt)`
+        : '';
+      console.log(`[resume] Skipping ${totalSkipped} already-complete question(s)${errNote}`);
     }
   }
 
@@ -276,10 +330,13 @@ async function runBoundedPool(items, concurrency, fn) {
   // ---- per-question pipeline ------------------------------------------------
   async function processQuestion(q) {
     const qStart = Date.now();
-    const questionId   = q.question_id;
-    const questionType = q.question_type;
-    const questionText = q.question;
+    const questionId      = q.question_id;
+    const questionType    = q.question_type;
+    const questionText    = q.question;
+    const questionDate    = q.question_date || '';
     const haystackSessions = Array.isArray(q.haystack_sessions) ? q.haystack_sessions : [];
+    // haystack_dates is index-parallel to haystack_sessions; tolerate missing field
+    const haystackDates   = Array.isArray(q.haystack_dates) ? q.haystack_dates : [];
 
     const scratch = makeScratchDb();
     let result;
@@ -288,30 +345,39 @@ async function runBoundedPool(items, concurrency, fn) {
       if (IS_DRY_RUN) {
         // Dry-run: append episodes for schema validation, skip all LLM steps
         for (let i = 0; i < haystackSessions.length; i++) {
-          const session = haystackSessions[i];
+          const session  = haystackSessions[i];
+          const dateStr  = haystackDates[i] || null;
+          const tsMs     = parseSessionDate(dateStr);
           scratch.episodes.append({
-            content:    formatSession(session),
+            content:    formatSession(session, dateStr),
             origin:     'observed',
             salience:   1.0,
             hard_keep:  1,
             role:       'user',
             session_id: `${questionId}-s${i}`,
+            ...(tsMs != null ? { ts: tsMs } : {}),
           });
         }
         result = { question_id: questionId, question_type: questionType, hypothesis: DRY_RUN_STUB_ANSWER };
       } else {
         // Real mode: full pipeline
 
-        // Step 1: ingest ALL haystack sessions as episodes (one episode per session)
+        // Step 1: ingest ALL haystack sessions as episodes (one episode per session).
+        // haystack_dates[i] is prefixed into the content and used as the episode ts
+        // so the engine's temporal ordering reflects the historical conversation timeline
+        // (critical for temporal-reasoning and knowledge-update questions).
         for (let i = 0; i < haystackSessions.length; i++) {
           const session = haystackSessions[i];
+          const dateStr = haystackDates[i] || null;
+          const tsMs    = parseSessionDate(dateStr);
           scratch.episodes.append({
-            content:    formatSession(session),
+            content:    formatSession(session, dateStr),
             origin:     'observed',
             salience:   1.0,
             hard_keep:  1,
             role:       'user',
             session_id: `${questionId}-s${i}`,
+            ...(tsMs != null ? { ts: tsMs } : {}),
           });
         }
 
@@ -337,8 +403,18 @@ async function runBoundedPool(items, concurrency, fn) {
           ? retrieval.results.map(r => `- ${r.value}`).join('\n')
           : '(no relevant memory entries found)';
 
-        // Step 6: generate answer with Haiku (cheap model — GPT-4o reserved for scorer)
-        const answerPrompt = `Given these memory entries:\n${retrievedText}\n\nAnswer this question: ${questionText}\n\nAnswer with just the factual answer, no explanation.`;
+        // Step 6: generate answer with Haiku (cheap model — GPT-4o reserved for scorer).
+        //
+        // Prompt structure is an equivalent of the official LongMemEval QA template
+        // (src/generation/run_generation.py), adapted for brain-memory's memory-node
+        // retrieval format (retrieved nodes rather than raw session history). The
+        // structure is: history entries → current date → question → "Answer:".
+        // The open-ended "Answer:" (no "just the factual answer" constraint) allows
+        // the model to respond "I don't have information about that" for questions
+        // where no relevant memory entries exist — required for correct abstention
+        // scoring on _abs questions. See docs/evals.md for provenance details.
+        const currentDateLine = questionDate ? `\nCurrent Date: ${questionDate}` : '';
+        const answerPrompt = `I will give you several memory entries from conversations between you and a user. Please answer the question based on the relevant memory entries.\n\n\nMemory Entries:\n\n${retrievedText}${currentDateLine}\nQuestion: ${questionText}\nAnswer:`;
         const answerResponse = await anthropicClient.messages.create({
           model:      ANSWER_MODEL,
           max_tokens: 256,
@@ -408,4 +484,19 @@ async function runBoundedPool(items, concurrency, fn) {
   }
 
   console.log(`Done. ${completedCount} new result(s) appended to ${OUT_FILE} (${totalInFile} total, ${doneIds.size} skipped). Elapsed: ${(elapsedMs / 1000).toFixed(1)}s | ${completedCount > 0 ? (elapsedMs / completedCount / 1000).toFixed(2) : 'n/a'}s/question`);
+
+  // ---- error count report (always on stderr so it is visible even when stdout is piped)
+  const finalLines = fs.existsSync(OUT_FILE)
+    ? fs.readFileSync(OUT_FILE, 'utf8').split('\n').filter(l => l.trim())
+    : [];
+  let finalErrorCount = 0;
+  for (const line of finalLines) {
+    try { const r = JSON.parse(line); if (r.error) finalErrorCount++; } catch {}
+  }
+  if (finalErrorCount > 0) {
+    process.stderr.write(
+      `\n[warn] ${finalErrorCount} error line(s) in ${OUT_FILE}. Re-run with --retry-errors to re-attempt them.\n` +
+      `       The recorded run should finish with 0 errors; fix any systematic errors before publishing scores.\n`
+    );
+  }
 })();

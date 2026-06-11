@@ -39,6 +39,15 @@ export interface AppendEventParams {
    * Email and other non-hook episodes leave this empty — they are always globally visible.
    */
   cwd?: string;
+  /**
+   * Optional timestamp override (milliseconds since epoch). EVAL USE ONLY.
+   * When provided, the episode is stored with this ts instead of clock.nowMs().
+   * Production code paths must never set this field — they rely on the injected
+   * clock (D-12). The eval harness uses it to preserve the historical ordering of
+   * haystack sessions so temporal-reasoning questions are scored correctly.
+   * Defaults to undefined (falls back to clock.nowMs()).
+   */
+  ts?: number;
 }
 
 /** Truncation marker appended when content exceeds maxContentBytes (D-09). */
@@ -152,7 +161,8 @@ export class EpisodicStore {
    */
   append(params: AppendEventParams): EpisodeRow {
     const id = newId();
-    const ts = this.clock.nowMs();
+    // params.ts is an EVAL-only override; production callers never set it (D-12).
+    const ts = params.ts != null ? params.ts : this.clock.nowMs();
     const content = capContent(params.content, this.config.maxContentBytes);
     const source = params.source ?? 'claude-code';
     const external_id = params.external_id ?? null;
