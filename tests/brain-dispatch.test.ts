@@ -13,7 +13,7 @@
  */
 
 import { spawnSync } from 'child_process';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, unlinkSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { describe, it, expect } from 'vitest';
