@@ -165,11 +165,17 @@ describe('docs/server-mode.md', () => {
     expect(headers.length).toBeGreaterThanOrEqual(4);
   });
 
-  it('contains envsubst command for brain-serve template', () => {
-    expect(readDoc(GUIDE_PATH)).toContain('envsubst < scripts/brain-serve.service.template');
+  it('contains whitelist-form envsubst command for brain-serve template (IN-07)', () => {
+    // Bare `envsubst <` blanks EVERY ${VAR} in the input — including ones the operator
+    // forgot to export — with no error. The explicit variable list pins the safer convention.
+    expect(readDoc(GUIDE_PATH)).toContain(
+      "envsubst '${YOUR_USER} ${BRAIN_MEMORY_DIR} ${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} ${HOST} ${PORT} ${HOME}' < scripts/brain-serve.service.template",
+    );
   });
 
-  it('contains envsubst command for brain-scheduler template', () => {
-    expect(readDoc(GUIDE_PATH)).toContain('envsubst < scripts/brain-scheduler.service.template');
+  it('contains whitelist-form envsubst command for brain-scheduler template (IN-07)', () => {
+    expect(readDoc(GUIDE_PATH)).toContain(
+      "envsubst '${YOUR_USER} ${BRAIN_MEMORY_DIR} ${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} ${HOME}' < scripts/brain-scheduler.service.template",
+    );
   });
 });

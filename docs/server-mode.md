@@ -181,11 +181,16 @@ export HOME=/home/user
 
 Both templates use `${VAR}` placeholders that `envsubst` expands from the exported shell
 variables defined above — the exported names must match exactly for substitution to work.
+The commands below pass an explicit variable list to `envsubst` so only the intended
+placeholders are touched (a bare `envsubst` would blank **every** `${VAR}` it finds,
+including any you forgot to export, with no error). A listed-but-unexported variable
+still substitutes to empty, so always inspect the generated unit before installing.
 
 Instantiate and install:
 
 ```sh
-envsubst < scripts/brain-serve.service.template > /tmp/brain-serve.service
+envsubst '${YOUR_USER} ${BRAIN_MEMORY_DIR} ${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} ${HOST} ${PORT} ${HOME}' < scripts/brain-serve.service.template > /tmp/brain-serve.service
+cat /tmp/brain-serve.service   # inspect: an empty value (e.g. `--port` with nothing after it) means a missing export
 sudo cp /tmp/brain-serve.service /etc/systemd/system/brain-serve.service
 sudo systemctl daemon-reload
 sudo systemctl enable brain-serve
@@ -212,7 +217,8 @@ The sleep-pass (consolidation) must survive reboots to keep the semantic graph c
 Use the companion template at `scripts/brain-scheduler.service.template`:
 
 ```sh
-envsubst < scripts/brain-scheduler.service.template > /tmp/brain-scheduler.service
+envsubst '${YOUR_USER} ${BRAIN_MEMORY_DIR} ${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} ${HOME}' < scripts/brain-scheduler.service.template > /tmp/brain-scheduler.service
+cat /tmp/brain-scheduler.service   # inspect before installing
 sudo cp /tmp/brain-scheduler.service /etc/systemd/system/brain-scheduler.service
 sudo systemctl daemon-reload
 sudo systemctl enable brain-scheduler
