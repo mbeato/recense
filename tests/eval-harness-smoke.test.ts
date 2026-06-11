@@ -430,6 +430,68 @@ describe('eval-harness-smoke', () => {
     expect(harnessCount).toBe(1);
   });
 
+  // ── Test 8: topk→values mapping returns up to K live node values ─────────
+  //
+  // Verifies the harness Step 4 retrieval path:
+  //   CandidateRetriever.topk(queryVec, K) + SemanticStore.getNode(id) → values
+  //
+  // The harness uses this path instead of RetrievalEngine.retrieve() because the
+  // production wrapper gates on cosine >= 0.7 and returns at most 1 result, which
+  // causes nearly every eval question to abstain (gold node is often at cosine ~0.48).
+  //
+  // Checks:
+  //  - Returns at most K values
+  //  - Returns at least 1 value when embedded nodes exist
+  //  - Tombstoned nodes are excluded (topk SQL: tombstoned=0)
+  //  - The highest-cosine node (query-aligned unit vector) ranks first
+
+  it('topk→values mapping returns up to K live node values, excludes tombstoned', () => {
+    const h = makeHarness();
+    const DIM = DEFAULT_CONFIG.embeddingDimensions;
+
+    /** Unit vector: 1.0 at index (i % DIM), 0.0 everywhere else. */
+    function unitVec(i: number): Float32Array {
+      const v = new Float32Array(DIM);
+      v[i % DIM] = 1.0;
+      return v;
+    }
+
+    // Insert 5 live nodes, each with a distinct embedding
+    for (let i = 0; i < 5; i++) {
+      h.store.upsertNode({ id: `eval-node-${i}`, type: 'fact', value: `eval-fact-${i}`, origin: 'observed', s: 0.5 });
+      h.store.setEmbedding(`eval-node-${i}`, unitVec(i));
+    }
+
+    // Insert 1 tombstoned node — must be excluded from topk results
+    h.store.upsertNode({ id: 'eval-dead', type: 'fact', value: 'eval-tombstoned-fact', origin: 'observed', s: 0.5 });
+    h.store.setEmbedding('eval-dead', unitVec(0)); // same direction as query → would rank first if alive
+    h.store.tombstone('eval-dead');
+
+    // Query aligned with unitVec(0): eval-node-0 should rank first, eval-dead excluded
+    const queryVec = unitVec(0);
+    const K = 3;
+    const topkResults = h.retriever.topk(queryVec, K);
+
+    // Mirror the harness Step 4 mapping: topkResults → getNode → filter null → value
+    const values = topkResults
+      .map(r => h.store.getNode(r.id))
+      .filter((n): n is NonNullable<typeof n> => n !== null)
+      .map(n => n.value);
+
+    // At most K results
+    expect(values.length).toBeLessThanOrEqual(K);
+    // At least 1 result (we inserted 5 live nodes)
+    expect(values.length).toBeGreaterThan(0);
+    // Tombstoned node must NOT appear
+    expect(values).not.toContain('eval-tombstoned-fact');
+    // All values must come from the live node set
+    for (const v of values) {
+      expect(v).toMatch(/^eval-fact-\d$/);
+    }
+    // Top result must be eval-node-0 (query vector aligns exactly with unitVec(0), cosine=1.0)
+    expect(values[0]).toBe('eval-fact-0');
+  });
+
   // ── Test 6: Resume + --retry-errors — error lines are re-attempted ────────
   //
   // Pre-seeds OUT_FILE with one successful line and one error line.

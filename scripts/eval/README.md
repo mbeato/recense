@@ -225,7 +225,16 @@ npm run eval:longmemeval
 Flags: `--probe` (10-question cost estimate), `--dry-run` (zero API, MockModelProvider),
 `--eval <path>` (override fixture), `--out <path>` (override results file),
 `--concurrency N` (parallel workers, default 4, min 1),
+`--topk N` (top-K nodes retrieved per question, default 10),
 `--retry-errors` (re-attempt question_ids whose existing line has an `error` field).
+
+**Retrieval path:** the harness uses `CandidateRetriever.topk(queryVec, K)` directly —
+brute-force cosine over all embedded, non-tombstoned graph nodes, returning up to K
+candidates. The production hook-injection wrapper (`RetrievalEngine.retrieve`) is NOT
+used: that primitive returns at most one result and requires cosine ≥ 0.7 (the
+`deletedSimilarityThreshold`), which is calibrated for production session-start injection
+and causes nearly every benchmark question to abstain. The topk substrate is the same
+engine machinery, without the single-result gate that serves a different product feature.
 
 #### Rate-limit behavior and concurrency guidance
 

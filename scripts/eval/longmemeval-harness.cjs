@@ -19,6 +19,9 @@
  *   # Concurrency: bound parallel workers (default 4, min 1; raise only after error-free probe)
  *   node scripts/eval/longmemeval-harness.cjs --concurrency 8
  *
+ *   # Top-K: override number of retrieved nodes fed into the answer prompt (default 10)
+ *   node scripts/eval/longmemeval-harness.cjs --topk 20
+ *
  *   # Resume: if OUT_FILE already exists, question_ids already present are skipped
  *   node scripts/eval/longmemeval-harness.cjs --out results/my-run.jsonl
  *   # (re-running appends only the missing questions; error lines also count as done)
@@ -90,6 +93,12 @@ const RETRY_ERRORS   = process.argv.includes('--retry-errors');
 // Start at 4; raise only after a probe completes with 0 errors AND 0 quarantines.
 // At concurrency 8+ the Anthropic API returns 70-80% 429s even with 10 retries.
 const CONCURRENCY = Math.max(1, parseInt(arg('--concurrency', '4'), 10) || 4);
+
+// --topk N: number of top-k nodes to retrieve for the answer-gen prompt (default 10).
+// The production hook-injection wrapper (RetrievalEngine.retrieve) gates on cosine >= 0.7
+// and returns at most 1 result — correct for production injection, wrong for QA benchmarking.
+// Here we use CandidateRetriever.topk directly so every question gets up to K candidates.
+const TOP_K = Math.max(1, parseInt(arg('--topk', '10'), 10) || 10);
 
 // --dry-run defaults to the committed mini fixture; normal/probe default to the downloaded dataset
 const EVAL_DEFAULT = IS_DRY_RUN
@@ -414,15 +423,40 @@ async function runBoundedPool(items, concurrency, fn) {
         // Step 3: embed the question
         const [queryVec] = await embedder.embed([questionText]);
 
-        // Step 4: build retrieval engine and retrieve
-        const engine = buildRetrievalEngine(scratch.db, scratch.dbPath);
-        const retrieval = queryVec
-          ? engine.retrieve(queryVec)
-          : engine.retrieveCueless();
+        // Step 4: retrieve top-K nodes by cosine similarity over the consolidated graph.
+        //
+        // The production hook-injection wrapper (RetrievalEngine.retrieve) is NOT used here.
+        // That primitive returns at most 1 result and requires cosine >= deletedSimilarityThreshold
+        // (0.7) — a gate calibrated for production injection, not benchmark QA. In practice
+        // the gold node often sits at cosine ~0.48 (under the gate), so nearly every question
+        // would abstain on empty context if we used the production path.
+        //
+        // Instead we use CandidateRetriever.topk directly: brute-force cosine over all embedded,
+        // non-tombstoned nodes, returning the top K (--topk flag, default 10). This is the same
+        // substrate the production engine uses internally, without the single-result / threshold
+        // gate that serves a different product feature (hook injection).
+        let retrievedValues;
+        if (queryVec) {
+          const evalRetriever = new CandidateRetriever(scratch.db);
+          const evalStore     = new SemanticStore(scratch.db, realClock, { ...DEFAULT_CONFIG, dbPath: scratch.dbPath });
+          const topkResults   = evalRetriever.topk(queryVec, TOP_K);
+          // CandidateRetriever.topk already excludes tombstoned nodes (SQL: tombstoned = 0).
+          // getNode() resolves each id to its value; skip any id that resolves to null (race guard).
+          retrievedValues = topkResults
+            .map(r => evalStore.getNode(r.id))
+            .filter(n => n !== null)
+            .map(n => n.value);
+        } else {
+          // Cueless fallback: no query vector available (embed failed or unavailable).
+          // Fall back to RetrievalEngine.retrieveCueless() for ranked cue-less retrieval.
+          const engine = buildRetrievalEngine(scratch.db, scratch.dbPath);
+          const retrieval = engine.retrieveCueless();
+          retrievedValues = retrieval.results.map(r => r.value);
+        }
 
         // Step 5: format retrieved nodes for the answer-gen prompt
-        const retrievedText = retrieval.results.length > 0
-          ? retrieval.results.map(r => `- ${r.value}`).join('\n')
+        const retrievedText = retrievedValues.length > 0
+          ? retrievedValues.map(v => `- ${v}`).join('\n')
           : '(no relevant memory entries found)';
 
         // Step 6: generate answer with Haiku (cheap model — GPT-4o reserved for scorer).
