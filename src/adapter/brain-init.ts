@@ -477,8 +477,6 @@ async function main(): Promise<void> {
         '  Seed exited non-zero — check /tmp/brain-memory-seed.log for details.',
       );
     }
-  } else {
-    rl.close();
   }
 
   console.log('\nbrain init complete.\n');
