@@ -423,10 +423,14 @@ const DEFAULT_SALIENCE_CONFIG: SalienceConfig = {
     granola: 0.5,       // meeting transcripts — moderate signal; attributed speaker turns
     gmail: 0.35,        // noisiest channel; must earn confidence through consolidation volume
   },
-  // Per-source consolidation skip threshold (D-60, mirrors consolSkipThresholdAssistant)
+  // Per-source consolidation skip threshold (D-60, mirrors consolSkipThresholdAssistant).
+  // Sources not listed fall back to the per-role default (consolSkipThreshold / consolSkipThresholdAssistant).
   consolSkipThresholdBySource: {
-    gmail: 0.4,    // higher bar: email is lower-signal; aggressive skip saves LLM budget
-    granola: 0.25, // slightly above global 0.2; transcripts denser but noisier than conversation
+    gmail: 0.4,         // higher bar: email is lower-signal; aggressive skip saves LLM budget
+    granola: 0.25,      // slightly above global 0.2; transcripts denser but noisier than conversation
+    obsidian: 0.2,      // curated vault content — same as global default; low skip justified
+    conversation: 0.2,  // general conversation: same as global default; episodic detail extraction
+                        // is the whole point, so don't skip more aggressively than the base rate
   },
 };
 
