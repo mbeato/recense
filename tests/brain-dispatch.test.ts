@@ -24,6 +24,33 @@ const INGEST_LOG = '/tmp/brain-memory-ingest.log';
 // Skip the entire suite when dist/ has not been built (CI guard).
 const SKIP_NO_DIST = !existsSync(BRAIN_JS);
 
+describe.skipIf(SKIP_NO_DIST)('brain dispatcher (12-05): init dispatch regression', () => {
+  it('brain init with non-TTY stdin exits 1 and prints interactive terminal error', () => {
+    // Spawn brain init with stdio:'pipe' (non-TTY stdin). The non-TTY guard added in
+    // 12-05 must fire before any side effects: exit 1 + stderr containing
+    // 'interactive terminal'. This proves the dispatcher reaches brain-init's main()
+    // instead of the pre-fix silent exit-0 no-op (bare require() with require.main guard).
+    const tmpDir = mkdtempSync(join(tmpdir(), 'brain-init-test-'));
+    const throwawayEnv = join(tmpDir, 'sleep.env');
+    try {
+      const r = spawnSync(process.execPath, [BRAIN_JS, 'init'], {
+        stdio: 'pipe',
+        timeout: 15_000,
+        env: {
+          ...process.env,
+          BRAIN_MEMORY_SLEEP_ENV: throwawayEnv, // defense-in-depth: guard exits before any write
+        },
+      });
+      // Must exit 1 (NOT 0 — the pre-fix silent no-op exited 0)
+      expect(r.status).toBe(1);
+      // Must contain the non-TTY guard marker — proves dispatch reached brain-init main()
+      expect(r.stderr.toString()).toContain('interactive terminal');
+    } finally {
+      try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
+    }
+  });
+});
+
 describe.skipIf(SKIP_NO_DIST)('brain dispatcher (H-1): argv[3..] forwarding', () => {
   it('ingest child receives positional source arg and logs Unknown source', () => {
     // Use a unique source name that will definitely trigger the "Unknown source" log.
