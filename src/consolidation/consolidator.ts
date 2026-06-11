@@ -38,7 +38,8 @@ import type { CandidateRetriever } from '../retrieval/topk';
 import { cosineSimF32 } from '../retrieval/topk';
 import type { JudgeRelation } from '../model/judge';
 import type { ModelProvider } from '../model/provider';
-import { parseClaims } from '../model/claim-extractor';
+import type { ExtractedClaim } from '../model/claim-extractor';
+import { extractClaimsWithChunking } from '../model/claim-extractor';
 import { promptForSource } from '../source/extraction-prompts';
 import type { Origin, PendingContradiction, EpisodeRow, EpisodeRole } from '../lib/types';
 import { newId } from '../lib/hash';
@@ -180,19 +181,22 @@ export class Consolidator {
    * T-02-ASYNC and CONSOL-02 are unaffected: all writes still happen in the ordered
    * per-episode loop's synchronous Phase B transaction.
    */
-  private async prefetchExtractions(episodes: EpisodeRow[]): Promise<Map<string, string | Error>> {
-    const results = new Map<string, string | Error>();
+  private async prefetchExtractions(episodes: EpisodeRow[]): Promise<Map<string, ExtractedClaim[] | Error>> {
+    const results = new Map<string, ExtractedClaim[] | Error>();
     let idx = 0;
 
     const workerFn = async (): Promise<void> => {
       while (idx < episodes.length) {
         const episode = episodes[idx++]!;
         try {
-          const text = await this.provider.generate(
-            promptForSource(episode.source) + episode.role + '\n\nDocument content:\n' + episode.content,
-            { maxTokens: 2048 },
+          const promptPrefix =
+            promptForSource(episode.source) + episode.role + '\n\nDocument content:\n';
+          const claims = await extractClaimsWithChunking(
+            this.provider,
+            promptPrefix,
+            episode.content,
           );
-          results.set(episode.id, text);
+          results.set(episode.id, claims);
         } catch (err) {
           results.set(episode.id, err instanceof Error ? err : new Error(String(err)));
         }
@@ -382,17 +386,18 @@ export class Consolidator {
         // applies. Fallback to inline extraction if not in map (defensive — should not occur
         // for eligible episodes, but guards against unexpected eligibility-predicate drift).
         const prefetched = prefetchedExtractions.get(episode.id);
-        let extractText: string;
+        let claims: ExtractedClaim[];
         if (prefetched !== undefined) {
           if (prefetched instanceof Error) throw prefetched;
-          extractText = prefetched;
+          claims = prefetched;
         } else {
-          extractText = await this.provider.generate(
-            promptForSource(episode.source) + episode.role + '\n\nDocument content:\n' + episode.content,
-            { maxTokens: 2048 },
-          );
+          // Inline fallback: prefetch skipped this episode (eligibility drift guard).
+          // extractClaimsWithChunking handles both single and multi-chunk paths,
+          // including the raised EXTRACTION_MAX_TOKENS and salvage parsing.
+          const promptPrefix =
+            promptForSource(episode.source) + episode.role + '\n\nDocument content:\n';
+          claims = await extractClaimsWithChunking(this.provider, promptPrefix, episode.content);
         }
-        const claims = parseClaims(extractText);
 
         // Batch-embed all claim query vectors in ONE call (T-02-ASYNC: Phase A, before any
         // db.transaction). Empty-claims episodes make zero embed calls.

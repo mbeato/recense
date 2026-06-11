@@ -8,6 +8,7 @@
  *   - ExtractedClaim / ClaimExtractor interface (kept for ColdStartSeeder compatibility)
  *   - MockClaimExtractor (kept for ColdStartSeeder tests that have not yet migrated)
  *   - ProviderClaimExtractor (Phase 8, D-77): production extractor wrapping ModelProvider
+ *   - extractClaimsWithChunking (Phase 14): chunked extraction for long content
  *
  * Threat mitigations (carried forward):
  *  - T-04-KEY / T-08-KEY: API key is read from env by the SDK inside DefaultModelProvider;
@@ -63,6 +64,26 @@ Example:
 Document type: `;
 
 // ---------------------------------------------------------------------------
+// Extraction tunables (named constants — never magic numbers at call sites)
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum tokens for a single extraction generate() call.
+ * Raised from 2048 → 8192 to prevent JSON array truncation on long content
+ * (Phase 14 hardening: silent claim loss when response was cut mid-array).
+ */
+export const EXTRACTION_MAX_TOKENS = 8_192;
+
+/**
+ * Character threshold above which content is split into chunks for extraction.
+ * ~24 000 chars ≈ well under the 8K-token API limit per chunk while leaving
+ * headroom for the prompt prefix. Episodes from EpisodicStore are already
+ * capped at maxContentBytes (8 000), so chunking is a forward-compatibility
+ * guard for the seeder path and future content-limit increases.
+ */
+export const EXTRACTION_CHUNK_CHARS = 24_000;
+
+// ---------------------------------------------------------------------------
 // Mock — deterministic, no network; retained for ColdStartSeeder compatibility
 // ---------------------------------------------------------------------------
 
@@ -93,6 +114,34 @@ function extractJsonArray(text: string): string | null {
   return text.slice(start, end + 1);
 }
 
+/**
+ * Validate and coerce one parsed JSON array into ExtractedClaim[].
+ * Filters out items with missing/invalid type or value fields.
+ */
+function parseClaimsFromArray(raw: unknown[]): ExtractedClaim[] {
+  return raw.flatMap((item): ExtractedClaim[] => {
+    if (typeof item !== 'object' || item === null) return [];
+    const obj = item as Record<string, unknown>;
+
+    const type = obj['type'];
+    const value = obj['value'];
+
+    if (
+      (type !== 'entity' && type !== 'fact' && type !== 'schema') ||
+      typeof value !== 'string' ||
+      value.trim() === ''
+    ) {
+      return [];
+    }
+
+    const links = Array.isArray(obj['links'])
+      ? (obj['links'] as unknown[]).filter((l): l is string => typeof l === 'string')
+      : undefined;
+
+    return [{ type: type as NodeType, value: value.trim(), links }];
+  });
+}
+
 // ---------------------------------------------------------------------------
 // ProviderClaimExtractor — production extractor routing through ModelProvider.generate()
 // ---------------------------------------------------------------------------
@@ -101,9 +150,9 @@ function extractJsonArray(text: string): string | null {
  * Production ClaimExtractor that mirrors the Consolidator's extraction call
  * (consolidator.ts:247-251) for use by ColdStartSeeder (Phase 8, D-77).
  *
- * extract(content, sourceType) calls provider.generate with promptForSource(sourceType)
- * prefix + '\n\nDocument content:\n' + content suffix, then parses the response
- * with parseClaims. No episode.role term — seeding has no role context.
+ * extract(content, sourceType) delegates to extractClaimsWithChunking so very
+ * long seeder content is handled correctly without truncation. No episode.role
+ * term — seeding has no role context.
  *
  * Threat mitigation T-08-KEY: the API key is read from env by the SDK inside
  * DefaultModelProvider; it is never logged or passed through this class.
@@ -112,41 +161,157 @@ export class ProviderClaimExtractor implements ClaimExtractor {
   constructor(private readonly provider: ModelProvider) {}
 
   async extract(content: string, sourceType: string): Promise<ExtractedClaim[]> {
-    const prompt = promptForSource(sourceType) + '\n\nDocument content:\n' + content;
-    const text = await this.provider.generate(prompt, { maxTokens: 2048 });
-    return parseClaims(text);
+    const promptPrefix = promptForSource(sourceType) + '\n\nDocument content:\n';
+    return extractClaimsWithChunking(this.provider, promptPrefix, content);
   }
 }
 
 export function parseClaims(text: string): ExtractedClaim[] {
   const json = extractJsonArray(text);
-  if (json === null) return [];
+
+  if (json === null) {
+    // No ']' found — likely a truncated response. Attempt salvage: find the first
+    // '[' and last '}' in the raw text, close the array, and parse the prefix.
+    const startIdx = text.indexOf('[');
+    const lastBrace = text.lastIndexOf('}');
+    if (startIdx !== -1 && lastBrace !== -1 && lastBrace > startIdx) {
+      try {
+        const partial = text.slice(startIdx, lastBrace + 1) + ']';
+        const partialRaw = JSON.parse(partial) as unknown;
+        if (Array.isArray(partialRaw) && partialRaw.length > 0) {
+          const salvaged = parseClaimsFromArray(partialRaw);
+          if (salvaged.length > 0) {
+            console.warn(
+              `[brain-memory] parseClaims: no closing ']' — salvaged ${salvaged.length} claim(s) from truncated array`,
+            );
+            return salvaged;
+          }
+        }
+      } catch {
+        // Salvage parse also failed — nothing recoverable
+      }
+    }
+    return [];
+  }
+
   try {
     const raw = JSON.parse(json) as unknown;
     if (!Array.isArray(raw)) return [];
-
-    return raw.flatMap((item): ExtractedClaim[] => {
-      if (typeof item !== 'object' || item === null) return [];
-      const obj = item as Record<string, unknown>;
-
-      const type = obj['type'];
-      const value = obj['value'];
-
-      if (
-        (type !== 'entity' && type !== 'fact' && type !== 'schema') ||
-        typeof value !== 'string' ||
-        value.trim() === ''
-      ) {
-        return [];
-      }
-
-      const links = Array.isArray(obj['links'])
-        ? (obj['links'] as unknown[]).filter((l): l is string => typeof l === 'string')
-        : undefined;
-
-      return [{ type: type as NodeType, value: value.trim(), links }];
-    });
+    return parseClaimsFromArray(raw);
   } catch {
+    // Full array parse failed. Two sub-cases:
+    // (a) A ']' appeared inside a string value — extractJsonArray cut the span at
+    //     the wrong ']', leaving the trailing objects outside `json`. Salvage by
+    //     searching for the last '}' in the raw text and constructing the prefix.
+    // (b) Other malformed JSON — find the last '}' in the extracted json span.
+
+    // Case (b): try the extracted json span first (fast path for the common case)
+    const lastBraceInJson = json.lastIndexOf('}');
+    if (lastBraceInJson !== -1) {
+      try {
+        const partial = json.slice(0, lastBraceInJson + 1) + ']';
+        const partialRaw = JSON.parse(partial) as unknown;
+        if (Array.isArray(partialRaw) && partialRaw.length > 0) {
+          const salvaged = parseClaimsFromArray(partialRaw);
+          if (salvaged.length > 0) {
+            console.warn(
+              `[brain-memory] parseClaims: malformed JSON array — salvaged ${salvaged.length} claim(s)`,
+            );
+            return salvaged;
+          }
+        }
+      } catch {
+        // json-span salvage failed — fall through to raw-text salvage
+      }
+    }
+
+    // Case (a): raw-text salvage — handles ] inside string values causing wrong span cut
+    const rawStart = text.indexOf('[');
+    const rawLastBrace = text.lastIndexOf('}');
+    if (rawStart !== -1 && rawLastBrace !== -1 && rawLastBrace > rawStart) {
+      try {
+        const partial = text.slice(rawStart, rawLastBrace + 1) + ']';
+        const partialRaw = JSON.parse(partial) as unknown;
+        if (Array.isArray(partialRaw) && partialRaw.length > 0) {
+          const salvaged = parseClaimsFromArray(partialRaw);
+          if (salvaged.length > 0) {
+            console.warn(
+              `[brain-memory] parseClaims: malformed span (] in value?) — salvaged ${salvaged.length} claim(s)`,
+            );
+            return salvaged;
+          }
+        }
+      } catch {
+        // Raw-text salvage also failed — nothing recoverable
+      }
+    }
+
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Chunked extraction helper (exported — used by Consolidator + ProviderClaimExtractor)
+// ---------------------------------------------------------------------------
+
+/**
+ * Split content on newline boundaries, keeping each chunk <= maxChars.
+ * Falls back to a hard split at maxChars when no newline is found in range.
+ */
+function splitIntoChunks(content: string, maxChars: number): string[] {
+  if (content.length <= maxChars) return [content];
+  const chunks: string[] = [];
+  let pos = 0;
+  while (pos < content.length) {
+    if (content.length - pos <= maxChars) {
+      chunks.push(content.slice(pos));
+      break;
+    }
+    let end = pos + maxChars;
+    // Prefer splitting at the last newline within the window to avoid mid-sentence cuts
+    const nlIdx = content.lastIndexOf('\n', end - 1);
+    if (nlIdx > pos) end = nlIdx + 1; // include the newline in the current chunk
+    chunks.push(content.slice(pos, end));
+    pos = end;
+  }
+  return chunks.filter(c => c.trim().length > 0);
+}
+
+/**
+ * Extract claims from content of arbitrary length, chunking when necessary.
+ *
+ * When content.length <= EXTRACTION_CHUNK_CHARS: single generate() call (existing behavior).
+ * When content.length >  EXTRACTION_CHUNK_CHARS: split on paragraph/newline boundaries,
+ *   extract each chunk sequentially with the same prompt prefix, and concatenate claims.
+ *
+ * Per-episode quarantine semantics (H-2) are preserved: any chunk failure propagates as
+ * a thrown Error, quarantining the entire episode without marking it consolidated.
+ *
+ * @param provider      ModelProvider — generate() is called once per chunk.
+ * @param promptPrefix  Prompt text prepended to each chunk (includes role header and
+ *                      "Document content:" label — identical across all chunks).
+ * @param content       Raw episode/document content to extract from (chunked if long).
+ */
+export async function extractClaimsWithChunking(
+  provider: ModelProvider,
+  promptPrefix: string,
+  content: string,
+): Promise<ExtractedClaim[]> {
+  if (content.length <= EXTRACTION_CHUNK_CHARS) {
+    const text = await provider.generate(promptPrefix + content, { maxTokens: EXTRACTION_MAX_TOKENS });
+    return parseClaims(text);
+  }
+
+  console.warn(
+    `[brain-memory] extractClaimsWithChunking: content ${content.length} chars exceeds ` +
+      `EXTRACTION_CHUNK_CHARS (${EXTRACTION_CHUNK_CHARS}) — splitting into chunks`,
+  );
+  const chunks = splitIntoChunks(content, EXTRACTION_CHUNK_CHARS);
+  const allClaims: ExtractedClaim[] = [];
+  for (const chunk of chunks) {
+    // Any chunk failure propagates (H-2: episode quarantine semantics)
+    const text = await provider.generate(promptPrefix + chunk, { maxTokens: EXTRACTION_MAX_TOKENS });
+    allClaims.push(...parseClaims(text));
+  }
+  return allClaims;
 }
