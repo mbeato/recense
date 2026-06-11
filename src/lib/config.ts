@@ -391,28 +391,6 @@ export interface EngineConfig {
     pollIntervalMs: number;
   };
 
-  // --- Phase 7: Telegram channel (primary query surface) ---
-
-  /**
-   * Telegram bot channel configuration (the recommended query surface).
-   * A Telegram bot has its own identity, so — unlike iMessage on a shared Apple ID —
-   * the bot never receives its own replies and there is no self-echo loop.
-   *
-   * telegram.enable: false (default) — off until the self-hoster opts in (fail-closed).
-   *   When both telegram.enable and channel.enable are set, Telegram takes precedence.
-   * telegram.allowlist: [] (default = answers no one). Entries are numeric Telegram
-   *   user IDs (as strings) matched against update.message.from.id. Unlisted senders
-   *   are silently ignored.
-   * telegram.pollIntervalMs: 2000 — getUpdates long-poll cadence; floored at 500ms.
-   *
-   * The bot token is a SECRET and is NOT stored here — it is read from the
-   * BRAIN_MEMORY_TELEGRAM_TOKEN environment variable (sleep.env, chmod 600, gitignored).
-   */
-  telegram: {
-    enable: boolean;
-    allowlist: string[];
-    pollIntervalMs: number;
-  };
 }
 
 /** Default salience weights for the Allocation Gate. Calibrate against real transcripts. */
@@ -520,10 +498,4 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
     pollIntervalMs: 2_000,   // 2s poll cadence — near-instant feel, tunable (D-71)
   },
 
-  // Phase 7: Telegram channel (primary query surface) — token from env, not here
-  telegram: {
-    enable: false,           // default-off fail-closed; set true after populating allowlist
-    allowlist: [],           // [] = answers no one; add your numeric Telegram user ID(s)
-    pollIntervalMs: 2_000,   // 2s getUpdates cadence — near-instant feel, tunable
-  },
 };

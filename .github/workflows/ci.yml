@@ -45,17 +45,3 @@ jobs:
         run: |
           BRAIN_MEMORY_DB=:memory: node dist/src/adapter/brain.js doctor > /tmp/doctor-out.txt 2>&1 || true
           grep -q "brain doctor:" /tmp/doctor-out.txt
-
-      # Guard: telegram committed default must stay fail-closed (DEBT-01 / T-09-22).
-      # Imports the COMPILED DEFAULT_CONFIG — immune to comments and test fixtures
-      # (Pitfall 5 from 09-RESEARCH.md).
-      - name: Guard — telegram must be fail-closed in committed config
-        run: |
-          node -e "
-            const {DEFAULT_CONFIG} = require('./dist/src/lib/config');
-            if (DEFAULT_CONFIG.telegram.enable !== false || DEFAULT_CONFIG.telegram.allowlist.length !== 0) {
-              console.error('FAIL: telegram config is not fail-closed');
-              process.exit(1);
-            }
-            console.log('OK: telegram is fail-closed');
-          "
