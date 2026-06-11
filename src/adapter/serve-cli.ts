@@ -156,20 +156,26 @@ function checkAuth(req: http.IncomingMessage, storedToken: string): boolean {
  */
 function readBody(req: http.IncomingMessage): Promise<string | null> {
   return new Promise((resolve, reject) => {
-    let body = '';
+    // CR-02: accumulate raw buffers and decode ONCE at the end. Decoding each chunk
+    // independently (`chunk.toString('utf8')`) replaces any multibyte UTF-8 sequence
+    // that straddles a TCP chunk boundary with U+FFFD — silently corrupting non-ASCII
+    // content that then parses as valid JSON and gets persisted as a memory episode.
+    const chunks: Buffer[] = [];
     let size = 0;
     let settled = false;
     req.on('data', (chunk: Buffer) => {
       if (settled) return; // discard data after overflow; let socket drain naturally
-      size += chunk.length;
+      size += chunk.length; // byte counting stays on raw chunk length (T-12-07)
       if (size > BODY_SIZE_LIMIT) {
         settled = true;
         resolve(null); // null → 413 from the caller
         return;
       }
-      body += chunk.toString('utf8');
+      chunks.push(chunk);
     });
-    req.on('end', () => { if (!settled) { settled = true; resolve(body); } });
+    req.on('end', () => {
+      if (!settled) { settled = true; resolve(Buffer.concat(chunks).toString('utf8')); }
+    });
     req.on('error', (err) => { if (!settled) { settled = true; reject(err); } });
   });
 }
