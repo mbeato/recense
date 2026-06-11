@@ -8,6 +8,10 @@
 #   BRAIN_JS              — absolute path to the compiled entry point
 #                           (e.g. /home/user/brain-memory/dist/src/adapter/brain.js)
 #   PORT                  — port for brain serve to listen on (default: 7701)
+#   HOST                  — bind address for brain serve (default: 127.0.0.1 — loopback-only,
+#                           the Caddy reverse proxy connects to it locally; set 0.0.0.0 only
+#                           for direct remote exposure without a local reverse proxy, e.g. a
+#                           container publishing the port or a trusted LAN)
 #   HOME                  — absolute path to the user's home directory (e.g. /home/user)
 #
 # Templates use dollar-brace placeholders (VAR syntax) instantiated by the envsubst command in docs/server-mode.md.
@@ -20,7 +24,7 @@ After=network.target
 Type=simple
 User=${YOUR_USER}
 WorkingDirectory=${BRAIN_MEMORY_DIR}
-ExecStart=${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} serve --host 0.0.0.0 --port ${PORT}
+ExecStart=${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} serve --host ${HOST} --port ${PORT}
 # Pin the Node.js binary so better-sqlite3 loads with the matching ABI (NODE_MODULE_VERSION).
 # A bare `node` from /usr/bin resolves a different binary and breaks the native addon on restart.
 Environment=BRAIN_MEMORY_NODE_BIN=${BRAIN_MEMORY_NODE_BIN}

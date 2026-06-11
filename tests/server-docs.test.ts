@@ -38,11 +38,20 @@ describe('scripts/brain-serve.service.template', () => {
     expect(existsSync(TEMPLATE_PATH)).toBe(true);
   });
 
-  it('contains ExecStart= with serve and --host 0.0.0.0', () => {
+  it('contains ExecStart= with serve and --host ${HOST} placeholder (no hard-coded 0.0.0.0)', () => {
     const content = readDoc(TEMPLATE_PATH);
     expect(content).toContain('ExecStart=');
     expect(content).toContain('serve');
-    expect(content).toContain('--host 0.0.0.0');
+    // CR-01: host must be an envsubst placeholder — the guide's export block defaults it
+    // to 127.0.0.1 (loopback-by-default behind Caddy). Hard-coding 0.0.0.0 would expose
+    // plaintext HTTP + the Bearer token to the whole network.
+    expect(content).toContain('--host ${HOST}');
+    expect(content).not.toContain('--host 0.0.0.0');
+  });
+
+  it('guide export block defaults HOST to 127.0.0.1', () => {
+    const guide = readDoc(GUIDE_PATH);
+    expect(guide).toContain('export HOST=127.0.0.1');
   });
 
   it('contains Environment=BRAIN_MEMORY_NODE_BIN= (ABI pin)', () => {

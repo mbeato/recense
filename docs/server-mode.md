@@ -158,6 +158,12 @@ export BRAIN_MEMORY_DIR=/home/user/brain-memory
 export BRAIN_MEMORY_NODE_BIN=$(grep BRAIN_MEMORY_NODE_BIN ~/.config/brain-memory/sleep.env | cut -d= -f2)
 export BRAIN_JS=/home/user/brain-memory/dist/src/adapter/brain.js
 export PORT=7701
+# Bind address for brain serve. 127.0.0.1 keeps the plain-HTTP port loopback-only —
+# Caddy proxies to it locally and outside requests never reach the engine directly.
+# Set HOST=0.0.0.0 ONLY when the port must be reachable without a local reverse proxy
+# (e.g. a container publishing the port, or a trusted LAN). That exposes plaintext
+# HTTP — the Bearer token crosses the network unencrypted — so prefer the Caddy path.
+export HOST=127.0.0.1
 export HOME=/home/user
 ```
 
