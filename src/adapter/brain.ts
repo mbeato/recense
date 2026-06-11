@@ -66,7 +66,6 @@ switch (cmd) {
   case 'snapshot': require('./snapshot-cli'); break;
 
   // ── Forward-declared commands (implemented in later plans) ───────────────────
-  case 'init':   require('./brain-init');   break;
   case 'doctor': require('./brain-doctor'); break;
   case 'viz':    require('./brain-viz-cli'); break;
 
@@ -81,6 +80,10 @@ switch (cmd) {
   // H-1: forward argv[3..] (process.argv.slice(3)) so the child receives all
   // positional args and flags (e.g. `brain ingest gmail` or `brain seed --db /x`).
   // The local `rest = slice(4)` is intentionally NOT used here — it drops argv[3].
+  // brain-init.ts guards execution with `require.main === module` (interactive wizard)
+  // so a bare require() would never invoke main(). Spawn as a subprocess so the guard
+  // fires correctly in the child (consistent with mcp/serve dispatch pattern).
+  case 'init':       spawnScript('brain-init.js',    process.argv.slice(3)); break;
   case 'sleep-pass': spawnScript('sleep-pass-cli.js', process.argv.slice(3)); break;
   case 'seed':       spawnScript('seed-cli.js',       process.argv.slice(3)); break;
   case 'ingest':     spawnScript('ingest-cli.js',     process.argv.slice(3)); break;
