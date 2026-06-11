@@ -195,7 +195,10 @@ const prefix = origin === 'inferred' ? '(inferred) ' : '';
 reply(prefix + answer);
 ```
 
-The Telegram reference client uses this exact pattern.
+The Telegram reference client implements this pattern with an idempotency guard:
+`brain serve` already embeds a trailing ` (inferred)` marker in inferred answers, so
+the client adds the prefix only when the answer does not already end with the marker —
+answers are never double-marked.
 
 **2. Never present `origin: "none"` or `answer: null` as an answer.**
 `{ "answer": null, "origin": "none" }` means the memory has no grounded answer. The

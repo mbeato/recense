@@ -21,8 +21,9 @@
  *     (i) monotonic commit → stale messages (id ≤ cursor) dropped
  *     (j) cold-start baseline committed, backlog NOT answered
  *     (k) null/origin:'none' ask reply → no Telegram send
- *     (l) non-null reply → exactly one send
+ *     (l) non-null reply → exactly one send; origin:'fact' sent verbatim (no marker)
  *     (m) group-chat update from allowlisted sender → no ask, no send, cursor advances
+ *     (n) inferred-origin provenance marking — prefix added, idempotent (no double-mark)
  *     D-04 no-loss: serve returns 503 → cursor NOT advanced, no reply sent
  *     C-1 never-throw: serve error resolves (does not reject) runClientTick
  *   DefaultTelegramTransport:
@@ -485,6 +486,50 @@ describe('runClientTick', () => {
       await runClientTick(cfg, t, mc);
       expect(t.sent).toHaveLength(1);
       expect(t.sent[0]).toEqual({ chatId: 111, text: 'your training load is 42' });
+    } finally {
+      rmFile(sp);
+    }
+  });
+
+  // ── (n) Inferred-origin provenance marking (idempotent) ──
+
+  it('(n) origin:"inferred" without marker → "(inferred) " prefix appended', async () => {
+    const sp = uniqueStatePath();
+    writeStateCursor(sp, '0');
+    // A non-brain-memory server may return inferred answers without the embedded marker.
+    scriptedAskReply = { answer: 'you probably lift on Tuesdays', origin: 'inferred' };
+    const t = new MockTelegramTransport([makeUpdate(10, 111, 'when do i lift?')]);
+    const cfg = makeConfig({
+      allowlist: [ALLOWED_ID],
+      statePath: sp,
+      serveUrl: `http://127.0.0.1:${mockPort}`,
+    });
+    const mc = createMemoryClient(cfg.serveUrl, cfg.serveToken);
+    try {
+      await runClientTick(cfg, t, mc);
+      expect(t.sent).toHaveLength(1);
+      expect(t.sent[0]!.text).toBe('(inferred) you probably lift on Tuesdays');
+    } finally {
+      rmFile(sp);
+    }
+  });
+
+  it('(n) origin:"inferred" already carrying the marker → sent unchanged (no double-mark)', async () => {
+    const sp = uniqueStatePath();
+    writeStateCursor(sp, '0');
+    // brain serve embeds a trailing " (inferred)" in inferred answers (src/responder).
+    scriptedAskReply = { answer: 'you probably lift on Tuesdays (inferred)', origin: 'inferred' };
+    const t = new MockTelegramTransport([makeUpdate(10, 111, 'when do i lift?')]);
+    const cfg = makeConfig({
+      allowlist: [ALLOWED_ID],
+      statePath: sp,
+      serveUrl: `http://127.0.0.1:${mockPort}`,
+    });
+    const mc = createMemoryClient(cfg.serveUrl, cfg.serveToken);
+    try {
+      await runClientTick(cfg, t, mc);
+      expect(t.sent).toHaveLength(1);
+      expect(t.sent[0]!.text).toBe('you probably lift on Tuesdays (inferred)');
     } finally {
       rmFile(sp);
     }

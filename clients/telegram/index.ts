@@ -147,7 +147,8 @@ export async function fetchMessages(
  *  4. Re-read live cursor via readStateCursor; drop messages with id <= cursor (stale).
  *  5. Monotonic commit check — if commitTo <= cursor, skip cursor write.
  *  6. Respond loop — ask() each message; safe-null: only send when answer !== null
- *     && origin !== 'none'.
+ *     && origin !== 'none'. Inferred answers carry a visible '(inferred) ' prefix
+ *     unless the server-composed answer already ends with the marker.
  *  7. D-04 no-loss: if ask() throws (serve unreachable / non-2xx), log + RETURN
  *     WITHOUT committing cursor → message retried next tick, no message loss.
  *  8. Commit cursor via writeStateCursor when not skipCommit.
@@ -211,8 +212,17 @@ export async function runClientTick(
       // Safe-null (origin semantics D-09): only reply when memory has a grounded answer.
       // origin === 'none' or answer === null → stay silent (T-07-04 / D-75).
       if (answer !== null && origin !== 'none') {
+        // Provenance presentation (docs/reference-client.md rule 1): mark inferred
+        // answers visibly so the user knows they are reading an inference, not a
+        // record. Idempotent: brain serve already embeds a trailing " (inferred)"
+        // marker in inferred answers (src/responder), so the prefix is only added
+        // when no marker is present — answers are never double-marked.
+        const text =
+          origin === 'inferred' && !answer.endsWith('(inferred)')
+            ? '(inferred) ' + answer
+            : answer;
         try {
-          await transport.sendMessage(Number(m.sender), answer);
+          await transport.sendMessage(Number(m.sender), text);
         } catch (sendErr) {
           // Send errors do not prevent cursor advance — the message was answered.
           log('send error: ' + String(sendErr));
