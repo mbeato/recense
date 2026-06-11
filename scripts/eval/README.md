@@ -224,15 +224,27 @@ npm run eval:longmemeval
 
 Flags: `--probe` (10-question cost estimate), `--dry-run` (zero API, MockModelProvider),
 `--eval <path>` (override fixture), `--out <path>` (override results file),
-`--concurrency N` (parallel workers, default 8, min 1).
+`--concurrency N` (parallel workers, default 8, min 1),
+`--retry-errors` (re-attempt question_ids whose existing line has an `error` field).
 
 #### Resume
 
 If `--out` already exists, question_ids already present in the file are skipped on re-run.
-Error lines written by a prior run also count as done — re-running will not retry a
-deterministically-failing question. Each completed question is appended to OUT_FILE
-immediately rather than written in one batch at the end, so a killed run loses at most
-the in-flight question(s), not the entire batch.
+By default, error lines written by a prior run also count as done — this prevents silently
+retrying a deterministically-failing question on every resume. Each completed question is
+appended to OUT_FILE immediately so a killed run loses at most the in-flight question(s).
+
+#### Retrying errors
+
+When a run finishes, the summary reports the error-line count on stderr. To re-attempt
+failed questions:
+
+```sh
+node scripts/eval/longmemeval-harness.cjs --out <same-file> --retry-errors
+```
+
+This drops the error lines from `--out`, then appends fresh results. The recorded run
+should finish with **0 errors** before scores are published.
 
 ### CI smoke (zero API)
 
