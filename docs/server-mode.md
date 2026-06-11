@@ -54,10 +54,19 @@ the hourly sleep-pass, and BYO API keys that never touch the repo.
    # ✓ Node ABI: NMV=127, bin=/home/user/.nvm/versions/node/v22.x.x/bin/node
    ```
 
-   Add that exact path to sleep.env:
+   `brain init` (step 3) already wrote `BRAIN_MEMORY_NODE_BIN` into sleep.env. Verify
+   the stored value matches the doctor output:
 
    ```sh
-   echo "BRAIN_MEMORY_NODE_BIN=/home/user/.nvm/versions/node/v22.x.x/bin/node" >> ~/.config/brain-memory/sleep.env
+   grep '^BRAIN_MEMORY_NODE_BIN=' ~/.config/brain-memory/sleep.env
+   ```
+
+   If it differs, edit that line **in place** — do not append a second
+   `BRAIN_MEMORY_NODE_BIN=` line (the systemd section below extracts the value with
+   grep; a duplicate key would yield a two-line value and corrupt the generated unit):
+
+   ```sh
+   sed -i "s|^BRAIN_MEMORY_NODE_BIN=.*|BRAIN_MEMORY_NODE_BIN=/home/user/.nvm/versions/node/v22.x.x/bin/node|" ~/.config/brain-memory/sleep.env
    ```
 
 ---
@@ -155,7 +164,7 @@ Define variables (adapt to your paths):
 ```sh
 export YOUR_USER=max
 export BRAIN_MEMORY_DIR=/home/user/brain-memory
-export BRAIN_MEMORY_NODE_BIN=$(grep BRAIN_MEMORY_NODE_BIN ~/.config/brain-memory/sleep.env | cut -d= -f2)
+export BRAIN_MEMORY_NODE_BIN=$(grep '^BRAIN_MEMORY_NODE_BIN=' ~/.config/brain-memory/sleep.env | tail -1 | cut -d= -f2-)
 export BRAIN_JS=/home/user/brain-memory/dist/src/adapter/brain.js
 export PORT=7701
 # Bind address for brain serve. 127.0.0.1 keeps the plain-HTTP port loopback-only —
