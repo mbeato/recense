@@ -1,0 +1,307 @@
+/**
+ * @module graph
+ * brain-memory viz — data render, in-brain seeding, ForceGraph3D init (shared
+ * geometry, D-05), force tuning, brain containment via onEngineTick (NOT
+ * d3Force setter — Spike 001 landmine), settle-then-pin reveal, and camera
+ * framing.
+ *
+ * Sets on ctx: Graph, hullGroup, pulseGroup.
+ * Reads from ctx (must be set before initGraph by app.js):
+ *   THREE, ForceGraph3D, allNodes, allLinks, idMap, adj, getVisibleNodes,
+ *   brainVol, nodeVisible, linkVis (set by lod.js which runs first),
+ *   selectNode (set by detail.js — guarded lazily on click).
+ */
+
+import * as THREE from 'three';
+import {
+  TYPE_COLOR,
+  TOMBSTONE_COLOR,
+  BRAIN_SCALE,
+  HULL_ROT_X,
+  HULL_ROT_Y,
+  HULL_ROT_Z,
+  CONTAIN_STRENGTH,
+  HOVER_SCALE,
+  nodeRelSize,
+} from './constants.js';
+
+// ─── Shared geometry (D-05) ──────────────────────────────────────────────────
+// A unit sphere shared across ALL nodes; each node gets its own material and
+// scales via mesh.scale.setScalar(radius). Reduces geometry objects from ~1500
+// to exactly 1.
+const _sharedGeo = new THREE.SphereGeometry(1, 8, 8);
+
+// Scratch vectors reused in the hot containment tick (avoids per-tick allocation)
+const _q   = new THREE.Vector3();
+const _inv = new THREE.Matrix4();
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Return the display radius for a node based on its LOD category.
+ * Schema super-nodes scale with member count to form visual anchors.
+ */
+function nodeRadius(node) {
+  if (node.__cat === 'schema') return 3 + Math.sqrt(node.__members || 0) * 0.8;
+  if (node.__cat === 'member') return 2.5;
+  return 2; // haze
+}
+
+/**
+ * Build (or reuse) the THREE.Mesh for a node.
+ * Shared geometry + per-node material for independent color / opacity animation.
+ * Annotates the node with __mesh, __mat, __base, __baseOp, __baseR, __act,
+ * __actGain so trace.js can drive the activation animation.
+ */
+function makeNodeObject(node) {
+  if (node.__mesh) return node.__mesh;
+
+  const radius = nodeRadius(node);
+  const baseColor = node.tombstoned
+    ? new THREE.Color(TOMBSTONE_COLOR)
+    : new THREE.Color(TYPE_COLOR[node.type] ?? TYPE_COLOR.fact);
+
+  const mat = new THREE.MeshBasicMaterial({
+    color: baseColor.clone(),
+    transparent: true,
+    opacity: node.tombstoned ? 0.35 : 0.88,
+    depthWrite: true,
+  });
+
+  const mesh = new THREE.Mesh(_sharedGeo, mat);
+  mesh.scale.setScalar(radius);
+
+  // Annotations used by trace.js for activation animation
+  node.__mesh    = mesh;
+  node.__mat     = mat;
+  node.__base    = baseColor;           // THREE.Color at rest for lerp
+  node.__baseOp  = mat.opacity;         // opacity at rest
+  node.__baseR   = radius;              // world radius (detail.js selection ring)
+  node.__act     = 0;                   // activation level [0,1]
+  node.__actGain = node.__cat === 'schema' ? 1.2 : 1.0; // schemas pulse brighter
+
+  return mesh;
+}
+
+/**
+ * Test whether a point in the hull's local coordinate space (normalised [-1,1]
+ * cube) is inside the brain occupancy grid.
+ */
+function brainOccupied(brainVol, qx, qy, qz) {
+  const R = brainVol.res;
+  const ix = ((qx + 1) * 0.5 * R) | 0;
+  const iy = ((qy + 1) * 0.5 * R) | 0;
+  const iz = ((qz + 1) * 0.5 * R) | 0;
+  if (ix < 0 || iy < 0 || iz < 0 || ix >= R || iy >= R || iz >= R) return false;
+  const i = (iz * R + iy) * R + ix;
+  return !!((brainVol.bits[i >> 3] >> (i & 7)) & 1);
+}
+
+/**
+ * Seed all node positions inside the brain occupancy volume before the layout
+ * simulation starts. Nodes begin inside the hull so the containment force has
+ * less correction to do and the simulation converges faster.
+ */
+function seedNodePositions(allNodes, brainVol) {
+  if (!brainVol) {
+    // Fallback: random scatter in a sphere of radius BRAIN_SCALE * 0.6
+    for (const n of allNodes) {
+      const r     = BRAIN_SCALE * 0.6 * Math.cbrt(Math.random());
+      const theta = Math.random() * Math.PI * 2;
+      const phi   = Math.acos(2 * Math.random() - 1);
+      n.x = r * Math.sin(phi) * Math.cos(theta);
+      n.y = r * Math.sin(phi) * Math.sin(theta);
+      n.z = r * Math.cos(phi);
+    }
+    return;
+  }
+
+  // Build a rotation matrix matching the hull group orientation so sampled
+  // occupancy-grid points map to the same world space as the hull mesh.
+  const euler  = new THREE.Euler(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
+  const rotMat = new THREE.Matrix4().makeRotationFromEuler(euler);
+
+  const R    = brainVol.res;
+  const bits = brainVol.bits;
+
+  // Collect occupied voxel centres (normalised to [-1,1] cube)
+  const occupied = [];
+  for (let iz = 0; iz < R; iz++) {
+    for (let iy = 0; iy < R; iy++) {
+      for (let ix = 0; ix < R; ix++) {
+        const idx = (iz * R + iy) * R + ix;
+        if (!((bits[idx >> 3] >> (idx & 7)) & 1)) continue;
+        occupied.push([
+          (ix / R) * 2 - 1,
+          (iy / R) * 2 - 1,
+          (iz / R) * 2 - 1,
+        ]);
+      }
+    }
+  }
+
+  if (!occupied.length) { seedNodePositions(allNodes, null); return; }
+
+  const v = new THREE.Vector3();
+  for (const n of allNodes) {
+    const [lx, ly, lz] = occupied[(Math.random() * occupied.length) | 0];
+    v.set(lx, ly, lz)
+     .applyMatrix4(rotMat)
+     .multiplyScalar(BRAIN_SCALE);
+    // Small jitter so co-located voxels diverge
+    n.x = v.x + (Math.random() - 0.5) * 4;
+    n.y = v.y + (Math.random() - 0.5) * 4;
+    n.z = v.z + (Math.random() - 0.5) * 4;
+  }
+}
+
+// ─── Public API ──────────────────────────────────────────────────────────────
+
+/**
+ * Initialise the ForceGraph3D instance and wire all rendering, containment,
+ * and reveal behaviour onto ctx.
+ *
+ * Call order (enforced by app.js, Plan 07):
+ *   initLod(ctx)   → sets ctx.nodeVisible, ctx.linkVis, ctx.expanded, …
+ *   initGraph(ctx) → sets ctx.Graph, ctx.hullGroup, ctx.pulseGroup
+ *
+ * @param {import('./constants.js').Ctx} ctx
+ */
+export function initGraph(ctx) {
+  const { allNodes, allLinks, getVisibleNodes, brainVol } = ctx;
+
+  // Seed positions so layout starts inside the brain volume
+  seedNodePositions(allNodes, brainVol);
+
+  // ── ForceGraph3D init ──────────────────────────────────────────────────
+  // nodeVisibility / linkVisibility read ctx lazily so lod.js callbacks are
+  // picked up even if initLod ran first and set them synchronously.
+  const Graph = ctx.ForceGraph3D()(document.getElementById('graph'))
+    .backgroundColor('#060a0f')
+    .graphData({ nodes: getVisibleNodes(), links: allLinks })
+    .nodeRelSize(nodeRelSize)
+    .nodeThreeObject(makeNodeObject)
+    .nodeVisibility(n  => ctx.nodeVisible ? ctx.nodeVisible(n)  : true)
+    .linkVisibility(l  => ctx.linkVis     ? ctx.linkVis(l)      : true)
+    .linkColor(()      => 'rgba(80,120,160,0.45)')
+    .linkWidth(0.8)
+    .onNodeHover(node  => {
+      const tooltipEl = document.getElementById('tooltip');
+      if (!tooltipEl) return;
+
+      if (!node) {
+        tooltipEl.style.display = 'none';
+        if (ctx._hoveredNode && ctx._hoveredNode.__mesh) {
+          ctx._hoveredNode.__mesh.scale.setScalar(ctx._hoveredNode.__baseR || 2);
+        }
+        ctx._hoveredNode = null;
+        return;
+      }
+
+      // Reset previously hovered scale
+      if (ctx._hoveredNode && ctx._hoveredNode !== node && ctx._hoveredNode.__mesh) {
+        ctx._hoveredNode.__mesh.scale.setScalar(ctx._hoveredNode.__baseR || 2);
+      }
+      ctx._hoveredNode = node;
+      if (node.__mesh && node.__baseR) {
+        node.__mesh.scale.setScalar(node.__baseR * HOVER_SCALE);
+      }
+
+      // Tooltip text: textContent only — NEVER innerHTML with node data (T-10-12)
+      tooltipEl.textContent    = (node.value || node.id || '').slice(0, 120);
+      tooltipEl.style.display  = 'block';
+    })
+    .onNodeClick(node  => {
+      if (!node) return;
+      if (node.__cat === 'schema') {
+        // Schema drill-in: toggle the expanded set then refresh
+        if (ctx.expanded) {
+          if (ctx.expanded.has(node.id)) {
+            ctx.expanded.delete(node.id);
+          } else {
+            ctx.expanded.add(node.id);
+          }
+          Graph.graphData({ nodes: getVisibleNodes(), links: allLinks });
+          if (ctx.revealTrace) ctx.revealTrace();
+        }
+        return; // schema clicks: drill-in only, no detail panel
+      }
+      // Non-schema: open detail panel (detail.js sets ctx.selectNode)
+      if (ctx.selectNode) ctx.selectNode(node);
+    });
+
+  ctx.Graph = Graph;
+
+  // ── Scene groups ──────────────────────────────────────────────────────
+  const hullGroup  = new THREE.Group();
+  const pulseGroup = new THREE.Group();
+  Graph.scene().add(hullGroup);
+  Graph.scene().add(pulseGroup);
+  ctx.hullGroup  = hullGroup;
+  ctx.pulseGroup = pulseGroup;
+
+  // ── Force tuning ──────────────────────────────────────────────────────
+  const chargeForce = Graph.d3Force('charge');
+  if (chargeForce) chargeForce.strength(-15);
+  const linkForce = Graph.d3Force('link');
+  if (linkForce) linkForce.distance(l => l.kind === 'abstracts' ? 16 : 22);
+  Graph.d3ReheatSimulation();
+
+  // ── Brain containment via onEngineTick ────────────────────────────────
+  // CRITICAL: do NOT pass a two-arg custom containment force to d3Force().
+  // The two-arg setter re-registers forces in a way that nulls 3d-force-graph's
+  // internal layout reference. The next tick throws:
+  //   "Cannot read properties of undefined (reading 'tick')"
+  // → canvas goes black. Always use onEngineTick for custom per-tick forces.
+  // (Spike 001 landmine; see RESEARCH.md Pattern 7.)
+  function brainContainment() {
+    const nodes = Graph.graphData().nodes;
+    if (!brainVol || !nodes.length) return;
+
+    // Compute graph centroid
+    let cx = 0, cy = 0, cz = 0;
+    for (const n of nodes) { cx += n.x || 0; cy += n.y || 0; cz += n.z || 0; }
+    cx /= nodes.length; cy /= nodes.length; cz /= nodes.length;
+
+    // Align hullGroup so the occupancy test is in hull-local space
+    hullGroup.position.set(cx, cy, cz);
+    hullGroup.updateMatrixWorld(true);
+    _inv.copy(hullGroup.matrixWorld).invert();
+
+    for (const n of nodes) {
+      _q.set(n.x || 0, n.y || 0, n.z || 0).applyMatrix4(_inv);
+      if (!brainOccupied(brainVol, _q.x, _q.y, _q.z)) {
+        n.vx = (n.vx || 0) + (cx - (n.x || 0)) * CONTAIN_STRENGTH;
+        n.vy = (n.vy || 0) + (cy - (n.y || 0)) * CONTAIN_STRENGTH;
+        n.vz = (n.vz || 0) + (cz - (n.z || 0)) * CONTAIN_STRENGTH;
+      }
+    }
+  }
+
+  Graph.onEngineTick(brainContainment);
+
+  // ── Settle-then-pin reveal ────────────────────────────────────────────
+  // The canvas starts hidden (opacity 0). Once the simulation cools (or
+  // 200 ms elapses — primary path since onEngineStop is unreliable/slow),
+  // pin every node's fx/fy/fz at its settled position then fade in.
+  Graph.cooldownTicks(12);
+  const graphEl = document.getElementById('graph');
+  graphEl.style.opacity = '0'; // hidden — no transition yet
+
+  let _settled = false;
+  function revealSettled() {
+    if (_settled) return;
+    _settled = true;
+    for (const n of allNodes) {
+      if (n.x != null) { n.fx = n.x; n.fy = n.y; n.fz = n.z; }
+    }
+    graphEl.style.transition = 'opacity 0.35s ease'; // fade IN only, never out
+    graphEl.style.opacity    = '1';
+  }
+
+  Graph.onEngineStop(revealSettled);
+  setTimeout(revealSettled, 200); // primary path (onEngineStop is unreliable/slow)
+
+  // ── Camera framing ────────────────────────────────────────────────────
+  Graph.cameraPosition({ z: BRAIN_SCALE * 2.2 });
+}
