@@ -113,6 +113,14 @@ interface ClaimDecision {
   episodeRole: EpisodeRole;
 }
 
+/** Claim that escalated to provider.judge — carries its slot index for ordered reassembly. */
+interface PendingJudge {
+  slotIdx: number;
+  claimValue: string;
+  claimType: string;
+  candidates: Array<{ id: string; value: string }>;
+}
+
 // ---------------------------------------------------------------------------
 // Consolidator
 // ---------------------------------------------------------------------------
@@ -385,7 +393,6 @@ export class Consolidator {
           );
         }
         const claims = parseClaims(extractText);
-        const decisions: ClaimDecision[] = [];
 
         // Batch-embed all claim query vectors in ONE call (T-02-ASYNC: Phase A, before any
         // db.transaction). Empty-claims episodes make zero embed calls.
@@ -394,6 +401,20 @@ export class Consolidator {
           ? await this.provider.embed(claimValues)
           : [];
 
+        // ── Concurrent judge calls within one episode ────────────────────
+        // Sync work per claim (topk retrieval, D-17 fast-path exact-match, UPDATE-02
+        // low-cosine auto-unrelated) reads pre-episode graph state and runs in claim order.
+        // Claims that escalate to provider.judge are collected and awaited with Promise.all
+        // (claims within one episode are independent — they all see the same graph snapshot).
+        // Decisions are reassembled in original claim order via indexed slots.
+        // If any judge call rejects, Promise.all rejects and the episode is quarantined (H-2).
+        // EPISODE ORDER IS SEMANTICS: this optimization is intra-episode only; the outer loop
+        // still processes episodes sequentially and all writes happen in Phase B order.
+
+        // Pre-allocate slots so we can fill in order after concurrent judge resolution.
+        const decisionSlots: (ClaimDecision | null)[] = new Array(claims.length).fill(null);
+        const pendingJudges: PendingJudge[] = [];
+
         for (let claimIdx = 0; claimIdx < claims.length; claimIdx++) {
           const claim = claims[claimIdx]!;
           const queryVec = claimVecs[claimIdx];
@@ -401,48 +422,77 @@ export class Consolidator {
 
           const candidates = this.retriever.topk(queryVec, this.config.candidateK);
 
-          let relation: JudgeRelation;
-          let bestCandidateId: string | null = null;
-          let magnitude = 0; // only meaningful for 'contradict' (D-15)
-
           // D-17: zero-inference fast path — normalized exact-match → confirm, no judge call
           const fastPathCandidate = candidates.find(
             c => normalizeValue(this.store.getNode(c.id)?.value ?? '') === normalizeValue(claim.value)
           );
           if (fastPathCandidate) {
-            relation = 'confirm';
-            bestCandidateId = fastPathCandidate.id;
+            decisionSlots[claimIdx] = {
+              claimValue: claim.value,
+              claimType: claim.type,
+              claimOrigin,
+              relation: 'confirm',
+              bestCandidateId: fastPathCandidate.id,
+              episodeSessionId: episode.session_id,
+              magnitude: 0,
+              episodeSourceInferenceId: episode.source_inference_id,
+              episodeRole: episode.role,
+            };
           } else if (
             candidates.length === 0 ||
             candidates[0]!.score < this.config.unrelatedSimilarityThreshold
           ) {
             // UPDATE-02 safe-direction: low cosine → auto-unrelated, no judge call
-            relation = 'unrelated';
-            bestCandidateId = null;
+            decisionSlots[claimIdx] = {
+              claimValue: claim.value,
+              claimType: claim.type,
+              claimOrigin,
+              relation: 'unrelated',
+              bestCandidateId: null,
+              episodeSessionId: episode.session_id,
+              magnitude: 0,
+              episodeSourceInferenceId: episode.source_inference_id,
+              episodeRole: episode.role,
+            };
           } else {
             // Escalate to judge — read candidate values from graph (UPDATE-01 "current value")
-            const candidatesWithValues = candidates.map(c => ({
-              id: c.id,
-              value: this.store.getNode(c.id)?.value ?? '',
-            }));
-            const verdict = await this.provider.judge(claim.value, candidatesWithValues);
-            relation = verdict.relation;
-            bestCandidateId = verdict.best_candidate_id;
-            magnitude = verdict.magnitude;
+            pendingJudges.push({
+              slotIdx: claimIdx,
+              claimValue: claim.value,
+              claimType: claim.type,
+              candidates: candidates.map(c => ({
+                id: c.id,
+                value: this.store.getNode(c.id)?.value ?? '',
+              })),
+            });
           }
+        }
 
-          decisions.push({
-            claimValue: claim.value,
-            claimType: claim.type,
+        // Await all judge calls for this episode concurrently (Promise.all — if any rejects,
+        // the whole episode is caught by the try/catch and quarantined per H-2).
+        const judgeVerdicts = await Promise.all(
+          pendingJudges.map(p => this.provider.judge(p.claimValue, p.candidates))
+        );
+
+        // Fill judge-escalated slots in original claim order
+        for (let i = 0; i < pendingJudges.length; i++) {
+          const { slotIdx, claimValue, claimType } = pendingJudges[i]!;
+          const verdict = judgeVerdicts[i]!;
+          decisionSlots[slotIdx] = {
+            claimValue,
+            claimType,
             claimOrigin,
-            relation,
-            bestCandidateId,
+            relation: verdict.relation,
+            bestCandidateId: verdict.best_candidate_id,
             episodeSessionId: episode.session_id,
-            magnitude,
+            magnitude: verdict.magnitude,
             episodeSourceInferenceId: episode.source_inference_id,
             episodeRole: episode.role,
-          });
+          };
         }
+
+        // Filter null slots (claims skipped due to missing queryVec)
+        const decisions: ClaimDecision[] = decisionSlots.filter((d): d is ClaimDecision => d !== null);
 
         // ── Per-episode Phase B: synchronous write — one transaction (CONSOL-02) ──
         // All decisions for this episode + markConsolidated in ONE atomic transaction.
