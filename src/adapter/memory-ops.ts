@@ -46,8 +46,13 @@ const LOG_PATH = '/tmp/brain-memory-ops.log';
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] memory-ops: ${msg}\n`);
 
-/** T-12-02 / T-11-02: bound the query before embedding (mirrors HybridResponder). */
-const MAX_QUERY_BYTES = 4_000;
+/**
+ * T-12-02 / T-11-02: bound the query before embedding (mirrors HybridResponder).
+ * IN-03: String.prototype.slice counts UTF-16 code units, NOT bytes — a fully
+ * multibyte query can reach ~4x this in UTF-8 bytes at the embedding API. The
+ * looser bound is accepted; the name says CHARS so it is not mistaken for a byte cap.
+ */
+const MAX_QUERY_CHARS = 4_000;
 
 /** T-11-03: bound memory_add content at the handler boundary (DoS cap). */
 const MAX_CONTENT_CHARS = 8_000;
@@ -222,7 +227,7 @@ export function wireMemoryEngine(
 
   async function search(query: string): Promise<SearchRow[]> {
     // T-11-02/T-12-02: query is data only — bounded, embedded, never interpolated.
-    const bounded = query.slice(0, MAX_QUERY_BYTES);
+    const bounded = query.slice(0, MAX_QUERY_CHARS);
     // A1: one embedding call, zero generation calls (D-08). LLM-free read path.
     const [cueVec] = await provider.embed([bounded]);
     if (!cueVec) return [];
@@ -279,7 +284,7 @@ export function wireMemoryEngine(
 
   async function ask(query: string): Promise<{ answer: string | null; origin: 'fact' | 'inferred' | 'none' }> {
     // T-11-02: query is data only — bounded before any LLM call.
-    const bounded = query.slice(0, MAX_QUERY_BYTES);
+    const bounded = query.slice(0, MAX_QUERY_CHARS);
 
     // The responder's facts-first branch appends ONE origin='inferred', salience=0
     // episode — that is a write, so the single-writer lock is required.

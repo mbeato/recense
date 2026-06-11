@@ -36,7 +36,7 @@
  *
  * Threat mitigations:
  *  - T-11-02: query treated as data only (embedded, never shell-interpolated or eval'd);
- *    bounded to MAX_QUERY_BYTES before embedding (mirrors HybridResponder).
+ *    bounded to MAX_QUERY_CHARS before embedding (mirrors HybridResponder).
  *  - T-11-04: resolveDbPath(..., { fallbackToDefault: false }) — no silent default DB.
  *  - T-11-06: handlers catch errors and return { isError: true, content } text; raw
  *    errors/stack traces never cross the transport.
