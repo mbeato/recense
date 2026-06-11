@@ -163,8 +163,11 @@ export function checkScheduler(): CheckResult {
     }
     return fail('com.brain-memory.sleep-pass not registered — run `brain scheduler install`');
   }
-  // Linux: foreground process only (D-92 honesty principle)
-  const result = spawnSync('pgrep', ['-f', 'brain scheduler run'], { stdio: 'pipe' });
+  // Linux: foreground process only (D-92 honesty principle).
+  // WR-04: tolerate the compiled entry point — the systemd unit runs
+  // `node .../brain.js scheduler run`, so the pattern must match both the npm bin
+  // shim (`brain scheduler run`) and the direct invocation (`brain.js scheduler run`).
+  const result = spawnSync('pgrep', ['-f', 'brain(\\.js)? scheduler run'], { stdio: 'pipe' });
   if (result.status === 0) {
     return pass('brain scheduler run process detected');
   }
