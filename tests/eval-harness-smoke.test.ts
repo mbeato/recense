@@ -96,6 +96,7 @@ interface LongMemEvalQuestion {
   question: string;
   answer: string;
   question_date?: string;
+  haystack_dates?: string[];
   haystack_sessions: Array<Array<{ role: string; content: string; has_answer?: boolean }>>;
   answer_session_ids?: string[];
 }
@@ -105,11 +106,16 @@ function loadFixture(): LongMemEvalQuestion[] {
   return lines.map(l => JSON.parse(l) as LongMemEvalQuestion);
 }
 
-/** Concatenate all turns in a session into a single content string. */
-function formatSession(session: Array<{ role: string; content: string }>): string {
-  return session
+/**
+ * Concatenate all turns in a session into a single content string.
+ * Mirrors the harness formatSession(session, date) — prefixes with
+ * "[Session date: {date}]" when a date is provided.
+ */
+function formatSession(session: Array<{ role: string; content: string }>, date?: string): string {
+  const turns = session
     .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
     .join('\n');
+  return date ? `[Session date: ${date}]\n${turns}` : turns;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +129,8 @@ describe('eval-harness-smoke', () => {
   it('mini fixture loads and has correct schema fields on every question', () => {
     const questions = loadFixture();
 
-    expect(questions.length).toBeGreaterThanOrEqual(2);
+    // Fixture now has 3 questions: mini-001, mini-002, mini-003_abs
+    expect(questions.length).toBeGreaterThanOrEqual(3);
 
     for (const q of questions) {
       expect(q).toHaveProperty('question_id');
@@ -145,6 +152,10 @@ describe('eval-harness-smoke', () => {
       expect(Array.isArray(q.haystack_sessions)).toBe(true);
       expect(q.haystack_sessions.length).toBeGreaterThanOrEqual(1);
 
+      // haystack_dates must be present and parallel to haystack_sessions
+      expect(Array.isArray(q.haystack_dates)).toBe(true);
+      expect(q.haystack_dates!.length).toBe(q.haystack_sessions.length);
+
       // Each session is an array of turns
       for (const session of q.haystack_sessions) {
         expect(Array.isArray(session)).toBe(true);
@@ -158,6 +169,10 @@ describe('eval-harness-smoke', () => {
     // At least one knowledge-update question (EVAL-01 positioning requirement)
     const kuCount = questions.filter(q => q.question_type === 'knowledge-update').length;
     expect(kuCount).toBeGreaterThanOrEqual(1);
+
+    // At least one abstention question (mini-003_abs covers scorer routing)
+    const absCount = questions.filter(q => q.question_id.endsWith('_abs')).length;
+    expect(absCount).toBeGreaterThanOrEqual(1);
   });
 
   // ── Test 2: Scratch-DB init + multi-session episode append ────────────────
@@ -301,8 +316,95 @@ describe('eval-harness-smoke', () => {
       const ids = allLines.map(l => { try { return JSON.parse(l).question_id; } catch { return null; } });
       expect(ids).toContain('mini-001');
 
-      // At least one new question must have been processed (mini fixture has ≥2 questions)
+      // At least one new question must have been processed (mini fixture now has 3 questions)
       expect(allLines.length).toBeGreaterThan(1);
+    } finally {
+      try { fs.unlinkSync(OUT); } catch {}
+    }
+  });
+
+  // ── Test 5: Date prefix appears in appended episode content ──────────────
+  //
+  // When haystack_dates are present, formatSession() must prefix the episode
+  // content with "[Session date: {date}]". Verified via scratch-DB episode row.
+
+  it('date prefix from haystack_dates appears in appended episode content', () => {
+    const h = makeHarness();
+    const questions = loadFixture();
+
+    const q = questions.find(qn => qn.question_id === 'mini-001') ?? questions[0];
+    if (!q) throw new Error('Fixture returned no questions');
+
+    const firstSession = q.haystack_sessions[0];
+    if (!firstSession) throw new Error('Expected at least one session');
+    const dateStr = (q.haystack_dates ?? [])[0] ?? '';
+
+    // Append with date prefix (mirrors harness formatSession behaviour)
+    h.episodes.append({
+      content:    formatSession(firstSession as Array<{ role: string; content: string }>, dateStr),
+      origin:     'observed',
+      salience:   1.0,
+      hard_keep:  1,
+      role:       'user',
+      session_id: `smoke-date-prefix-${q.question_id}-s0`,
+    });
+
+    const rows = h.db.prepare('SELECT content FROM episode').all() as Array<{ content: string }>;
+    expect(rows).toHaveLength(1);
+
+    const firstRow = rows[0];
+    if (!firstRow) throw new Error('Expected episode row');
+
+    // Content must start with the date prefix when dateStr is present
+    if (dateStr) {
+      expect(firstRow.content).toContain(`[Session date: ${dateStr}]`);
+    }
+
+    // Content must also contain the actual turn text
+    expect(firstRow.content).toContain('Portland');
+  });
+
+  // ── Test 6: Resume + --retry-errors — error lines are re-attempted ────────
+  //
+  // Pre-seeds OUT_FILE with one successful line and one error line.
+  // Verifies that --retry-errors drops the error line and retries that question_id.
+
+  it('harness --dry-run --retry-errors re-attempts error-bearing question_ids', () => {
+    const OUT = path.join(os.tmpdir(), `harness-retry-test-${Date.now()}-${process.pid}.jsonl`);
+
+    // Pre-seed: mini-001 done successfully, mini-002 had an error
+    const doneLine  = JSON.stringify({ question_id: 'mini-001', question_type: 'single-session-user', hypothesis: 'Portland' });
+    const errorLine = JSON.stringify({ question_id: 'mini-002', question_type: 'knowledge-update', error: 'simulated-prior-error' });
+    fs.writeFileSync(OUT, doneLine + '\n' + errorLine + '\n');
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.resolve(__dirname, '../scripts/eval/longmemeval-harness.cjs'),
+          '--dry-run',
+          '--out', OUT,
+          '--eval', FIXTURE_PATH,
+          '--retry-errors',
+        ],
+        { encoding: 'utf8', cwd: path.resolve(__dirname, '..'), timeout: 30_000 },
+      );
+
+      expect(result.status).toBe(0);
+      // Harness must log that it dropped error lines for retry
+      expect(result.stdout).toContain('retry');
+
+      const allLines = fs.readFileSync(OUT, 'utf8').split('\n').filter(l => l.trim());
+      const parsed = allLines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+
+      // mini-001 must still be present (was not an error — not retried)
+      const ids = parsed.map((r: { question_id?: string } | null) => r?.question_id);
+      expect(ids).toContain('mini-001');
+
+      // mini-002 must appear exactly once with a hypothesis (not an error), since it was retried
+      const mini002 = parsed.filter((r: { question_id?: string } | null) => r?.question_id === 'mini-002');
+      expect(mini002).toHaveLength(1);
+      expect((mini002[0] as { error?: string }).error).toBeUndefined();
     } finally {
       try { fs.unlinkSync(OUT); } catch {}
     }

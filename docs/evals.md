@@ -16,11 +16,11 @@ We run LongMemEval-S (the standard published split), not a custom subset, so the
 
 ### Methodology
 
-1. **Ingest** — each test case's conversation sessions are fed into a fresh scratch database (isolated per-question, never touching the live `brain.db`) as episodic writes.
+1. **Ingest** — each test case's conversation sessions are fed into a fresh scratch database (isolated per-question, never touching the live `brain.db`) as episodic writes. Each session is prefixed with its date from `haystack_dates` (e.g. `[Session date: 2023/05/20 (Sat) 02:21]`) and the episode `ts` is set to the parsed session date, so the engine's temporal ordering reflects the historical conversation timeline. This is critical for temporal-reasoning and knowledge-update question types.
 2. **Sleep pass** — `runConsolidation` is called programmatically after ingestion. This triggers the same PE-gated belief-correction and schema-induction code the hourly launchd job runs.
 3. **Retrieve** — after consolidation, the question is answered via the LLM-free retrieval path (spreading activation over graph + vector similarity).
-4. **Answer generation** — a compose call produces a natural-language answer from the retrieved nodes.
-5. **Scoring** — GPT-4o-2024-08-06 judges each answer binary (correct / incorrect) using the standard LongMemEval evaluation prompt. The judge is the same model the benchmark paper used.
+4. **Answer generation** — the answer prompt is structurally equivalent to the official LongMemEval QA template (`src/generation/run_generation.py`, non-CoT form), adapted for brain-memory's memory-node retrieval format (retrieved graph nodes rather than raw session history). The `Current Date` field is populated from `question_date`. The prompt ends with an open-ended `Answer:` (no "just the factual answer" constraint) so the model can respond "I don't have information about that" for abstention questions. **This is an equivalent, not a verbatim port** — the official template receives raw session text; ours receives retrieved memory nodes.
+5. **Scoring** — GPT-4o-2024-08-06 judges each answer binary (correct / incorrect) using the per-question-type judge prompts ported verbatim from the official LongMemEval `src/evaluation/evaluate_qa.py` (`get_anscheck_prompt`). Four distinct templates are used: temporal-reasoning (off-by-one leniency for day counts), knowledge-update (accepts "previous information along with an updated answer"), single-session-preference (rubric-based), and a default template for all other types. Questions whose `question_id` ends in `_abs` use the abstention template regardless of their `question_type`, matching the official scoring protocol. The judge model is the same model the benchmark paper used.
 
 The harness is `scripts/eval/longmemeval-harness.cjs`. Results are committed as JSON under `scripts/eval/results/`.
 
