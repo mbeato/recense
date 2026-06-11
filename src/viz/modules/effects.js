@@ -13,7 +13,7 @@
  *
  * Threat mitigations:
  *   T-10-10  imports only '../vendor/addons/...' and 'three' — no CDN
- *   T-15-DBLCOMP  uses Graph.postProcessingComposer() — never new EffectComposer
+ *   T-15-DBLCOMP  uses Graph.postProcessingComposer() — never constructs a second EffectComposer
  *   T-15-OCCLUDE  depthWrite:false + AdditiveBlending — hull never masks nodes
  *   T-04-FAKEFIRE idle path animates rimOpacity only — no node/edge activity
  */
@@ -120,8 +120,8 @@ export function initEffects(ctx) {
 
   // ── UnrealBloomPass (D-01 cinematic glow) ──────────────────────────────────
   //
-  // Uses Graph.postProcessingComposer() — NEVER new EffectComposer (Pitfall 2 /
-  // T-15-DBLCOMP). The composer already contains a RenderPass added by
+  // Uses Graph.postProcessingComposer() — do NOT construct a second EffectComposer
+  // (Pitfall 2 / T-15-DBLCOMP). The composer already contains a RenderPass added by
   // 3d-force-graph. We append:
   //   [RenderPass (auto)] → [UnrealBloomPass] → [OutputPass] (last = sRGB)
   //
