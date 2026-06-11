@@ -16,8 +16,8 @@
  *   # Dry-run mode: zero API calls, validates fixture parsing + scratch DB
  *   node scripts/eval/longmemeval-harness.cjs --dry-run
  *
- *   # Concurrency: bound parallel workers (default 8, min 1)
- *   node scripts/eval/longmemeval-harness.cjs --concurrency 16
+ *   # Concurrency: bound parallel workers (default 4, min 1; raise only after error-free probe)
+ *   node scripts/eval/longmemeval-harness.cjs --concurrency 8
  *
  *   # Resume: if OUT_FILE already exists, question_ids already present are skipped
  *   node scripts/eval/longmemeval-harness.cjs --out results/my-run.jsonl
@@ -46,6 +46,14 @@ const os   = require('os');
 
 // npm packages (already in package.json)
 const Anthropic = require('@anthropic-ai/sdk');
+
+// ---- SDK retry budget (must be set BEFORE loading dist modules) -------------
+// anthropic-client.ts reads BRAIN_MEMORY_SDK_MAX_RETRIES at module-load time.
+// 10 retries + SDK-native retry-after backoff = self-throttling under 429 load.
+// Set only if the caller has not already overridden it.
+if (!process.env.BRAIN_MEMORY_SDK_MAX_RETRIES) {
+  process.env.BRAIN_MEMORY_SDK_MAX_RETRIES = '10';
+}
 
 // Engine internals — require dist (run `npm run build` before this script).
 // Paths are relative to the repo root because this script runs via `node scripts/eval/...`
@@ -321,7 +329,12 @@ async function runBoundedPool(items, concurrency, fn) {
     : new OpenAIEmbedder(DEFAULT_CONFIG.openaiEmbedModel, DEFAULT_CONFIG.embeddingDimensions);
 
   // ---- anthropic client (real mode only) ------------------------------------
-  const anthropicClient = IS_DRY_RUN ? null : new Anthropic();
+  // Pass maxRetries explicitly so the answer-gen client also benefits from the
+  // higher retry budget set above (SDK reads env at construction time only for
+  // the Anthropic SDK default, but we pass it here to be explicit and consistent
+  // with what the dist modules use via SDK_MAX_RETRIES).
+  const harnessMaxRetries = Math.max(1, parseInt(process.env.BRAIN_MEMORY_SDK_MAX_RETRIES || '10', 10) || 10);
+  const anthropicClient = IS_DRY_RUN ? null : new Anthropic({ maxRetries: harnessMaxRetries });
 
   // ---- telemetry state (shared across workers, safe: += after await) --------
   let completedCount = 0;

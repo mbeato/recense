@@ -39,9 +39,20 @@ export type AnthropicLike = {
  * 60 s + 2 retries = at most ~3 min worst-case, well within the stale window.
  *
  * Applied to: Anthropic SDK, AnthropicVertex SDK, OpenAI SDK (embedder + local Ollama).
+ *
+ * SDK_MAX_RETRIES is env-overridable via BRAIN_MEMORY_SDK_MAX_RETRIES.
+ * The eval harness sets it to 10 before loading dist modules so that engine-level
+ * 429s during consolidation self-throttle via the SDK's native retry-after backoff,
+ * rather than failing after the default 2 attempts.
+ * Invalid or absent → production default 2.
  */
 export const SDK_TIMEOUT_MS = 60_000;
-export const SDK_MAX_RETRIES = 2;
+export const SDK_MAX_RETRIES: number = (() => {
+  const raw = process.env['BRAIN_MEMORY_SDK_MAX_RETRIES'];
+  if (!raw) return 2;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 2;
+})();
 
 /**
  * Pure helper — returns the correct model id string for the configured provider.
