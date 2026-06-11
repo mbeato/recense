@@ -492,8 +492,19 @@ if (require.main === module) {
     const token = resolveServeToken();
 
     // Parse --port (default 7701) and --host (default '127.0.0.1') from argv.
+    // IN-10: an invalid --port must fail loudly — `parseInt(...) || 7701` silently
+    // mapped typos (`--port abc`, a missing value, `--port 0`) to the default port.
+    let port = 7701;
     const portIdx = process.argv.indexOf('--port');
-    const port = portIdx !== -1 ? parseInt(process.argv[portIdx + 1] ?? '', 10) || 7701 : 7701;
+    if (portIdx !== -1) {
+      const raw = process.argv[portIdx + 1];
+      const parsed = Number(raw);
+      if (!raw || !Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+        process.stderr.write(`brain serve: invalid --port value '${raw ?? ''}' — expected an integer between 1 and 65535\n`);
+        process.exit(1);
+      }
+      port = parsed;
+    }
 
     const hostIdx = process.argv.indexOf('--host');
     const host = hostIdx !== -1 ? (process.argv[hostIdx + 1] ?? '127.0.0.1') : '127.0.0.1';
