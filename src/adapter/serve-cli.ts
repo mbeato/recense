@@ -147,22 +147,30 @@ function checkAuth(req: http.IncomingMessage, storedToken: string): boolean {
 /**
  * Accumulate the request body; resolve null if the cap is exceeded (caller sends 413).
  * NEVER trusts content-length (it is caller-controlled — Pitfall in RESEARCH.md).
+ *
+ * IMPORTANT: does NOT call req.destroy() on overflow — destroying the socket before
+ * the handler writes the 413 response would kill the socket and the 413 would never
+ * reach the client. Instead we stop accumulating and resolve null; the handler sends
+ * 413 normally. The remaining oversized data is drained and discarded by Node.js after
+ * res.end(), which also signals connection close (HTTP/1.1 default).
  */
 function readBody(req: http.IncomingMessage): Promise<string | null> {
   return new Promise((resolve, reject) => {
     let body = '';
     let size = 0;
+    let settled = false;
     req.on('data', (chunk: Buffer) => {
+      if (settled) return; // discard data after overflow; let socket drain naturally
       size += chunk.length;
       if (size > BODY_SIZE_LIMIT) {
-        req.destroy(); // abort the connection
+        settled = true;
         resolve(null); // null → 413 from the caller
         return;
       }
       body += chunk.toString('utf8');
     });
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
+    req.on('end', () => { if (!settled) { settled = true; resolve(body); } });
+    req.on('error', (err) => { if (!settled) { settled = true; reject(err); } });
   });
 }
 
