@@ -105,11 +105,11 @@ For each item extract:
 Extract BOTH durable facts AND personal episodic details: events attended, purchases made, durations and quantities ("commute is 45 minutes each way"), places visited or mentioned, plans and intentions, dates and schedules, personal preferences, and any fact that the user would want remembered. Values must be self-contained so they are meaningful when recalled without surrounding context.
 
 IMPORTANT: When a statement describes a change or update (using words like "cut to", "moved to", "switched to", "quit", "started", "stopped", "dropped", "no longer"), extract the NEW CURRENT STATE as the fact value — not the change description. Examples:
-- "Ana cut her meditation to 20 minutes" → "Ana meditates for 20 minutes each morning"
-- "Ana moved to Denver, Colorado" → "Ana lives in Denver, Colorado"
-- "Ana switched to boutique hotels" → "Ana stays at boutique hotels when traveling"
-- "Ana is no longer vegetarian" → "Ana is not vegetarian"
-- "Ana now works as a software developer" → "Ana works full-time as a software developer"
+- "Jordan cut her plan from Professional to Starter" → "Jordan's active subscription is the Starter tier"
+- "Sam switched from Ruby to Go for backend work" → "Sam writes backend services in Go"
+- "Oliver moved to lunchtime workouts from early-morning gym sessions" → "Oliver works out at lunchtime on weekdays"
+- "Priya quit her finance analyst role and now leads product" → "Priya works as a product lead"
+- "Marco stopped using Jira and switched to Linear" → "Marco's team tracks tasks in Linear"
 
 Return ONLY a valid JSON array — no preamble, no explanation, no markdown fences.
 
