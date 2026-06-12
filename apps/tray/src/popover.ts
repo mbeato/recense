@@ -115,15 +115,47 @@ export function togglePopover(tray: Tray, win: BrowserWindow): void {
 }
 
 /**
+ * Drag strip injected while pinned (founder request, 2026-06-12): a pinned
+ * floating window should be movable away from the tray anchor (mid-screen
+ * tray icons drop it over content). Injected from the MAIN process via
+ * executeJavaScript — the preload stays empty (D-102 zero IPC surface) and
+ * the served frontend stays browser-neutral. The strip is a 26px
+ * -webkit-app-region:drag band at the top with a subtle grab pill; #panel
+ * is marked no-drag so the SSE dot stays interactive. Unpin removes it,
+ * and the next unpinned open re-anchors via positionUnder().
+ */
+const DRAG_STRIP_ADD = `(() => {
+  if (document.getElementById('recense-drag-strip')) return;
+  const strip = document.createElement('div');
+  strip.id = 'recense-drag-strip';
+  strip.style.cssText = 'position:fixed;top:0;left:0;right:0;height:26px;z-index:60;-webkit-app-region:drag;';
+  const pill = document.createElement('div');
+  pill.style.cssText = 'margin:7px auto 0;width:44px;height:5px;border-radius:3px;background:rgba(240,233,228,0.28);pointer-events:none;';
+  strip.appendChild(pill);
+  document.body.appendChild(strip);
+  const panel = document.getElementById('panel');
+  if (panel) panel.style.setProperty('-webkit-app-region', 'no-drag');
+})();`;
+const DRAG_STRIP_REMOVE = `document.getElementById('recense-drag-strip')?.remove();`;
+
+/**
  * Set the pin state.
  *
- * Pinned → window becomes always-on-top; blur no longer hides it.
- *   Promotes the popover to an all-day ambient floating window (D-04).
- * Unpinned → reverts to blur-dismiss behavior; stays visible until next blur.
+ * Pinned → window becomes always-on-top; blur no longer hides it; a drag
+ *   strip appears along the top edge so the window can be moved off the
+ *   tray anchor. Promotes the popover to an all-day ambient floating
+ *   window (D-04).
+ * Unpinned → reverts to blur-dismiss behavior; drag strip removed; stays
+ *   visible until next blur and re-anchors under the tray on next open.
  */
 export function setPinned(win: BrowserWindow, pinned: boolean): void {
   _pinned = pinned;
   win.setAlwaysOnTop(pinned);
+  win.webContents
+    .executeJavaScript(pinned ? DRAG_STRIP_ADD : DRAG_STRIP_REMOVE)
+    .catch(() => {
+      // Page may not be loaded (server down) — strip is cosmetic, ignore.
+    });
 }
 
 /**
