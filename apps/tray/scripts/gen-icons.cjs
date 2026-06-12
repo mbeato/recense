@@ -1,11 +1,13 @@
 /**
  * gen-icons.cjs — Generate macOS tray icon assets using only Node.js built-ins.
  *
- * Produces four PNGs in apps/tray/src/icons/:
- *   iconTemplate.png       16x16  black+alpha glyph (macOS template: OS recolors via alpha)
- *   iconTemplate@2x.png    32x32  same glyph, @2x
- *   icon-active.png        16x16  amber #F59E0B filled glyph (non-template, pulse frame)
- *   icon-active@2x.png     32x32  same amber glyph, @2x
+ * Produces six PNGs in apps/tray/src/icons/:
+ *   iconTemplate.png        16x16  black+alpha glyph (macOS template: OS recolors via alpha)
+ *   iconTemplate@2x.png     32x32  same glyph, @2x
+ *   iconDimTemplate.png     16x16  same glyph at 40% alpha (server-offline dim state, D-05)
+ *   iconDimTemplate@2x.png  32x32  same dim glyph, @2x
+ *   icon-active.png         16x16  amber #F59E0B filled glyph (non-template, pulse frame)
+ *   icon-active@2x.png      32x32  same amber glyph, @2x
  *
  * Template images: macOS uses the alpha channel to determine the shape and recolors
  * the glyph black/white automatically for light/dark menu bars. They MUST be
@@ -140,7 +142,7 @@ function glyphAlpha(x, y, size) {
 // Build RGBA pixel buffer for a given size and color mode
 // ---------------------------------------------------------------------------
 
-function buildRGBA(size, isTemplate) {
+function buildRGBA(size, isTemplate, alphaScale = 1) {
   // R, G, B for active (amber) vs template (black)
   const r = isTemplate ? 0 : 245;
   const g = isTemplate ? 0 : 158;
@@ -154,7 +156,9 @@ function buildRGBA(size, isTemplate) {
     const rowOffset = y * scanlineLen;
     raw[rowOffset] = 0; // filter byte: None
     for (let x = 0; x < size; x++) {
-      const alpha = glyphAlpha(x, y, size);
+      // alphaScale < 1 produces the dim (server-offline) template variant:
+      // macOS renders template glyphs from alpha, so scaled alpha = faded glyph.
+      const alpha = Math.round(glyphAlpha(x, y, size) * alphaScale);
       const pixelOffset = rowOffset + 1 + x * 4;
       raw[pixelOffset]     = r;
       raw[pixelOffset + 1] = g;
@@ -170,11 +174,11 @@ function buildRGBA(size, isTemplate) {
 // Encode full PNG
 // ---------------------------------------------------------------------------
 
-function encodePNG(size, isTemplate) {
+function encodePNG(size, isTemplate, alphaScale = 1) {
   const PNG_SIG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdr = makeIHDR(size, size);
 
-  const rawPixels = buildRGBA(size, isTemplate);
+  const rawPixels = buildRGBA(size, isTemplate, alphaScale);
   const compressed = zlib.deflateSync(rawPixels, { level: 9 });
   const idat = makeChunk('IDAT', compressed);
   const iend = makeChunk('IEND', Buffer.alloc(0));
@@ -223,10 +227,12 @@ const iconsDir  = path.join(scriptDir, '..', 'src', 'icons');
 fs.mkdirSync(iconsDir, { recursive: true });
 
 const assets = [
-  { name: 'iconTemplate.png',    size: 16, isTemplate: true  },
-  { name: 'iconTemplate@2x.png', size: 32, isTemplate: true  },
-  { name: 'icon-active.png',     size: 16, isTemplate: false },
-  { name: 'icon-active@2x.png',  size: 32, isTemplate: false },
+  { name: 'iconTemplate.png',       size: 16, isTemplate: true  },
+  { name: 'iconTemplate@2x.png',    size: 32, isTemplate: true  },
+  { name: 'iconDimTemplate.png',    size: 16, isTemplate: true,  alphaScale: 0.4 },
+  { name: 'iconDimTemplate@2x.png', size: 32, isTemplate: true,  alphaScale: 0.4 },
+  { name: 'icon-active.png',        size: 16, isTemplate: false },
+  { name: 'icon-active@2x.png',     size: 32, isTemplate: false },
 ];
 
 process.stdout.write('Generating tray icon assets...\n');
@@ -236,7 +242,7 @@ let hadError = false;
 for (const asset of assets) {
   const outPath = path.join(iconsDir, asset.name);
   try {
-    const png = encodePNG(asset.size, asset.isTemplate);
+    const png = encodePNG(asset.size, asset.isTemplate, asset.alphaScale ?? 1);
     fs.writeFileSync(outPath, png);
     process.stdout.write(`  WROTE ${asset.name} (${asset.size}x${asset.size})\n`);
   } catch (err) {
@@ -253,13 +259,15 @@ if (hadError) {
 process.stdout.write('Validating...\n');
 
 try {
-  validatePNG(path.join(iconsDir, 'iconTemplate.png'),    16, 16);
-  validatePNG(path.join(iconsDir, 'iconTemplate@2x.png'), 32, 32);
-  validatePNG(path.join(iconsDir, 'icon-active.png'),     16, 16);
-  validatePNG(path.join(iconsDir, 'icon-active@2x.png'),  32, 32);
+  validatePNG(path.join(iconsDir, 'iconTemplate.png'),       16, 16);
+  validatePNG(path.join(iconsDir, 'iconTemplate@2x.png'),    32, 32);
+  validatePNG(path.join(iconsDir, 'iconDimTemplate.png'),    16, 16);
+  validatePNG(path.join(iconsDir, 'iconDimTemplate@2x.png'), 32, 32);
+  validatePNG(path.join(iconsDir, 'icon-active.png'),        16, 16);
+  validatePNG(path.join(iconsDir, 'icon-active@2x.png'),     32, 32);
 } catch (err) {
   process.stderr.write('VALIDATION FAILED: ' + err.message + '\n');
   process.exit(1);
 }
 
-process.stdout.write('Done. All four icon assets valid.\n');
+process.stdout.write('Done. All six icon assets valid.\n');

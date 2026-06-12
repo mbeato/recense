@@ -67,6 +67,11 @@ function activeIcon() {
   return nativeImage.createFromPath(join(ICONS_DIR, 'icon-active.png'));
 }
 
+function dimIcon() {
+  // 40%-alpha template variant — visually distinct server-offline state (D-05)
+  return nativeImage.createFromPath(join(ICONS_DIR, 'iconDimTemplate.png'));
+}
+
 // ---------------------------------------------------------------------------
 // SSE endpoint
 // ---------------------------------------------------------------------------
@@ -100,7 +105,7 @@ export function initTrayIcon(opts: TrayIconOptions): TrayIconHandle {
 
   function setDim(): void {
     isDim = true;
-    tray.setImage(restIcon());
+    tray.setImage(dimIcon());
     tray.setToolTip('brain — server offline');
   }
 
