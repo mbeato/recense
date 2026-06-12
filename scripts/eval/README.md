@@ -348,3 +348,66 @@ npm run build && node scripts/eval/correctness-harness.cjs --dry-run
 
 1. **Fictional cases are clear-cut.** The case set uses unambiguous value changes (numeric drift, categorical reversal) — real-world contradictions are harder. This measures the lower bound of the belief-correction mechanism, not production accuracy on noisy input.
 2. **ADD-only is a weak baseline.** It is the floor, not a competitor. The correctness suite establishes that brain-memory clears the bar of "does anything at all" on belief correction; a stronger comparison requires running mem0 or similar against the same cases.
+
+---
+
+## Extraction bake-off (constrained decoding) — `extractor-bakeoff.cjs`
+
+Measures extraction quality signals for local candidate models through the production
+`CONVERSATION_EXTRACTION_PROMPT` and the real engine extraction path — including the
+**native `/api/chat` constrained-decoding path** added in QUICK-260612-clb. This kills
+the parse-failure class (Ollama's `/v1` compat endpoint silently ignores `response_format
+json_schema`; the native endpoint enforces grammar-constrained JSON output).
+
+No judge, no consolidation, no scratch DB, no API spend. All runs are purely local.
+
+### What it measures
+
+| Metric | Description |
+| ------ | ----------- |
+| `parse-ok` | Episodes where parseClaims returned ≥1 valid claim (schema-shaped, faithful) |
+| `parse-fail` | Episodes where the output had no array syntax at all (model failure or download) |
+| `parsed-but-empty` | Episodes where array syntax was present but all items were invalid/empty |
+| `claims/ep` | Average claims extracted per episode (over-extraction signal; baseline qwen2.5:7b ≈ 1–2 on these short single-fact inputs) |
+| `regreg` | Episodes where any claim value contains a CONVERSATION prompt few-shot example value (`Jane Doe`, `brain-memory project`, `45 minutes each way`, `React Summit`, `dark roast coffee`) — any hit disqualifies the model |
+| `think-leak` | `<think>` occurrences in the stripped output — any occurrence flags the model as DISQUALIFIED (think:false should produce none) |
+| `s/ep` | Average wall-clock seconds per episode |
+
+The change-normalization sub-table prints claim values for the 13 pass:2 contradiction
+inputs for human review. A `⚑` annotation flags values that still contain change-verb
+language (ideally the prompt's "extract the NEW CURRENT STATE" instruction normalizes these).
+
+### Run
+
+```sh
+# Full run (all 34 inputs, all specified models)
+npm run build && node scripts/eval/extractor-bakeoff.cjs \
+  --models "qwen2.5:7b-instruct,phi4:latest" \
+  --out scripts/eval/extractor-bakeoff-results.json
+
+# Smoke test (3 episodes, baseline model only)
+npm run build && node scripts/eval/extractor-bakeoff.cjs \
+  --models "qwen2.5:7b-instruct" --limit 3
+```
+
+Flags: `--models "tag1,tag2,..."` (required), `--limit N` (cap episode count — for the
+smoke test), `--think-off` (global think-off knob; native path defaults to think:false
+already), `--ollama-url` (default `http://localhost:11434/v1`), `--out <path>` (results
+JSON; default `scripts/eval/extractor-bakeoff-results.json`).
+
+### Constrained decoding requirement
+
+The harness uses `DefaultModelProvider.generate(..., { jsonSchema: CLAIM_ARRAY_SCHEMA })`
+which routes through `OllamaClient`'s native `/api/chat` path (added in QUICK-260612-clb).
+The OpenAI-compat `/v1/chat/completions` endpoint silently ignores `response_format
+json_schema` (ollama#10001/#10937) — always use `npm run build` before the harness so the
+compiled native path is in effect.
+
+### Per-model adapter note
+
+`think:false` and `temperature 0` are native-path defaults — standard instruct models
+(`qwen2.5:7b-instruct`, `phi4`, etc.) need no adapter entry. Models requiring overrides
+(e.g. `hf.co/numind/NuExtract3-GGUF:Q8_0` → temperature 0.2) have entries in the
+`ADAPTERS` map at the top of the harness and are run via a direct `/api/chat` fetch
+instead of `DefaultModelProvider` (so overrides can be applied). If a NuExtract GGUF
+refuses to load text-only input, it is caught and marked errored — the run continues.
