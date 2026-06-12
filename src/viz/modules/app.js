@@ -170,8 +170,10 @@ initEffects(ctx);
 initTrace(ctx);
 initDetail(ctx);
 
-// Clear bootstrap loading message now that modules are wired
-if (loadingEl) loadingEl.textContent = '';
+// Clear bootstrap loading message now that modules are wired — but NOT when it
+// carries the load-error or empty-graph message set above (clearing those would
+// leave a silent black screen, the exact failure D-14 forbids).
+if (loadingEl && !graphLoadError && allNodes.length) loadingEl.textContent = '';
 
 // ── Tooltip position tracking ──────────────────────────────────────────────────
 // graph.js onNodeHover drives tooltip text + visibility; here we track the mouse
