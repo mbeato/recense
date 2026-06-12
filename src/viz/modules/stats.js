@@ -56,12 +56,14 @@ export function initStats(ctx) {
     currentTier = newTier;
     const bp = ctx.bloomPass;
     if (!bp) return;
+    // Resize via setSize(): UnrealBloomPass copies `resolution` into its render
+    // targets in the constructor only — mutating the Vector2 afterwards is a no-op.
     if (newTier === QualityTier.FULL) {
       bp.enabled = true;
-      if (bp.resolution) bp.resolution.set(window.innerWidth, window.innerHeight);
+      if (typeof bp.setSize === 'function') bp.setSize(window.innerWidth, window.innerHeight);
     } else if (newTier === QualityTier.REDUCED) {
       bp.enabled = true;
-      if (bp.resolution) bp.resolution.set(
+      if (typeof bp.setSize === 'function') bp.setSize(
         Math.floor(window.innerWidth  / 2),
         Math.floor(window.innerHeight / 2)
       );
