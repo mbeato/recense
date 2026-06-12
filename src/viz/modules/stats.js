@@ -164,17 +164,33 @@ export function initStats(ctx) {
   }
 
   // ── Idle camera drift (D-04: camera-only, never node/edge changes) ─────────
-  function updateIdleDrift() {
+  // Implemented manually: the bundled OrbitControls' autoRotate is inert (its
+  // update() applies no rotation — verified empirically), so we rotate the
+  // camera position around the target's vertical axis ourselves each idle
+  // frame. Stops instantly on interaction because the gate is ctx.isIdle().
+  const IDLE_ORBIT_RAD_PER_SEC = 0.02; // full orbit ≈ 5 min — ambient drift
+  let lastDriftNow = null;
+  function updateIdleDrift(now) {
+    if (!ctx.isIdle()) { lastDriftNow = null; return; }
+    const cam = ctx.Graph && typeof ctx.Graph.camera === 'function'
+      ? ctx.Graph.camera()
+      : null;
+    if (!cam) return;
+    if (lastDriftNow === null) { lastDriftNow = now; return; }
+    const dt = Math.min(0.1, (now - lastDriftNow) / 1000);
+    lastDriftNow = now;
+
     const controls = ctx.Graph && typeof ctx.Graph.controls === 'function'
       ? ctx.Graph.controls()
       : null;
-    if (!controls) return;
-    if (ctx.isIdle()) {
-      // Slow orbit — camera motion only (D-04 hard rule: never resembles activation)
-      controls.autoRotate      = true;
-      controls.autoRotateSpeed = 0.25;
-    }
-    // autoRotate is cleared in markActive(); no else branch needed here
+    const target = (controls && controls.target) || { x: 0, y: 0, z: 0 };
+    const a = IDLE_ORBIT_RAD_PER_SEC * dt;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    const dx = cam.position.x - target.x;
+    const dz = cam.position.z - target.z;
+    cam.position.x = target.x + dx * cos - dz * sin;
+    cam.position.z = target.z + dx * sin + dz * cos;
+    cam.lookAt(target.x, target.y || 0, target.z);
   }
 
   // ── Master rAF loop ───────────────────────────────────────────────────────
@@ -210,7 +226,7 @@ export function initStats(ctx) {
     autoAdaptQuality(fps);
 
     // 5. Drive idle camera drift (D-04)
-    updateIdleDrift();
+    updateIdleDrift(now);
 
     // 6. Schedule next frame (idle-throttled or full rate)
     scheduleFrame();
