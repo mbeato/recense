@@ -19,14 +19,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-// Require the COMPILED dist/runtime-paths.js (tsc must have run first).
+// Require the COMPILED dist/src/runtime-paths.js (tsc must have run first).
+// Note: rootDir="." with include=["src"] → output lands at dist/src/ not dist/
 const {
   resolveNodeBin,
   resolveBrainJs,
   resolveDbPath,
   defaultDbPath,
   sleepEnvPath,
-} = require('../dist/runtime-paths');
+} = require('../dist/src/runtime-paths');
 
 const tmpdir = os.tmpdir();
 let passed = 0;
