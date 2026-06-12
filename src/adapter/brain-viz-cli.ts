@@ -41,6 +41,11 @@ import { startVizServer } from '../viz/server';
 
 const PORT = 7810;
 
+// OQ-1: server-only mode for the tray app (16-02). When --no-open is passed,
+// the viz HTTP server starts normally (D-96 trace flag, exit handlers, stdout URL)
+// but no browser window is opened. This keeps D-09 (windowed brain viz) intact.
+const noOpen = process.argv.includes('--no-open');
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -81,32 +86,36 @@ async function main(): Promise<void> {
   // The server's http.createServer().listen() keeps the event loop alive.
 
   // ── 4. Open a chromeless app-window (D-103) ─────────────────────────────────
-  // Launch the Chrome binary DIRECTLY with --app=<url>. The previous form,
-  // `open -a "Google Chrome" --args --app=<url>`, silently DROPS --args when Chrome
-  // is already running (macOS just activates the running app), leaving a blank,
-  // URL-less window — the user had to paste the URL by hand. Invoking the executable
-  // navigates reliably whether or not Chrome is already open. Falls back to the system
-  // default browser if Chrome isn't at the standard path or the launch errors.
-  const CHROME_BIN = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-  const openDefaultBrowser = (): void => {
-    try {
-      const tab = spawn('open', [url], { detached: true, stdio: 'ignore' });
-      // WR-03: async spawn 'error' (not a sync throw) would otherwise crash the process.
-      tab.on('error', () => { /* non-macOS — URL already printed to stdout */ });
-      tab.unref();
-    } catch { /* headless/CI — URL already printed to stdout below */ }
-  };
-  if (existsSync(CHROME_BIN)) {
-    try {
-      const app = spawn(CHROME_BIN, [`--app=${url}`], { detached: true, stdio: 'ignore' });
-      // WR-03: on async launch error, fall back to the default browser (still navigates).
-      app.on('error', openDefaultBrowser);
-      app.unref();
-    } catch {
+  // Skipped when --no-open is passed (OQ-1: tray spawns the server headless).
+  // D-09: omitting --no-open preserves the existing windowed brain viz behaviour.
+  if (!noOpen) {
+    // Launch the Chrome binary DIRECTLY with --app=<url>. The previous form,
+    // `open -a "Google Chrome" --args --app=<url>`, silently DROPS --args when Chrome
+    // is already running (macOS just activates the running app), leaving a blank,
+    // URL-less window — the user had to paste the URL by hand. Invoking the executable
+    // navigates reliably whether or not Chrome is already open. Falls back to the system
+    // default browser if Chrome isn't at the standard path or the launch errors.
+    const CHROME_BIN = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    const openDefaultBrowser = (): void => {
+      try {
+        const tab = spawn('open', [url], { detached: true, stdio: 'ignore' });
+        // WR-03: async spawn 'error' (not a sync throw) would otherwise crash the process.
+        tab.on('error', () => { /* non-macOS — URL already printed to stdout */ });
+        tab.unref();
+      } catch { /* headless/CI — URL already printed to stdout below */ }
+    };
+    if (existsSync(CHROME_BIN)) {
+      try {
+        const app = spawn(CHROME_BIN, [`--app=${url}`], { detached: true, stdio: 'ignore' });
+        // WR-03: on async launch error, fall back to the default browser (still navigates).
+        app.on('error', openDefaultBrowser);
+        app.unref();
+      } catch {
+        openDefaultBrowser();
+      }
+    } else {
       openDefaultBrowser();
     }
-  } else {
-    openDefaultBrowser();
   }
 
   // ── 5. Print URL to stdout (headless/CI usability) ─────────────────────────
