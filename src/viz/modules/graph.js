@@ -32,6 +32,11 @@ import {
 // to exactly 1.
 const _sharedGeo = new THREE.SphereGeometry(1, 8, 8);
 
+// Compact viewports (tray popover ≤500px): haze nodes render as barely-there
+// mist so the schema constellation reads at a glance (founder-tuned 2026-06-12).
+const COMPACT = Math.min(window.innerWidth, window.innerHeight) <= 500;
+const HAZE_COMPACT_OPACITY = 0.12;
+
 // Scratch vectors reused in the hot containment tick (avoids per-tick allocation)
 const _q   = new THREE.Vector3();
 const _inv = new THREE.Matrix4();
@@ -65,7 +70,8 @@ function makeNodeObject(node) {
   const mat = new THREE.MeshBasicMaterial({
     color: baseColor.clone(),
     transparent: true,
-    opacity: node.tombstoned ? 0.35 : 0.88,
+    opacity: node.tombstoned ? 0.35
+      : (COMPACT && node.__cat === 'haze' ? HAZE_COMPACT_OPACITY : 0.88),
     depthWrite: true,
   });
 

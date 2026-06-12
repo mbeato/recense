@@ -82,17 +82,12 @@ export function initLod(ctx) {
   // These functions are called per-node/link by 3d-force-graph every frame.
   // They must be fast — no map construction, only Set.has() / Map.get().
 
-  // Compact viewports (tray popover ≤500px): glance surface, not exploration —
-  // haze hidden at rest so the popover shows the schema constellation; traces
-  // still reveal full pathways (founder: 1.8k nodes at 300px read as fog).
-  const compact = Math.min(window.innerWidth, window.innerHeight) <= 500;
-
   const nodeVisible = n => {
     if (!n) return false;
-    // Schema nodes are always visible in the overview
-    if (n.__cat === 'schema') return true;
-    // Haze: visible in the full window; in compact only when a trace lights it
-    if (n.__cat === 'haze') return !compact || traceNodes.has(n.id);
+    // Schema and haze nodes are visible in the overview; in compact viewports
+    // haze is rendered near-invisible instead of hidden (graph.js dims it) —
+    // schema constellation forward, haze as barely-there mist (founder-tuned).
+    if (n.__cat !== 'member') return true;
     // Member nodes: show only if their schema is drilled-in OR the trace reveals them
     return expanded.has(n.__schemaId) || traceNodes.has(n.id);
   };
