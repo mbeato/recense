@@ -30,6 +30,7 @@ import type { ServerHandle } from './server-lifecycle';
 import { initTrayIcon } from './tray-icon';
 import type { TrayIconHandle } from './tray-icon';
 import { createPopover, togglePopover, setPinned, isPinned } from './popover';
+import { openMainWindow } from './main-window';
 
 // ---------------------------------------------------------------------------
 // Logging (append-only — never stdout for a background app)
@@ -109,6 +110,13 @@ function buildMenu(
       : false;
 
   return Menu.buildFromTemplate([
+    {
+      label: 'Open Brain Window',
+      click() {
+        openMainWindow();
+      },
+    },
+    { type: 'separator' },
     {
       label: 'Pin',
       type: 'checkbox',
