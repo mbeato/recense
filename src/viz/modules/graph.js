@@ -358,7 +358,7 @@ export function initGraph(ctx) {
   // keeping the ambient idle rotation centered on the brain, not the origin.
   const compact = Math.min(window.innerWidth, window.innerHeight) <= 500;
   if (compact) {
-    const FRAME_X = -85;
+    const FRAME_X = -42;
     Graph.cameraPosition({ x: FRAME_X, z: BRAIN_SCALE * 2.35 }, { x: FRAME_X, y: 0, z: 0 });
   } else {
     Graph.cameraPosition({ z: BRAIN_SCALE * 2.2 });
