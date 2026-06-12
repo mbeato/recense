@@ -1,0 +1,21 @@
+{
+  "name": "@brain-memory/tray",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "electron dist/main.js",
+    "pack": "npm run build && electron-builder --mac dir"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "electron": "42.4.0",
+    "electron-builder": "26.15.2",
+    "typescript": "^6.0.3"
+  }
+}
