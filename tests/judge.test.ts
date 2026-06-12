@@ -4,10 +4,11 @@
  * parseVerdict validation and safe-fallback tests drive AnthropicJudge internals indirectly
  * via a test-only subclass that exposes the private method.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { MockJudge, AnthropicJudge } from '../src/model/judge';
 import type { Judge, JudgeVerdict, JudgeRelation } from '../src/model/judge';
 import { DEFAULT_CONFIG } from '../src/lib/config';
+import type { AnthropicLike } from '../src/model/anthropic-client';
 
 // ── MockJudge ────────────────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ describe('AnthropicJudge (export verification)', () => {
 // malformed JSON asserts the safe `unrelated` fallback", we use a package-private
 // test helper approach: export `parseVerdictForTest` from judge.ts.
 
-import { parseVerdictForTest, chooseConsistentVerdict } from '../src/model/judge';
+import { parseVerdictForTest, chooseConsistentVerdict, parseVerdictBatchForTest } from '../src/model/judge';
 
 describe('parseVerdict (via exported test helper)', () => {
   it('returns safe unrelated fallback for malformed JSON', () => {
@@ -343,5 +344,342 @@ describe('EngineConfig: Phase-2 tunables present in DEFAULT_CONFIG', () => {
 
   it('peReconcileBandHigh is a positive number', () => {
     expect(DEFAULT_CONFIG.peReconcileBandHigh).toBeGreaterThan(0);
+  });
+});
+
+// ── MockJudge.judgeBatch ──────────────────────────────────────────────────────
+
+describe('MockJudge.judgeBatch', () => {
+  it('empty items array → empty result, no queue consumption', async () => {
+    const mock = new MockJudge([{ best_candidate_id: 'c1', relation: 'confirm', magnitude: 0 }]);
+    const result = await mock.judgeBatch([]);
+    expect(result).toEqual([]);
+    // Queue not consumed — judge() would still work
+    const v = await mock.judge('x', [{ id: 'c1', value: 'v' }]);
+    expect(v.relation).toBe('confirm');
+  });
+
+  it('consumes one verdict per item in order', async () => {
+    const verdicts: JudgeVerdict[] = [
+      { best_candidate_id: 'c1', relation: 'confirm', magnitude: 0 },
+      { best_candidate_id: 'c2', relation: 'contradict', magnitude: 0.8 },
+      { best_candidate_id: null, relation: 'unrelated', magnitude: 0 },
+    ];
+    const mock = new MockJudge(verdicts);
+    const results = await mock.judgeBatch([
+      { claim: 'A', candidates: [{ id: 'c1', value: 'v1' }] },
+      { claim: 'B', candidates: [{ id: 'c2', value: 'v2' }] },
+      { claim: 'C', candidates: [] },
+    ]);
+    expect(results).toHaveLength(3);
+    expect(results[0]!.relation).toBe('confirm');
+    expect(results[1]!.relation).toBe('contradict');
+    expect(results[2]!.relation).toBe('unrelated');
+    // M2: contradicted_ids defaults to []
+    expect(results[0]!.contradicted_ids).toEqual([]);
+    expect(results[1]!.contradicted_ids).toEqual([]);
+  });
+
+  it('throws queue-exhausted when items exceed scripted verdicts', async () => {
+    const mock = new MockJudge([{ best_candidate_id: 'x', relation: 'confirm', magnitude: 0 }]);
+    await expect(mock.judgeBatch([
+      { claim: 'A', candidates: [{ id: 'x', value: 'v' }] },
+      { claim: 'B', candidates: [{ id: 'y', value: 'v' }] },
+    ])).rejects.toThrow(/exhausted/i);
+  });
+
+  it('satisfies the Judge interface', () => {
+    const j: Judge = new MockJudge([]);
+    expect(typeof j.judgeBatch).toBe('function');
+  });
+});
+
+// ── parseVerdictBatch fail-safes ──────────────────────────────────────────────
+
+describe('parseVerdictBatch fail-safes', () => {
+  const noCandidates: Array<Set<string>> = [new Set(), new Set(), new Set()];
+
+  it('whole-parse failure → all SAFE_VERDICT', () => {
+    const result = parseVerdictBatchForTest('not json at all', 3, noCandidates);
+    expect(result).toHaveLength(3);
+    for (const v of result) {
+      expect(v).toEqual({ best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] });
+    }
+  });
+
+  it('response is not an array (object) → all SAFE_VERDICT', () => {
+    const result = parseVerdictBatchForTest('{"relation":"confirm"}', 2, [new Set(), new Set()]);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.relation).toBe('unrelated');
+    expect(result[1]!.relation).toBe('unrelated');
+  });
+
+  it('malformed item (not an object) leaves that slot as SAFE_VERDICT', () => {
+    const raw = JSON.stringify([
+      { claim_index: 0, best_candidate_id: 'c1', relation: 'confirm', magnitude: 0, contradicted_ids: [] },
+      null,  // malformed
+      { claim_index: 2, best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] },
+    ]);
+    const result = parseVerdictBatchForTest(raw, 3, noCandidates);
+    expect(result[0]!.relation).toBe('confirm');
+    expect(result[1]!.relation).toBe('unrelated'); // SAFE_VERDICT for null slot
+    expect(result[2]!.relation).toBe('unrelated');
+  });
+
+  it('invalid relation in an item → leaves that slot as SAFE_VERDICT', () => {
+    const raw = JSON.stringify([
+      { claim_index: 0, best_candidate_id: 'c1', relation: 'bogus', magnitude: 0, contradicted_ids: [] },
+    ]);
+    const result = parseVerdictBatchForTest(raw, 2, [new Set(['c1']), new Set()]);
+    expect(result[0]!.relation).toBe('unrelated'); // SAFE for invalid relation
+    expect(result[1]!.relation).toBe('unrelated'); // not provided → SAFE
+  });
+
+  it('claim_index mapping: maps to correct slot even out of array order', () => {
+    const raw = JSON.stringify([
+      { claim_index: 2, best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] },
+      { claim_index: 0, best_candidate_id: 'c1', relation: 'confirm', magnitude: 0.1, contradicted_ids: [] },
+    ]);
+    const result = parseVerdictBatchForTest(raw, 3, noCandidates);
+    expect(result[0]!.relation).toBe('confirm');
+    expect(result[1]!.relation).toBe('unrelated'); // not provided → SAFE
+    expect(result[2]!.relation).toBe('unrelated');
+  });
+
+  it('position fallback when claim_index absent', () => {
+    const raw = JSON.stringify([
+      { best_candidate_id: 'c1', relation: 'extend', magnitude: 0.2, contradicted_ids: [] },
+      { best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] },
+    ]);
+    const result = parseVerdictBatchForTest(raw, 2, [new Set(['c1']), new Set()]);
+    expect(result[0]!.relation).toBe('extend');
+    expect(result[1]!.relation).toBe('unrelated');
+  });
+
+  it('contradict-empty-cids fail-safe: contradict + empty cids + bestId → [bestId] per item', () => {
+    const raw = JSON.stringify([
+      { claim_index: 0, best_candidate_id: 'c1', relation: 'contradict', magnitude: 0.8 },
+    ]);
+    const result = parseVerdictBatchForTest(raw, 1, [new Set(['c1'])]);
+    expect(result[0]!.relation).toBe('contradict');
+    expect(result[0]!.contradicted_ids).toEqual(['c1']); // fail-safe applied
+  });
+
+  it('magnitude clamped to [0,1] per item', () => {
+    const raw = JSON.stringify([
+      { claim_index: 0, best_candidate_id: null, relation: 'unrelated', magnitude: 1.9 },
+    ]);
+    const result = parseVerdictBatchForTest(raw, 1, [new Set()]);
+    expect(result[0]!.magnitude).toBe(1.0);
+  });
+
+  it('T-UE6-02 defensive filter: contradicted_ids outside candidate set dropped per item', () => {
+    const raw = JSON.stringify([
+      {
+        claim_index: 0,
+        best_candidate_id: 'c1',
+        relation: 'contradict',
+        magnitude: 0.7,
+        contradicted_ids: ['c1', 'hallucinated-id'],
+      },
+    ]);
+    const result = parseVerdictBatchForTest(raw, 1, [new Set(['c1'])]);
+    expect(result[0]!.contradicted_ids).toEqual(['c1']); // hallucinated-id filtered
+  });
+
+  it('json array in code fence is extracted correctly', () => {
+    const backtick = '\x60';
+    const fence = backtick + backtick + backtick;
+    const text = fence + 'json\n' +
+      '[{"claim_index":0,"best_candidate_id":"x","relation":"confirm","magnitude":0,"contradicted_ids":[]}]\n' +
+      fence;
+    const result = parseVerdictBatchForTest(text, 1, [new Set(['x'])]);
+    expect(result[0]!.relation).toBe('confirm');
+    expect(result[0]!.best_candidate_id).toBe('x');
+  });
+});
+
+// ── AnthropicJudge.judgeBatch — batch-of-1 delegates to single path ───────────
+
+describe('AnthropicJudge.judgeBatch — batch-of-1 delegates to single path', () => {
+  it('calls messages.create once with the single-claim prompt (not batch format)', async () => {
+    const calls: { content: string }[] = [];
+    const mockClient: AnthropicLike = {
+      messages: {
+        async create(params) {
+          calls.push({ content: typeof params.messages[0]?.content === 'string' ? params.messages[0].content : '' });
+          // Return a valid single-claim verdict
+          return {
+            content: [{ type: 'text' as const, text: '{"best_candidate_id":"c1","relation":"confirm","magnitude":0,"contradicted_ids":[]}' }],
+          } as any;
+        },
+      },
+    };
+    const judge = AnthropicJudge.forTest(mockClient, 'test-model');
+    const results = await judge.judgeBatch([
+      { claim: 'test claim', candidates: [{ id: 'c1', value: 'test value' }] },
+    ]);
+
+    // batch-of-1 uses existing single path: prompt starts with single-claim prefix (not "For EACH")
+    expect(results).toHaveLength(1);
+    expect(results[0]!.relation).toBe('confirm');
+    // Single path makes 1 call (order-swap skips since no contradict)
+    expect(calls).toHaveLength(1);
+    // Single prompt contains 'New claim:' (from JUDGE_PROMPT_PREFIX), not 'Claim 0:'
+    expect(calls[0]!.content).toContain('New claim:');
+    expect(calls[0]!.content).not.toContain('Claim 0:');
+  });
+
+  it('empty items → returns [] with no API calls', async () => {
+    let callCount = 0;
+    const mockClient: AnthropicLike = {
+      messages: {
+        async create(_params) {
+          callCount++;
+          return { content: [] } as any;
+        },
+      },
+    };
+    const judge = AnthropicJudge.forTest(mockClient, 'test-model');
+    const results = await judge.judgeBatch([]);
+    expect(results).toEqual([]);
+    expect(callCount).toBe(0);
+  });
+});
+
+// ── AnthropicJudge.judgeBatch — batch>1 prompt shape and order-swap ───────────
+
+describe('AnthropicJudge.judgeBatch — batch>1: prompt shape and order-swap', () => {
+  /**
+   * Build a mock AnthropicLike that records all prompts and returns scripted responses.
+   */
+  function makeMockClient(responses: Array<{ text: string }>): {
+    client: AnthropicLike;
+    capturedPrompts: string[];
+  } {
+    const capturedPrompts: string[] = [];
+    let callIdx = 0;
+    const client: AnthropicLike = {
+      messages: {
+        async create(params) {
+          const content = typeof params.messages[0]?.content === 'string' ? params.messages[0].content : '';
+          capturedPrompts.push(content);
+          const resp = responses[callIdx++];
+          const text = resp?.text ?? '[]';
+          return { content: [{ type: 'text' as const, text }] } as any;
+        },
+      },
+    };
+    return { client, capturedPrompts };
+  }
+
+  it('batch prompt enumerates claims with per-claim candidate lists', async () => {
+    const batchResponse = JSON.stringify([
+      { claim_index: 0, best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] },
+      { claim_index: 1, best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] },
+    ]);
+    const { client, capturedPrompts } = makeMockClient([{ text: batchResponse }]);
+    const judge = AnthropicJudge.forTest(client, 'test-model');
+
+    await judge.judgeBatch([
+      { claim: 'Alice is a manager', candidates: [{ id: 'n1', value: 'Alice is an engineer' }] },
+      { claim: 'Bob lives in NYC', candidates: [{ id: 'n2', value: 'Bob lives in LA' }, { id: 'n3', value: 'Bob' }] },
+    ]);
+
+    expect(capturedPrompts).toHaveLength(1); // ONE call for non-contradict batch
+    const prompt = capturedPrompts[0]!;
+
+    // Batch prefix: "For EACH numbered claim"
+    expect(prompt).toContain('For EACH numbered claim');
+    // Claims enumerated
+    expect(prompt).toContain('Claim 0:');
+    expect(prompt).toContain('Claim 1:');
+    expect(prompt).toContain('"Alice is a manager"');
+    expect(prompt).toContain('"Bob lives in NYC"');
+    // Per-claim candidate lists
+    expect(prompt).toContain('Candidates for claim 0:');
+    expect(prompt).toContain('Candidates for claim 1:');
+    expect(prompt).toContain('id: "n1"');
+    expect(prompt).toContain('id: "n2"');
+    expect(prompt).toContain('id: "n3"');
+  });
+
+  it('batched swap: only contradict items re-sent with reversed candidates in ONE second call', async () => {
+    // v1: item 0 = contradict, item 1 = confirm (no swap needed)
+    const v1Response = JSON.stringify([
+      { claim_index: 0, best_candidate_id: 'c1', relation: 'contradict', magnitude: 0.8, contradicted_ids: ['c1'] },
+      { claim_index: 1, best_candidate_id: 'c2', relation: 'confirm', magnitude: 0, contradicted_ids: [] },
+    ]);
+    // v2 (swap): item 0 reversed → same contradict (both agree → intersection cids)
+    const v2Response = JSON.stringify([
+      { claim_index: 0, best_candidate_id: 'c1', relation: 'contradict', magnitude: 0.7, contradicted_ids: ['c1'] },
+    ]);
+    const { client, capturedPrompts } = makeMockClient([{ text: v1Response }, { text: v2Response }]);
+    const judge = AnthropicJudge.forTest(client, 'test-model');
+
+    const results = await judge.judgeBatch([
+      { claim: 'A contradicts', candidates: [{ id: 'c1', value: 'v1' }, { id: 'c2', value: 'v2' }] },
+      { claim: 'B confirms', candidates: [{ id: 'c2', value: 'v2' }, { id: 'c3', value: 'v3' }] },
+    ]);
+
+    // ≤2 total calls: forward batch + swap batch
+    expect(capturedPrompts).toHaveLength(2);
+
+    // Second call contains ONLY the contradict item (claim 'A contradicts')
+    const swapPrompt = capturedPrompts[1]!;
+    expect(swapPrompt).toContain('"A contradicts"');
+    expect(swapPrompt).not.toContain('"B confirms"'); // confirm item not re-sent
+
+    // In the swap prompt, candidates for the contradict item are REVERSED
+    // Original order: c1,c2 → reversed: c2,c1 → c2 appears before c1
+    const c1Pos = swapPrompt.indexOf('"c1"');
+    const c2Pos = swapPrompt.indexOf('"c2"');
+    expect(c2Pos).toBeLessThan(c1Pos); // c2 first (reversed)
+
+    // Results: item 1 (confirm) unchanged; item 0 resolved via chooseConsistentVerdict
+    expect(results[1]!.relation).toBe('confirm');
+    // Both orderings agree on contradict → chooseConsistentVerdict returns v1 with intersection cids
+    expect(results[0]!.relation).toBe('contradict');
+  });
+
+  it('no swap when all items are non-contradict (only one LLM call)', async () => {
+    const v1Response = JSON.stringify([
+      { claim_index: 0, best_candidate_id: 'c1', relation: 'confirm', magnitude: 0, contradicted_ids: [] },
+      { claim_index: 1, best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] },
+    ]);
+    const { client, capturedPrompts } = makeMockClient([{ text: v1Response }]);
+    const judge = AnthropicJudge.forTest(client, 'test-model');
+
+    await judge.judgeBatch([
+      { claim: 'A', candidates: [{ id: 'c1', value: 'v1' }] },
+      { claim: 'B', candidates: [{ id: 'c2', value: 'v2' }] },
+    ]);
+
+    // No contradict → no swap call → exactly 1 LLM call
+    expect(capturedPrompts).toHaveLength(1);
+  });
+
+  it('zero-candidate items receive SAFE_VERDICT without a network call', async () => {
+    const batchResponse = JSON.stringify([
+      { claim_index: 0, best_candidate_id: 'c1', relation: 'confirm', magnitude: 0, contradicted_ids: [] },
+    ]);
+    const { client, capturedPrompts } = makeMockClient([{ text: batchResponse }]);
+    const judge = AnthropicJudge.forTest(client, 'test-model');
+
+    const results = await judge.judgeBatch([
+      { claim: 'A has candidates', candidates: [{ id: 'c1', value: 'v1' }] },
+      { claim: 'B has no candidates', candidates: [] }, // zero-candidate → SAFE_VERDICT
+      { claim: 'C also has candidates', candidates: [] }, // zero-candidate → SAFE_VERDICT
+    ]);
+
+    // Batch prompt built with only item 0 (non-empty)
+    expect(capturedPrompts).toHaveLength(1);
+    expect(capturedPrompts[0]).toContain('Claim 0:'); // only one claim in prompt
+    expect(capturedPrompts[0]).not.toContain('Claim 1:');
+
+    expect(results[0]!.relation).toBe('confirm');
+    // Items with 0 candidates → SAFE_VERDICT
+    expect(results[1]!).toEqual({ best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] });
+    expect(results[2]!).toEqual({ best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] });
   });
 });
