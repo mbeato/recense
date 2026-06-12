@@ -25,7 +25,11 @@ const QualityTier = { FULL: 0, REDUCED: 1, MINIMAL: 2 };
 Object.freeze(QualityTier);
 
 // ── Idle timeout: silence after this many ms = idle state ────────────────────
-const IDLE_TIMEOUT_MS = 8000; // 8s quiet period triggers idle throttle + autoRotate
+// Compact (tray popover): spin is the resting state — idle from the moment the
+// window opens, pausing only while the pointer is over the brain and resuming
+// 1.2s after it leaves (founder, 2026-06-12). Full window keeps the 8s calm.
+const COMPACT_VIEW = Math.min(window.innerWidth, window.innerHeight) <= 500;
+const IDLE_TIMEOUT_MS = COMPACT_VIEW ? 1200 : 8000;
 
 // ── FPS measurement hysteresis windows ───────────────────────────────────────
 const DEGRADE_FRAMES = 120; // ~2s of low fps before downgrade
@@ -37,7 +41,7 @@ export function initStats(ctx) {
   ctx.registerTick = fn => { callbacks.push(fn); };
 
   // ── Idle state ────────────────────────────────────────────────────────────
-  let lastActiveTime = performance.now();
+  let lastActiveTime = COMPACT_VIEW ? performance.now() - IDLE_TIMEOUT_MS - 1 : performance.now();
 
   ctx.markActive = () => {
     lastActiveTime = performance.now();

@@ -361,15 +361,8 @@ button:hover {
    panel collapses to an SSE dot + tiny legend pill; title, counts, buttons,
    and log are hidden. Full-window `brain viz` is unaffected. */
 @media (max-width: 500px), (max-height: 500px) {
-  #panel {
-    width: auto;
-    top: 8px;
-    left: 8px;
-    padding: 4px 8px;
-    border-radius: 8px;
-    opacity: 0.35;
-  }
-  #panel:hover { opacity: 0.9; }
+  /* No chrome at popover scale — the tray icon itself signals health (D-05) */
+  #panel { display: none; }
   #panel .actions-row,
   #panel .count-wrap,
   #panel #sse-label,
