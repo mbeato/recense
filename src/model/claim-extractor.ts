@@ -75,6 +75,29 @@ Document type: `;
 export const EXTRACTION_MAX_TOKENS = 8_192;
 
 /**
+ * JSON Schema for the flat claims array returned by the local constrained-decoding
+ * extraction path (QUICK-260612-clb). Passed as `jsonSchema` to
+ * `provider.generate()` → forwarded to OllamaClient's native /api/chat endpoint
+ * as the `format` parameter.
+ *
+ * Uses array-root schema (empirically verified: Ollama 0.21.2 accepts this shape).
+ * Anthropic/Vertex transports receive this in the ignored `extra` arg and never
+ * include it in their request body (T-CLB-seam).
+ */
+export const CLAIM_ARRAY_SCHEMA: object = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: ['entity', 'fact'] },
+      value: { type: 'string' },
+      links: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['type', 'value'],
+  },
+};
+
+/**
  * Character threshold above which content is split into chunks for extraction.
  * ~24 000 chars ≈ well under the 8K-token API limit per chunk while leaving
  * headroom for the prompt prefix. Episodes from EpisodicStore are already
@@ -167,6 +190,29 @@ export class ProviderClaimExtractor implements ClaimExtractor {
 }
 
 export function parseClaims(text: string): ExtractedClaim[] {
+  // Constrained-decoding object-wrap guard (QUICK-260612-clb):
+  // When OllamaClient returns an object-wrapped response `{"items":[...]}` (e.g. from
+  // an object-root schema fallback), extract and parse the inner array directly.
+  // This runs before the array-slicing path so it handles pure object responses where
+  // no stray `[` from other contexts exists. Falls through silently on any parse error.
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const obj = JSON.parse(trimmed) as unknown;
+      if (
+        typeof obj === 'object' &&
+        obj !== null &&
+        !Array.isArray(obj) &&
+        'items' in obj &&
+        Array.isArray((obj as Record<string, unknown>)['items'])
+      ) {
+        return parseClaimsFromArray((obj as Record<string, unknown>)['items'] as unknown[]);
+      }
+    } catch {
+      // Not a valid JSON object — fall through to the existing array-slicing path
+    }
+  }
+
   const json = extractJsonArray(text);
 
   if (json === null) {
@@ -298,7 +344,10 @@ export async function extractClaimsWithChunking(
   content: string,
 ): Promise<ExtractedClaim[]> {
   if (content.length <= EXTRACTION_CHUNK_CHARS) {
-    const text = await provider.generate(promptPrefix + content, { maxTokens: EXTRACTION_MAX_TOKENS });
+    const text = await provider.generate(promptPrefix + content, {
+      maxTokens: EXTRACTION_MAX_TOKENS,
+      jsonSchema: CLAIM_ARRAY_SCHEMA,
+    });
     return parseClaims(text);
   }
 
@@ -310,7 +359,10 @@ export async function extractClaimsWithChunking(
   const allClaims: ExtractedClaim[] = [];
   for (const chunk of chunks) {
     // Any chunk failure propagates (H-2: episode quarantine semantics)
-    const text = await provider.generate(promptPrefix + chunk, { maxTokens: EXTRACTION_MAX_TOKENS });
+    const text = await provider.generate(promptPrefix + chunk, {
+      maxTokens: EXTRACTION_MAX_TOKENS,
+      jsonSchema: CLAIM_ARRAY_SCHEMA,
+    });
     allClaims.push(...parseClaims(text));
   }
   return allClaims;
