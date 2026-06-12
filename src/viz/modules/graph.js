@@ -234,6 +234,8 @@ export function initGraph(ctx) {
 
   // ── Scene groups ──────────────────────────────────────────────────────
   const hullGroup  = new THREE.Group();
+  hullGroup.rotation.set(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
+  hullGroup.scale.setScalar(BRAIN_SCALE);   // normalized brain → world; matches containment
   const pulseGroup = new THREE.Group();
   Graph.scene().add(hullGroup);
   Graph.scene().add(pulseGroup);
