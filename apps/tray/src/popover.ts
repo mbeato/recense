@@ -113,9 +113,14 @@ export function createPopover(): BrowserWindow {
   // T-16-10: deny any new-window request from the renderer.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
-  // Inject the expand affordance whenever the page (re)loads.
+  // Inject the expand affordance whenever the page (re)loads — and restore
+  // the drag strip if we are pinned (a reload, or a pin issued before the
+  // page was ready, would otherwise silently lose it).
   win.webContents.on('did-finish-load', () => {
     win.webContents.executeJavaScript(EXPAND_BTN_JS).catch(() => {});
+    if (_pinned) {
+      win.webContents.executeJavaScript(DRAG_STRIP_ADD).catch(() => {});
+    }
   });
 
   // D-04: blur-dismiss — hide the popover on loss of focus unless pinned.
@@ -201,11 +206,12 @@ const DRAG_STRIP_REMOVE = `document.getElementById('recense-drag-strip')?.remove
 export function setPinned(win: BrowserWindow, pinned: boolean): void {
   _pinned = pinned;
   win.setAlwaysOnTop(pinned);
-  win.webContents
-    .executeJavaScript(pinned ? DRAG_STRIP_ADD : DRAG_STRIP_REMOVE)
-    .catch(() => {
-      // Page may not be loaded (server down) — strip is cosmetic, ignore.
-    });
+  const applyStrip = () =>
+    win.webContents.executeJavaScript(pinned ? DRAG_STRIP_ADD : DRAG_STRIP_REMOVE);
+  applyStrip().catch(() => {
+    // Page may still be loading — retry once; did-finish-load also restores.
+    setTimeout(() => { applyStrip().catch(() => {}); }, 400);
+  });
 }
 
 /**
