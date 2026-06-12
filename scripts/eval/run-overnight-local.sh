@@ -17,9 +17,11 @@ set +a
 export BRAIN_MEMORY_JUDGE_PROVIDER=local
 export BRAIN_MEMORY_EXTRACTOR_PROVIDER=local
 # Per-role pins (resolveProviderOverlay role-specific keys) — the validated split.
-# Extractor: granite4.1:8b won the 2026-06-12 bake-off (scripts/eval/extractor-bakeoff-results.json):
-# best change-normalization (incl. both V6 genuine-miss cases 7/8), 0 regurgitation, 0 think-leak,
-# 2.32s/ep under constrained decoding. Prior winner qwen2.5:7b-instruct kept as fallback.
+# Extractor: qwen2.5:7b-instruct — the validated end-to-end winner (V6, 61.5%).
+# granite4.1:8b won the isolated bake-off (extractor-bakeoff-results.json) but was
+# REJECTED end-to-end (V7, 38.5%): its claims resolve to confirm/extend/hold instead
+# of contradict downstream and its bare-entity claims pollute retrieval. Component
+# wins require system confirmation before adoption.
 export BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL=qwen2.5:7b-instruct
 export BRAIN_MEMORY_JUDGE_LOCAL_MODEL=qwen3.6:35b-a3b
 # Unset the sleep.env shared override so the per-role pins are the only model selectors.
