@@ -238,6 +238,17 @@ app
       // no-op — the tray lives in the menu bar, not in a window
     });
 
+    // -- Obsidian-style entry (founder, 2026-06-12) ---------------------------
+    // An explicit user launch (Finder/Dock double-click) opens the exploration
+    // window — the desktop icon is the front door to looking around. A
+    // login-item launch stays ambient: tray only, no window at every boot.
+    const openedAtLogin =
+      process.platform === 'darwin' &&
+      app.getLoginItemSettings().wasOpenedAtLogin;
+    if (!openedAtLogin) {
+      openMainWindow();
+    }
+
     log('tray app fully initialized');
   })
   .catch((err: unknown) => {

@@ -76,10 +76,9 @@ export function openMainWindow(): void {
   });
 }
 
-/** Focus the window from a Dock-icon click while in 'regular' mode. */
+/** Obsidian-style reopen: clicking the Dock icon or re-launching brain.app
+ *  from Finder while the app is running opens (or focuses) the exploration
+ *  window — the desktop icon is the front door to looking around. */
 app.on('activate', () => {
-  if (_win && !_win.isDestroyed()) {
-    _win.show();
-    _win.focus();
-  }
+  openMainWindow();
 });
