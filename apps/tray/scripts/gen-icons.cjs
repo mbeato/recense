@@ -1,28 +1,35 @@
 /**
- * gen-icons.cjs — Generate macOS tray icon assets using only Node.js built-ins.
+ * gen-icons.cjs — Derive dim (server-offline) tray icon variants from the
+ * hand-crafted brand assets, using only Node.js built-ins.
  *
- * Produces six PNGs in apps/tray/src/icons/:
- *   iconTemplate.png        16x16  black+alpha glyph (macOS template: OS recolors via alpha)
- *   iconTemplate@2x.png     32x32  same glyph, @2x
- *   iconDimTemplate.png     16x16  same glyph at 40% alpha (server-offline dim state, D-05)
- *   iconDimTemplate@2x.png  32x32  same dim glyph, @2x
- *   icon-active.png         16x16  amber #F59E0B filled glyph (non-template, pulse frame)
- *   icon-active@2x.png      32x32  same amber glyph, @2x
+ * Contract:
+ *   The four brand PNGs in apps/tray/src/icons/ are hand-crafted canonical
+ *   assets that this script READS but NEVER WRITES:
+ *     iconTemplate.png        16x16  brain mark, black+alpha (macOS template)
+ *     iconTemplate@2x.png     32x32  same mark, @2x
+ *     icon-active.png         16x16  amber active mark (non-template)
+ *     icon-active@2x.png      32x32  same, @2x
  *
- * Template images: macOS uses the alpha channel to determine the shape and recolors
- * the glyph black/white automatically for light/dark menu bars. They MUST be
- * black (RGB 0,0,0) + alpha — the color is defined by alpha, not RGB values.
- * Filename MUST end in 'Template' — macOS requires this for the auto-invert behavior.
+ *   The script's ONLY outputs are the two dim variants, derived by
+ *   multiplying the source alpha channel by 0.4 (D-05 server-offline
+ *   dim state):
+ *     iconDimTemplate.png     16x16  derived from iconTemplate.png
+ *     iconDimTemplate@2x.png  32x32  derived from iconTemplate@2x.png
  *
- * Pulse frames: amber RGB(245,158,11) = #F59E0B, fully opaque. Non-template filename.
- * Palette: amber activation only — no other hue. No synthetic activity.
+ * Template images: macOS uses the alpha channel to determine the shape and
+ * recolors the glyph black/white automatically for light/dark menu bars.
+ * Filename MUST end in 'Template' — macOS requires this for the auto-invert
+ * behavior. Because the shape comes from alpha, scaling alpha by 0.4
+ * produces a faded (dim) rendering of the same brain mark.
  *
- * PNG encoding: 8-byte PNG signature + IHDR + IDAT + IEND. Each scanline has a
- * leading filter byte (0 = None). IDAT data is zlib-deflated. CRC32 per chunk.
+ * PNG decoding: requires 8-bit RGBA non-interlaced sources (bit depth 8,
+ * colour type 6, compression 0, filter method 0, interlace 0) and fails
+ * loudly otherwise — no fallback. All five standard scanline filters
+ * (None/Sub/Up/Average/Paeth) are unfiltered.
  *
- * Self-validation: after writing each file, reads back and verifies:
- *   - PNG signature (8 bytes)
- *   - IHDR width and height match the expected dimensions
+ * Self-validation: after writing each dim file, reads it back and verifies:
+ *   - PNG signature + IHDR dimensions match the decoded source
+ *   - max alpha equals Math.round(0.4 * source max alpha)
  * Exits non-zero on any mismatch.
  *
  * Usage: node scripts/gen-icons.cjs  (from apps/tray or repo root)
@@ -89,101 +96,168 @@ function makeIHDR(width, height) {
 }
 
 // ---------------------------------------------------------------------------
-// Glyph drawing — filled rounded-square/dot shape
-//
-// Template icons: macOS determines shape from the alpha channel.
-// The glyph is a filled rounded square (corner radius = ~20% of size).
-// Template channels: R=0, G=0, B=0, alpha = glyph alpha.
-// Active channels:  R=245, G=158, B=11 (amber #F59E0B), alpha = glyph alpha.
+// PNG decoder — strict 8-bit RGBA non-interlaced only (fail loudly otherwise)
 // ---------------------------------------------------------------------------
 
-function glyphAlpha(x, y, size) {
-  // Filled rounded square with a small inset margin.
-  // margin: 1px for 16px, 2px for 32px
-  const margin = size <= 16 ? 1 : 2;
-  const radius = Math.round(size * 0.22);
-  const x0 = margin;
-  const y0 = margin;
-  const x1 = size - 1 - margin;
-  const y1 = size - 1 - margin;
+const PNG_SIG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-  if (x < x0 || x > x1 || y < y0 || y > y1) return 0;
-
-  // Corner rounding: check each corner quadrant
-  // Top-left corner
-  if (x < x0 + radius && y < y0 + radius) {
-    const dx = x0 + radius - x;
-    const dy = y0 + radius - y;
-    if (dx * dx + dy * dy > radius * radius) return 0;
-  }
-  // Top-right corner
-  if (x > x1 - radius && y < y0 + radius) {
-    const dx = x - (x1 - radius);
-    const dy = y0 + radius - y;
-    if (dx * dx + dy * dy > radius * radius) return 0;
-  }
-  // Bottom-left corner
-  if (x < x0 + radius && y > y1 - radius) {
-    const dx = x0 + radius - x;
-    const dy = y - (y1 - radius);
-    if (dx * dx + dy * dy > radius * radius) return 0;
-  }
-  // Bottom-right corner
-  if (x > x1 - radius && y > y1 - radius) {
-    const dx = x - (x1 - radius);
-    const dy = y - (y1 - radius);
-    if (dx * dx + dy * dy > radius * radius) return 0;
+function decodePNG(buffer, label) {
+  if (buffer.length < 8 || !buffer.subarray(0, 8).equals(PNG_SIG)) {
+    throw new Error(`${label}: invalid PNG signature`);
   }
 
-  return 255;
-}
+  let width = 0;
+  let height = 0;
+  const idatParts = [];
+  let offset = 8;
 
-// ---------------------------------------------------------------------------
-// Build RGBA pixel buffer for a given size and color mode
-// ---------------------------------------------------------------------------
+  while (offset + 8 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.toString('ascii', offset + 4, offset + 8);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd + 4 > buffer.length) {
+      throw new Error(`${label}: truncated chunk '${type}' at offset ${offset}`);
+    }
 
-function buildRGBA(size, isTemplate, alphaScale = 1) {
-  // R, G, B for active (amber) vs template (black)
-  const r = isTemplate ? 0 : 245;
-  const g = isTemplate ? 0 : 158;
-  const b = isTemplate ? 0 : 11;
+    if (type === 'IHDR') {
+      width  = buffer.readUInt32BE(dataStart);
+      height = buffer.readUInt32BE(dataStart + 4);
+      const bitDepth    = buffer[dataStart + 8];
+      const colourType  = buffer[dataStart + 9];
+      const compression = buffer[dataStart + 10];
+      const filterMeth  = buffer[dataStart + 11];
+      const interlace   = buffer[dataStart + 12];
+      if (bitDepth !== 8)    throw new Error(`${label}: unsupported bit depth ${bitDepth} (expected 8)`);
+      if (colourType !== 6)  throw new Error(`${label}: unsupported colour type ${colourType} (expected 6 = RGBA)`);
+      if (compression !== 0) throw new Error(`${label}: unsupported compression method ${compression} (expected 0)`);
+      if (filterMeth !== 0)  throw new Error(`${label}: unsupported filter method ${filterMeth} (expected 0)`);
+      if (interlace !== 0)   throw new Error(`${label}: unsupported interlace method ${interlace} (expected 0 = non-interlaced)`);
+    } else if (type === 'IDAT') {
+      idatParts.push(buffer.subarray(dataStart, dataEnd));
+    } else if (type === 'IEND') {
+      break;
+    }
 
-  // Each scanline: filter byte (0) + width * 4 bytes RGBA
-  const scanlineLen = 1 + size * 4;
-  const raw = Buffer.allocUnsafe(size * scanlineLen);
+    offset = dataEnd + 4; // skip CRC
+  }
 
-  for (let y = 0; y < size; y++) {
-    const rowOffset = y * scanlineLen;
-    raw[rowOffset] = 0; // filter byte: None
-    for (let x = 0; x < size; x++) {
-      // alphaScale < 1 produces the dim (server-offline) template variant:
-      // macOS renders template glyphs from alpha, so scaled alpha = faded glyph.
-      const alpha = Math.round(glyphAlpha(x, y, size) * alphaScale);
-      const pixelOffset = rowOffset + 1 + x * 4;
-      raw[pixelOffset]     = r;
-      raw[pixelOffset + 1] = g;
-      raw[pixelOffset + 2] = b;
-      raw[pixelOffset + 3] = alpha;
+  if (width === 0 || height === 0) {
+    throw new Error(`${label}: missing or empty IHDR`);
+  }
+  if (idatParts.length === 0) {
+    throw new Error(`${label}: no IDAT chunks found`);
+  }
+
+  const raw = zlib.inflateSync(Buffer.concat(idatParts));
+
+  // Unfilter scanlines: each row is 1 filter byte + width*4 RGBA bytes
+  const bpp = 4;
+  const rowLen = width * bpp;
+  const expectedRaw = height * (1 + rowLen);
+  if (raw.length !== expectedRaw) {
+    throw new Error(`${label}: decompressed size ${raw.length} != expected ${expectedRaw}`);
+  }
+
+  const pixels = Buffer.alloc(height * rowLen);
+
+  for (let y = 0; y < height; y++) {
+    const filterType = raw[y * (1 + rowLen)];
+    const srcRow = y * (1 + rowLen) + 1;
+    const dstRow = y * rowLen;
+
+    for (let x = 0; x < rowLen; x++) {
+      const rawByte = raw[srcRow + x];
+      const left = x >= bpp ? pixels[dstRow + x - bpp] : 0;
+      const up   = y > 0 ? pixels[dstRow - rowLen + x] : 0;
+      const upLeft = (y > 0 && x >= bpp) ? pixels[dstRow - rowLen + x - bpp] : 0;
+
+      let value;
+      switch (filterType) {
+        case 0: // None
+          value = rawByte;
+          break;
+        case 1: // Sub
+          value = rawByte + left;
+          break;
+        case 2: // Up
+          value = rawByte + up;
+          break;
+        case 3: // Average
+          value = rawByte + Math.floor((left + up) / 2);
+          break;
+        case 4: { // Paeth
+          const p = left + up - upLeft;
+          const pa = Math.abs(p - left);
+          const pb = Math.abs(p - up);
+          const pc = Math.abs(p - upLeft);
+          const pred = (pa <= pb && pa <= pc) ? left : (pb <= pc ? up : upLeft);
+          value = rawByte + pred;
+          break;
+        }
+        default:
+          throw new Error(`${label}: unknown scanline filter type ${filterType} at row ${y}`);
+      }
+      pixels[dstRow + x] = value & 0xff;
     }
   }
 
-  return raw;
+  return { width, height, pixels };
 }
 
 // ---------------------------------------------------------------------------
-// Encode full PNG
+// Encode raw RGBA pixels back into a PNG (filter byte 0 per row)
 // ---------------------------------------------------------------------------
 
-function encodePNG(size, isTemplate, alphaScale = 1) {
-  const PNG_SIG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  const ihdr = makeIHDR(size, size);
+function encodeRGBA(width, height, pixels) {
+  const rowLen = width * 4;
+  const raw = Buffer.allocUnsafe(height * (1 + rowLen));
+  for (let y = 0; y < height; y++) {
+    raw[y * (1 + rowLen)] = 0; // filter byte: None
+    pixels.copy(raw, y * (1 + rowLen) + 1, y * rowLen, (y + 1) * rowLen);
+  }
+  const compressed = zlib.deflateSync(raw, { level: 9 });
+  return Buffer.concat([
+    PNG_SIG,
+    makeIHDR(width, height),
+    makeChunk('IDAT', compressed),
+    makeChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
 
-  const rawPixels = buildRGBA(size, isTemplate, alphaScale);
-  const compressed = zlib.deflateSync(rawPixels, { level: 9 });
-  const idat = makeChunk('IDAT', compressed);
-  const iend = makeChunk('IEND', Buffer.alloc(0));
+// ---------------------------------------------------------------------------
+// Dim derivation: copy RGB, scale alpha by DIM_ALPHA_SCALE
+// ---------------------------------------------------------------------------
 
-  return Buffer.concat([PNG_SIG, ihdr, idat, iend]);
+const DIM_ALPHA_SCALE = 0.4;
+
+function maxAlpha(pixels) {
+  let max = 0;
+  for (let i = 3; i < pixels.length; i += 4) {
+    if (pixels[i] > max) max = pixels[i];
+  }
+  return max;
+}
+
+function deriveDim(srcPath, outPath, expectedSize) {
+  if (!fs.existsSync(srcPath)) {
+    throw new Error(`source brand asset missing: ${srcPath} — hand-crafted brand PNGs must exist; this script never creates them`);
+  }
+  const src = decodePNG(fs.readFileSync(srcPath), path.basename(srcPath));
+
+  if (src.width !== expectedSize || src.height !== expectedSize) {
+    throw new Error(`${path.basename(srcPath)}: expected ${expectedSize}x${expectedSize} source, got ${src.width}x${src.height}`);
+  }
+
+  const dim = Buffer.from(src.pixels); // copies R/G/B/A; we rescale A below
+  for (let i = 3; i < dim.length; i += 4) {
+    dim[i] = Math.round(dim[i] * DIM_ALPHA_SCALE);
+  }
+
+  fs.writeFileSync(outPath, encodeRGBA(src.width, src.height, dim));
+  process.stdout.write(`  WROTE ${path.basename(outPath)} (${src.width}x${src.height}, derived from ${path.basename(srcPath)})\n`);
+
+  return { srcMaxAlpha: maxAlpha(src.pixels), width: src.width, height: src.height };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,58 +290,45 @@ function validatePNG(filePath, expectedWidth, expectedHeight) {
   process.stdout.write(`  PASS ${path.basename(filePath)}: ${width}x${height} valid PNG signature + IHDR\n`);
 }
 
+function validateDim(filePath, source) {
+  validatePNG(filePath, source.width, source.height);
+
+  const dim = decodePNG(fs.readFileSync(filePath), path.basename(filePath));
+  if (dim.width !== source.width || dim.height !== source.height) {
+    throw new Error(`${filePath}: decoded dimensions ${dim.width}x${dim.height} != source ${source.width}x${source.height}`);
+  }
+
+  const expectedMax = Math.round(DIM_ALPHA_SCALE * source.srcMaxAlpha);
+  const actualMax = maxAlpha(dim.pixels);
+  if (actualMax !== expectedMax) {
+    throw new Error(`${filePath}: max alpha ${actualMax} != expected ${expectedMax} (= round(${DIM_ALPHA_SCALE} * ${source.srcMaxAlpha}))`);
+  }
+
+  process.stdout.write(`  PASS ${path.basename(filePath)}: max alpha ${actualMax} = round(${DIM_ALPHA_SCALE} * source max ${source.srcMaxAlpha})\n`);
+}
+
 // ---------------------------------------------------------------------------
-// Main
+// Main: derive the two dim variants from the hand-crafted brand templates
 // ---------------------------------------------------------------------------
 
-// Resolve output directory relative to this script's location
 const scriptDir = path.dirname(__filename);
 const iconsDir  = path.join(scriptDir, '..', 'src', 'icons');
 
-fs.mkdirSync(iconsDir, { recursive: true });
-
-const assets = [
-  { name: 'iconTemplate.png',       size: 16, isTemplate: true  },
-  { name: 'iconTemplate@2x.png',    size: 32, isTemplate: true  },
-  { name: 'iconDimTemplate.png',    size: 16, isTemplate: true,  alphaScale: 0.4 },
-  { name: 'iconDimTemplate@2x.png', size: 32, isTemplate: true,  alphaScale: 0.4 },
-  { name: 'icon-active.png',        size: 16, isTemplate: false },
-  { name: 'icon-active@2x.png',     size: 32, isTemplate: false },
+const derivations = [
+  { src: 'iconTemplate.png',    out: 'iconDimTemplate.png',    size: 16 },
+  { src: 'iconTemplate@2x.png', out: 'iconDimTemplate@2x.png', size: 32 },
 ];
 
-process.stdout.write('Generating tray icon assets...\n');
-
-let hadError = false;
-
-for (const asset of assets) {
-  const outPath = path.join(iconsDir, asset.name);
-  try {
-    const png = encodePNG(asset.size, asset.isTemplate, asset.alphaScale ?? 1);
-    fs.writeFileSync(outPath, png);
-    process.stdout.write(`  WROTE ${asset.name} (${asset.size}x${asset.size})\n`);
-  } catch (err) {
-    process.stderr.write(`ERROR writing ${asset.name}: ${err}\n`);
-    hadError = true;
-  }
-}
-
-if (hadError) {
-  process.exit(1);
-}
-
-// Self-validate
-process.stdout.write('Validating...\n');
+process.stdout.write('Deriving dim tray icon variants from brand assets...\n');
 
 try {
-  validatePNG(path.join(iconsDir, 'iconTemplate.png'),       16, 16);
-  validatePNG(path.join(iconsDir, 'iconTemplate@2x.png'),    32, 32);
-  validatePNG(path.join(iconsDir, 'iconDimTemplate.png'),    16, 16);
-  validatePNG(path.join(iconsDir, 'iconDimTemplate@2x.png'), 32, 32);
-  validatePNG(path.join(iconsDir, 'icon-active.png'),        16, 16);
-  validatePNG(path.join(iconsDir, 'icon-active@2x.png'),     32, 32);
+  for (const d of derivations) {
+    const source = deriveDim(path.join(iconsDir, d.src), path.join(iconsDir, d.out), d.size);
+    validateDim(path.join(iconsDir, d.out), source);
+  }
 } catch (err) {
-  process.stderr.write('VALIDATION FAILED: ' + err.message + '\n');
+  process.stderr.write('FAILED: ' + err.message + '\n');
   process.exit(1);
 }
 
-process.stdout.write('Done. All six icon assets valid.\n');
+process.stdout.write('Done. Both dim icon assets derived and valid.\n');
