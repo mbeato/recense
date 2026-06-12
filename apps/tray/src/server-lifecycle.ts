@@ -11,7 +11,10 @@
  *            Pass ONLY BRAIN_MEMORY_DB additively. Do not add NODE_MODE env vars to child.
  *   T-16-05: pipe child output to append-only /tmp/brain-memory-tray.log — never tray stdout.
  *   T-16-06: exponential backoff (1s→30s cap) with a `stopping` guard prevents tight respawn
- *            loops on a persistently-failing server.
+ *            loops on a persistently-failing server. At most ONE respawn timer is ever
+ *            pending (scheduleRespawn is a no-op while a timer is live), and the backoff
+ *            delay is a single module-level monotonic value shared by every trigger path —
+ *            stacked timers + per-call delays were the 11,755-spawn storm.
  */
 
 import { appendFileSync, existsSync } from 'fs';
@@ -110,6 +113,15 @@ let stopping = false;
 
 /** Active backoff timer, if any. Cleared by stopServer(). */
 let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Monotonic backoff delay shared across ALL respawn-trigger paths (child exit,
+ * health-check failure, respawn error). Each scheduling attempt doubles it
+ * (capped at BACKOFF_CAP_MS); a healthy respawn or stopServer() resets it to
+ * BACKOFF_INITIAL_MS. Per-call delays let insta-crashing children loop at 1s
+ * forever — this shared value is what makes escalation actually monotonic.
+ */
+let respawnDelayMs = BACKOFF_INITIAL_MS;
 
 /**
  * Most recently spawned child process.
@@ -216,7 +228,8 @@ export async function ensureServer(opts: EnsureServerOpts = {}): Promise<ServerH
     log(`server exited (code=${code ?? 'null'} signal=${signal ?? 'null'})`);
     if (!stopping) {
       opts.onUnhealthy?.();
-      scheduleRespawn(opts, BACKOFF_INITIAL_MS);
+      scheduleRespawn(opts, respawnDelayMs);
+      respawnDelayMs = Math.min(respawnDelayMs * 2, BACKOFF_CAP_MS);
     }
   });
 
@@ -246,6 +259,8 @@ export function stopServer(handle: ServerHandle): void {
       clearTimeout(backoffTimer);
       backoffTimer = null;
     }
+    // Fresh backoff for the next stop/restart cycle.
+    respawnDelayMs = BACKOFF_INITIAL_MS;
     // D-96: SIGTERM so the child's exit handler restores viz_trace_enabled OFF.
     // Use activeChild (most recently spawned child) rather than handle.child so
     // that a crash-backoff respawn cycle does not leave the replacement child
@@ -264,12 +279,20 @@ export function stopServer(handle: ServerHandle): void {
 /**
  * Schedule a server respawn after `delayMs` milliseconds.
  *
- * Backoff doubles on each consecutive failure, capped at BACKOFF_CAP_MS (30s).
- * A successful health check after a respawn resets the delay (next crash = 1s).
- * The `stopping` guard prevents respawn during deliberate tray quit (T-16-06).
+ * Single-flight: at most one respawn timer is ever pending — a call while a
+ * timer is live is a no-op (stacked timers were the respawn-storm multiplier).
+ * Callers pass the module-level `respawnDelayMs` and double it after the call,
+ * so escalation is monotonic (1s → 2s → 4s → ... → BACKOFF_CAP_MS) across all
+ * trigger paths. A successful health check after a respawn resets the delay;
+ * so does stopServer(). The `stopping` guard prevents respawn during
+ * deliberate tray quit (T-16-06).
  */
 function scheduleRespawn(opts: EnsureServerOpts, delayMs: number): void {
   if (stopping) return;
+  // Single-flight guard: a respawn is already pending — never stack a second
+  // timer (this was the storm multiplier: each failure cycle scheduled twice,
+  // doubling the live-timer population every cycle).
+  if (backoffTimer !== null) return;
   const cappedDelay = Math.min(delayMs, BACKOFF_CAP_MS);
   log(`scheduling respawn in ${cappedDelay}ms`);
 
@@ -284,9 +307,11 @@ function scheduleRespawn(opts: EnsureServerOpts, delayMs: number): void {
         if (!healthy) {
           log('respawned server failed health check — doubling backoff');
           opts.onUnhealthy?.();
-          scheduleRespawn(opts, cappedDelay * 2);
+          scheduleRespawn(opts, respawnDelayMs);
+          respawnDelayMs = Math.min(respawnDelayMs * 2, BACKOFF_CAP_MS);
         } else {
           log('respawned server is healthy (backoff reset)');
+          respawnDelayMs = BACKOFF_INITIAL_MS;
           // Notify the main orchestrator so it can restore the tray icon state
           opts.onHealthy?.();
         }
@@ -294,7 +319,8 @@ function scheduleRespawn(opts: EnsureServerOpts, delayMs: number): void {
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         log(`respawn error: ${msg}`);
-        scheduleRespawn(opts, cappedDelay * 2);
+        scheduleRespawn(opts, respawnDelayMs);
+        respawnDelayMs = Math.min(respawnDelayMs * 2, BACKOFF_CAP_MS);
       });
   }, cappedDelay);
 }
