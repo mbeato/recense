@@ -156,7 +156,7 @@ export function initHud(ctx) {
   function refreshNodeCount() {
     if (!ncountEl) return;
     const nodes = ctx.allNodes || [];
-    ncountEl.textContent = String(nodes.filter(n => !n.tombstoned).length || nodes.length);
+    ncountEl.textContent = String(nodes.filter(n => !n.tombstoned).length);
   }
   // Call after a brief delay to allow app.js to populate ctx.allNodes
   setTimeout(refreshNodeCount, 200);
