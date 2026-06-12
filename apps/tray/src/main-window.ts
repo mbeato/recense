@@ -45,7 +45,7 @@ export function openMainWindow(): void {
   _win = new BrowserWindow({
     width: WIN_WIDTH,
     height: WIN_HEIGHT,
-    title: 'brain-memory',
+    title: 'Recense',
     show: true,
     webPreferences: {
       preload: join(__dirname, 'preload.js'),

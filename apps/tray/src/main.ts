@@ -186,14 +186,14 @@ app
     } catch (err) {
       if (err instanceof MissingDbError) {
         dialog.showErrorBox(
-          'brain',
+          'Recense',
           `DB not found at ${err.dbPath}\n\nRun \`brain init\` first to set up brain-memory.`,
         );
       } else if (err instanceof MissingBrainJsError) {
-        dialog.showErrorBox('brain', (err as Error).message);
+        dialog.showErrorBox('Recense', (err as Error).message);
       } else {
         const msg = err instanceof Error ? err.message : String(err);
-        dialog.showErrorBox('brain', `Failed to start viz server: ${msg}`);
+        dialog.showErrorBox('Recense', `Failed to start viz server: ${msg}`);
       }
       app.quit();
       return;
