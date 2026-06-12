@@ -1761,8 +1761,17 @@ describe('M1/M2: entity-anchored expansion and multi-candidate contradiction rou
     const [entityVec] = await sameEmb.embed(['Alice the founder']);
     h.store.setEmbedding(entityId, entityVec!);
 
-    // Seed fact sibling WITHOUT embedding (not in cosine top-k, will be reached via SQL anchor)
+    // Seed fact sibling WITHOUT an actual embedding blob.
+    // Critical: we mark it as "already embedded" (embedded_hash = value_hash) so that
+    // reembedDirty() does NOT re-embed it using the provider's makeZeroEmbedFn. If
+    // reembedDirty embedded it with a zero vector, topk would include it in cosine candidates
+    // (cosineSimF32(zero, zero)=0, still returned by topk), placing it in cosineIdSet. The M1
+    // provenance expansion would then deduplicate it from anchors → anchors=[] → auto-unrelated.
+    // By setting embedded_hash without an embedding blob, topk (WHERE embedding IS NOT NULL)
+    // skips it while stmtProvenanceSiblingFacts (WHERE f.tombstoned = 0, no embedding filter)
+    // still returns it. Test-only state: embedding IS NULL / embedded_hash IS NOT NULL.
     h.store.upsertNode({ id: factSiblingId, type: 'fact', value: 'Alice founded Acme Corp', origin: 'observed', s: 0.5, c: 0.7 });
+    h.db.prepare('UPDATE node SET embedded_hash = value_hash WHERE id = ?').run(factSiblingId);
 
     // Link both to the same episode via consolidation_event
     linkNodeToEpisode(entityId, sharedEpisodeId);
@@ -1812,10 +1821,13 @@ describe('M1/M2: entity-anchored expansion and multi-candidate contradiction rou
     // POST: link anchor fires → rescue → judge called → node tombstoned.
     const targetId = newId();
     h.store.upsertNode({ id: targetId, type: 'fact', value: 'Alice Wonderland is the CEO', origin: 'observed', s: 0.5, c: 0.7 });
-    // Give it a non-zero embedding so the SQL queries work, but claim will use zero embed
-    const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
-    const [vec] = await sameEmb.embed(['Alice Wonderland is the CEO']);
-    h.store.setEmbedding(targetId, vec!);
+    // Mark target as "already embedded" (embedded_hash = value_hash, embedding blob stays NULL).
+    // This prevents reembedDirty() from assigning a zero vector (which would put target in topk
+    // with score=0, making it enter cosineIdSet, causing the link anchor deduplication to skip
+    // it → anchors=[] → auto-unrelated). The link-anchor SQL (stmtLiveNodesForLinks:
+    // SELECT id, value FROM node WHERE tombstoned = 0) does not filter by embedding, so target
+    // is still reachable via M1. Test-only invariant: embedding IS NULL / embedded_hash IS NOT NULL.
+    h.db.prepare('UPDATE node SET embedded_hash = value_hash WHERE id = ?').run(targetId);
 
     // s=0.5, c=0.7 → resistance=0.35; magnitude=0.5 → ratio≈1.43 → reconcile
     const judgeVerdict: JudgeVerdict = {

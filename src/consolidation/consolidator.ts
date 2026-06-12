@@ -28,7 +28,7 @@
  *    before tombstone-cycling; prev_value is carried explicitly on the new node so the
  *    guard is functional in the real flow even across tombstone-always boundaries.
  */
-import Database from 'better-sqlite3';
+import Database, { type Statement } from 'better-sqlite3';
 import { realClock, type Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
 import type { EpisodicStore } from '../db/episode-store';
@@ -112,6 +112,12 @@ interface ClaimDecision {
   episodeSourceInferenceId: string | null;
   /** Episode role — assistant-role confirms must NOT strengthen (C-2 self-confirmation guard). */
   episodeRole: EpisodeRole;
+  /**
+   * M2: ALL candidate ids (from the judge candidate set) that the judge listed as contradicted.
+   * Filtered to the exact candidate set passed to that judge call before routing (T-UE6-02).
+   * Empty for fast-path, auto-unrelated, and non-contradict verdicts.
+   */
+  contradictedIds: string[];
 }
 
 /** Claim that escalated to provider.judge — carries its slot index for ordered reassembly. */
@@ -139,6 +145,12 @@ export class Consolidator {
   private readonly sink: ConsolidationSink;
   private readonly log: (msg: string) => void;
 
+  // M1: prepared statements for entity-anchored candidate expansion (T-01-SQL).
+  // Compiled once in the constructor; sync reads only (T-02-ASYNC — no await, never inside
+  // a db.transaction). Mirrors the B2 stmtStaleEntityIds precedent in engine.ts:140-158.
+  private readonly stmtProvenanceSiblingFacts: Statement<[string], { id: string; value: string }>;
+  private readonly stmtLiveNodesForLinks: Statement<[], { id: string; value: string }>;
+
   constructor(
     db: Database.Database,
     episodes: EpisodicStore,
@@ -163,6 +175,24 @@ export class Consolidator {
     this.clock = clock;
     this.sink = sink;
     this.log = log;
+
+    // M1: compile prepared statements once (T-01-SQL).
+    // stmtProvenanceSiblingFacts: given an entity node id, return DISTINCT live fact siblings
+    // (nodes of type='fact' sharing >=1 consolidation_event episode with the entity).
+    // Indexed by idx_consolidation_event_node / idx_consolidation_event_episode (v5 migration).
+    this.stmtProvenanceSiblingFacts = db.prepare(`
+      SELECT DISTINCT f.id, f.value
+      FROM consolidation_event a
+      JOIN consolidation_event b ON a.episode_id = b.episode_id
+      JOIN node f ON b.node_id = f.id
+      WHERE a.node_id = ? AND f.type = 'fact' AND f.tombstoned = 0
+    `);
+    // stmtLiveNodesForLinks: all live nodes for link-anchor containment matching.
+    // Small-N full scan (~1.5k nodes at target scale); link matching done in JS via
+    // normalizeValue containment (T-UE6-03: sub-ms at target volume).
+    this.stmtLiveNodesForLinks = db.prepare(
+      `SELECT id, value FROM node WHERE tombstoned = 0`
+    );
   }
 
   // ── Private helper: prefetch claim extractions in parallel ──────────────
@@ -428,6 +458,7 @@ export class Consolidator {
           const candidates = this.retriever.topk(queryVec, this.config.candidateK);
 
           // D-17: zero-inference fast path — normalized exact-match → confirm, no judge call
+          // Fast path evaluated on cosine candidates only (unchanged, D-17 priority preserved).
           const fastPathCandidate = candidates.find(
             c => normalizeValue(this.store.getNode(c.id)?.value ?? '') === normalizeValue(claim.value)
           );
@@ -442,34 +473,86 @@ export class Consolidator {
               magnitude: 0,
               episodeSourceInferenceId: episode.source_inference_id,
               episodeRole: episode.role,
-            };
-          } else if (
-            candidates.length === 0 ||
-            candidates[0]!.score < this.config.unrelatedSimilarityThreshold
-          ) {
-            // UPDATE-02 safe-direction: low cosine → auto-unrelated, no judge call
-            decisionSlots[claimIdx] = {
-              claimValue: claim.value,
-              claimType: claim.type,
-              claimOrigin,
-              relation: 'unrelated',
-              bestCandidateId: null,
-              episodeSessionId: episode.session_id,
-              magnitude: 0,
-              episodeSourceInferenceId: episode.source_inference_id,
-              episodeRole: episode.role,
+              contradictedIds: [],
             };
           } else {
-            // Escalate to judge — read candidate values from graph (UPDATE-01 "current value")
-            pendingJudges.push({
-              slotIdx: claimIdx,
-              claimValue: claim.value,
-              claimType: claim.type,
-              candidates: candidates.map(c => ({
-                id: c.id,
-                value: this.store.getNode(c.id)?.value ?? '',
-              })),
-            });
+            // M1: entity-anchored candidate expansion (Phase A sync reads — T-02-ASYNC preserved).
+            // Run AFTER D-17 fast path. Two anchor sources:
+            //   (a) Link anchors — claim.links containment-match against live nodes.
+            //   (b) Provenance-sibling anchors — live fact siblings of entity-type cosine candidates.
+            // All reads are sync prepared statements, never inside db.transaction (T-02-ASYNC).
+            const cosineIdSet = new Set(candidates.map(c => c.id));
+            const anchors: Array<{ id: string; value: string }> = [];
+
+            // (a) Link anchors — D-17 containment: normalizeValue(node.value).includes(normLink)
+            for (const link of (claim.links ?? [])) {
+              const normLink = normalizeValue(link);
+              if (normLink.length < 3) continue; // skip noise tokens (M1 design)
+              for (const row of this.stmtLiveNodesForLinks.all()) {
+                if (!cosineIdSet.has(row.id) && !anchors.some(a => a.id === row.id)) {
+                  if (normalizeValue(row.value).includes(normLink)) {
+                    anchors.push({ id: row.id, value: row.value });
+                    if (anchors.length >= this.config.entityAnchorK) break; // T-UE6-03 cap
+                  }
+                }
+              }
+              if (anchors.length >= this.config.entityAnchorK) break;
+            }
+
+            // (b) Provenance-sibling anchors — entity-type nodes in cosine top-k
+            if (anchors.length < this.config.entityAnchorK) {
+              for (const c of candidates) {
+                const node = this.store.getNode(c.id);
+                if (node?.type === 'entity') {
+                  const siblings = this.stmtProvenanceSiblingFacts.all(c.id);
+                  for (const sib of siblings) {
+                    if (!cosineIdSet.has(sib.id) && !anchors.some(a => a.id === sib.id)) {
+                      anchors.push({ id: sib.id, value: sib.value });
+                      if (anchors.length >= this.config.entityAnchorK) break; // T-UE6-03 cap
+                    }
+                  }
+                }
+                if (anchors.length >= this.config.entityAnchorK) break;
+              }
+            }
+
+            // UPDATE-02 refined gate: auto-unrelated fires ONLY when cosine gate is true
+            // AND no anchor candidates exist. When anchors exist, fall through to judge
+            // escalation regardless of cosine score (M1 distant-contradiction rescue).
+            const cosineGate = candidates.length === 0 ||
+              candidates[0]!.score < this.config.unrelatedSimilarityThreshold;
+
+            if (cosineGate && anchors.length === 0) {
+              // UPDATE-02 safe-direction: low cosine, no anchors → auto-unrelated, no judge call
+              decisionSlots[claimIdx] = {
+                claimValue: claim.value,
+                claimType: claim.type,
+                claimOrigin,
+                relation: 'unrelated',
+                bestCandidateId: null,
+                episodeSessionId: episode.session_id,
+                magnitude: 0,
+                episodeSourceInferenceId: episode.source_inference_id,
+                episodeRole: episode.role,
+                contradictedIds: [],
+              };
+            } else {
+              // Escalate to judge — cosine candidates first (D-17 precedence), anchors appended.
+              // Reads current values from graph (UPDATE-01 "current value").
+              const judgeCandidates = [
+                ...candidates.map(c => ({
+                  id: c.id,
+                  value: this.store.getNode(c.id)?.value ?? '',
+                })),
+                ...anchors, // anchors carry value from SQL / stmtLiveNodesForLinks row
+              ];
+              pendingJudges.push({
+                slotIdx: claimIdx,
+                claimValue: claim.value,
+                claimType: claim.type,
+                candidates: judgeCandidates,
+              });
+            }
           }
         }
 
@@ -483,6 +566,10 @@ export class Consolidator {
         for (let i = 0; i < pendingJudges.length; i++) {
           const { slotIdx, claimValue, claimType } = pendingJudges[i]!;
           const verdict = judgeVerdicts[i]!;
+          // M2 / T-UE6-02: filter contradicted_ids to the exact candidate set passed to this
+          // judge call — drops any hallucinated ids the model might emit (defensive).
+          const candidateIdSet = new Set(pendingJudges[i]!.candidates.map(c => c.id));
+          const contradictedIds = (verdict.contradicted_ids ?? []).filter(id => candidateIdSet.has(id));
           decisionSlots[slotIdx] = {
             claimValue,
             claimType,
@@ -493,6 +580,7 @@ export class Consolidator {
             magnitude: verdict.magnitude,
             episodeSourceInferenceId: episode.source_inference_id,
             episodeRole: episode.role,
+            contradictedIds,
           };
         }
 
