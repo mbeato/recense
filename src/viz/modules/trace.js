@@ -211,10 +211,17 @@ export function initTrace(ctx) {
       for (const node of frontier) {
         const edges = (ctx.adj.get(node.id) || []).slice(0, TRACE_FANOUT);
         for (const edge of edges) {
-          if (budget-- <= 0) break;
-          const nbId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+          // ctx.adj lists each edge under BOTH endpoints, so the neighbor is
+          // whichever endpoint is NOT the frontier node (same pattern as
+          // detail.js getConnections) — always taking edge.target would drop
+          // every incoming edge as a self-visit.
+          const sid = typeof edge.source === 'object' ? edge.source.id : edge.source;
+          const tid = typeof edge.target === 'object' ? edge.target.id : edge.target;
+          const nbId = sid === node.id ? tid : sid;
           const nb = ctx.idMap.get(nbId);
           if (!nb || visited.has(nb.id)) continue;
+          // Spend budget only on edges actually traversed, not on skips
+          if (budget-- <= 0) break;
           visited.add(nb.id);
           wave.push({ edge, from: node, to: nb });
           next.push(nb);
