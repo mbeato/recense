@@ -5,7 +5,7 @@
 # — V5 scored 38.5% from empty extractions), judge on qwen3.6:35b-a3b (won judge-eval v2
 # under the contradicted_ids+order-swap contract). Embeddings OpenAI.
 # Detached via nohup so it survives the Claude Code session. Results land in
-# scripts/eval/results/correctness-LOCAL-V7.json; log alongside.
+# scripts/eval/results/correctness-LOCAL-V8.json; log alongside.
 set -uo pipefail
 cd $HOME/brain-memory
 
@@ -22,7 +22,7 @@ export BRAIN_MEMORY_EXTRACTOR_PROVIDER=local
 # REJECTED end-to-end (V7, 38.5%): its claims resolve to confirm/extend/hold instead
 # of contradict downstream and its bare-entity claims pollute retrieval. Component
 # wins require system confirmation before adoption.
-export BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL=qwen2.5:7b-instruct
+export BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL=granite4.1:8b
 export BRAIN_MEMORY_JUDGE_LOCAL_MODEL=qwen3.6:35b-a3b
 # Unset the sleep.env shared override so the per-role pins are the only model selectors.
 unset BRAIN_MEMORY_LOCAL_MODEL
@@ -35,8 +35,8 @@ node scripts/eval/correctness-harness.cjs >> "$LOG" 2>&1
 STATUS=$?
 
 if [ $STATUS -eq 0 ] && [ -f scripts/eval/results/correctness-PENDING.json ]; then
-  cp scripts/eval/results/correctness-PENDING.json scripts/eval/results/correctness-LOCAL-V7.json
-  echo "=== done: $(date) — results copied to correctness-LOCAL-V7.json ===" >> "$LOG"
+  cp scripts/eval/results/correctness-PENDING.json scripts/eval/results/correctness-LOCAL-V8.json
+  echo "=== done: $(date) — results copied to correctness-LOCAL-V8.json ===" >> "$LOG"
 else
   echo "=== FAILED (exit $STATUS): $(date) ===" >> "$LOG"
 fi
