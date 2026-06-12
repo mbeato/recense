@@ -177,8 +177,8 @@ describe('css', () => {
     expect(css).toMatch(/\.toast|\.error-badge/);
   });
 
-  it('sets a near-black deep-sea background colour (D-03)', () => {
-    expect(css).toMatch(/background\s*:\s*#0[0-9a-f]{5}/i);
+  it('sets the deep warm-aubergine background (Recense brand field, 2026-06-12)', () => {
+    expect(css).toMatch(/background\s*:\s*#170f1d/i);
   });
 
   it('has no external CDN URLs in the stylesheet (T-10-10)', () => {

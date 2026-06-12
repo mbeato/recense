@@ -1,7 +1,8 @@
 /* ============================================================================
    brain-memory · activations — design system
-   Bioluminescent deep-sea palette (D-03): near-black background, cyan/teal/
-   soft-green accents, warm amber activation flares against the cool dark.
+   Recense palette (founder-locked 2026-06-11, field warmed 2026-06-12):
+   deep warm-aubergine background, muted rose/slate/mauve nodes at rest,
+   warm amber as the ONLY activation signal. Never reintroduce cyan/teal.
    ============================================================================ */
 
 /* ── Reset + layout skeleton ─────────────────────────────────────────────── */
@@ -376,11 +377,8 @@ button:hover {
   #log,
   #detail-loading { display: none; }
   #panel .row { margin: 0; }
-  .legend {
-    font-size: 9px;
-    margin-top: 1px;
-    letter-spacing: 0.02em;
-  }
+  /* Legend removed at popover scale (founder, 2026-06-12) — the pill is just the SSE dot */
+  .legend { display: none; }
   /* Detail panel must fit inside the small window */
   #detail {
     width: calc(100vw - 24px);

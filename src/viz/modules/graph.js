@@ -256,6 +256,32 @@ export function initGraph(ctx) {
   // .backgroundColor above stays pure black as a safe clear color underneath.
   Graph.scene().background = new THREE.Color(BG_COLOR);
 
+  // ── Stuck-drag guard (pinned tray window) ─────────────────────────────
+  // If pointerup is lost (popover hidden mid-drag, drag ends outside the
+  // frameless window), OrbitControls keeps tracking the pointer and rotates
+  // on HOVER with no button held. Release: any pointer move with buttons===0
+  // while a drag is tracked gets a synthetic pointercancel. Idle autoRotate
+  // (stats.js) is camera-level and unaffected — rotation by hand needs a
+  // real held button again.
+  {
+    const controlsEl = Graph.renderer().domElement;
+    let activePointerId = null;
+    controlsEl.addEventListener('pointerdown', (e) => { activePointerId = e.pointerId; });
+    window.addEventListener('pointerup', () => { activePointerId = null; });
+    const release = () => {
+      if (activePointerId === null) return;
+      controlsEl.dispatchEvent(new PointerEvent('pointercancel', { pointerId: activePointerId }));
+      activePointerId = null;
+    };
+    window.addEventListener('pointermove', (e) => {
+      if (activePointerId !== null && e.buttons === 0) release();
+    });
+    window.addEventListener('blur', release);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') release();
+    });
+  }
+
   Graph.scene().add(hullGroup);
   Graph.scene().add(pulseGroup);
   ctx.hullGroup  = hullGroup;
