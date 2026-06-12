@@ -39,7 +39,7 @@ const COLLAPSE_BTN_JS = `(() => {
   btn.textContent = '\u2199';
   btn.title = 'Collapse to menu bar';
   btn.style.cssText = 'position:fixed;top:10px;right:12px;z-index:70;width:26px;height:26px;'
-    + 'line-height:26px;text-align:center;border-radius:7px;cursor:pointer;'
+    + 'display:flex;align-items:center;justify-content:center;border-radius:7px;cursor:pointer;'
     + 'color:#d9cbc0;background:rgba(26,18,32,0.7);border:1px solid rgba(170,150,180,0.18);'
     + 'font:15px ui-sans-serif,system-ui;opacity:0.65;user-select:none;';
   btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });

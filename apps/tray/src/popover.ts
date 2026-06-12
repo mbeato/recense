@@ -31,7 +31,7 @@ const EXPAND_BTN_JS = `(() => {
   btn.textContent = '\\u2197';
   btn.title = 'Open Brain Window';
   btn.style.cssText = 'position:fixed;top:6px;right:8px;z-index:70;width:26px;height:26px;'
-    + 'line-height:26px;text-align:center;border-radius:7px;cursor:pointer;'
+    + 'display:flex;align-items:center;justify-content:center;border-radius:7px;cursor:pointer;'
     + 'color:#d9cbc0;background:rgba(26,18,32,0.7);border:1px solid rgba(170,150,180,0.18);'
     + 'font:15px ui-sans-serif,system-ui;opacity:0.65;-webkit-app-region:no-drag;user-select:none;';
   btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });
