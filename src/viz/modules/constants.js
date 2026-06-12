@@ -32,7 +32,8 @@
  * --- lod.js (Plan 03) -------------------------------------------------------
  * @property {Function}  nodeVisible             - (node) → boolean; LOD predicate
  * @property {Function}  linkVis                 - (link) → boolean; LOD link predicate
- * @property {Function}  revealTrace             - () → void; reapply visibility
+ * @property {Function}  refreshVisibility       - () → void; full visibility re-eval (schema expand/collapse)
+ * @property {Function}  revealTrace             - (pathNodes, pathLinks) → void; trace-only delta sync — flips .visible on the bounded pathway object set
  * @property {Set<string>} expanded              - Schema ids currently drilled-in
  * @property {Set<string>} traceNodes            - Node ids revealed by active trace
  * @property {Set<string>} traceLinks            - Link keys revealed by active trace

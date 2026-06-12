@@ -225,7 +225,7 @@ export function initGraph(ctx) {
         if (ctx.expanded.has(node.id) && ctx.selectedId === node.id) {
           ctx.expanded.delete(node.id);
           Graph.graphData({ nodes: getVisibleNodes(), links: getVisibleLinks() });
-          if (ctx.revealTrace) ctx.revealTrace();
+          if (ctx.refreshVisibility) ctx.refreshVisibility();
           if (ctx.closeDetail) ctx.closeDetail();
           return;
         }
@@ -235,7 +235,7 @@ export function initGraph(ctx) {
         if (!ctx.expanded.has(node.id)) {
           ctx.expanded.add(node.id);
           Graph.graphData({ nodes: getVisibleNodes(), links: getVisibleLinks() });
-          if (ctx.revealTrace) ctx.revealTrace();
+          if (ctx.refreshVisibility) ctx.refreshVisibility();
         }
       }
       // All nodes: open detail panel (detail.js sets ctx.selectNode)

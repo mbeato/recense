@@ -231,15 +231,22 @@ export function initTrace(ctx) {
       frontier = next;
     }
 
-    // Reveal pathway through the LOD before pulses start
+    // Reveal pathway through the LOD before pulses start. Collect the bounded
+    // pathway object set (seeds + every BFS-revealed node/edge) so revealTrace
+    // can delta-sync .visible on just these objects instead of re-digesting
+    // the full graph (the old full re-eval caused a visible frame hitch).
+    const pathNodes = [...seeds];
+    const pathLinks = [];
     seeds.forEach(s => ctx.traceNodes.add(s.id));
     for (const wave of waves) {
       for (const { edge, to } of wave) {
         ctx.traceNodes.add(to.id);
         ctx.traceLinks.add(ctx.linkKey(edge));
+        pathNodes.push(to);
+        pathLinks.push(edge);
       }
     }
-    ctx.revealTrace();
+    ctx.revealTrace(pathNodes, pathLinks);
 
     // Activate all seeds immediately at full intensity
     seeds.forEach(s => activate(s, 1.0));
@@ -257,11 +264,13 @@ export function initTrace(ctx) {
       }, h * HOP_MS);
     });
 
-    // Fade the pathway back after all pulses have had time to complete
+    // Fade the pathway back after all pulses have had time to complete.
+    // Re-evaluating the SAME bounded object set after clearing the sets hides
+    // exactly what the trace revealed (schemas expanded mid-trace stay visible).
     setTimeout(() => {
       ctx.traceNodes.clear();
       ctx.traceLinks.clear();
-      ctx.revealTrace();
+      ctx.revealTrace(pathNodes, pathLinks);
     }, waves.length * HOP_MS + 2800);
   }
 
