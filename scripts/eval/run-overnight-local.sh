@@ -1,8 +1,11 @@
 #!/bin/bash
 # Overnight local-inference correctness eval (quick task 260611-ue6 verification).
-# Judge + extractor on local Ollama (qwen3.6:35b-a3b via config default); embeddings OpenAI.
+# Per-role validated split (V5 postmortem 2026-06-12): extraction on qwen2.5:7b-instruct
+# (won the 2026-06-07 extraction bake-off; 35b-with-thinking silently breaks claim parsing
+# — V5 scored 38.5% from empty extractions), judge on qwen3.6:35b-a3b (won judge-eval v2
+# under the contradicted_ids+order-swap contract). Embeddings OpenAI.
 # Detached via nohup so it survives the Claude Code session. Results land in
-# scripts/eval/results/correctness-LOCAL-V5.json; log alongside.
+# scripts/eval/results/correctness-LOCAL-V6.json; log alongside.
 set -uo pipefail
 cd $HOME/brain-memory
 
@@ -13,8 +16,10 @@ set +a
 
 export BRAIN_MEMORY_JUDGE_PROVIDER=local
 export BRAIN_MEMORY_EXTRACTOR_PROVIDER=local
-# Unset the sleep.env 7b override so BOTH roles use config default qwen3.6:35b-a3b
-# (the judge model validated against Haiku on contradiction detection, 2026-06-07).
+# Per-role pins (resolveProviderOverlay role-specific keys) — the validated split.
+export BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL=qwen2.5:7b-instruct
+export BRAIN_MEMORY_JUDGE_LOCAL_MODEL=qwen3.6:35b-a3b
+# Unset the sleep.env shared override so the per-role pins are the only model selectors.
 unset BRAIN_MEMORY_LOCAL_MODEL
 
 LOG=scripts/eval/results/overnight-local-run.log
@@ -25,8 +30,8 @@ node scripts/eval/correctness-harness.cjs >> "$LOG" 2>&1
 STATUS=$?
 
 if [ $STATUS -eq 0 ] && [ -f scripts/eval/results/correctness-PENDING.json ]; then
-  cp scripts/eval/results/correctness-PENDING.json scripts/eval/results/correctness-LOCAL-V5.json
-  echo "=== done: $(date) — results copied to correctness-LOCAL-V5.json ===" >> "$LOG"
+  cp scripts/eval/results/correctness-PENDING.json scripts/eval/results/correctness-LOCAL-V6.json
+  echo "=== done: $(date) — results copied to correctness-LOCAL-V6.json ===" >> "$LOG"
 else
   echo "=== FAILED (exit $STATUS): $(date) ===" >> "$LOG"
 fi

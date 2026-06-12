@@ -51,6 +51,11 @@ export interface ProviderOverlay {
  *  - When (and only when) the resolved provider is 'local', optional
  *    BRAIN_MEMORY_LOCAL_MODEL / BRAIN_MEMORY_LOCAL_BASE_URL overlay localModel /
  *    localBaseUrl; absent → DEFAULT_CONFIG values are kept.
+ *  - Per-role local model (V5 postmortem 2026-06-12): when roleEnvKey is set, a
+ *    role-specific model key derived by replacing the _PROVIDER suffix with
+ *    _LOCAL_MODEL (e.g. BRAIN_MEMORY_JUDGE_LOCAL_MODEL) takes precedence over
+ *    BRAIN_MEMORY_LOCAL_MODEL. Roles validated independently (extraction bake-off
+ *    → qwen2.5:7b; judge eval v2 → qwen3.6:35b-a3b) need independent pins.
  *  - roleEnvKey is optional: calling with no role key behaves EXACTLY as the
  *    original single-overlay resolver (backward-compatible — bc2 tests).
  * Pure (env passed in) and network-free so it is unit-testable.
@@ -73,7 +78,11 @@ export function resolveProviderOverlay(
   const overlay: ProviderOverlay = { modelProvider: provider };
 
   if (provider === 'local') {
-    const localModel = env['BRAIN_MEMORY_LOCAL_MODEL'];
+    // Per-role model pin wins over the shared key (roles are validated independently).
+    const roleModelKey = roleEnvKey?.endsWith('_PROVIDER')
+      ? roleEnvKey.replace(/_PROVIDER$/, '_LOCAL_MODEL')
+      : undefined;
+    const localModel = (roleModelKey && env[roleModelKey]) || env['BRAIN_MEMORY_LOCAL_MODEL'];
     const localBaseUrl = env['BRAIN_MEMORY_LOCAL_BASE_URL'];
     if (localModel) overlay.localModel = localModel;
     if (localBaseUrl) overlay.localBaseUrl = localBaseUrl;

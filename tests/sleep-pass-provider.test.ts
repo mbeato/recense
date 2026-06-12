@@ -136,4 +136,41 @@ describe('resolveProviderOverlay (per-role provider routing)', () => {
     expect(judge.modelProvider).toBe('anthropic');
     expect(judge.localModel).toBeUndefined();
   });
+
+  it('per-role local model: role-specific key wins over shared BRAIN_MEMORY_LOCAL_MODEL', () => {
+    const env = {
+      BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'local',
+      BRAIN_MEMORY_JUDGE_PROVIDER: 'local',
+      BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL: 'qwen2.5:7b-instruct',
+      BRAIN_MEMORY_JUDGE_LOCAL_MODEL: 'qwen3.6:35b-a3b',
+      BRAIN_MEMORY_LOCAL_MODEL: 'shared-fallback',
+    };
+    const extractor = resolveProviderOverlay(env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER');
+    const judge = resolveProviderOverlay(env, 'BRAIN_MEMORY_JUDGE_PROVIDER');
+    expect(extractor.localModel).toBe('qwen2.5:7b-instruct');
+    expect(judge.localModel).toBe('qwen3.6:35b-a3b');
+  });
+
+  it('per-role local model: absent role key falls back to shared, then config default', () => {
+    const shared = resolveProviderOverlay(
+      { BRAIN_MEMORY_JUDGE_PROVIDER: 'local', BRAIN_MEMORY_LOCAL_MODEL: 'shared-model' },
+      'BRAIN_MEMORY_JUDGE_PROVIDER',
+    );
+    expect(shared.localModel).toBe('shared-model');
+
+    const none = resolveProviderOverlay(
+      { BRAIN_MEMORY_JUDGE_PROVIDER: 'local' },
+      'BRAIN_MEMORY_JUDGE_PROVIDER',
+    );
+    expect(none.localModel).toBeUndefined(); // DEFAULT_CONFIG.localModel kept downstream
+  });
+
+  it('per-role local model: no roleEnvKey → shared key only (bc2 backward-compat)', () => {
+    const overlay = resolveProviderOverlay({
+      BRAIN_MEMORY_MODEL_PROVIDER: 'local',
+      BRAIN_MEMORY_JUDGE_LOCAL_MODEL: 'must-not-apply',
+      BRAIN_MEMORY_LOCAL_MODEL: 'shared-model',
+    });
+    expect(overlay.localModel).toBe('shared-model');
+  });
 });
