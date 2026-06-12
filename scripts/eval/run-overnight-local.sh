@@ -20,7 +20,7 @@ export BRAIN_MEMORY_EXTRACTOR_PROVIDER=local
 # Extractor: granite4.1:8b won the 2026-06-12 bake-off (scripts/eval/extractor-bakeoff-results.json):
 # best change-normalization (incl. both V6 genuine-miss cases 7/8), 0 regurgitation, 0 think-leak,
 # 2.32s/ep under constrained decoding. Prior winner qwen2.5:7b-instruct kept as fallback.
-export BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL=granite4.1:8b
+export BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL=qwen2.5:7b-instruct
 export BRAIN_MEMORY_JUDGE_LOCAL_MODEL=qwen3.6:35b-a3b
 # Unset the sleep.env shared override so the per-role pins are the only model selectors.
 unset BRAIN_MEMORY_LOCAL_MODEL
