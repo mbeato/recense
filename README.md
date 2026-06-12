@@ -294,6 +294,7 @@ brain-memory is a **read-only query surface**. It answers questions from allowli
 - [docs/mcp.md](docs/mcp.md) — MCP server registration config and tool semantics
 - [docs/server-mode.md](docs/server-mode.md) — `brain serve` HTTP API reference
 - [docs/reference-client.md](docs/reference-client.md) — reference client template and provenance handling
+- [docs/tray-app.md](docs/tray-app.md) — menu-bar tray app: build from source, lifecycle, Gatekeeper caveat
 
 ---
 
