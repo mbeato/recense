@@ -9,14 +9,19 @@
  * or a trace reveals them; schema super-nodes float above the haze.
  *
  * Sets on ctx:
- *   nodeVisible   — (node) → boolean; LOD visibility predicate
- *   linkVis       — (link) → boolean; LOD link visibility predicate
- *   revealTrace   — () → void; re-applies nodeVisibility + linkVisibility on Graph
- *   expanded      — Set<schemaId>; schemas currently drilled-in by user
- *   traceNodes    — Set<nodeId>; nodes revealed by the active spreading-activation trace
- *   traceLinks    — Set<linkKey>; links revealed by the active trace
- *   memberSchema  — Map<memberId, schemaId>; inverse of 'abstracts' edges
- *   linkKey       — (link) → string; canonical '|'-delimited edge key
+ *   nodeVisible       — (node) → boolean; LOD visibility predicate
+ *   linkVis           — (link) → boolean; LOD link visibility predicate
+ *   refreshVisibility — () → void; full-graph re-eval (re-applies nodeVisibility +
+ *                       linkVisibility on Graph); reserved for global LOD changes
+ *                       (schema expand/collapse in graph.js)
+ *   revealTrace       — (pathNodes, pathLinks) → void; TRACE-ONLY delta sync that
+ *                       flips .visible directly on the bounded pathway object set
+ *                       (compare-before-write; zero writes when already in sync)
+ *   expanded          — Set<schemaId>; schemas currently drilled-in by user
+ *   traceNodes        — Set<nodeId>; nodes revealed by the active spreading-activation trace
+ *   traceLinks        — Set<linkKey>; links revealed by the active trace
+ *   memberSchema      — Map<memberId, schemaId>; inverse of 'abstracts' edges
+ *   linkKey           — (link) → string; canonical '|'-delimited edge key
  *
  * Call order (enforced by app.js, Plan 07):
  *   initLod(ctx)   — classification + set callbacks on ctx
@@ -110,26 +115,63 @@ export function initLod(ctx) {
             expanded.has(memberSchema.get(tid)));
   };
 
-  // ── revealTrace ────────────────────────────────────────────────────────
-  // Re-applies nodeVisibility and linkVisibility on the Graph instance.
-  // Called by trace.js after mutating traceNodes / traceLinks, and by
-  // graph.js on schema expand/collapse.
+  // ── refreshVisibility ──────────────────────────────────────────────────
+  // FULL-GRAPH re-eval: re-applies nodeVisibility and linkVisibility on the
+  // Graph instance, which synchronously re-digests every node/link object.
+  // Reserved for global LOD changes (schema expand/collapse in graph.js),
+  // where the preceding Graph.graphData(...) swap re-digests anyway.
   //
   // ctx.Graph is set by initGraph (which runs after initLod), so the
-  // closure reference is safe — revealTrace is only called post-init.
-  function revealTrace() {
+  // closure reference is safe — refreshVisibility is only called post-init.
+  function refreshVisibility() {
     if (!ctx.Graph) return;
     ctx.Graph.nodeVisibility(nodeVisible);
     ctx.Graph.linkVisibility(linkVis);
   }
 
+  // ── revealTrace ────────────────────────────────────────────────────────
+  // TRACE-ONLY delta sync. A trace touches a bounded set (seeds +
+  // ≤TRACE_MAX_EDGES revealed nodes/links), so instead of the full-graph
+  // re-digest above, flip .visible directly on the bounded set's three.js
+  // objects (node.__threeObj / link.__lineObj — this graph uses no arrows
+  // or particles). Compare-before-write IS the fast path: when the whole
+  // pathway is already visible under the current LOD (common case), the
+  // loop performs zero writes and never touches the Graph setters.
+  //
+  // The same call serves both phases of the trace lifecycle:
+  //   arrival   — trace.js has ADDED to traceNodes/traceLinks, so the
+  //               predicates now return true → hidden members flip on;
+  //   fade-back — trace.js has CLEARED the sets, so the predicates return
+  //               the plain LOD answer → trace-only reveals flip off, while
+  //               nodes whose schema got expanded mid-trace correctly stay
+  //               visible. Re-evaluating the predicate on the same bounded
+  //               object set hides exactly what the trace revealed without
+  //               separate bookkeeping.
+  //
+  // Nodes without __threeObj (tombstone-filtered, not in graphData) are
+  // skipped — they have no scene object to flip.
+  function revealTrace(pathNodes, pathLinks) {
+    if (!ctx.Graph) return;
+    for (const n of (pathNodes || [])) {
+      if (!n.__threeObj) continue;
+      const desired = nodeVisible(n);
+      if (n.__threeObj.visible !== desired) n.__threeObj.visible = desired;
+    }
+    for (const l of (pathLinks || [])) {
+      if (!l.__lineObj) continue;
+      const desired = linkVis(l);
+      if (l.__lineObj.visible !== desired) l.__lineObj.visible = desired;
+    }
+  }
+
   // ── Publish onto ctx ───────────────────────────────────────────────────
-  ctx.nodeVisible  = nodeVisible;
-  ctx.linkVis      = linkVis;
-  ctx.revealTrace  = revealTrace;
-  ctx.expanded     = expanded;
-  ctx.traceNodes   = traceNodes;
-  ctx.traceLinks   = traceLinks;
-  ctx.memberSchema = memberSchema;
-  ctx.linkKey      = linkKey;
+  ctx.nodeVisible       = nodeVisible;
+  ctx.linkVis           = linkVis;
+  ctx.refreshVisibility = refreshVisibility;
+  ctx.revealTrace       = revealTrace;
+  ctx.expanded          = expanded;
+  ctx.traceNodes        = traceNodes;
+  ctx.traceLinks        = traceLinks;
+  ctx.memberSchema      = memberSchema;
+  ctx.linkKey           = linkKey;
 }
