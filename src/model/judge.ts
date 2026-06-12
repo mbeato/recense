@@ -257,6 +257,14 @@ export class AnthropicJudge implements Judge {
     // (a single-candidate reversal yields no new information)
     if (!JUDGE_ORDER_SWAP || candidates.length < 2) return v1;
 
+    // Skip second call when v1 is non-destructive: chooseConsistentVerdict returns v1
+    // in EVERY non-contradict-v1 path (agreement → v1; v2=contradict → v1 as the
+    // non-destructive pick; both-non-contradict-differ → v1). The reversed call only
+    // changes the outcome when v1 says contradict — the swap exists to gate destructive
+    // verdicts, so only destructive verdicts pay for it. Behavior-identical by case
+    // analysis; halves judge latency on confirm/extend/unrelated escalations.
+    if (v1.relation !== 'contradict') return v1;
+
     const v2 = await this.judgeOnce(claim, [...candidates].reverse());
     return chooseConsistentVerdict(v1, v2);
   }
