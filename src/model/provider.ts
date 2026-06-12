@@ -34,8 +34,16 @@ import type { JudgeVerdict } from './judge';
  * Swapping the `embed` implementation must NEVER require changes to `generate` or `judge`.
  */
 export interface ModelProvider {
-  /** Text completion: one user-turn prompt → one string response. */
-  generate(prompt: string, opts?: { maxTokens?: number }): Promise<string>;
+  /**
+   * Text completion: one user-turn prompt → one string response.
+   *
+   * @param opts.maxTokens - Maximum tokens for the response.
+   * @param opts.jsonSchema - Optional JSON Schema to request constrained output from
+   *   the local (Ollama) transport. Anthropic/Vertex transports ignore this field;
+   *   it is forwarded as the `extra` second arg to `messages.create` only (T-CLB-seam:
+   *   jsonSchema NEVER appears in the Anthropic message body params).
+   */
+  generate(prompt: string, opts?: { maxTokens?: number; jsonSchema?: object }): Promise<string>;
 
   /** Batch embed N texts → N Float32Arrays, index-aligned. */
   embed(texts: string[]): Promise<Float32Array[]>;
@@ -86,7 +94,7 @@ export class DefaultModelProvider implements ModelProvider {
     this.embedConfig = embedConfig;
   }
 
-  async generate(prompt: string, opts?: { maxTokens?: number }): Promise<string> {
+  async generate(prompt: string, opts?: { maxTokens?: number; jsonSchema?: object }): Promise<string> {
     // L-12: cache the generate client — createAnthropicClient was called per-call,
     // defeating connection reuse across the per-episode extract loop in the sleep pass.
     // Mirror the lazy-init pattern used by _embedder and _judge.
@@ -95,11 +103,17 @@ export class DefaultModelProvider implements ModelProvider {
       this._generateClient = createAnthropicClient(this.generateConfig);
     }
     const { client, model } = this._generateClient;
-    const msg = await client.messages.create({
-      model,
-      max_tokens: opts?.maxTokens ?? 1024,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    // T-CLB-seam: jsonSchema goes ONLY into the `extra` second arg — never into the
+    // Anthropic message body params. Anthropic/Vertex transports ignore the extra arg;
+    // OllamaClient uses it for the native /api/chat constrained-decoding path.
+    const msg = await client.messages.create(
+      {
+        model,
+        max_tokens: opts?.maxTokens ?? 1024,
+        messages: [{ role: 'user', content: prompt }],
+      },
+      { jsonSchema: opts?.jsonSchema }
+    );
     return msg.content
       .filter((block): block is Anthropic.TextBlock => block.type === 'text')
       .map(block => block.text)
@@ -158,7 +172,7 @@ export class MockModelProvider implements ModelProvider {
     this.judgeQueue = [...judgeScript];
   }
 
-  async generate(_prompt: string, _opts?: { maxTokens?: number }): Promise<string> {
+  async generate(_prompt: string, _opts?: { maxTokens?: number; jsonSchema?: object }): Promise<string> {
     if (this.generateIdx >= this.generateQueue.length) {
       throw new Error(
         `MockModelProvider generate queue exhausted: all ${this.generateQueue.length} scripted responses have been consumed`

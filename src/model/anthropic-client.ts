@@ -24,10 +24,18 @@ import { OllamaClient } from './ollama-client';
  * Narrows to only the `messages.create` overload the Judge/ClaimExtractor call sites use.
  * The response Message type (including TextBlock) comes from @anthropic-ai/sdk,
  * so Anthropic.TextBlock narrowing at call sites is valid for both providers.
+ *
+ * The optional `extra` second argument carries brain-memory-internal options that are
+ * transport-specific (e.g. jsonSchema for the OllamaClient native constrained-decoding
+ * path). For Anthropic/Vertex transports the extra arg lands in the ignored RequestOptions
+ * slot — jsonSchema never reaches the Anthropic API body (QUICK-260612-clb, T-CLB-seam).
  */
 export type AnthropicLike = {
   messages: {
-    create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message>;
+    create(
+      params: Anthropic.MessageCreateParamsNonStreaming,
+      extra?: { jsonSchema?: object }
+    ): Promise<Anthropic.Message>;
   };
 };
 
@@ -91,7 +99,10 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
     opts.timeout = SDK_TIMEOUT_MS;
     opts.maxRetries = SDK_MAX_RETRIES;
     const client = new AnthropicVertex(opts);
-    return { client, model };
+    // Cast to AnthropicLike: the extra second arg (`{ jsonSchema? }`) lands in the
+    // ignored RequestOptions slot at runtime. The SDK does not send unknown option keys
+    // to the Anthropic API — jsonSchema never reaches the request body (T-CLB-seam).
+    return { client: client as unknown as AnthropicLike, model };
   }
 
   if (config.modelProvider === 'local') {
@@ -103,11 +114,14 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
       timeout: SDK_TIMEOUT_MS,
       maxRetries: SDK_MAX_RETRIES,
     });
-    const client = new OllamaClient(openai);
+    // Pass localBaseUrl so OllamaClient can derive the native /api/chat endpoint
+    // for constrained-decoding calls (QUICK-260612-clb).
+    const client = new OllamaClient(openai, config.localBaseUrl);
     return { client, model };
   }
 
   // Default: direct Anthropic SDK — reads ANTHROPIC_API_KEY from env automatically.
+  // Cast to AnthropicLike: same reasoning as the vertex path above (T-CLB-seam).
   const client = new Anthropic({ timeout: SDK_TIMEOUT_MS, maxRetries: SDK_MAX_RETRIES });
-  return { client, model };
+  return { client: client as unknown as AnthropicLike, model };
 }

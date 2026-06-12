@@ -12,6 +12,7 @@ import { MockModelProvider, DefaultModelProvider } from '../src/model/provider';
 import type { ModelProvider } from '../src/model/provider';
 import type { JudgeVerdict } from '../src/model/judge';
 import { DEFAULT_CONFIG } from '../src/lib/config';
+import { parseClaims } from '../src/model/claim-extractor';
 
 // ── L-12: spy on createAnthropicClient to verify generate() caches the client ──
 // vi.hoisted so the spy reference is available inside vi.mock's factory.
@@ -196,6 +197,100 @@ describe('DefaultModelProvider (export verification)', () => {
     // T-05-KEY: only verifying export exists — no actual instantiation
     // (would require ANTHROPIC_API_KEY / OPENAI_API_KEY in environment)
     expect(typeof DefaultModelProvider).toBe('function');
+  });
+});
+
+// ── DefaultModelProvider — jsonSchema is NOT put in the Anthropic params body ──
+
+describe('DefaultModelProvider — jsonSchema seam (QUICK-260612-clb)', () => {
+  it('messages.create params body does NOT contain jsonSchema when transport is anthropic', async () => {
+    createClientSpy.mockClear();
+
+    // Capture the exact args passed to messages.create
+    const capturedArgs: any[][] = [];
+    createClientSpy.mockReturnValueOnce({
+      client: {
+        messages: {
+          create: vi.fn(async (...args: any[]) => {
+            capturedArgs.push(args);
+            return { content: [{ type: 'text', text: 'ok' }] };
+          }),
+        },
+      },
+      model: 'test-model',
+    });
+
+    const config = { ...DEFAULT_CONFIG, dbPath: ':memory:', modelProvider: 'anthropic' as const };
+    const provider = new DefaultModelProvider({
+      generateConfig: config,
+      judgeConfig: config,
+      embedConfig: config,
+    });
+
+    await provider.generate('prompt', { maxTokens: 100, jsonSchema: { type: 'array' } });
+
+    expect(capturedArgs).toHaveLength(1);
+    const params = capturedArgs[0]![0];
+    // T-CLB-seam: jsonSchema must NEVER appear in the params body for Anthropic transports
+    expect('jsonSchema' in params).toBe(false);
+  });
+
+  it('jsonSchema is forwarded as the extra second arg, not in params', async () => {
+    createClientSpy.mockClear();
+
+    const capturedArgs: any[][] = [];
+    createClientSpy.mockReturnValueOnce({
+      client: {
+        messages: {
+          create: vi.fn(async (...args: any[]) => {
+            capturedArgs.push(args);
+            return { content: [{ type: 'text', text: 'ok' }] };
+          }),
+        },
+      },
+      model: 'test-model',
+    });
+
+    const config = { ...DEFAULT_CONFIG, dbPath: ':memory:', modelProvider: 'anthropic' as const };
+    const provider = new DefaultModelProvider({
+      generateConfig: config,
+      judgeConfig: config,
+      embedConfig: config,
+    });
+
+    const schema = { type: 'array', items: {} };
+    await provider.generate('prompt', { maxTokens: 100, jsonSchema: schema });
+
+    expect(capturedArgs).toHaveLength(1);
+    // Second arg (extra) should carry the jsonSchema
+    const extra = capturedArgs[0]![1];
+    expect(extra).toBeDefined();
+    expect(extra.jsonSchema).toEqual(schema);
+  });
+});
+
+// ── parseClaims — {items:[...]} unwrap (QUICK-260612-clb) ─────────────────
+
+describe('parseClaims — constrained-decoding object-wrap unwrap', () => {
+  it('object-wrap response {"items":[...]} parses to the same claims as the bare array', () => {
+    const claims = [{ type: 'fact', value: 'the extracted claim', links: [] }];
+    const bareArray = JSON.stringify(claims);
+    const objectWrap = JSON.stringify({ items: claims });
+
+    const fromBare = parseClaims(bareArray);
+    const fromWrapped = parseClaims(objectWrap);
+
+    expect(fromWrapped).toHaveLength(fromBare.length);
+    expect(fromWrapped[0]!.type).toBe(fromBare[0]!.type);
+    expect(fromWrapped[0]!.value).toBe(fromBare[0]!.value);
+  });
+
+  it('object-wrap with multiple items unwraps all of them', () => {
+    const wrapped = '{"items":[{"type":"fact","value":"claim one"},{"type":"entity","value":"claim two"}]}';
+    const claims = parseClaims(wrapped);
+    expect(claims).toHaveLength(2);
+    expect(claims[0]!.value).toBe('claim one');
+    expect(claims[1]!.value).toBe('claim two');
   });
 });
 
