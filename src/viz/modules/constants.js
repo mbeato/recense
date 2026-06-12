@@ -57,7 +57,8 @@
  *
  * --- stats.js (Plan 03) -----------------------------------------------------
  * @property {Function}  setTier                 - (tier: number) → void; 0=FULL,1=REDUCED,2=MINIMAL
- * @property {Function}  markActive              - () → void; reset idle timer
+ * @property {Function}  markActive              - () → void; reset idle timer (user interaction only)
+ * @property {Function}  markAnimating           - (durationMs: number) → void; hold full framerate without resetting idle timer
  * @property {Function}  isIdle                  - () → boolean
  *
  * --- detail.js (Plan 06) ----------------------------------------------------

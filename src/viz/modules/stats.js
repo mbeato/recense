@@ -5,7 +5,9 @@
  *
  * initStats(ctx) implements:
  *   - ctx.registerTick(fn)  — register a per-frame callback (trace activation, effects shimmer)
- *   - ctx.markActive()      — reset idle timer; called on pointer/keyboard events
+ *   - ctx.markActive()      — reset idle timer; user interaction only (pointer/keyboard/select)
+ *   - ctx.markAnimating(durationMs) — hold full framerate for durationMs without
+ *     resetting the idle timer (trace playback, D-07)
  *   - ctx.isIdle()          — returns true after IDLE_TIMEOUT_MS of no markActive() calls
  *   - ctx.setTier(tier)     — 0=FULL / 1=REDUCED / 2=MINIMAL quality tier
  *   - Single requestAnimationFrame loop: measures fps, invokes all registered ticks,
@@ -42,12 +44,20 @@ export function initStats(ctx) {
 
   // ── Idle state ────────────────────────────────────────────────────────────
   let lastActiveTime = COMPACT_VIEW ? performance.now() - IDLE_TIMEOUT_MS - 1 : performance.now();
+  let animUntil = 0; // full-rate deadline for non-interactive animation (traces)
 
   ctx.markActive = () => {
     lastActiveTime = performance.now();
     // Disable autoRotate immediately on any activity (D-04)
     const controls = ctx.Graph && typeof ctx.Graph.controls === 'function' ? ctx.Graph.controls() : null;
     if (controls) controls.autoRotate = false;
+  };
+
+  // Frame-scheduling signal only — never touches lastActiveTime or autoRotate
+  // (D-04: drift is camera-only; a trace is not user activity). Math.max so
+  // overlapping traces extend, never shorten, the full-rate window.
+  ctx.markAnimating = (durationMs) => {
+    animUntil = Math.max(animUntil, performance.now() + durationMs);
   };
 
   ctx.isIdle = () => (performance.now() - lastActiveTime) > IDLE_TIMEOUT_MS;
@@ -205,8 +215,9 @@ export function initStats(ctx) {
 
   function scheduleFrame() {
     if (!loopRunning) return;
-    if (ctx.isIdle()) {
-      // Throttle to ~IDLE_FPS to keep fans quiet (D-07)
+    if (ctx.isIdle() && performance.now() >= animUntil) {
+      // Throttle to ~IDLE_FPS to keep fans quiet (D-07) — only when idle AND
+      // no animation deadline (trace playback) is pending
       const delay = Math.max(0, 1000 / IDLE_FPS - (performance.now() - lastFrame));
       setTimeout(() => { if (loopRunning) requestAnimationFrame(frame); }, delay);
     } else {

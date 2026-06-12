@@ -180,9 +180,6 @@ export function initTrace(ctx) {
   // Called by both the SSE trace listener (hud.js) and the local test trigger
   // — the same function in both cases (D-102 proof).
   function applyTrace(seedIds) {
-    // Signal the stats loop to run at full framerate during this trace (D-07)
-    if (ctx.markActive) ctx.markActive();
-
     if (ctx.logEvent) {
       ctx.logEvent('trace', `seeds=[${(seedIds || []).join(',')}]`);
     }
@@ -230,6 +227,12 @@ export function initTrace(ctx) {
       if (wave.length) waves.push(wave);
       frontier = next;
     }
+
+    // Hold full framerate for the whole trace window WITHOUT resetting the
+    // idle timer (D-07) — covers hop scheduling + final pulse + pathway
+    // fade-back (waves.length*HOP_MS + 2800) + activation decay tail (~1.6s,
+    // rounded up). Over-estimating only costs full-rate frames.
+    if (ctx.markAnimating) ctx.markAnimating(waves.length * HOP_MS + PULSE_MS + 2800 + 1800);
 
     // Reveal pathway through the LOD before pulses start. Collect the bounded
     // pathway object set (seeds + every BFS-revealed node/edge) so revealTrace
