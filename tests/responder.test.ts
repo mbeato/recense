@@ -266,6 +266,60 @@ describe('HybridResponder', () => {
     expect(questionAsObserved).toHaveLength(0);
   });
 
+  // ── B1: facts-first uses retrieveRanked, not retrieve ─────────────────────
+
+  it('B1: responder calls retrieveRanked (not retrieve) for facts-first lookup', async () => {
+    // Mock: retrieveRanked returns a fact hit; retrieve returns nothing.
+    // In RED (current responder uses retrieve): retrieve is called, ranked is not → test fails.
+    // In GREEN (switched to retrieveRanked): ranked is called, retrieve is not → test passes.
+    let retrieveRankedCalled = false;
+    let retrieveCalled = false;
+    const mockRetrieval = {
+      retrieveRanked: (_v: Float32Array, _k: number, _f: number) => {
+        retrieveRankedCalled = true;
+        return [{ id: 'mock-fact', value: 'Max founded a startup in 2022', score: 0.85 }];
+      },
+      retrieve: (_v?: Float32Array) => {
+        retrieveCalled = true;
+        return { results: [], status: 'unreachable' as const };
+      },
+      retrieveCueless: () => ({ results: [], status: 'ok' as const }),
+    } as unknown as RetrievalEngine;
+
+    const provider = makeStubProvider(h.config.embeddingDimensions, 0, ['Max founded a startup in 2022.']);
+    const recallProvider = makeStubProvider(h.config.embeddingDimensions, 0, []);
+    const recall = makeRecallEngine(h, recallProvider);
+    const responder = new HybridResponder(h.clock, h.config, provider, mockRetrieval, recall, h.episodes);
+
+    await responder.respond('When did Max start his company?', 'sess-b1-a');
+
+    expect(retrieveRankedCalled).toBe(true);
+    expect(retrieveCalled).toBe(false);
+  });
+
+  it('B1: retrieveRanked hit >= floor → grounded fact answer (origin:fact, no (inferred) marker)', async () => {
+    // Mock: retrieveRanked returns a hit; retrieve returns nothing (shouldn't be called after switch).
+    // In RED (retrieve used): retrieve returns empty → honest no-answer → origin:'none'.
+    // In GREEN (retrieveRanked used): ranked returns the fact → grounded answer → origin:'fact'.
+    const mockRetrieval = {
+      retrieveRanked: () => [{ id: 'mock-x', value: 'Max founded a startup in 2022', score: 0.85 }],
+      retrieve: () => ({ results: [], status: 'unreachable' as const }),
+      retrieveCueless: () => ({ results: [], status: 'ok' as const }),
+    } as unknown as RetrievalEngine;
+
+    const grounded = 'Max founded a startup in 2022.';
+    const provider = makeStubProvider(h.config.embeddingDimensions, 0, [grounded]);
+    const recallProvider = makeStubProvider(h.config.embeddingDimensions, 0, []);
+    const recall = makeRecallEngine(h, recallProvider);
+    const responder = new HybridResponder(h.clock, h.config, provider, mockRetrieval, recall, h.episodes);
+
+    const result = await responder.respond('When did Max start his company?', 'sess-b1-b');
+
+    expect(result.origin).toBe('fact');
+    expect(result.reply).toBe(grounded);
+    expect(result.reply).not.toContain('(inferred)');
+  });
+
   // ── safe-null: embed throws → resolves null, never throws ────────────────
 
   it('safe-null: embed throws → respond() resolves to {reply:null,origin:none} without throwing', async () => {

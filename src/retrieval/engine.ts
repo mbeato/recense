@@ -67,6 +67,14 @@ export class RetrievalEngine {
   // Nodes absent from this set (orphan/seeded nodes) are unioned in as global.
   private readonly stmtGetEventBackedNodeIds: Database.Statement;
 
+  // B2 entity support-count invalidation (T-01-SQL: compiled once in constructor).
+  // Returns entity node IDs to EXCLUDE from retrieveRanked: those that are event-backed,
+  // have >=1 fact-sibling sharing a consolidation episode, and have NO live (tombstoned=0) fact-sibling.
+  // H-5 orphan exception: entities with zero consolidation_event rows are NOT returned here
+  // (the first EXISTS clause filters them out — same global-treat as retrieveCueless orphan union).
+  // Indexed: idx_consolidation_event_node / idx_consolidation_event_episode (v5 schema migration).
+  private readonly stmtStaleEntityIds: Database.Statement;
+
   constructor(
     db: Database.Database,
     clock: Clock,
@@ -121,6 +129,33 @@ export class RetrievalEngine {
     this.stmtGetEventBackedNodeIds = db.prepare(
       'SELECT DISTINCT node_id FROM consolidation_event WHERE node_id IS NOT NULL'
     );
+
+    // B2: entity nodes to exclude from retrieveRanked — event-backed entities whose every
+    // fact-sibling (a fact node sharing >=1 consolidation episode) is tombstoned.
+    // Subquery 1 (EXISTS ce): event-backed guard — entities with zero consolidation_event rows
+    //   are orphans/seeded corpus (H-5) and are NOT returned → never filtered from results.
+    // Subquery 2 (EXISTS a JOIN b JOIN f): fact-sibling exists — entity and fact share an episode.
+    // Subquery 3 (NOT EXISTS ...tombstoned=0): no live fact-sibling remains.
+    // Industry remedy (Graphiti / TMS): never cascade-delete entities; filter at recall instead.
+    this.stmtStaleEntityIds = db.prepare(`
+      SELECT DISTINCT e.id FROM node e
+      WHERE e.type = 'entity'
+        AND EXISTS (
+          SELECT 1 FROM consolidation_event ce WHERE ce.node_id = e.id
+        )
+        AND EXISTS (
+          SELECT 1 FROM consolidation_event a
+          JOIN consolidation_event b ON a.episode_id = b.episode_id
+          JOIN node f ON b.node_id = f.id
+          WHERE a.node_id = e.id AND f.type = 'fact'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM consolidation_event a
+          JOIN consolidation_event b ON a.episode_id = b.episode_id
+          JOIN node f ON b.node_id = f.id
+          WHERE a.node_id = e.id AND f.type = 'fact' AND f.tombstoned = 0
+        )
+    `);
   }
 
   /**
@@ -297,6 +332,53 @@ export class RetrievalEngine {
     }
 
     return { results, status: 'ok' };
+  }
+
+  /**
+   * Ranked top-k retrieval with cosine floor for the product question-answering path (memory_ask / B1).
+   *
+   * Returns the top-k live nodes whose cosine similarity to queryVec >= floor, sorted descending.
+   * Below-floor and tombstoned nodes are absent: topk() already excludes tombstoned=1 (T-02-STALE),
+   * and the floor gate is applied here.
+   *
+   * B2 entity support-count invalidation: entity nodes that are event-backed, have >=1 fact-sibling
+   * (sharing a consolidation_event episode_id), and have NO live (tombstoned=0) fact-sibling are
+   * excluded. This prevents a stale "Biscuit is Ana's dog" entity node from winning a query after
+   * its supporting facts are tombstoned (industry remedy: Graphiti / TMS filter-at-recall).
+   * H-5 orphan exception: entities with zero consolidation_event rows are NOT filtered — they are
+   * seeded/pre-SEAM-02 corpus treated as global (same as the retrieveCueless orphan union).
+   *
+   * Read-only: no graph writes (spec §8). LLM-free: no API calls (PROJECT.md).
+   * DO NOT modify retrieve() or retrieveCueless() — D-29 deleted/unreachable classification and
+   * the session-start budget logic depend on their existing behaviour.
+   *
+   * B1/B2/B3: used by HybridResponder facts-first branch and the correctness harness query step.
+   */
+  retrieveRanked(
+    queryVec: Float32Array,
+    k: number,
+    floor: number,
+  ): Array<{ id: string; value: string; score: number }> {
+    // topk returns live (tombstoned=0) nodes sorted descending by cosine (T-02-STALE already guards).
+    const hits = this.retriever.topk(queryVec, k);
+
+    // Apply floor threshold and resolve node values.
+    // topk is sorted descending — break early once a score falls below floor.
+    const candidates: Array<{ id: string; value: string; score: number }> = [];
+    for (const hit of hits) {
+      if (hit.score < floor) break; // sorted desc: all remaining are also below floor
+      const node = this.store.getNode(hit.id);
+      if (!node) continue; // guard: node was deleted between topk scan and getNode
+      candidates.push({ id: hit.id, value: node.value, score: hit.score });
+    }
+
+    // B2: build the stale-entity exclusion set once per call (prepared statement, T-01-SQL).
+    // H-5: entities with zero consolidation_event rows are NOT in this set (orphan-is-global).
+    const staleEntityIds = new Set<string>(
+      (this.stmtStaleEntityIds.all() as Array<{ id: string }>).map(r => r.id),
+    );
+
+    return candidates.filter(r => !staleEntityIds.has(r.id));
   }
 
   /**

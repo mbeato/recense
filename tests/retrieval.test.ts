@@ -285,6 +285,120 @@ describe('RetrievalEngine', () => {
     });
   });
 
+  // ─── retrieveRanked: ranked top-k with floor (B1/B2) ────────────────────────
+
+  describe('retrieveRanked(queryVec, k, floor)', () => {
+    /** Insert a live entity node with an embedding attached. */
+    function addEmbeddedEntityNode(id: string, value: string, vec: Float32Array, s: number = 0.5): void {
+      store.upsertNode({ id, type: 'entity', value, origin: 'observed', s });
+      store.setEmbedding(id, vec);
+    }
+
+    /** Insert a consolidation_event row linking node_id and episode_id (for B2 sibling wiring). */
+    function linkNodeToEpisode(nodeId: string, episodeId: string): void {
+      db.prepare(
+        'INSERT INTO consolidation_event (id, ts, schema_version, event_type, node_id, episode_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(`ce-${nodeId}-${episodeId}`, Date.now(), 5, 'confirm', nodeId, episodeId);
+    }
+
+    it('returns multiple live hits >= floor sorted descending; excludes below-floor node', () => {
+      // Three nodes all at basisVec(0): cosine with basisVec(0) = 1.0 (above floor 0.3)
+      addEmbeddedNode('ranked-a', 'fact a', basisVec(0), 0.9);
+      addEmbeddedNode('ranked-b', 'fact b', basisVec(0), 0.7);
+      addEmbeddedNode('ranked-c', 'fact c', basisVec(0), 0.5);
+      // One node at basisVec(1): cosine with basisVec(0) = 0.0 (below floor 0.3)
+      addEmbeddedNode('ranked-d', 'fact d below floor', basisVec(1), 0.9);
+
+      const engine = makeEngine();
+      const results = engine.retrieveRanked(basisVec(0), 10, 0.3);
+
+      const ids = results.map(r => r.id);
+      expect(ids).toContain('ranked-a');
+      expect(ids).toContain('ranked-b');
+      expect(ids).toContain('ranked-c');
+      expect(ids).not.toContain('ranked-d'); // cosine 0.0 < floor 0.3
+
+      // Results must be sorted descending by score
+      for (let i = 1; i < results.length; i++) {
+        expect(results[i - 1]!.score).toBeGreaterThanOrEqual(results[i]!.score);
+      }
+
+      // Result items must have id, value, score
+      expect(results[0]).toMatchObject({ id: expect.any(String), value: expect.any(String), score: expect.any(Number) });
+    });
+
+    it('entity is excluded when all fact-siblings (sharing a consolidation episode) are tombstoned', () => {
+      // Entity + fact share episode ep-100; fact is tombstoned
+      addEmbeddedEntityNode('ent-stale', 'Ana', basisVec(0), 0.9);
+      addEmbeddedNode('fact-stale', 'Ana lives in Denver', basisVec(0), 0.9);
+      linkNodeToEpisode('ent-stale', 'ep-100');
+      linkNodeToEpisode('fact-stale', 'ep-100');
+      store.tombstone('fact-stale'); // only fact-sibling is now tombstoned
+
+      const engine = makeEngine();
+      const results = engine.retrieveRanked(basisVec(0), 10, 0.0);
+
+      const ids = results.map(r => r.id);
+      expect(ids).not.toContain('ent-stale'); // excluded: all fact-siblings are tombstoned
+      expect(ids).not.toContain('fact-stale'); // tombstoned, excluded by topk
+    });
+
+    it('entity is NOT excluded when >= 1 live fact-sibling exists', () => {
+      // Entity + two facts share ep-200; one fact tombstoned, one still live
+      addEmbeddedEntityNode('ent-live', 'Ana', basisVec(0), 0.9);
+      addEmbeddedNode('fact-live-a', 'Ana lives in Denver', basisVec(0), 0.9);
+      addEmbeddedNode('fact-live-b', 'Ana has a dog', basisVec(0), 0.9);
+      linkNodeToEpisode('ent-live', 'ep-200');
+      linkNodeToEpisode('fact-live-a', 'ep-200');
+      linkNodeToEpisode('fact-live-b', 'ep-200');
+      store.tombstone('fact-live-a'); // one fact tombstoned, fact-live-b remains live
+
+      const engine = makeEngine();
+      const results = engine.retrieveRanked(basisVec(0), 10, 0.0);
+
+      const ids = results.map(r => r.id);
+      expect(ids).toContain('ent-live'); // NOT excluded: fact-live-b is still live
+      expect(ids).toContain('fact-live-b');
+      expect(ids).not.toContain('fact-live-a'); // tombstoned, excluded by topk
+    });
+
+    it('orphan entity (zero consolidation_event rows) is NOT excluded (H-5 precedent)', () => {
+      // Orphan: type=entity but no consolidation_event rows at all — seeded/pre-SEAM-02 corpus
+      addEmbeddedEntityNode('ent-orphan', "Biscuit is Ana's dog", basisVec(0), 0.9);
+      // No linkNodeToEpisode call — zero consolidation_event rows for ent-orphan
+
+      const engine = makeEngine();
+      const results = engine.retrieveRanked(basisVec(0), 10, 0.0);
+
+      const ids = results.map(r => r.id);
+      expect(ids).toContain('ent-orphan'); // NOT excluded: orphan/seeded node (H-5 global-treat)
+    });
+
+    it('retrieve() D-29 regression: ok/deleted/unreachable classification unchanged by retrieveRanked addition', () => {
+      // ok: live node with exact-match embedding
+      addEmbeddedNode('reg-live', 'regression live node', basisVec(0), 0.9);
+      // deleted scenario: tombstoned node matches, live node is orthogonal
+      addEmbeddedNode('reg-dead', 'regression tombstoned node', basisVec(3), 0.9);
+      addEmbeddedNode('reg-other', 'orthogonal live node', basisVec(1), 0.9);
+      store.tombstone('reg-dead');
+
+      const engine = makeEngine();
+
+      // ok: live node at basisVec(0) → cosine 1.0 >= deletedSimilarityThreshold 0.7
+      const okResult = engine.retrieve(basisVec(0));
+      expect(okResult.status).toBe('ok');
+      expect(okResult.results[0]?.id).toBe('reg-live');
+
+      // deleted: tombstoned node at basisVec(3), no live match at that dim
+      const deletedResult = engine.retrieve(basisVec(3));
+      expect(deletedResult.status).toBe('deleted');
+
+      // unreachable: query at basisVec(5) — no live or tombstoned node there
+      const unreachResult = engine.retrieve(basisVec(5));
+      expect(unreachResult.status).toBe('unreachable');
+    });
+  });
+
   // ─── L-2 topk side: dimension-mismatch safety ───────────────────────────────
 
   describe('topk dimension-mismatch safety (L-2 topk side)', () => {
