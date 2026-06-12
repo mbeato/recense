@@ -12,9 +12,10 @@
 import { BrowserWindow, Tray } from 'electron';
 import { join } from 'path';
 
-/** Default window dimensions (Claude's discretion per plan). */
-const WIN_WIDTH = 420;
-const WIN_HEIGHT = 640;
+/** Small square — glance surface sized so the brain fills the frame; the viz
+ *  frontend switches to compact mode (discrete legend, tighter camera) ≤500px. */
+const WIN_WIDTH = 340;
+const WIN_HEIGHT = 340;
 
 /** Module-level pin state. Accessed only through isPinned() / setPinned(). */
 let _pinned = false;

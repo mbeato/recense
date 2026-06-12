@@ -353,3 +353,44 @@ button:hover {
   font-size: 10px;
   color: #f08080;
 }
+
+/* ── Compact mode — tray popover (≤500px either dimension) ──────────────────
+   The 340×340 pinned/popover window gets a minimal, discrete overlay:
+   panel collapses to an SSE dot + tiny legend pill; title, counts, buttons,
+   and log are hidden. Full-window `brain viz` is unaffected. */
+@media (max-width: 500px), (max-height: 500px) {
+  #panel {
+    width: auto;
+    top: 8px;
+    left: 8px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    opacity: 0.35;
+  }
+  #panel:hover { opacity: 0.9; }
+  #panel h1,
+  #panel .row:has(button),
+  #panel .row:has(#ncount),
+  #panel #sse-label,
+  #btn-log,
+  #log,
+  #detail-loading { display: none; }
+  #panel .row { margin: 0; }
+  .legend {
+    font-size: 9px;
+    margin-top: 1px;
+    letter-spacing: 0.02em;
+  }
+  /* Detail panel must fit inside the small window */
+  #detail {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+  /* CC BY-SA credit must remain visible — shrink, don't hide */
+  #hull-credit {
+    font-size: 8px;
+    bottom: 4px;
+    right: 6px;
+    opacity: 0.55;
+  }
+}
