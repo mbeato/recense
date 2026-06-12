@@ -227,6 +227,23 @@ export interface EngineConfig {
    */
   peReconcileBandHigh: number;
 
+  /**
+   * Minimum effective resistance (effective_s × c) a node must have before a `contradict`
+   * verdict in the extreme band (ratio >= peReconcileBandHigh) can route to append-new.
+   *
+   * Without this guard, a fresh node (s=0.1, c=0.5 → resistance=0.05) routes to append-new
+   * for ANY judge magnitude >= 0.10 (ratio = magnitude/0.05 >= 2.0), because the reconcile
+   * band (magnitude 0.04–0.10) is too narrow to be reached in practice. The result: the old
+   * node is never tombstoned, every contradiction produces a duplicate, and belief-correction
+   * never completes (D-16 structural defect for fresh nodes).
+   *
+   * 0.3: a fresh node with s=0.1/c=0.5 (resistance=0.05) cannot reach this — it will always
+   * reconcile. An established node needs roughly s=0.6, c=0.5 or s=0.375, c=0.8 to reach 0.3,
+   * appropriate evidence for a belief treated as "established enough to coexist with a
+   * contradiction." Default 0.3 is a calibration placeholder (D-13).
+   */
+  peAppendNewMinResistance: number;
+
   // --- Phase 3: retrieval tunables (D-24/25/27/29) ---
 
   /**
@@ -467,6 +484,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   unrelatedSimilarityThreshold: 0.3,
   peReconcileBandLow: 0.8,
   peReconcileBandHigh: 2.0,
+  peAppendNewMinResistance: 0.3,
   rankWeightS: 1.0,
   rankWeightR: 0.0,
   injectionTokenBudget: 500,

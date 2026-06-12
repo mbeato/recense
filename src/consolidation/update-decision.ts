@@ -31,11 +31,16 @@ const EPS = 1e-9;
  *
  * ratio = peMagnitude / max(resistance, EPS)
  *
- *   ratio < peReconcileBandLow   → 'hold'       (D-16 weak: weak challenge vs strong fact;
- *                                                 append entry to pending_contradictions)
- *   ratio < peReconcileBandHigh  → 'reconcile'  (D-16 mid: tombstone old + set new current)
- *   else                         → 'append-new' (D-16 extreme/categorical: genuine divergence,
- *                                                 both values coexist)
+ *   ratio < peReconcileBandLow                    → 'hold'       (weak challenge vs strong fact)
+ *   ratio < peReconcileBandHigh                   → 'reconcile'  (tombstone old + set new current)
+ *   ratio >= peReconcileBandHigh
+ *     AND resistance >= peAppendNewMinResistance   → 'append-new' (genuine divergence; both coexist)
+ *     AND resistance <  peAppendNewMinResistance   → 'reconcile'  (fresh node; coexistence unwarranted)
+ *
+ * The peAppendNewMinResistance guard prevents fresh nodes (s=0.1, c=0.5 → resistance=0.05) from
+ * routing to append-new on any moderate judge magnitude (>= 0.10). Without it, the reconcile
+ * band (magnitude 0.04–0.10) is unreachable in practice: every clear contradiction routes to
+ * append-new, the old node is never tombstoned, and belief-correction never completes (D-16 fix).
  */
 export function routeContradiction(
   peMagnitude: number,
@@ -48,6 +53,10 @@ export function routeContradiction(
   // Band 2: mid-band → reconcile (tombstone old + set new current value; tombstone-always v1)
   if (ratio < config.peReconcileBandHigh) return 'reconcile';
   // Band 3: extreme / categorical → append-new (genuine divergence; both values coexist)
+  // Guard: only route to append-new when the node has meaningful resistance (D-16 fix).
+  // A fresh/weak node (resistance < peAppendNewMinResistance) has no basis for "genuine
+  // divergence" — the old value is not well-established, so reconcile is the correct action.
+  if (resistance < config.peAppendNewMinResistance) return 'reconcile';
   return 'append-new';
 }
 

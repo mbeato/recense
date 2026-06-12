@@ -14,7 +14,7 @@ import {
   countDistinctProvenance,
 } from '../src/consolidation/update-decision';
 
-// peReconcileBandLow=0.8, peReconcileBandHigh=2.0 (DEFAULT_CONFIG)
+// peReconcileBandLow=0.8, peReconcileBandHigh=2.0, peAppendNewMinResistance=0.3 (DEFAULT_CONFIG)
 const config = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
 
 // ---------------------------------------------------------------------------
@@ -32,9 +32,15 @@ describe('routeContradiction', () => {
     expect(routeContradiction(0.5, 0.5, config)).toBe('reconcile');
   });
 
-  it('high ratio → append-new (extreme / categorical contradiction)', () => {
-    // resistance=0.1, magnitude=0.5: ratio = 5.0 > 2.0 → append-new
-    expect(routeContradiction(0.5, 0.1, config)).toBe('append-new');
+  it('high ratio, well-established node → append-new (extreme / categorical contradiction)', () => {
+    // resistance=0.5 >= peAppendNewMinResistance(0.3), magnitude=1.0: ratio=2.0 → append-new
+    expect(routeContradiction(1.0, 0.5, config)).toBe('append-new');
+  });
+
+  it('high ratio, fresh node → reconcile (peAppendNewMinResistance guard blocks append-new)', () => {
+    // resistance=0.1 < peAppendNewMinResistance(0.3): append-new blocked → reconcile
+    // This is the D-16 fix: fresh node (s=0.1, c=0.5, resistance=0.05) never reaches append-new
+    expect(routeContradiction(0.5, 0.1, config)).toBe('reconcile');
   });
 
   it('boundary: ratio exactly at peReconcileBandLow (0.8) → reconcile (not hold)', () => {
@@ -42,15 +48,30 @@ describe('routeContradiction', () => {
     expect(routeContradiction(0.8, 1.0, config)).toBe('reconcile');
   });
 
-  it('boundary: ratio exactly at peReconcileBandHigh (2.0) → append-new (not reconcile)', () => {
-    // ratio = 2.0/1.0 = 2.0. Check is `ratio < 2.0` → false → falls to append-new
+  it('boundary: ratio exactly at peReconcileBandHigh (2.0), established node → append-new', () => {
+    // ratio = 2.0/1.0 = 2.0. resistance=1.0 >= 0.3 → append-new
     expect(routeContradiction(2.0, 1.0, config)).toBe('append-new');
   });
 
-  it('resistance=0 does not divide-by-zero (EPS floor → huge ratio → append-new)', () => {
-    // resistance=0 → denominator = EPS ≈ 1e-9; peMagnitude=0.5 → ratio ≈ 5e8 >> 2.0
+  it('boundary: ratio exactly at peReconcileBandHigh (2.0), fresh node → reconcile', () => {
+    // ratio = 2.0*0.1 / 0.1 = 2.0. resistance=0.1 < 0.3 → reconcile (guard fires)
+    expect(routeContradiction(0.2, 0.1, config)).toBe('reconcile');
+  });
+
+  it('resistance=0 does not divide-by-zero (EPS floor → huge ratio → reconcile via guard)', () => {
+    // resistance=0 → denominator = EPS ≈ 1e-9; ratio ≈ 5e8 >> 2.0 but resistance=0 < 0.3 → reconcile
     const action = routeContradiction(0.5, 0, config);
-    expect(action).toBe('append-new'); // defined action, no NaN/Infinity crash
+    expect(action).toBe('reconcile'); // defined action, no NaN/Infinity crash; guard prevents append-new
+  });
+
+  it('peAppendNewMinResistance boundary: resistance exactly at threshold → append-new allowed', () => {
+    // resistance=0.3 exactly matches peAppendNewMinResistance; ratio=3.0 >= 2.0 → append-new
+    expect(routeContradiction(0.9, 0.3, config)).toBe('append-new');
+  });
+
+  it('peAppendNewMinResistance boundary: resistance just below threshold → reconcile', () => {
+    // resistance=0.299 < 0.3; ratio=3.0 >= 2.0 but guard blocks → reconcile
+    expect(routeContradiction(0.9, 0.299, config)).toBe('reconcile');
   });
 
   it('D-16: lazy decay erodes resistance — borderline magnitude flips hold → reconcile', () => {

@@ -1621,9 +1621,10 @@ describe('Consolidator sink events per applyDecision branch (SEAM-02, D-49)', ()
   // ── contradict_append_new ─────────────────────────────────────────────────
 
   it('contradict append-new branch emits contradict_append_new', async () => {
-    // s=0.1, c=0.5 → resistance=0.05; magnitude=0.9 → ratio=18 > 2.0 → append-new
+    // s=0.5, c=0.8 → resistance=0.40 >= peAppendNewMinResistance(0.3) → append-new allowed
+    // magnitude=0.9 → ratio=0.9/0.40=2.25 >= peReconcileBandHigh(2.0) → append-new
     const candidateId = newId();
-    h.store.upsertNode({ id: candidateId, type: 'fact', value: 'append-new-original', origin: 'observed', s: 0.1, c: 0.5 });
+    h.store.upsertNode({ id: candidateId, type: 'fact', value: 'append-new-original', origin: 'observed', s: 0.5, c: 0.8 });
     const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
     const [vec] = await sameEmb.embed(['append-new-original']);
     h.store.setEmbedding(candidateId, vec!);
