@@ -378,7 +378,25 @@ export class RetrievalEngine {
       (this.stmtStaleEntityIds.all() as Array<{ id: string }>).map(r => r.id),
     );
 
-    return candidates.filter(r => !staleEntityIds.has(r.id));
+    const results = candidates.filter(r => !staleEntityIds.has(r.id));
+
+    // ── Trace emission (D-97 guarded, mirrors retrieveCueless ~L279-300) ────────
+    // retrieveRanked is flat top-k + floor + stale-entity filter — no spread loop ran,
+    // so the results ARE the seeds and hops is honestly empty (WR-02: never fabricate
+    // activation structure that wasn't computed). This makes HybridResponder's
+    // facts-first branch (the common memory_ask / Telegram answer path) light the viz;
+    // the inference fallback already emits via RecallEngine. Callers wired with the
+    // Noop sink (correctness harness, session-start) have traceEnabled === false and
+    // skip this entirely.
+    if (this.traceEnabled && results.length > 0) {
+      try {
+        this.traceSink.emit({ query_id: newId(), seeds: results.map(r => r.id), hops: [] });
+      } catch {
+        // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
+      }
+    }
+
+    return results;
   }
 
   /**
