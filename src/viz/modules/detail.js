@@ -247,7 +247,10 @@ export function initDetail(ctx) {
     void detailEl.offsetWidth;
     // Step 3: add panel-open — CSS transitions opacity and transform
     detailEl.classList.add('panel-open');
-    backdropEl.style.display = 'block';
+    // NOTE: the #backdrop overlay is intentionally NOT shown — it would swallow
+    // pointer events and block orbit/pan while a node is focused. Empty-space
+    // dismiss is handled by Graph.onBackgroundClick (graph.js), which
+    // distinguishes clicks from drags.
   }
 
   /** Hide the detail panel. */

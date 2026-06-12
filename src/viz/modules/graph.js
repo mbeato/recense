@@ -234,6 +234,11 @@ export function initGraph(ctx) {
       }
       // All nodes: open detail panel (detail.js sets ctx.selectNode)
       if (ctx.selectNode) ctx.selectNode(node);
+    })
+    .onBackgroundClick(() => {
+      // Clicking empty space dismisses the focused node. Drags/orbits do not
+      // trigger this — 3d-force-graph only fires it for true clicks.
+      if (ctx.closeDetail) ctx.closeDetail();
     });
 
   ctx.Graph = Graph;
