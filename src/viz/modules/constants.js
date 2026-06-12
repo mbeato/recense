@@ -87,12 +87,13 @@ export const TYPE_COLOR = {
 
 /**
  * Scene background — set via Graph.scene().background (color-managed path).
- * Near-black with a barely-there cool cast; renders exactly as authored.
+ * Deep warm aubergine matching the Recense app-icon field (brand cohesion,
+ * 2026-06-12); still dark enough that the amber pulse stays the only signal.
  */
-export const BG_COLOR = 0x030405;
+export const BG_COLOR = 0x170f1d;
 
 /** Tombstoned nodes: visually muted and de-emphasised */
-export const TOMBSTONE_COLOR = 0x252a33;
+export const TOMBSTONE_COLOR = 0x2b2530;
 
 /**
  * Activation glow colour — warm amber.

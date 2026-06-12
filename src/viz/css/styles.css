@@ -9,7 +9,7 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #030405;
+  background: #170f1d;
   color: #aab2bc;
   /* UI chrome: system sans (D-16) */
   font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
@@ -34,7 +34,7 @@ html, body {
   width: 340px;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
-  background: rgba(7, 8, 10, 0.93);
+  background: rgba(26, 18, 32, 0.93);
   border: 1px solid rgba(140, 150, 165, 0.14);
   border-radius: 12px;
   padding: 14px 16px;
@@ -58,7 +58,7 @@ html, body {
   z-index: 20;
   display: none;
   pointer-events: none;
-  background: rgba(7, 8, 10, 0.88);
+  background: rgba(26, 18, 32, 0.88);
   border: 1px solid rgba(140, 150, 165, 0.18);
   border-radius: 8px;
   padding: 4px 9px;
@@ -82,7 +82,7 @@ html, body {
   left: 12px;
   z-index: 10;
   width: 230px;
-  background: rgba(7, 8, 10, 0.72);
+  background: rgba(26, 18, 32, 0.72);
   border: 1px solid rgba(140, 150, 165, 0.11);
   border-radius: 10px;
   padding: 10px 13px;
@@ -190,9 +190,9 @@ button:hover {
 }
 
 /* Bioluminescent palette — distinct hues per semantic type (D-03) */
-.dot-entity { color: #c8cfd8; }  /* cyan   — facts about specific entities */
-.dot-fact   { color: #6d7890; }  /* green  — general semantic facts */
-.dot-schema { color: #82698c; }  /* violet — learned abstraction schemas */
+.dot-entity { color: #9c7080; }  /* dusty rose — specific entities (matches node hue) */
+.dot-fact   { color: #6d7890; }  /* slate — general semantic facts */
+.dot-schema { color: #82698c; }  /* muted mauve — learned abstraction schemas */
 
 /* ── Initializing indicator ──────────────────────────────────────────────── */
 #detail-loading {
