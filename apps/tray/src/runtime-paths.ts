@@ -152,5 +152,25 @@ export function resolveDbPath(argv: string[] = process.argv): string {
   }
   const fromEnv = process.env['BRAIN_MEMORY_DB'];
   if (fromEnv !== undefined) return fromEnv;
+  // GUI apps launched from Finder/Dock do NOT inherit shell env, so a system
+  // configured via sleep.env (setup-dogfood.sh writes BRAIN_MEMORY_DB there;
+  // the launchd agents load it) would silently fall through to the default —
+  // an empty DB — and the viz shows zero nodes. Read the engine's own config
+  // file before falling back (founder hit this 2026-06-12: 1811-node repo DB
+  // vs empty default DB).
+  const fromSleepEnv = readSleepEnvDb();
+  if (fromSleepEnv !== undefined) return fromSleepEnv;
   return defaultDbPath();
+}
+
+/** Parse BRAIN_MEMORY_DB out of sleep.env (best-effort; undefined if absent). */
+function readSleepEnvDb(): string | undefined {
+  try {
+    const content = readFileSync(sleepEnvPath(), 'utf8');
+    const m = content.match(/^\s*BRAIN_MEMORY_DB=(.+)\s*$/m);
+    const v = m && m[1] ? m[1].trim() : '';
+    return v !== '' ? v : undefined;
+  } catch {
+    return undefined; // no sleep.env — fresh install, default path is correct
+  }
 }
