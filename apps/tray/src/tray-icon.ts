@@ -3,7 +3,9 @@
  *
  * Responsibilities:
  *   - Create the macOS menu-bar Tray icon from the at-rest template image.
- *   - Subscribe to the viz server's /events SSE stream using undici EventSource.
+ *   - Subscribe to the viz server's /events SSE stream using the eventsource package
+ *     (undici's EventSource resolves in dev only via transitive node_modules — it is NOT
+ *     packaged into the asar and crashes the built .app; OQ-2 re-resolved 2026-06-12).
  *   - Pulse the icon amber ONLY on real `trace` events (Phase 15 D-04 — no fake firing).
  *   - Dim the icon when the SSE connection errors / server is down (D-05 health).
  *   - Reconnect after sleep/wake via powerMonitor.on('resume').
@@ -13,7 +15,7 @@
  */
 
 import { Tray, nativeImage, powerMonitor } from 'electron';
-import { EventSource } from 'undici';
+import { EventSource } from 'eventsource';
 import { join } from 'path';
 import { appendFileSync } from 'fs';
 

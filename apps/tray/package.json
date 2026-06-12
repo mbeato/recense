@@ -17,5 +17,8 @@
     "electron": "42.4.0",
     "electron-builder": "26.15.2",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "eventsource": "^4.1.0"
   }
 }
