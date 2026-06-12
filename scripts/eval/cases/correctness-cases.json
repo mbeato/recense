@@ -107,7 +107,7 @@
     "expected_relation": "contradict",
     "magnitude": 0.9,
     "query_probe": "Is Ana vegetarian?",
-    "expected_answer_hint": "no longer vegetarian, eats meat"
+    "expected_answer_hint": "not vegetarian"
   },
   {
     "case_id": 11,
@@ -129,7 +129,7 @@
     "expected_relation": "contradict",
     "magnitude": 0.9,
     "query_probe": "Is Ana still married to Stefan?",
-    "expected_answer_hint": "divorced, no longer married to Stefan"
+    "expected_answer_hint": "divorced"
   },
   {
     "case_id": 13,

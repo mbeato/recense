@@ -99,6 +99,10 @@ function runAddOnlyCase(c) {
     const s1 = `case-${c.case_id}-s1`;
     const s2 = `case-${c.case_id}-s2`;
 
+    // source: 'conversation' — uses the conversation extraction prompt (single-fact,
+    // personal episodic details) rather than the general claude-code EXTRACTION_PROMPT
+    // which inflates duplicates with entity nodes. Harness cases are simple personal facts;
+    // 'conversation' is the appropriate source. Fixes the known multi-claim confound (D-62).
     episodes.append({
       content: c.initial_fact,
       origin: 'asserted_by_user',
@@ -106,6 +110,7 @@ function runAddOnlyCase(c) {
       hard_keep: 1,
       role: 'user',
       session_id: s1,
+      source: 'conversation',
     });
     episodes.append({
       content: c.contradicting_fact,
@@ -114,6 +119,7 @@ function runAddOnlyCase(c) {
       hard_keep: 1,
       role: 'user',
       session_id: s2,
+      source: 'conversation',
     });
 
     const dupCount = db
@@ -147,7 +153,11 @@ function runAddOnlyCase(c) {
  *   corrected         — any live node value contains expected_answer_hint (case-insensitive)
  *   stale             — contradiction case, no corrected result, but ≥1 node returned
  *   tombstone_present — any tombstoned node in the scratch DB after consolidation
- *   duplicate_count   — count of live (non-tombstoned) nodes in the DB
+ *   duplicate_count   — count of live fact-type nodes (type='fact', tombstoned=0).
+ *                       Entity nodes (named people, places, objects) are excluded; they are
+ *                       separate knowledge-graph citizens, not duplicates of the belief claim.
+ *                       The ADD-only baseline counts episode rows (2 per case), making
+ *                       fact-node vs episode-row a proper apples-to-apples comparison.
  */
 async function runBrainMemoryCase(c, env) {
   const { db, dbPath, episodes, config, cleanup } = makeScratchDb();
@@ -156,6 +166,8 @@ async function runBrainMemoryCase(c, env) {
     const s2 = `case-${c.case_id}-s2`;
 
     // ── Pass 1: ingest initial fact + consolidate ─────────────────────────────
+    // source: 'conversation' — uses conversation extraction prompt for simple personal facts.
+    // Avoids general EXTRACTION_PROMPT's entity extraction that inflates duplicate counts (D-62).
     episodes.append({
       content: c.initial_fact,
       origin: 'asserted_by_user',
@@ -163,6 +175,7 @@ async function runBrainMemoryCase(c, env) {
       hard_keep: 1,
       role: 'user',
       session_id: s1,
+      source: 'conversation',
     });
     await runConsolidation(db, dbPath, env, () => {});
 
@@ -174,6 +187,7 @@ async function runBrainMemoryCase(c, env) {
       hard_keep: 1,
       role: 'user',
       session_id: s2,
+      source: 'conversation',
     });
     await runConsolidation(db, dbPath, env, () => {});
 
@@ -199,7 +213,11 @@ async function runBrainMemoryCase(c, env) {
     const tombCount = db.prepare('SELECT COUNT(*) AS n FROM node WHERE tombstoned = 1').get().n;
     const tombstone_present = tombCount > 0;
 
-    const dupCount = db.prepare('SELECT COUNT(*) AS n FROM node WHERE tombstoned = 0').get().n;
+    // Count only fact-type live nodes — entity nodes (named people, places, pets) are
+    // separate knowledge-graph citizens and should not inflate the duplicate metric.
+    // Baseline comparison: add-only counts episode rows (always 2); fact-node count
+    // is the semantically equivalent measure for the brain-memory path.
+    const dupCount = db.prepare("SELECT COUNT(*) AS n FROM node WHERE tombstoned = 0 AND type = 'fact'").get().n;
 
     const topBelief = results.length > 0 ? results[0].value : '[no result returned]';
 
