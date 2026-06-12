@@ -170,12 +170,15 @@ export function initTrayIcon(opts: TrayIconOptions): TrayIconHandle {
   // Close the stale connection and open a fresh one.
   powerMonitor.on('resume', () => {
     log('powerMonitor resume — reconnecting SSE');
-    setDim(); // show offline state until the new connection fires a trace event
+    setDim(); // show offline state until the new connection confirms the server
     connectSSE();
-    // Restore rest icon once reconnected (immediate optimistic restore — the
-    // next trace event will confirm the server is actually live).
+    // Restore the rest icon only if the fresh connection actually opened.
+    // setDim() above forces isDim=true, so isDim alone can't distinguish a
+    // successful reconnect from a failed one — gate on readyState instead.
+    // If the server is down, readyState stays CONNECTING/CLOSED and the
+    // icon remains dim until a later successful connection or trace event.
     setTimeout(() => {
-      if (!disposed && isDim) {
+      if (!disposed && isDim && es !== null && es.readyState === EventSource.OPEN) {
         setRest();
       }
     }, 3000);
