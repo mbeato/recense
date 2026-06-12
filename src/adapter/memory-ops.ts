@@ -36,8 +36,9 @@ import { RetrievalEngine } from '../retrieval/engine';
 import { RecallEngine } from '../recall';
 import { HybridResponder } from '../responder';
 import { IngestionPipeline } from '../ingest/pipeline';
-import { NoopActivationTraceSink } from '../viz/activation-sink';
+import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
+import { newId } from '../lib/hash';
 import { acquireLockWithRetry, releaseLock } from './lockfile';
 
 const LOG_PATH = '/tmp/brain-memory-ops.log';
@@ -213,8 +214,18 @@ export function wireMemoryEngine(
   const provider = opts.provider
     ?? new DefaultModelProvider({ generateConfig, judgeConfig, embedConfig: config });
 
-  // No viz in the MCP/HTTP surfaces — Noop sink, zero per-call trace cost (D-97).
-  const traceSink = new NoopActivationTraceSink();
+  // Viz trace sink for the long-running surfaces (MCP/HTTP/Telegram via this factory):
+  // flag-gated SwitchableActivationTraceSink, refreshed once per retrieval-serving request
+  // (search/ask) so `brain viz` flag flips take effect without a restart. D-97's
+  // load-bearing scope is the SessionStart hook hot path (session-start-cli) — that stays
+  // hard-wired Noop and never reads the flag; it does NOT go through this factory.
+  // Construction must stay after initSchema(writeDb): the sink's constructor prepares a
+  // statement against the `meta` table.
+  // NOTE: the engines' constructor-computed `traceEnabled` gate is now permanently true
+  // for these surfaces (the sink is not a Noop instance), so the guarded trace-payload
+  // build in the engines runs even when the flag is 0 — a bounded handful of indexed
+  // reads, well below the embedding API call on the same path. Accepted; do NOT "optimize".
+  const traceSink = new SwitchableActivationTraceSink(writeDb, realClock);
 
   const retrieval = new RetrievalEngine(writeDb, realClock, config, retriever, store, strength, gate, traceSink);
   const recall    = new RecallEngine(writeDb, realClock, config, provider, retriever, store, strength, episodes, traceSink);
@@ -233,6 +244,9 @@ export function wireMemoryEngine(
   // ── 4. Plain-data operation functions ────────────────────────────────────
 
   async function search(query: string): Promise<SearchRow[]> {
+    // Per-request flag re-read: lets a long-running process pick up `brain viz`
+    // flag flips without restart (one indexed meta read).
+    traceSink.refresh();
     // T-11-02/T-12-02: query is data only — bounded, embedded, never interpolated.
     const bounded = query.slice(0, MAX_QUERY_CHARS);
     // A1: one embedding call, zero generation calls (D-08). LLM-free read path.
@@ -240,12 +254,14 @@ export function wireMemoryEngine(
     if (!cueVec) return [];
     // Read-only path: NO lock acquisition (spec §8); topk never writes.
     const hits = searchRetriever!.topk(cueVec, SEARCH_TOP_K);
-    return hits
+    const surfacedIds: string[] = [];
+    const rows = hits
       .filter(hit => hit.score >= SEARCH_SCORE_FLOOR)
       .flatMap(hit => {
         // Defensive: skip any id whose node row vanished between scan and lookup.
         const node = searchStore!.getNode(hit.id);
         if (!node) return [];
+        surfacedIds.push(hit.id);
         return [{
           value: node.value,
           origin: node.origin,
@@ -253,6 +269,22 @@ export function wireMemoryEngine(
           lastUpdatedMs: node.last_access,
         }];
       });
+    // Viz trace: search is flat top-k retrieval with no spreading activation, so the
+    // surfaced hits ARE the activated set — they go in `seeds` (rank order) and `hops`
+    // stays empty (WR-02: never fabricate hop/activation structure that wasn't computed).
+    // D-95 interplay: search READS through the optional readonly handle, but this trace
+    // INSERT is a deliberate, documented exception that goes through the writeDb-backed
+    // sink; it writes only the capped viz side-table (activation_trace, RING_CAP 50),
+    // never the graph — the single-writer lock discipline (sleep pass = sole graph
+    // writer) is unaffected.
+    if (rows.length > 0) {
+      try {
+        traceSink.emit({ query_id: newId(), seeds: surfacedIds, hops: [] });
+      } catch {
+        // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
+      }
+    }
+    return rows;
   }
 
   async function add(content: string, rawOrigin?: string): Promise<{ status: string; message: string }> {
@@ -290,6 +322,8 @@ export function wireMemoryEngine(
   }
 
   async function ask(query: string): Promise<{ answer: string | null; origin: 'fact' | 'inferred' | 'none' }> {
+    // Per-request flag re-read (same as search): flag flips apply without restart.
+    traceSink.refresh();
     // T-11-02: query is data only — bounded before any LLM call.
     const bounded = query.slice(0, MAX_QUERY_CHARS);
 
