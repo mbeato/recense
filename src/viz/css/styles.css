@@ -191,8 +191,8 @@ button:hover {
 
 /* Bioluminescent palette — distinct hues per semantic type (D-03) */
 .dot-entity { color: #c8cfd8; }  /* cyan   — facts about specific entities */
-.dot-fact   { color: #66716a; }  /* green  — general semantic facts */
-.dot-schema { color: #6f6880; }  /* violet — learned abstraction schemas */
+.dot-fact   { color: #6d7890; }  /* green  — general semantic facts */
+.dot-schema { color: #82698c; }  /* violet — learned abstraction schemas */
 
 /* ── Initializing indicator ──────────────────────────────────────────────── */
 #detail-loading {

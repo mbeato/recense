@@ -80,9 +80,9 @@
  * @type {{entity: number, fact: number, schema: number}}
  */
 export const TYPE_COLOR = {
-  entity: 0x6e7a88,  // steel gray (cool cast)   — specific entities
-  fact:   0x66716a,  // sage gray (green cast)   — general semantic facts
-  schema: 0x6f6880,  // slate gray (violet cast) — learned abstraction layer
+  entity: 0x9c7080,  // dusty rose  — specific entities (the "brain tissue" hue)
+  fact:   0x6d7890,  // slate blue  — general semantic facts (cool counterpoint)
+  schema: 0x82698c,  // muted mauve — learned abstractions (bridges rose ↔ blue)
 };
 
 /**

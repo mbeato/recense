@@ -184,7 +184,7 @@ export function initGraph(ctx) {
     .nodeThreeObject(makeNodeObject)
     .nodeVisibility(n  => ctx.nodeVisible ? ctx.nodeVisible(n)  : true)
     .linkVisibility(l  => ctx.linkVis     ? ctx.linkVis(l)      : true)
-    .linkColor(()      => 'rgba(110,118,130,0.32)')
+    .linkColor(()      => 'rgba(125,112,122,0.30)')
     .linkWidth(0.8)
     .onNodeHover(node  => {
       const tooltipEl = document.getElementById('tooltip');
