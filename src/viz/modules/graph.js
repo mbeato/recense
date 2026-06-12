@@ -324,8 +324,5 @@ export function initGraph(ctx) {
   setTimeout(revealSettled, 200); // primary path (onEngineStop is unreliable/slow)
 
   // ── Camera framing ────────────────────────────────────────────────────
-  // Compact viewports (tray popover ≤500px) frame the brain tighter so it
-  // fills the small square; full-window framing is unchanged.
-  const compact = Math.min(window.innerWidth, window.innerHeight) <= 500;
-  Graph.cameraPosition({ z: BRAIN_SCALE * (compact ? 1.95 : 2.2) });
+  Graph.cameraPosition({ z: BRAIN_SCALE * 2.2 });
 }
