@@ -170,7 +170,7 @@ export function initStats(ctx) {
   // update() applies no rotation — verified empirically), so we rotate the
   // camera position around the target's vertical axis ourselves each idle
   // frame. Stops instantly on interaction because the gate is ctx.isIdle().
-  const IDLE_ORBIT_RAD_PER_SEC = 0.02; // full orbit ≈ 5 min — ambient drift
+  const IDLE_ORBIT_RAD_PER_SEC = 0.08; // full orbit ≈ 80s — visibly ambient (founder: 0.02 read as static, 2026-06-12)
   let lastDriftNow = null;
   function updateIdleDrift(now) {
     if (!ctx.isIdle()) { lastDriftNow = null; return; }
