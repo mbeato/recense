@@ -113,6 +113,9 @@ function buildMenu(
     {
       label: 'Open Brain Window',
       click() {
+        // Promote: the window supersedes the popover — never both (founder, 2026-06-12)
+        if (isPinned()) setPinned(popover, false);
+        popover.hide();
         openMainWindow();
       },
     },

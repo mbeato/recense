@@ -11,6 +11,34 @@
  */
 import { BrowserWindow, Tray } from 'electron';
 import { join } from 'path';
+import { openMainWindow } from './main-window';
+
+/**
+ * Sentinel URL for the injected expand button (promote popover → app window).
+ * The popover page has NO IPC surface (D-102 empty preload), so the button
+ * "commands" the main process by navigating here; the will-navigate guard
+ * intercepts it as a command and prevents the navigation — the URL never
+ * loads, and plain browsers never see the button (it is injected only in
+ * the Electron context).
+ */
+const EXPAND_SENTINEL = 'http://127.0.0.1:7810/__recense/expand';
+
+/** Injected expand affordance — top-right ↗, subtle, no-drag. */
+const EXPAND_BTN_JS = `(() => {
+  if (document.getElementById('recense-expand-btn')) return;
+  const btn = document.createElement('div');
+  btn.id = 'recense-expand-btn';
+  btn.textContent = '\\u2197';
+  btn.title = 'Open Brain Window';
+  btn.style.cssText = 'position:fixed;top:5px;right:8px;z-index:70;width:22px;height:22px;'
+    + 'line-height:22px;text-align:center;border-radius:6px;cursor:pointer;'
+    + 'color:#d9cbc0;background:rgba(26,18,32,0.55);font:14px ui-sans-serif,system-ui;'
+    + 'opacity:0.45;-webkit-app-region:no-drag;user-select:none;';
+  btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.95'; });
+  btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.45'; });
+  btn.addEventListener('click', () => { location.href = '${EXPAND_SENTINEL}'; });
+  document.body.appendChild(btn);
+})();`;
 
 /** Small square — glance surface sized so the brain fills the frame; the viz
  *  frontend switches to compact mode (discrete legend, tighter camera) ≤500px. */
@@ -61,7 +89,17 @@ export function createPopover(): BrowserWindow {
   });
 
   // T-16-10: abort any navigation that leaves the loopback origin.
+  // The expand sentinel is intercepted FIRST as a command (promote popover
+  // → app window); it is prevented like any other navigation, so the page
+  // never actually leaves the viz URL.
   win.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith(EXPAND_SENTINEL)) {
+      event.preventDefault();
+      if (_pinned) setPinned(win, false); // also removes the drag strip
+      win.hide();
+      openMainWindow();
+      return;
+    }
     if (!url.startsWith('http://127.0.0.1:7810')) {
       event.preventDefault();
     }
@@ -69,6 +107,11 @@ export function createPopover(): BrowserWindow {
 
   // T-16-10: deny any new-window request from the renderer.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  // Inject the expand affordance whenever the page (re)loads.
+  win.webContents.on('did-finish-load', () => {
+    win.webContents.executeJavaScript(EXPAND_BTN_JS).catch(() => {});
+  });
 
   // D-04: blur-dismiss — hide the popover on loss of focus unless pinned.
   // Pinned windows survive blur and remain as an always-on-top floating surface.
