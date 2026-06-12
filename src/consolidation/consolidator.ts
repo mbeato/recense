@@ -556,10 +556,12 @@ export class Consolidator {
           }
         }
 
-        // Await all judge calls for this episode concurrently (Promise.all — if any rejects,
-        // the whole episode is caught by the try/catch and quarantined per H-2).
-        const judgeVerdicts = await Promise.all(
-          pendingJudges.map(p => this.provider.judge(p.claimValue, p.candidates))
+        // ONE judgeBatch call per episode (batch = all pending claims for this episode).
+        // Amortizes one think block across N claims; ≤2 LLM calls total (forward + optional
+        // contradict-only swap). If the batch rejects, the episode is quarantined per H-2.
+        // T-02-ASYNC: this single await is Phase A — before any db.transaction (CONSOL-02).
+        const judgeVerdicts = await this.provider.judgeBatch(
+          pendingJudges.map(p => ({ claim: p.claimValue, candidates: p.candidates }))
         );
 
         // Fill judge-escalated slots in original claim order

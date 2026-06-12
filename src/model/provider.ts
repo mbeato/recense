@@ -56,6 +56,14 @@ export interface ModelProvider {
     claim: string,
     candidates: Array<{ id: string; value: string }>
   ): Promise<JudgeVerdict>;
+
+  /**
+   * Batch variant: N claims in ONE LLM call to amortize the think-block cost (Judge.judgeBatch).
+   * Index-aligned: result[i] corresponds to items[i]. ≤2 LLM calls per episode total.
+   */
+  judgeBatch(
+    items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>
+  ): Promise<JudgeVerdict[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +149,15 @@ export class DefaultModelProvider implements ModelProvider {
     }
     return this._judge.judge(claim, candidates);
   }
+
+  async judgeBatch(
+    items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>
+  ): Promise<JudgeVerdict[]> {
+    if (!this._judge) {
+      this._judge = new AnthropicJudge(this.judgeConfig);
+    }
+    return this._judge.judgeBatch(items);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -195,5 +212,15 @@ export class MockModelProvider implements ModelProvider {
       );
     }
     return this.judgeQueue[this.judgeIdx++]!;
+  }
+
+  async judgeBatch(
+    items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>
+  ): Promise<JudgeVerdict[]> {
+    const results: JudgeVerdict[] = [];
+    for (const item of items) {
+      results.push(await this.judge(item.claim, item.candidates));
+    }
+    return results;
   }
 }

@@ -333,6 +333,10 @@ describe('HybridResponder', () => {
       async judge(): Promise<never> {
         throw new Error('Should not be called');
       },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('Should not be called');
+      },
     };
     const recallProvider = makeStubProvider(h.config.embeddingDimensions, 0, []);
     const retrieval = makeRetrievalEngine(h);

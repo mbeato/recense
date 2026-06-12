@@ -78,6 +78,10 @@ function makeCapturingProvider(
     async judge(): Promise<never> {
       throw new Error('judge should not be called in recall tests');
     },
+    async judgeBatch(items) {
+      if (items.length === 0) return [];
+      throw new Error('judgeBatch should not be called in recall tests');
+    },
   };
 }
 
@@ -235,6 +239,7 @@ describe('RecallEngine', () => {
       embed: async (_texts) => [],
       generate: async (_prompt) => { throw new Error('generate should not be called'); },
       judge: async () => { throw new Error('judge should not be called'); },
+      judgeBatch: async (items) => { if (items.length === 0) return []; throw new Error('judgeBatch should not be called'); },
     };
     const engine = new RecallEngine(
       h.db, h.clock, h.config, emptyProvider, h.retriever, h.store, h.strength, h.episodes,
@@ -502,6 +507,10 @@ describe('RecallEngine', () => {
       },
       async judge(): Promise<never> {
         throw new Error('judge should not be called in embed count test');
+      },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('judgeBatch should not be called in embed count test');
       },
     };
 

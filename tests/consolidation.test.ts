@@ -659,6 +659,10 @@ describe('Consolidator', () => {
       async judge(): Promise<never> {
         throw new Error('judge should not be called');
       },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('judgeBatch should not be called with non-empty items');
+      },
     };
 
     const consolidator = new Consolidator(
@@ -1053,6 +1057,10 @@ describe('Consolidator', () => {
       async judge(): Promise<never> {
         throw new Error('judge should not be called in batch-embed test');
       },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('judgeBatch should not be called in batch-embed test');
+      },
     };
 
     const consolidator = new Consolidator(
@@ -1095,6 +1103,10 @@ describe('Consolidator', () => {
       },
       async judge(): Promise<never> {
         throw new Error('judge should not be called');
+      },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('judgeBatch should not be called with zero claims episode');
       },
     };
 
@@ -1330,6 +1342,10 @@ describe('Consolidator', () => {
       },
       async judge(): Promise<never> {
         throw new Error('judge should not be called');
+      },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('judgeBatch should not be called with non-empty items');
       },
     };
 
