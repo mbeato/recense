@@ -283,17 +283,30 @@ button:hover {
   margin: 0 0 5px;
 }
 
+.conn-group {
+  margin: 0 0 8px;
+}
+
+.conn-rel {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #565e68;
+  margin: 0 0 3px;
+}
+
 .conn-link {
   display: block;
   color: #8a95a3;
   cursor: pointer;
   font-size: 13px;
-  margin: 2px 0;
+  margin: 2px 0 2px 8px;
   transition: color 0.15s ease;
 }
 
 .conn-link:hover {
-  color: #c8cfd8;
+  color: #d9a05c;
 }
 
 #detail-conns-more {

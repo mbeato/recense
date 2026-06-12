@@ -96,16 +96,18 @@ export function initTrace(ctx) {
       if (node.__act <= 0.001) {
         node.__act = 0;
         active.delete(node);
-        // Restore base appearance
+        // Restore base appearance — scale restores to __baseR, NOT 1: node radius
+        // lives in mesh.scale (shared unit geometry, D-05), so setScalar(1) would
+        // permanently shrink every node that ever fired.
         if (node.__base) node.__mat.color.copy(node.__base);
         if (node.__baseOp !== undefined) node.__mat.opacity = node.__baseOp;
-        node.__mesh.scale.setScalar(1);
+        node.__mesh.scale.setScalar(node.__baseR || 1);
         continue;
       }
       const a = Math.max(0, node.__act) * (node.__actGain || 1);
       if (node.__base) node.__mat.color.copy(node.__base).lerp(HOT_COLOR, a * 0.8);
       node.__mat.opacity = Math.min(1, (node.__baseOp || 0.85) + a * 0.4);
-      node.__mesh.scale.setScalar(1 + a * 0.35);
+      node.__mesh.scale.setScalar((node.__baseR || 1) * (1 + a * 0.35));
     }
 
     // -- Pulse travel: sweep lit segment source→tip then fade -----------------

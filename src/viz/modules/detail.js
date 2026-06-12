@@ -16,7 +16,10 @@
  *            to clear own container structure (never with user data).
  */
 
-import { MAX_FAN_OUT } from './constants.js';
+import { MAX_FAN_OUT, PULSE_MS } from './constants.js';
+
+// Focus-dim opacity for nodes outside the selected neighborhood
+const FOCUS_DIM_OPACITY = 0.05;
 
 export function initDetail(ctx) {
   // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -32,18 +35,73 @@ export function initDetail(ctx) {
   // ── State ──────────────────────────────────────────────────────────────────
   let selectedNode  = null;
   let selectionRing = null;
+  let dimmedNodes   = [];   // nodes whose opacity we lowered for focus mode
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  /** Return neighbor nodes of `node` from the adjacency map. */
-  function getNeighbors(node) {
+  /**
+   * Return the connection records of `node`: [{edge, nb, rel, outgoing}].
+   * Direction matters for traversal display ("rel →" vs "← rel").
+   */
+  function getConnections(node) {
     const edges = (ctx.adj && ctx.adj.get(node.id)) || [];
-    return edges.map(e => {
+    const out = [];
+    for (const e of edges) {
       const sid = typeof e.source === 'object' ? e.source.id : e.source;
       const tid = typeof e.target === 'object' ? e.target.id : e.target;
-      const nbId = sid === node.id ? tid : sid;
-      return ctx.idMap && ctx.idMap.get(nbId);
-    }).filter(Boolean);
+      const outgoing = sid === node.id;
+      const nb = ctx.idMap && ctx.idMap.get(outgoing ? tid : sid);
+      if (nb) out.push({ edge: e, nb, rel: e.rel || e.kind || 'linked', outgoing });
+    }
+    return out;
+  }
+
+  /** Return neighbor nodes of `node` from the adjacency map. */
+  function getNeighbors(node) {
+    return getConnections(node).map(c => c.nb);
+  }
+
+  /**
+   * Micro-recall ripple (interaction feedback): the selected node flares and
+   * warm pulses sweep its edges, lightly activating each neighbor. Composes
+   * trace.js primitives (ctx.activate / ctx.spawnPulse) — does not touch the
+   * locked applyTrace semantics. Interaction-triggered, so D-04 (idle
+   * no-fake-firing) does not apply.
+   */
+  function ripple(node) {
+    if (!ctx.activate || !ctx.spawnPulse) return;
+    ctx.activate(node, 1.0);
+    const conns = getConnections(node).slice(0, MAX_FAN_OUT);
+    conns.forEach(({ nb }, i) => {
+      setTimeout(() => {
+        ctx.spawnPulse(node, nb);
+        setTimeout(() => ctx.activate(nb, 0.55), PULSE_MS * 0.6);
+      }, i * 40);
+    });
+  }
+
+  /**
+   * Focus mode: dim every node outside the selected neighborhood so the
+   * clicked constellation stands alone. Opacity-only (restored on deselect);
+   * never touches visibility, so LOD state is unaffected.
+   */
+  function applyFocusDim(node) {
+    clearFocusDim();
+    const keep = new Set([node.id]);
+    for (const nb of getNeighbors(node)) keep.add(nb.id);
+    for (const n of (ctx.allNodes || [])) {
+      if (keep.has(n.id) || !n.__mat) continue;
+      n.__mat.opacity = FOCUS_DIM_OPACITY;
+      dimmedNodes.push(n);
+    }
+  }
+
+  /** Restore opacity of all focus-dimmed nodes. */
+  function clearFocusDim() {
+    for (const n of dimmedNodes) {
+      if (n.__mat && n.__baseOp !== undefined) n.__mat.opacity = n.__baseOp;
+    }
+    dimmedNodes = [];
   }
 
   /** Remove the selection ring from the previous node. */
@@ -86,22 +144,42 @@ export function initDetail(ctx) {
     // Body — textContent only
     bodyEl.textContent = node.value || '';
 
-    // Wikilink connections — createElement + textContent (never innerHTML with neighbor values)
+    // Connections grouped by relation — createElement + textContent throughout
+    // (never innerHTML with neighbor values, T-10-12). Each row is a traversal
+    // hop: click flies the camera to the neighbor, selects it, ripples again.
     connsEl.innerHTML = ''; // safe: clearing own structure
     connsMoreEl.textContent = '';
-    const neighbors = getNeighbors(node);
-    const shown = neighbors.slice(0, MAX_FAN_OUT);
-    const overflow = neighbors.length - shown.length;
-    for (const nb of shown) {
-      const span = document.createElement('span');
-      span.className = 'conn-link';
-      span.setAttribute('tabindex', '0');
-      span.textContent = '[[' + (nb.value || nb.id || '').slice(0, 40) + ']]';
-      span.addEventListener('click', () => selectNode(nb));
-      span.addEventListener('keydown', e => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectNode(nb); }
-      });
-      connsEl.appendChild(span);
+    const conns = getConnections(node);
+    const shown = conns.slice(0, MAX_FAN_OUT);
+    const overflow = conns.length - shown.length;
+
+    // Group by "rel + direction" so e.g. "abstracts →" and "← abstracts" are distinct
+    const groups = new Map();
+    for (const c of shown) {
+      const label = c.outgoing ? c.rel + ' →' : '← ' + c.rel;
+      if (!groups.has(label)) groups.set(label, []);
+      groups.get(label).push(c);
+    }
+
+    for (const [label, members] of groups) {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'conn-group';
+      const relEl = document.createElement('span');
+      relEl.className = 'conn-rel';
+      relEl.textContent = label + ' (' + members.length + ')';
+      groupEl.appendChild(relEl);
+      for (const { nb } of members) {
+        const span = document.createElement('span');
+        span.className = 'conn-link';
+        span.setAttribute('tabindex', '0');
+        span.textContent = '[[' + (nb.value || nb.id || '').slice(0, 40) + ']]';
+        span.addEventListener('click', () => selectNode(nb));
+        span.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectNode(nb); }
+        });
+        groupEl.appendChild(span);
+      }
+      connsEl.appendChild(groupEl);
     }
     if (overflow > 0) {
       connsMoreEl.textContent = '+' + overflow + ' more';
@@ -157,12 +235,14 @@ export function initDetail(ctx) {
 
     // 2. Add selection ring as child of the node mesh (tracks position automatically)
     if (node.__mesh && node.__baseR && ctx.THREE) {
-      const r = node.__baseR;
-      const ringGeo = new ctx.THREE.RingGeometry(r * 1.4, r * 1.7, 32);
+      // Unit radii: the ring is a child of the node mesh, whose scale IS the
+      // node radius (D-05 shared unit geometry) — sizing the geometry by
+      // __baseR too would square the radius (giant hoop on schema nodes).
+      const ringGeo = new ctx.THREE.RingGeometry(1.4, 1.7, 32);
       const ringMat = new ctx.THREE.MeshBasicMaterial({
         color: 0xd9a05c,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.6,
         side: ctx.THREE.DoubleSide,
         depthWrite: false,
       });
@@ -179,7 +259,11 @@ export function initDetail(ctx) {
     // 5. Gently focus camera on the selected node (D-15)
     focusCamera(node);
 
-    // 6. Reset idle timer so the camera focus is not overridden immediately
+    // 6. Interaction impact: micro-recall ripple + neighborhood focus dim
+    ripple(node);
+    applyFocusDim(node);
+
+    // 7. Reset idle timer so the camera focus is not overridden immediately
     if (typeof ctx.markActive === 'function') ctx.markActive();
   }
 
@@ -187,6 +271,7 @@ export function initDetail(ctx) {
 
   function closeDetail() {
     clearSelection();
+    clearFocusDim();
     hidePanel();
   }
 
