@@ -19,6 +19,10 @@
  *   - Scratch DBs are cleaned up after each case (close + unlink); temp files under os.tmpdir().
  *   - corrected scoring uses case-insensitive substring match against expected_answer_hint —
  *     an approximation since node values are extracted claims, not verbatim episode text.
+ *   - Query step uses RetrievalEngine.retrieveRanked (top-k + floor, the product memory_ask path)
+ *     rather than raw retrieve() (single-hit 0.7 bar). Changed 2026-06-11 (B3 fix) so the harness
+ *     measures through the same path memory_ask uses. Before/after runs that mix old retrieve()
+ *     and new retrieveRanked() results are NOT silently comparing the same retrieval path.
  */
 'use strict';
 
@@ -202,7 +206,9 @@ async function runBrainMemoryCase(c, env) {
     const traceSink  = new NoopActivationTraceSink();
     const engine     = new RetrievalEngine(db, realClock, config, retriever, store, strength, gate, traceSink);
 
-    const { results } = engine.retrieve(queryVec);
+    // B3: measure through retrieveRanked (the product memory_ask path: top-k + floor)
+    // rather than raw retrieve() (single-hit 0.7 bar) — see header Gotchas for disclosure.
+    const results = engine.retrieveRanked(queryVec, config.rankedRetrievalK, config.rankedRetrievalFloor);
 
     // ── Score ─────────────────────────────────────────────────────────────────
     const hintLower = c.expected_answer_hint.toLowerCase();
