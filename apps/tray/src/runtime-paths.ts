@@ -168,7 +168,7 @@ function readSleepEnvDb(): string | undefined {
   try {
     const content = readFileSync(sleepEnvPath(), 'utf8');
     const m = content.match(/^\s*BRAIN_MEMORY_DB=(.+)\s*$/m);
-    const v = m && m[1] ? m[1].trim() : '';
+    const v = m && m[1] ? m[1].trim().replace(/^["']|["']$/g, '') : '';
     return v !== '' ? v : undefined;
   } catch {
     return undefined; // no sleep.env — fresh install, default path is correct
