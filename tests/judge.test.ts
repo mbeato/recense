@@ -76,7 +76,7 @@ describe('AnthropicJudge (export verification)', () => {
 // malformed JSON asserts the safe `unrelated` fallback", we use a package-private
 // test helper approach: export `parseVerdictForTest` from judge.ts.
 
-import { parseVerdictForTest } from '../src/model/judge';
+import { parseVerdictForTest, chooseConsistentVerdict } from '../src/model/judge';
 
 describe('parseVerdict (via exported test helper)', () => {
   it('returns safe unrelated fallback for malformed JSON', () => {
@@ -153,6 +153,40 @@ describe('parseVerdict code-fence handling', () => {
   it('(d) a string containing no JSON object returns SAFE_VERDICT', () => {
     const result = parseVerdictForTest('no json here at all');
     expect(result).toEqual({ best_candidate_id: null, relation: 'unrelated', magnitude: 0 });
+  });
+});
+
+// ── chooseConsistentVerdict ───────────────────────────────────────────────────
+
+describe('chooseConsistentVerdict', () => {
+  it('returns v1 unchanged when both relations are equal (confirm vs confirm)', () => {
+    const v1: JudgeVerdict = { best_candidate_id: 'c1', relation: 'confirm', magnitude: 0.0 };
+    const v2: JudgeVerdict = { best_candidate_id: 'c2', relation: 'confirm', magnitude: 0.0 };
+    expect(chooseConsistentVerdict(v1, v2)).toBe(v1);
+  });
+
+  it('returns v1 unchanged when both are contradict (equal relation → v1)', () => {
+    const v1: JudgeVerdict = { best_candidate_id: 'c1', relation: 'contradict', magnitude: 0.8 };
+    const v2: JudgeVerdict = { best_candidate_id: 'c2', relation: 'contradict', magnitude: 0.7 };
+    expect(chooseConsistentVerdict(v1, v2)).toBe(v1);
+  });
+
+  it('returns non-contradict when v1=contradict and v2=confirm (never escalate on disagreement)', () => {
+    const v1: JudgeVerdict = { best_candidate_id: 'c1', relation: 'contradict', magnitude: 0.9 };
+    const v2: JudgeVerdict = { best_candidate_id: 'c2', relation: 'confirm', magnitude: 0.0 };
+    expect(chooseConsistentVerdict(v1, v2)).toBe(v2);
+  });
+
+  it('returns non-contradict when v1=extend and v2=contradict (v1 is non-destructive)', () => {
+    const v1: JudgeVerdict = { best_candidate_id: 'c1', relation: 'extend', magnitude: 0.0 };
+    const v2: JudgeVerdict = { best_candidate_id: 'c2', relation: 'contradict', magnitude: 0.6 };
+    expect(chooseConsistentVerdict(v1, v2)).toBe(v1);
+  });
+
+  it('returns v1 when both are non-contradict but differ (first-order verdict wins)', () => {
+    const v1: JudgeVerdict = { best_candidate_id: 'c1', relation: 'confirm', magnitude: 0.0 };
+    const v2: JudgeVerdict = { best_candidate_id: 'c2', relation: 'extend', magnitude: 0.0 };
+    expect(chooseConsistentVerdict(v1, v2)).toBe(v1);
   });
 });
 

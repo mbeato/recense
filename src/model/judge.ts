@@ -49,6 +49,15 @@ const SAFE_VERDICT: JudgeVerdict = { best_candidate_id: null, relation: 'unrelat
 const VALID_RELATIONS = new Set<string>(['confirm', 'extend', 'contradict', 'unrelated']);
 
 /**
+ * Order-swap consistency toggle. When true, AnthropicJudge.judge() issues a second
+ * call with reversed candidate order and applies chooseConsistentVerdict() to prevent
+ * a run-to-run flip from escalating to a destructive 'contradict'.
+ * Module-level const — NOT a config.ts field (file ownership: see PLAN-A constraints).
+ * 2x judge cost is acceptable: this runs only in the offline sleep pass.
+ */
+const JUDGE_ORDER_SWAP = true;
+
+/**
  * Isolate the outermost JSON object span from a model response. Models routinely
  * wrap the object in ```json fences or add preamble despite being told not to
  * (observed with claude-haiku-4-5); JSON.parse on the raw text then throws and
@@ -101,6 +110,26 @@ export function parseVerdictForTest(text: string): JudgeVerdict {
   return parseVerdict(text);
 }
 
+/**
+ * Order-swap consistency resolver (Fix A1b).
+ *
+ * Compares the forward-order verdict v1 with the reversed-order verdict v2 and
+ * returns the non-destructive choice.  Mirrors the parseVerdictForTest precedent so
+ * the disagreement rule is unit-testable without a network call.
+ *
+ * Rules (applied in order):
+ *  1. Equal relations → return v1 (covers both-contradict and both-same-non-contradict).
+ *  2. Exactly one is 'contradict' → return the non-contradict verdict.
+ *     Never escalate to 'contradict' when the two orderings disagree (PLAN-A must_haves).
+ *  3. Both non-contradict but differ → return v1 (first-order verdict wins).
+ */
+export function chooseConsistentVerdict(v1: JudgeVerdict, v2: JudgeVerdict): JudgeVerdict {
+  if (v1.relation === v2.relation) return v1;
+  if (v1.relation === 'contradict') return v2;
+  if (v2.relation === 'contradict') return v1;
+  return v1;
+}
+
 // ---------------------------------------------------------------------------
 // Prompt for the AnthropicJudge
 // ---------------------------------------------------------------------------
@@ -140,13 +169,15 @@ export class AnthropicJudge implements Judge {
     this.model = model;
   }
 
-  async judge(
+  /**
+   * Single round-trip to the Anthropic API for a given candidate ordering.
+   * Extracted so judge() can call it twice (forward + reversed) for order-swap
+   * consistency without duplicating the prompt/parse logic.
+   */
+  private async judgeOnce(
     claim: string,
     candidates: Array<{ id: string; value: string }>
   ): Promise<JudgeVerdict> {
-    // Short-circuit: no candidates → unrelated with no network call
-    if (candidates.length === 0) return SAFE_VERDICT;
-
     const candidateList = candidates
       .map(c => `  - id: "${c.id}", value: "${c.value}"`)
       .join('\n');
@@ -158,6 +189,7 @@ export class AnthropicJudge implements Judge {
     const msg = await this.client.messages.create({
       model: this.model,
       max_tokens: 256,
+      temperature: 0, // matches the validated eval config (Fix A1a)
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -167,6 +199,23 @@ export class AnthropicJudge implements Judge {
       .join('');
 
     return parseVerdict(text);
+  }
+
+  async judge(
+    claim: string,
+    candidates: Array<{ id: string; value: string }>
+  ): Promise<JudgeVerdict> {
+    // Short-circuit: no candidates → unrelated with no network call
+    if (candidates.length === 0) return SAFE_VERDICT;
+
+    const v1 = await this.judgeOnce(claim, candidates);
+
+    // Skip second call when swap is disabled or there's only one candidate
+    // (a single-candidate reversal yields no new information)
+    if (!JUDGE_ORDER_SWAP || candidates.length < 2) return v1;
+
+    const v2 = await this.judgeOnce(claim, [...candidates].reverse());
+    return chooseConsistentVerdict(v1, v2);
   }
 }
 
