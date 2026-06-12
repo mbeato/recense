@@ -102,8 +102,9 @@ export function initHud(ctx) {
       ctx.showTombstones = showTombstones;
       btnTomb.textContent = showTombstones ? 'Hide tombstones' : 'Show tombstones';
 
-      // Re-apply graph data respecting tombstone state
-      const allLinks = ctx.allLinks || [];
+      // Re-apply graph data respecting tombstone state. Links MUST be filtered
+      // alongside nodes: the force engine throws "node not found" for any link
+      // whose endpoint was removed from the node array (app.js getVisibleLinks).
       let visibleNodes;
       if (typeof ctx.getVisibleNodes === 'function') {
         // app.js sets getVisibleNodes to read ctx.showTombstones
@@ -112,9 +113,12 @@ export function initHud(ctx) {
         // Fallback: direct filter if getVisibleNodes not yet set
         visibleNodes = (ctx.allNodes || []).filter(n => showTombstones || !n.tombstoned);
       }
+      const visibleLinks = typeof ctx.getVisibleLinks === 'function'
+        ? ctx.getVisibleLinks()
+        : (ctx.allLinks || []);
 
       if (ctx.Graph && typeof ctx.Graph.graphData === 'function') {
-        ctx.Graph.graphData({ nodes: visibleNodes, links: allLinks });
+        ctx.Graph.graphData({ nodes: visibleNodes, links: visibleLinks });
       }
       if (ncountEl) ncountEl.textContent = String(visibleNodes.length);
       logEvent('hud', showTombstones ? 'tombstones shown' : 'tombstones hidden');

@@ -130,6 +130,22 @@ const ctx = {
     return allNodes.filter(n => ctx.showTombstones || !n.tombstoned);
   },
 
+  // getVisibleLinks mirrors getVisibleNodes: when tombstones are hidden, every
+  // link touching a tombstoned endpoint must be dropped too — d3's link force
+  // resolves endpoints against the supplied node array and THROWS on a miss
+  // ("node not found"), so passing unfiltered links with filtered nodes kills
+  // the layout. Endpoints may be string ids (before the first graphData call)
+  // or node object refs (after 3d-force-graph mutates them) — handle both.
+  getVisibleLinks() {
+    if (ctx.showTombstones) return allLinks;
+    const ok = id => { const n = idMap.get(id); return n && !n.tombstoned; };
+    return allLinks.filter(l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      return ok(s) && ok(t);
+    });
+  },
+
   showTombstones: false,  // toggled by hud.js initHud's btn-tombstones handler
 };
 

@@ -7,7 +7,7 @@
  *
  * Sets on ctx: Graph, hullGroup, pulseGroup.
  * Reads from ctx (must be set before initGraph by app.js):
- *   THREE, ForceGraph3D, allNodes, allLinks, idMap, adj, getVisibleNodes,
+ *   THREE, ForceGraph3D, allNodes, idMap, adj, getVisibleNodes, getVisibleLinks,
  *   brainVol, nodeVisible, linkVis (set by lod.js which runs first),
  *   selectNode (set by detail.js — guarded lazily on click).
  */
@@ -169,7 +169,7 @@ function seedNodePositions(allNodes, brainVol) {
  * @param {import('./constants.js').Ctx} ctx
  */
 export function initGraph(ctx) {
-  const { allNodes, allLinks, getVisibleNodes, brainVol } = ctx;
+  const { allNodes, getVisibleNodes, getVisibleLinks, brainVol } = ctx;
 
   // Seed positions so layout starts inside the brain volume
   seedNodePositions(allNodes, brainVol);
@@ -179,7 +179,7 @@ export function initGraph(ctx) {
   // picked up even if initLod ran first and set them synchronously.
   const Graph = ctx.ForceGraph3D()(document.getElementById('graph'))
     .backgroundColor('#000000')
-    .graphData({ nodes: getVisibleNodes(), links: allLinks })
+    .graphData({ nodes: getVisibleNodes(), links: getVisibleLinks() })
     .nodeRelSize(nodeRelSize)
     .nodeThreeObject(makeNodeObject)
     .nodeVisibility(n  => ctx.nodeVisible ? ctx.nodeVisible(n)  : true)
@@ -218,7 +218,7 @@ export function initGraph(ctx) {
         // Re-click on the already-selected expanded schema: collapse + dismiss
         if (ctx.expanded.has(node.id) && ctx.selectedId === node.id) {
           ctx.expanded.delete(node.id);
-          Graph.graphData({ nodes: getVisibleNodes(), links: allLinks });
+          Graph.graphData({ nodes: getVisibleNodes(), links: getVisibleLinks() });
           if (ctx.revealTrace) ctx.revealTrace();
           if (ctx.closeDetail) ctx.closeDetail();
           return;
@@ -228,7 +228,7 @@ export function initGraph(ctx) {
         // schema's constellation lights up instead of just appearing.
         if (!ctx.expanded.has(node.id)) {
           ctx.expanded.add(node.id);
-          Graph.graphData({ nodes: getVisibleNodes(), links: allLinks });
+          Graph.graphData({ nodes: getVisibleNodes(), links: getVisibleLinks() });
           if (ctx.revealTrace) ctx.revealTrace();
         }
       }
