@@ -81,6 +81,47 @@ export function initDetail(ctx) {
   }
 
   /**
+   * Click shockwave: an expanding additive shell from the selected node, so
+   * every click — even on an unconnected fact — lands with physical feedback.
+   * Animated via the stats master rAF loop (registerTick); cleans itself up.
+   */
+  const shocks = [];
+  let shockGeo = null;
+  function shockwave(node) {
+    if (!ctx.THREE || !ctx.pulseGroup || !node.__mesh) return;
+    if (!shockGeo) shockGeo = new ctx.THREE.SphereGeometry(1, 16, 16);
+    const mat = new ctx.THREE.MeshBasicMaterial({
+      color: 0xffd9a0,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+      blending: ctx.THREE.AdditiveBlending,
+      side: ctx.THREE.BackSide,
+    });
+    const mesh = new ctx.THREE.Mesh(shockGeo, mat);
+    mesh.position.set(node.x || 0, node.y || 0, node.z || 0);
+    ctx.pulseGroup.add(mesh);
+    shocks.push({ mesh, t0: performance.now(), r0: node.__baseR || 2 });
+  }
+
+  if (typeof ctx.registerTick === 'function') {
+    ctx.registerTick((now) => {
+      for (let i = shocks.length - 1; i >= 0; i--) {
+        const s = shocks[i];
+        const t = (now - s.t0) / 650;
+        if (t >= 1) {
+          ctx.pulseGroup.remove(s.mesh);
+          s.mesh.material.dispose();
+          shocks.splice(i, 1);
+          continue;
+        }
+        s.mesh.scale.setScalar(s.r0 * (1 + t * 14));
+        s.mesh.material.opacity = 0.35 * (1 - t) * (1 - t);
+      }
+    });
+  }
+
+  /**
    * Focus mode: dim every node outside the selected neighborhood so the
    * clicked constellation stands alone. Opacity-only (restored on deselect);
    * never touches visibility, so LOD state is unaffected.
@@ -111,6 +152,7 @@ export function initDetail(ctx) {
     }
     selectionRing = null;
     selectedNode  = null;
+    ctx.selectedId = null;  // read by graph.js for schema collapse-on-reclick
   }
 
   /**
@@ -150,6 +192,17 @@ export function initDetail(ctx) {
     connsEl.innerHTML = ''; // safe: clearing own structure
     connsMoreEl.textContent = '';
     const conns = getConnections(node);
+
+    // Honest empty state for unconsolidated memories (most early-graph facts):
+    // say why there is nothing to traverse instead of showing a blank section.
+    if (!conns.length) {
+      const empty = document.createElement('div');
+      empty.className = 'conn-empty';
+      empty.textContent = 'no connections yet — this memory hasn’t been linked into the graph by consolidation';
+      connsEl.appendChild(empty);
+      return;
+    }
+
     const shown = conns.slice(0, MAX_FAN_OUT);
     const overflow = conns.length - shown.length;
 
@@ -232,6 +285,7 @@ export function initDetail(ctx) {
     if (!node) return;
 
     selectedNode = node;
+    ctx.selectedId = node.id;  // read by graph.js for schema collapse-on-reclick
 
     // 2. Add selection ring as child of the node mesh (tracks position automatically)
     if (node.__mesh && node.__baseR && ctx.THREE) {
@@ -259,7 +313,9 @@ export function initDetail(ctx) {
     // 5. Gently focus camera on the selected node (D-15)
     focusCamera(node);
 
-    // 6. Interaction impact: micro-recall ripple + neighborhood focus dim
+    // 6. Interaction impact: shockwave + micro-recall ripple + focus dim.
+    // The shockwave fires unconditionally so orphan facts still land a hit.
+    shockwave(node);
     ripple(node);
     applyFocusDim(node);
 

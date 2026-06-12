@@ -214,20 +214,25 @@ export function initGraph(ctx) {
     })
     .onNodeClick(node  => {
       if (!node) return;
-      if (node.__cat === 'schema') {
-        // Schema drill-in: toggle the expanded set then refresh
-        if (ctx.expanded) {
-          if (ctx.expanded.has(node.id)) {
-            ctx.expanded.delete(node.id);
-          } else {
-            ctx.expanded.add(node.id);
-          }
+      if (node.__cat === 'schema' && ctx.expanded) {
+        // Re-click on the already-selected expanded schema: collapse + dismiss
+        if (ctx.expanded.has(node.id) && ctx.selectedId === node.id) {
+          ctx.expanded.delete(node.id);
+          Graph.graphData({ nodes: getVisibleNodes(), links: allLinks });
+          if (ctx.revealTrace) ctx.revealTrace();
+          if (ctx.closeDetail) ctx.closeDetail();
+          return;
+        }
+        // Drill-in: reveal members, then fall through to the same select
+        // treatment as every other node (panel + ripple + focus dim) so the
+        // schema's constellation lights up instead of just appearing.
+        if (!ctx.expanded.has(node.id)) {
+          ctx.expanded.add(node.id);
           Graph.graphData({ nodes: getVisibleNodes(), links: allLinks });
           if (ctx.revealTrace) ctx.revealTrace();
         }
-        return; // schema clicks: drill-in only, no detail panel
       }
-      // Non-schema: open detail panel (detail.js sets ctx.selectNode)
+      // All nodes: open detail panel (detail.js sets ctx.selectNode)
       if (ctx.selectNode) ctx.selectNode(node);
     });
 

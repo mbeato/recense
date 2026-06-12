@@ -283,6 +283,12 @@ button:hover {
   margin: 0 0 5px;
 }
 
+.conn-empty {
+  font-size: 12px;
+  font-style: italic;
+  color: #565e68;
+}
+
 .conn-group {
   margin: 0 0 8px;
 }
