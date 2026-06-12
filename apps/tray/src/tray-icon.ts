@@ -117,11 +117,12 @@ export function initTrayIcon(opts: TrayIconOptions): TrayIconHandle {
       pulseTimer = null;
     }
     tray.setImage(activeIcon());
-    // Restore the at-rest template image after 600 ms
+    // Restore the correct base image after 600 ms — dim if the connection
+    // dropped mid-pulse, rest otherwise (never leave the active image stuck).
     pulseTimer = setTimeout(() => {
       pulseTimer = null;
-      if (!disposed && !isDim) {
-        tray.setImage(restIcon());
+      if (!disposed) {
+        tray.setImage(isDim ? dimIcon() : restIcon());
       }
     }, 600);
   }
@@ -152,7 +153,22 @@ export function initTrayIcon(opts: TrayIconOptions): TrayIconHandle {
     // Event name is `trace` (NOT `message`, NOT `activation`) — locked in server.ts.
     es.addEventListener('trace', (_e: Event) => {
       log('trace event received — pulsing icon');
+      // A received trace proves the server is alive — clear any dim state.
+      // No setRest() needed: pulse() sets the active image immediately, so
+      // clearing the flag is sufficient and avoids an image flicker.
+      isDim = false;
       pulse();
+    });
+
+    // Successful (re)connect — restore the rest icon. The eventsource package
+    // emits 'open' on auto-reconnects as well as the initial connect, so this
+    // closes the startup race: the first error dims the icon, the auto-reconnect
+    // succeeds ~1s later, and this open restores rest. Redundant fires while
+    // already at rest are fine — setRest() is idempotent.
+    es.addEventListener('open', (_e: Event) => {
+      if (disposed) return;
+      log('SSE open — restoring rest icon');
+      setRest();
     });
 
     // Server down / connection error — dim the icon (D-05 health).
