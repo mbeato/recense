@@ -32,6 +32,13 @@ let _win: BrowserWindow | null = null;
  * guard intercepts — same pattern as the popover's expand button).
  */
 const COLLAPSE_SENTINEL = 'http://127.0.0.1:7810/__recense/collapse';
+
+/** Called after a collapse-to-tray so the orchestrator can show the popover
+ *  (true swap — symmetric with the popover's expand button). */
+let _onCollapse: (() => void) | null = null;
+export function setCollapseHandler(cb: () => void): void {
+  _onCollapse = cb;
+}
 const COLLAPSE_BTN_JS = `(() => {
   if (document.getElementById('recense-collapse-btn')) return;
   const btn = document.createElement('div');
@@ -82,6 +89,7 @@ export function openMainWindow(): void {
     if (url.startsWith(COLLAPSE_SENTINEL)) {
       event.preventDefault();
       _win?.close(); // close IS the demote: accessory mode resumes, tray keeps running
+      _onCollapse?.(); // swap: surface the tray popover so the transition is visible
       return;
     }
     if (!url.startsWith(VIZ_URL)) {

@@ -30,7 +30,7 @@ import type { ServerHandle } from './server-lifecycle';
 import { initTrayIcon } from './tray-icon';
 import type { TrayIconHandle } from './tray-icon';
 import { createPopover, togglePopover, setPinned, isPinned } from './popover';
-import { openMainWindow } from './main-window';
+import { openMainWindow, setCollapseHandler } from './main-window';
 
 // ---------------------------------------------------------------------------
 // Logging (append-only — never stdout for a background app)
@@ -239,6 +239,13 @@ app
     // Without this handler, Electron quits when the last BrowserWindow closes.
     app.on('window-all-closed', () => {
       // no-op — the tray lives in the menu bar, not in a window
+    });
+
+    // -- Collapse-to-tray = true swap: closing the Brain Window via its
+    // collapse button surfaces the popover under the tray icon (founder:
+    // window vanishing with nothing appearing read as "app closed").
+    setCollapseHandler(() => {
+      if (!popover.isVisible()) togglePopover(icon.tray, popover);
     });
 
     // -- Obsidian-style entry (founder, 2026-06-12) ---------------------------
