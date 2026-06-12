@@ -282,6 +282,24 @@ export interface EngineConfig {
    */
   deletedSimilarityThreshold: number;
 
+  /**
+   * Top-k candidate count for the ranked product question-answering path (retrieveRanked / memory_ask).
+   * Default 10 — matches the memory_search SEARCH_TOP_K precedent; provides enough breadth
+   * for grounded compose answers. Distinct from candidateK (5), which governs the consolidation
+   * judge candidate count and is unrelated to this path.
+   */
+  rankedRetrievalK: number;
+
+  /**
+   * Min cosine similarity for a hit to surface on the ranked retrieval path (retrieveRanked).
+   * Default 0.3 — mirrors the memory-ops SEARCH_SCORE_FLOOR precedent ("real queries score
+   * 0.4–0.6; noise <0.3 excluded"). Intentionally distinct from deletedSimilarityThreshold (0.7):
+   * the 0.7 threshold classifies tombstoned-node deletion (D-29 semantics); this threshold gates
+   * live-node surfacing for question-form cues that typically score 0.4–0.6 against stored facts
+   * — below the single-hit 0.7 bar but well above noise.
+   */
+  rankedRetrievalFloor: number;
+
   // --- Phase 4: learning layer tunables (D-35/36/42/45) ---
 
   /**
@@ -490,6 +508,8 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   injectionTokenBudget: 500,
   spreadDecay: 0.5,
   deletedSimilarityThreshold: 0.7,
+  rankedRetrievalK: 10,     // breadth for product Q&A path; matches memory_search SEARCH_TOP_K
+  rankedRetrievalFloor: 0.3, // min cosine for ranked path; matches SEARCH_SCORE_FLOOR (noise < 0.3)
   schemaMinSupport: 3,
   schemaCohesionThreshold: 0.7,
   schemaJoinCentroidThreshold: 0.75,
