@@ -80,9 +80,9 @@ export function initEffects(ctx) {
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
     uniforms: {
-      rimColor:   { value: new THREE.Color(0x00e5ff) },  // bioluminescent cyan (D-03)
-      rimPower:   { value: 3.0 },
-      rimOpacity: { value: 0.7 },
+      rimColor:   { value: new THREE.Color(0x1d6a7a) },  // deep desaturated teal (D-03)
+      rimPower:   { value: 3.5 },                        // tighter rim falloff — edge light only
+      rimOpacity: { value: 0.22 },
     },
     transparent: true,
     depthWrite: false,
@@ -130,9 +130,9 @@ export function initEffects(ctx) {
   const composer = Graph.postProcessingComposer();
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    1.2,   // strength  — bioluminescent intensity without overdrive
+    0.7,   // strength  — restrained glow; ambient scene stays dark
     0.4,   // radius    — tight bloom halo around activated nodes
-    0.7,   // threshold — base colors dim; activation flares are the brightest signal
+    0.75,  // threshold — darkened base palette sits well below; only HOT activation flares
   );
   composer.addPass(bloomPass);
   composer.addPass(new OutputPass());  // tone-mapping + sRGB; MUST be last (A1 / r171)
@@ -157,7 +157,8 @@ export function initEffects(ctx) {
   registerTick((now) => {
     if (!shimmerActive || !isIdle()) return;
     const t = now / 1000;
-    // Animate between 0.3 and 0.5 on a ~15.7-second period (0.4 rad/s)
-    hullMat.uniforms.rimOpacity.value = 0.3 + 0.2 * Math.sin(t * 0.4);
+    // Animate between 0.10 and 0.22 on a ~15.7-second period (0.4 rad/s);
+    // peaks at the non-idle base so shimmer only ever dims, never flares.
+    hullMat.uniforms.rimOpacity.value = 0.16 + 0.06 * Math.sin(t * 0.4);
   });
 }

@@ -78,9 +78,9 @@
  * @type {{entity: number, fact: number, schema: number}}
  */
 export const TYPE_COLOR = {
-  entity: 0x00e5ff,  // bioluminescent cyan    — specific entities
-  fact:   0x00ff9d,  // sea-green              — general semantic facts
-  schema: 0x9b7ddf,  // muted violet           — learned abstraction layer
+  entity: 0x1f8fa6,  // deep desaturated cyan  — specific entities
+  fact:   0x2e8f6a,  // dark sea-green         — general semantic facts
+  schema: 0x6f5fa0,  // dim muted violet       — learned abstraction layer
 };
 
 /** Tombstoned nodes: visually muted and de-emphasised */
