@@ -27,6 +27,28 @@ const WIN_HEIGHT = 750;
 let _win: BrowserWindow | null = null;
 
 /**
+ * Collapse-to-tray button, injected from the main process (zero-IPC posture:
+ * the page commands Electron by navigating to a sentinel the will-navigate
+ * guard intercepts — same pattern as the popover's expand button).
+ */
+const COLLAPSE_SENTINEL = 'http://127.0.0.1:7810/__recense/collapse';
+const COLLAPSE_BTN_JS = `(() => {
+  if (document.getElementById('recense-collapse-btn')) return;
+  const btn = document.createElement('div');
+  btn.id = 'recense-collapse-btn';
+  btn.textContent = '\u2199';
+  btn.title = 'Collapse to menu bar';
+  btn.style.cssText = 'position:fixed;top:10px;right:12px;z-index:70;width:26px;height:26px;'
+    + 'line-height:26px;text-align:center;border-radius:7px;cursor:pointer;'
+    + 'color:#d9cbc0;background:rgba(26,18,32,0.7);border:1px solid rgba(170,150,180,0.18);'
+    + 'font:15px ui-sans-serif,system-ui;opacity:0.65;user-select:none;';
+  btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });
+  btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.65'; });
+  btn.addEventListener('click', () => { location.href = '${COLLAPSE_SENTINEL}'; });
+  document.body.appendChild(btn);
+})();`;
+
+/**
  * Open (or focus, if already open) the full exploration window.
  * Safe to call repeatedly from the tray menu.
  */
@@ -54,10 +76,22 @@ export function openMainWindow(): void {
   });
 
   // T-16-10: abort any navigation that leaves the loopback origin.
+  // The collapse sentinel is intercepted FIRST as a command (demote window →
+  // tray-only); prevented like any navigation, so the page never leaves.
   _win.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith(COLLAPSE_SENTINEL)) {
+      event.preventDefault();
+      _win?.close(); // close IS the demote: accessory mode resumes, tray keeps running
+      return;
+    }
     if (!url.startsWith(VIZ_URL)) {
       event.preventDefault();
     }
+  });
+
+  // Inject the collapse-to-tray affordance whenever the page (re)loads.
+  _win.webContents.on('did-finish-load', () => {
+    _win?.webContents.executeJavaScript(COLLAPSE_BTN_JS).catch(() => {});
   });
 
   // T-16-10: deny any new-window request from the renderer.

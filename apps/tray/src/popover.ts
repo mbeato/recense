@@ -30,12 +30,12 @@ const EXPAND_BTN_JS = `(() => {
   btn.id = 'recense-expand-btn';
   btn.textContent = '\\u2197';
   btn.title = 'Open Brain Window';
-  btn.style.cssText = 'position:fixed;top:5px;right:8px;z-index:70;width:22px;height:22px;'
-    + 'line-height:22px;text-align:center;border-radius:6px;cursor:pointer;'
-    + 'color:#d9cbc0;background:rgba(26,18,32,0.55);font:14px ui-sans-serif,system-ui;'
-    + 'opacity:0.45;-webkit-app-region:no-drag;user-select:none;';
-  btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.95'; });
-  btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.45'; });
+  btn.style.cssText = 'position:fixed;top:6px;right:8px;z-index:70;width:26px;height:26px;'
+    + 'line-height:26px;text-align:center;border-radius:7px;cursor:pointer;'
+    + 'color:#d9cbc0;background:rgba(26,18,32,0.7);border:1px solid rgba(170,150,180,0.18);'
+    + 'font:15px ui-sans-serif,system-ui;opacity:0.65;-webkit-app-region:no-drag;user-select:none;';
+  btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });
+  btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.65'; });
   btn.addEventListener('click', () => { location.href = '${EXPAND_SENTINEL}'; });
   document.body.appendChild(btn);
 })();`;
