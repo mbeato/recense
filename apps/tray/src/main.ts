@@ -115,8 +115,7 @@ function buildMenu(
       checked: isPinned(),
       click() {
         setPinned(popover, !isPinned());
-        // Rebuild to reflect new checked state
-        icon.tray.setContextMenu(buildMenu(popover, icon));
+        // No rebuild needed — the menu is built fresh on each right-click popup.
       },
     },
     {
@@ -132,8 +131,7 @@ function buildMenu(
         if (!current) {
           checkRequiresApproval();
         }
-        // Rebuild to reflect new state
-        icon.tray.setContextMenu(buildMenu(popover, icon));
+        // No rebuild needed — the menu is built fresh on each right-click popup.
       },
     },
     { type: 'separator' },
@@ -207,10 +205,13 @@ app
       onClick() {
         togglePopover(icon.tray, popover);
       },
+      // Right-click pops the menu, built fresh so checkbox states are current.
+      // NEVER setContextMenu: on macOS it opens on left click too, double-firing
+      // with the popover toggle (acceptance feedback 2026-06-12).
+      onRightClick() {
+        icon.tray.popUpContextMenu(buildMenu(popover, icon));
+      },
     });
-
-    // -- Context menu (right-click) -------------------------------------------
-    icon.tray.setContextMenu(buildMenu(popover, icon));
 
     // -- D-96: SIGTERM child on every quit path ------------------------------
     // stopServer() sets stopping=true (suppresses backoff respawn), clears

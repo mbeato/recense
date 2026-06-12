@@ -14,8 +14,8 @@ import { join } from 'path';
 
 /** Small square — glance surface sized so the brain fills the frame; the viz
  *  frontend switches to compact mode (discrete legend, tighter camera) ≤500px. */
-const WIN_WIDTH = 340;
-const WIN_HEIGHT = 340;
+const WIN_WIDTH = 300;
+const WIN_HEIGHT = 300;
 
 /** Module-level pin state. Accessed only through isPinned() / setPinned(). */
 let _pinned = false;

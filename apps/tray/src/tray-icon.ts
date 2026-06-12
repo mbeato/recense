@@ -39,6 +39,10 @@ function log(msg: string): void {
 
 export interface TrayIconOptions {
   onClick: () => void;
+  /** Right-click handler — pops the context menu. A persistent setContextMenu
+   *  is deliberately avoided: on macOS it opens on LEFT click too, double-firing
+   *  alongside onClick (acceptance feedback 2026-06-12). */
+  onRightClick?: () => void;
 }
 
 export interface TrayIconHandle {
@@ -78,6 +82,7 @@ export function initTrayIcon(opts: TrayIconOptions): TrayIconHandle {
   const tray = new Tray(restIcon());
   tray.setToolTip('brain');
   tray.on('click', opts.onClick);
+  if (opts.onRightClick) tray.on('right-click', opts.onRightClick);
 
   // ---- State ---------------------------------------------------------------
   let isDim = false;
