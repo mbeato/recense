@@ -36,6 +36,7 @@ const COLLAPSE_SENTINEL = 'http://127.0.0.1:7810/__recense/collapse';
 /** Called after a collapse-to-tray so the orchestrator can show the popover
  *  (true swap — symmetric with the popover's expand button). */
 let _onCollapse: (() => void) | null = null;
+let _collapseRequested = false;
 export function setCollapseHandler(cb: () => void): void {
   _onCollapse = cb;
 }
@@ -88,9 +89,9 @@ export function openMainWindow(): void {
   _win.webContents.on('will-navigate', (event, url) => {
     if (url.startsWith(COLLAPSE_SENTINEL)) {
       event.preventDefault();
-      _win?.close(); // close IS the demote: accessory mode resumes, tray keeps running
-      _onCollapse?.(); // swap: surface the tray popover so the transition is visible
-      return;
+      _collapseRequested = true; // swap completes in the 'closed' handler —
+      _win?.close();             // showing the popover NOW gets blur-killed by
+      return;                    // the focus churn of close + policy switch
     }
     if (!url.startsWith(VIZ_URL)) {
       event.preventDefault();
@@ -114,6 +115,12 @@ export function openMainWindow(): void {
     // Back to menu-bar-only; tray + server keep running (D-06 baseline).
     if (process.platform === 'darwin') {
       app.setActivationPolicy('accessory');
+    }
+    // Collapse swap: show the popover only after the policy switch settles,
+    // so the focus churn of closing can't blur-dismiss it.
+    if (_collapseRequested) {
+      _collapseRequested = false;
+      setTimeout(() => _onCollapse?.(), 220);
     }
   });
 }

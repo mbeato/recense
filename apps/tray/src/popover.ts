@@ -48,6 +48,11 @@ const WIN_HEIGHT = 300;
 /** Module-level pin state. Accessed only through isPinned() / setPinned(). */
 let _pinned = false;
 
+/** Blur-dismiss grace: ignore blur briefly after show — macOS focus churn
+ *  (e.g. activation-policy switches during a window→tray swap) fires a
+ *  spurious blur right after the popover appears. */
+let _blurGraceUntil = 0;
+
 /**
  * Create the frameless popover BrowserWindow.
  *
@@ -116,6 +121,7 @@ export function createPopover(): BrowserWindow {
   // D-04: blur-dismiss — hide the popover on loss of focus unless pinned.
   // Pinned windows survive blur and remain as an always-on-top floating surface.
   win.on('blur', () => {
+    if (Date.now() < _blurGraceUntil) return;
     if (!_pinned) {
       win.hide();
     }
@@ -152,6 +158,7 @@ export function togglePopover(tray: Tray, win: BrowserWindow): void {
     win.hide();
   } else {
     positionUnder(tray, win);
+    _blurGraceUntil = Date.now() + 800;
     win.show();
     win.focus();
   }
