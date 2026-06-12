@@ -1,9 +1,8 @@
 #!/bin/bash
 # Overnight local-inference correctness eval (quick task 260611-ue6 verification).
-# Per-role validated split (V5 postmortem 2026-06-12): extraction on qwen2.5:7b-instruct
-# (won the 2026-06-07 extraction bake-off; 35b-with-thinking silently breaks claim parsing
-# — V5 scored 38.5% from empty extractions), judge on qwen3.6:35b-a3b (won judge-eval v2
-# under the contradicted_ids+order-swap contract). Embeddings OpenAI.
+# Per-role validated split: extraction granite4.1:8b (V8-adopted 2026-06-12; lineage
+# V5 = 35b-thinking extractor bust, V6 = qwen2.5 61.5%, V7 = timeout-bug artifact,
+# V8 = granite 84.6%), judge qwen3.6:35b-a3b (judge-eval v2 winner). Embeddings OpenAI.
 # Detached via nohup so it survives the Claude Code session. Results land in
 # scripts/eval/results/correctness-LOCAL-V8.json; log alongside.
 set -uo pipefail
@@ -17,11 +16,10 @@ set +a
 export BRAIN_MEMORY_JUDGE_PROVIDER=local
 export BRAIN_MEMORY_EXTRACTOR_PROVIDER=local
 # Per-role pins (resolveProviderOverlay role-specific keys) — the validated split.
-# Extractor: qwen2.5:7b-instruct — the validated end-to-end winner (V6, 61.5%).
-# granite4.1:8b won the isolated bake-off (extractor-bakeoff-results.json) but was
-# REJECTED end-to-end (V7, 38.5%): its claims resolve to confirm/extend/hold instead
-# of contradict downstream and its bare-entity claims pollute retrieval. Component
-# wins require system confirmation before adoption.
+# Extractor: granite4.1:8b — ADOPTED via V8 (84.6% scorer / 92.3% content-correct,
+# vs qwen2.5:7b's V6 61.5%). The V7 "rejection" (38.5%) was an infra bug — 60s SDK
+# timeout vs Ollama-serialized concurrent judge calls (fixed 1849c27, LOCAL_SDK_TIMEOUT_MS).
+# Known residual: bare-entity nodes can win query-probe retrieval (V8 case 13 → "Biscuit").
 export BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL=granite4.1:8b
 export BRAIN_MEMORY_JUDGE_LOCAL_MODEL=qwen3.6:35b-a3b
 # Unset the sleep.env shared override so the per-role pins are the only model selectors.
