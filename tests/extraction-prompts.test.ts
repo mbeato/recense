@@ -140,4 +140,33 @@ describe('promptForSource', () => {
     expect(promptForSource('random-unknown')).toBe(EXTRACTION_PROMPT);
     expect(promptForSource('notasource')).toBe(EXTRACTION_PROMPT);
   });
+
+  // ── 11. conversation prompt: eval-leakage guard (Fix A2) ─────────────────
+  //
+  // The normalization examples must not mirror eval-case content. Three specific
+  // substrings confirmed as near-verbatim copies of correctness-cases.json entries:
+  //   - "Denver"       → case 4 "Ana moved to Denver, Colorado"
+  //   - "Ana moved"    → same case 4 example text
+  //   - "meditation to 20" → case 2 "Ana cut her daily meditation down to 20 minutes"
+  // Additionally asserts the validated normalization principle sentence is preserved.
+
+  it('conversation prompt retains the NEW CURRENT STATE principle sentence', () => {
+    const prompt = promptForSource('conversation');
+    expect(prompt).toContain('extract the NEW CURRENT STATE');
+  });
+
+  it('conversation prompt does not contain eval-leaked substring "Denver"', () => {
+    const prompt = promptForSource('conversation');
+    expect(prompt).not.toContain('Denver');
+  });
+
+  it('conversation prompt does not contain eval-leaked substring "Ana moved"', () => {
+    const prompt = promptForSource('conversation');
+    expect(prompt).not.toContain('Ana moved');
+  });
+
+  it('conversation prompt does not contain eval-leaked substring "meditation to 20"', () => {
+    const prompt = promptForSource('conversation');
+    expect(prompt).not.toContain('meditation to 20');
+  });
 });
