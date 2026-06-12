@@ -197,6 +197,7 @@ export function initStats(ctx) {
 
   // ── Master rAF loop ───────────────────────────────────────────────────────
   let loopRunning = false;
+  let lastTickErr = ''; // dedupe: report each unique tick error once, not 60x/s
 
   function scheduleFrame() {
     if (!loopRunning) return;
@@ -216,9 +217,17 @@ export function initStats(ctx) {
     measureFps(now);
     const fps = currentFps();
 
-    // 2. Invoke all registered tick callbacks
+    // 2. Invoke all registered tick callbacks — keep the loop alive on error,
+    // but never silently (D-14): surface once per unique error message.
     for (const fn of callbacks) {
-      try { fn(now); } catch (_) {}
+      try { fn(now); } catch (err) {
+        const m = (err && err.message) || String(err);
+        if (m !== lastTickErr) {
+          lastTickErr = m;
+          if (ctx.logEvent) ctx.logEvent('tick-error', m);
+          else console.error('tick error:', err);
+        }
+      }
     }
 
     // 3. Update stats overlay
