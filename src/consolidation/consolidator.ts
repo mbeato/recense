@@ -720,6 +720,18 @@ export class Consolidator {
       }
 
       case 'contradict': {
+        // M2: route secondary contradicted nodes BEFORE the primary break/guard (plan 260611-ue6 Task 3).
+        // contradictedIds is already filtered to the candidate set (T-UE6-02 — fill section above).
+        // Skip the primary id here — it is handled by the existing primary block below so that
+        // all existing routing logic (D-20 oscillation, D-19 hold, D-15/D-16, force-destabilize)
+        // remains byte-identical. Secondaries NEVER mint — only the primary reconcile mints one
+        // new node per claim (single-new-node invariant).
+        for (const secId of decision.contradictedIds) {
+          if (secId !== decision.bestCandidateId) {
+            this.applySecondaryContradiction(secId, decision, episodeId);
+          }
+        }
+
         if (!decision.bestCandidateId) break;
 
         // Read the candidate node and compute D-16 resistance = effective_s * c.
@@ -891,6 +903,114 @@ export class Consolidator {
         }
         break;
       }
+    }
+  }
+
+  // ── Private: PE-gate routing for a secondary contradicted node (M2) ─────────
+
+  /**
+   * Apply the prediction-error gate to a secondary contradicted node.
+   *
+   * M2 design (plan 260611-ue6 Task 3): a judge verdict can list MULTIPLE contradicted
+   * node ids (contradicted_ids). The primary id is handled by the existing applyDecision
+   * contradict branch which includes D-20 oscillation guard and mints exactly one new node.
+   * Every OTHER id in the list is routed here.
+   *
+   * Secondaries NEVER mint a new node — the primary already minted the single new current
+   * value for this claim. The routing mirrors the primary branch for hold/force-destabilize,
+   * tombstone (reconcile), and coexist (append-new), but without any upsertNode call.
+   *
+   * Threat mitigations:
+   *  - T-UE6-01: only tombstone/hold/coexist routes; no confirm/extend/strengthen (no
+   *    self-confirmation surface from secondary routing).
+   *  - D-19: hold path applies the same provenance-eligibility gate as the primary — inferred-
+   *    origin and echo episodes cannot destabilize secondaries.
+   *  - D-20: oscillation guard does NOT apply here — secondaries carry no new value to compare.
+   *  - T-02-ASYNC: pure sync method (no await); never called inside a db.transaction.
+   */
+  private applySecondaryContradiction(
+    nodeId: string,
+    decision: ClaimDecision,
+    episodeId: string,
+  ): void {
+    const node = this.store.getNode(nodeId);
+    if (!node || node.tombstoned) return;
+
+    const effectiveS = this.strength.effectiveStrength(
+      node.s, node.last_access, this.clock.nowMs(), this.config.lambda,
+    );
+    const resistance = effectiveS * node.c; // D-16
+    const action = routeContradiction(decision.magnitude, resistance, this.config);
+
+    if (action === 'reconcile') {
+      // Tombstone only — primary already minted the new current node (no D-20 guard needed:
+      // secondaries carry no new value and cannot oscillate)
+      this.store.tombstone(nodeId);
+      this.sink.emit({
+        event_type: 'contradict_reconcile',
+        node_id: nodeId,
+        candidate_id: nodeId,
+        episode_id: episodeId,
+        value: decision.claimValue,
+        origin: decision.claimOrigin,
+        magnitude: decision.magnitude,
+      });
+    } else if (action === 'append-new') {
+      // Established secondary: genuine divergence → leave live (coexists with primary's new node).
+      // Audit-only emit; no graph mutation, no mint.
+      this.sink.emit({
+        event_type: 'contradict_append_new',
+        node_id: nodeId,
+        candidate_id: nodeId,
+        episode_id: episodeId,
+        value: decision.claimValue,
+        origin: decision.claimOrigin,
+        magnitude: decision.magnitude,
+      });
+    } else {
+      // hold — apply the same D-19 provenance-eligibility gate as the primary
+      if (
+        decision.claimOrigin !== 'inferred' &&
+        decision.episodeSourceInferenceId === null
+      ) {
+        this.store.recordContradiction(nodeId, {
+          episode_id: episodeId,
+          session_id: decision.episodeSessionId,
+          origin: decision.claimOrigin,
+        } satisfies PendingContradiction);
+
+        const updatedNode = this.store.getNode(nodeId);
+        if (updatedNode) {
+          const entries = safeParseContradictions(updatedNode.pending_contradictions);
+          const distinctCount = countDistinctProvenance(entries);
+
+          if (distinctCount >= this.config.contradictionN) {
+            // Force-destabilize secondary: tombstone only (no mint — primary already minted)
+            this.store.tombstone(nodeId);
+            this.sink.emit({
+              event_type: 'contradict_force_destabilize',
+              node_id: nodeId,
+              candidate_id: nodeId,
+              episode_id: episodeId,
+              value: decision.claimValue,
+              origin: decision.claimOrigin,
+              magnitude: decision.magnitude,
+            });
+          } else {
+            // Hold only — distinctCount < contradictionN; record persisted, not yet destabilized
+            this.sink.emit({
+              event_type: 'contradict_hold',
+              node_id: nodeId,
+              candidate_id: nodeId,
+              episode_id: episodeId,
+              value: decision.claimValue,
+              origin: decision.claimOrigin,
+              magnitude: decision.magnitude,
+            });
+          }
+        }
+      }
+      // Not provenance-eligible: drop silently — mirrors primary D-19 rule
     }
   }
 }

@@ -1904,4 +1904,96 @@ describe('M1/M2: entity-anchored expansion and multi-candidate contradiction rou
     const nodes = h.db.prepare('SELECT * FROM node WHERE tombstoned = 0').all() as NodeRow[];
     expect(nodes).toHaveLength(2);
   });
+
+  // ── M2: multi-candidate contradiction routing ────────────────────────────
+
+  it('M2 integration: contradicted_ids=[id1,id2] tombstones BOTH nodes and mints exactly ONE new node', async () => {
+    // Both fact nodes in cosine top-k with score=1.0 (alwaysSame embed vs alwaysSame claim).
+    // Judge returns both in contradicted_ids → primary (id1) tombstoned+new minted; secondary (id2)
+    // tombstoned via applySecondaryContradiction (no extra mint). Exactly 1 live node after.
+    const id1 = newId();
+    const id2 = newId();
+    const alwaysVec = new Float32Array(h.config.embeddingDimensions); alwaysVec[0] = 1.0;
+    h.store.upsertNode({ id: id1, type: 'fact', value: 'Old fact 1 about Alice', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.setEmbedding(id1, alwaysVec);
+    h.store.upsertNode({ id: id2, type: 'fact', value: 'Old fact 2 about Alice', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.setEmbedding(id2, alwaysVec);
+
+    // Both in reconcile band: s=0.5, c=0.7 → resistance=0.35; magnitude=0.5 → ratio≈1.43 → reconcile
+    const verdict: JudgeVerdict = {
+      best_candidate_id: id1,
+      relation: 'contradict',
+      magnitude: 0.5,
+      contradicted_ids: [id1, id2],
+    };
+
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'New fact about Alice' }])],
+      judgeScript: [verdict],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock, sink,
+    );
+
+    h.episodes.append({
+      content: 'Alice update',
+      origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-m2-multi',
+    });
+
+    await consolidator.consolidate();
+
+    // PRIMARY: id1 tombstoned by reconcile
+    expect(h.store.getNode(id1)!.tombstoned).toBe(1);
+    // SECONDARY: id2 also tombstoned via applySecondaryContradiction (fails PRE, passes POST)
+    expect(h.store.getNode(id2)!.tombstoned).toBe(1);
+    // Exactly ONE live node (the primary reconcile mint) — no extra nodes from secondaries
+    const liveNodes = h.db.prepare('SELECT * FROM node WHERE tombstoned = 0').all() as NodeRow[];
+    expect(liveNodes).toHaveLength(1);
+    expect(liveNodes[0]!.value).toBe('New fact about Alice');
+  });
+
+  it('M2 guard: hallucinated contradicted_id outside candidate set is filtered and never tombstones', async () => {
+    // Only id1 is in the judge candidate set. The verdict includes a hallucinated id that was
+    // never in the candidate list. T-UE6-02: filter to candidateIdSet before routing — hallucinated
+    // id is dropped, only id1 routes, id1 tombstoned + 1 new node, no crash.
+    const id1 = newId();
+    const alwaysVec = new Float32Array(h.config.embeddingDimensions); alwaysVec[0] = 1.0;
+    h.store.upsertNode({ id: id1, type: 'fact', value: 'Old fact', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.setEmbedding(id1, alwaysVec);
+
+    const hallucinatedId = 'hallucinated-node-id-not-in-db';
+    const verdict: JudgeVerdict = {
+      best_candidate_id: id1,
+      relation: 'contradict',
+      magnitude: 0.5,
+      // hallucinatedId NOT in the candidate set — must be dropped by T-UE6-02 filter
+      contradicted_ids: [id1, hallucinatedId],
+    };
+
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'New fact' }])],
+      judgeScript: [verdict],
+    });
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'Update',
+      origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-m2-guard',
+    });
+
+    // Must not throw — hallucinated id filtered out before routing
+    await expect(consolidator.consolidate()).resolves.toBeUndefined();
+
+    // id1 tombstoned (primary)
+    expect(h.store.getNode(id1)!.tombstoned).toBe(1);
+    // hallucinatedId was never in the DB and was never created
+    expect(h.store.getNode(hallucinatedId)).toBeNull();
+  });
 });
