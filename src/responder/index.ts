@@ -17,8 +17,9 @@
  *  - T-07-02 (injection): MAX_QUERY_BYTES bound; query placed as data content, not code.
  *  - T-07-09 (spoofing): schema-prior answers carry ' (inferred)' marker (D-73); grounded facts unmarked.
  *  - T-07-04 (info disclosure): safe-null on any throw — reply=null, never a raw error string.
- *  - T-07-10 (stale fact): reuses RetrievalEngine.retrieve which returns 'deleted'/'unreachable'
- *    for tombstoned/missing nodes — never surfaces a stale fact (RET-02).
+ *  - T-07-10 (stale fact): facts-first now uses RetrievalEngine.retrieveRanked (B1 fix); topk
+ *    returns tombstoned=0 nodes only, and B2 entity invalidation excludes entities whose
+ *    supporting facts are all tombstoned — stale facts never surfaced (RET-02 preserved).
  */
 import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
@@ -61,8 +62,11 @@ const HONEST_RESULT: ResponderResult = {
 };
 
 /**
- * HybridResponder: online-embed the question, try facts-first via RetrievalEngine.retrieve(cueVec),
+ * HybridResponder: online-embed the question, try facts-first via RetrievalEngine.retrieveRanked(cueVec, k, floor),
  * fall back to schema-prior RecallEngine.recall(), answer honestly when neither fires.
+ *
+ * B1 fix: facts-first uses retrieveRanked (top-k + floor 0.3) instead of the single-hit 0.7 bar,
+ * so question-form cues (typically 0.4–0.6 cosine vs stored facts) can ground an answer.
  *
  * Concise reply with the fact-vs-(inferred) marker (D-73). Read-only on the graph except the
  * single inferred-episode log in the facts-first branch (D-75).
@@ -100,7 +104,10 @@ export class HybridResponder {
    *  1. Bound query length (T-04-03-I).
    *  2. Wrap everything in try/catch — any throw returns safe-null (never rethrows).
    *  3. Online embed: provider.embed([boundedQuery]).
-   *  4. Facts-first: retrieval.retrieve(cueVec). If ok + results → compose grounded answer.
+   *  4. Facts-first: retrieval.retrieveRanked(cueVec, k, floor). If results → compose grounded answer.
+   *     B1 fix: retrieveRanked uses top-k + floor (0.3) instead of the single-hit 0.7 bar.
+   *     Question-form cues ("Where does Ana live?") score 0.4–0.6 against stored facts —
+   *     structurally below retrieve()'s deletedSimilarityThreshold (0.7) but above the 0.3 floor.
    *  5. Schema-prior fallback: recall.recall(boundedQuery, sessionId).
    *  6. Honest no-answer: return HONEST_NO_ANSWER.
    *
@@ -117,10 +124,18 @@ export class HybridResponder {
       if (!cueVec) return HONEST_RESULT;
 
       // ── (4) Facts-first: attempt retrieval of directly-stored facts ───────
-      const r = this.retrieval.retrieve(cueVec);
-      if (r.status === 'ok' && r.results.length > 0) {
+      // B1: use retrieveRanked(k, floor) so question-form cues (0.4–0.6 cosine) surface facts
+      // instead of failing retrieve()'s single-hit 0.7 bar. Staleness guarded by B2: topk
+      // returns tombstoned=0 nodes only, and entity invalidation excludes entities whose
+      // supporting facts are all tombstoned (previously guarded by T-07-10 via retrieve()).
+      const ranked = this.retrieval.retrieveRanked(
+        cueVec,
+        this.config.rankedRetrievalK,
+        this.config.rankedRetrievalFloor,
+      );
+      if (ranked.length > 0) {
         // Build grounded compose prompt — facts as data content (T-04-03-I)
-        const factLines = r.results.map(x => `- ${x.value}`).join('\n');
+        const factLines = ranked.map(x => `- ${x.value}`).join('\n');
         const prompt =
           `You are answering a question using only the stored facts below.\n\n` +
           `Stored facts:\n${factLines}\n\n` +
@@ -140,8 +155,9 @@ export class HybridResponder {
         }
 
         if (composedAnswer !== null) {
-          // Log grounded answer as ephemeral inferred episode — the ONLY write in the facts-first branch (D-75)
-          // HARD INVARIANT: origin='inferred', salience=0 — inbound question never written as a fact (D-75)
+          // Log grounded answer as ephemeral inferred episode — the ONLY write in the facts-first branch (D-75).
+          // HARD INVARIANT: origin='inferred', salience=0 — inbound question never written as a fact (D-75).
+          // WR-01/CR-01 self-confirmation guard: salience=0 ensures this episode never strengthens the recalled fact.
           const ep = this.episodes.append({
             content: composedAnswer,
             origin: 'inferred',
