@@ -386,6 +386,9 @@ button:hover {
     width: calc(100vw - 24px);
     max-height: calc(100vh - 24px);
   }
+  /* 3d-force-graph's built-in nav directions ("left-click: rotate...") are
+     too cramped at popover scale — only the attribution stays (founder, 2026-06-12) */
+  .scene-nav-info { display: none; }
   /* CC BY-SA credit must remain visible — shrink, don't hide */
   #hull-credit {
     font-size: 8px;
