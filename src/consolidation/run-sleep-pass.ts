@@ -172,6 +172,7 @@ export async function runConsolidation(
     config,
     realClock,
     sink,
+    log,
   );
 
   // ── 5. Run the sleep pass ──────────────────────────────────────────────────

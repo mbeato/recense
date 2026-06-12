@@ -46,7 +46,15 @@ export type AnthropicLike = {
  * the hold can approach the 30-min stale window where H-4's lock reclaim fires.
  * 60 s + 2 retries = at most ~3 min worst-case, well within the stale window.
  *
- * Applied to: Anthropic SDK, AnthropicVertex SDK, OpenAI SDK (embedder + local Ollama).
+ * Applied to: Anthropic SDK, AnthropicVertex SDK, OpenAI SDK (embedder).
+ *
+ * LOCAL_SDK_TIMEOUT_MS applies only to the local Ollama path.  Local models can be
+ * slow: when the consolidator dispatches 2+ judge calls concurrently, Ollama serialises
+ * them internally.  A 35b reasoning model takes ~47 s per judgeOnce pass; the second
+ * concurrent request queues ~47 s then processes ~47 s = ~94 s total from when it was
+ * sent — exceeding the 60 s cloud limit.  300 s (5 min) gives 3× headroom while still
+ * staying well inside the 30-min H-4 lock-reclaim window (worst case: 3 retries ×
+ * 300 s = 15 min).
  *
  * SDK_MAX_RETRIES is env-overridable via BRAIN_MEMORY_SDK_MAX_RETRIES.
  * The eval harness sets it to 10 before loading dist modules so that engine-level
@@ -55,6 +63,7 @@ export type AnthropicLike = {
  * Invalid or absent → production default 2.
  */
 export const SDK_TIMEOUT_MS = 60_000;
+export const LOCAL_SDK_TIMEOUT_MS = 300_000;
 export const SDK_MAX_RETRIES: number = (() => {
   const raw = process.env['BRAIN_MEMORY_SDK_MAX_RETRIES'];
   if (!raw) return 2;
@@ -108,10 +117,12 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
   if (config.modelProvider === 'local') {
     // Local path: OpenAI-compatible Ollama endpoint. Dummy api key 'ollama' (Ollama
     // ignores it); never log the client. Wrapped in OllamaClient to satisfy AnthropicLike.
+    // Uses LOCAL_SDK_TIMEOUT_MS (300 s) instead of the cloud 60 s: concurrent judge calls
+    // queue behind each other in Ollama and the second can take ~94 s to respond.
     const openai = new OpenAI({
       baseURL: config.localBaseUrl,
       apiKey: 'ollama',
-      timeout: SDK_TIMEOUT_MS,
+      timeout: LOCAL_SDK_TIMEOUT_MS,
       maxRetries: SDK_MAX_RETRIES,
     });
     // Pass localBaseUrl so OllamaClient can derive the native /api/chat endpoint
