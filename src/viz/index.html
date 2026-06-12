@@ -25,28 +25,26 @@
 
 <!-- Control strip / status surface — styled to recede by default (D-13) -->
 <div id="panel">
-  <h1>brain-memory · activations</h1>
-  <div class="row">
+  <div class="row status-row">
     <span id="sse-dot"></span>
     <span id="sse-label" class="lbl">connecting…</span>
+    <span class="count-wrap"><span class="sep">·</span>
+      <span id="ncount" class="stat">—</span> <span class="lbl">nodes</span></span>
   </div>
-  <div class="row">
-    <span class="lbl">nodes</span>
-    <span id="ncount" class="stat">—</span>
-  </div>
-  <div class="row">
+  <div class="row actions-row">
     <button id="btn-tombstones">Show tombstones</button>
-    <button id="btn-test-trace" class="btn-sm">Test trace</button>
-  </div>
-  <div class="legend">
-    <span class="dot dot-entity">●</span> entity&nbsp;
-    <span class="dot dot-fact">●</span> fact&nbsp;
-    <span class="dot dot-schema">●</span> schema
+    <button id="btn-log" class="btn-sm">Log</button>
   </div>
   <div id="detail-loading">Initializing graph…</div>
   <!-- Event log: hidden by default, demoted to toggle (D-14) -->
-  <button id="btn-log" class="btn-sm">Toggle log</button>
   <div id="log"></div>
+</div>
+
+<!-- Node type legend — discrete, bottom-left (founder, 2026-06-12) -->
+<div class="legend">
+  <span class="dot dot-entity">●</span> entity&nbsp;
+  <span class="dot dot-fact">●</span> fact&nbsp;
+  <span class="dot dot-schema">●</span> schema
 </div>
 
 <!-- Tap-to-dismiss layer behind the detail panel -->

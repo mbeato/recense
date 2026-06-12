@@ -82,15 +82,19 @@ html, body {
   top: 12px;
   left: 12px;
   z-index: 10;
-  width: 230px;
-  background: rgba(26, 18, 32, 0.72);
-  border: 1px solid rgba(140, 150, 165, 0.11);
-  border-radius: 10px;
-  padding: 10px 13px;
-  backdrop-filter: blur(10px);
-  opacity: 0.52;
+  width: auto;
+  max-width: 300px;
+  background: rgba(26, 18, 32, 0.66);
+  border: 1px solid rgba(170, 150, 180, 0.12);
+  border-radius: 11px;
+  padding: 7px 12px;
+  backdrop-filter: blur(12px);
+  opacity: 0.45;
   transition: opacity 0.2s ease;
 }
+#panel .status-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+#panel .sep { color: #6b5f73; }
+#panel .actions-row { margin-top: 7px; display: flex; gap: 6px; }
 
 /* Reveal on hover (D-13 — chrome recedes, surfaces on attention) */
 #panel:hover,
@@ -98,21 +102,11 @@ html, body {
   opacity: 1;
 }
 
-/* ── Typography: system-ui for UI, monospace for data (D-16) ────────────── */
-h1 {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #8a95a3;
-  margin: 0 0 8px;
-}
-
 button {
-  background: rgba(140, 150, 165, 0.08);
-  color: #9aa4b0;
-  border: 1px solid rgba(140, 150, 165, 0.2);
-  border-radius: 6px;
+  background: rgba(170, 150, 180, 0.07);
+  color: #a99db3;
+  border: 1px solid rgba(170, 150, 180, 0.18);
+  border-radius: 7px;
   padding: 5px 10px;
   cursor: pointer;
   font-family: inherit;
@@ -183,12 +177,19 @@ button:hover {
   flex-shrink: 0;
 }
 
-/* ── Node type legend ────────────────────────────────────────────────────── */
+/* ── Node type legend — discrete fixed pill, bottom-left ─────────────────── */
 .legend {
-  font-size: 11px;
-  color: #565e68;
-  margin-top: 5px;
+  position: fixed;
+  bottom: 10px;
+  left: 12px;
+  z-index: 10;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: #6b5f73;
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
 }
+.legend:hover { opacity: 0.95; }
 
 /* Bioluminescent palette — distinct hues per semantic type (D-03) */
 .dot-entity { color: #9c7080; }  /* dusty rose — specific entities (matches node hue) */
@@ -369,11 +370,9 @@ button:hover {
     opacity: 0.35;
   }
   #panel:hover { opacity: 0.9; }
-  #panel h1,
-  #panel .row:has(button),
-  #panel .row:has(#ncount),
+  #panel .actions-row,
+  #panel .count-wrap,
   #panel #sse-label,
-  #btn-log,
   #log,
   #detail-loading { display: none; }
   #panel .row { margin: 0; }
