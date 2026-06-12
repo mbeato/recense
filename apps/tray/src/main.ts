@@ -1,27 +1,239 @@
 /**
- * brain tray — Electron entry stub (rewritten in 16-05).
+ * apps/tray/src/main.ts — brain tray orchestrator.
  *
- * This stub exists solely so `tsc --noEmit` has a valid entry point during
- * the scaffold phase. The full tray implementation (system-tray icon, viz
- * server spawn, SSE subscription) is implemented in plan 16-05.
+ * Wires server lifecycle (16-02), tray icon (16-03), and popover (16-04)
+ * into a menu-bar-only Electron app.
  *
- * Design invariants carried from brain-viz-cli.ts:
- *   D-96: trace flag must be restored OFF on all exit paths (child process owns
- *         this via its own exit handlers; tray SIGTERMs the child on before-quit).
- *   ABI: never use process.execPath as node bin (that is the Electron binary);
- *         resolve via BRAIN_MEMORY_NODE_BIN or sleep.env instead (pin-node pattern).
+ * Design invariants:
+ *   D-06: menu-bar-only — no Dock icon, no Cmd-Tab; Quit lives in tray context menu.
+ *   D-07: attach to an already-running server on port 7810; else spawn on system node.
+ *   D-08: openAtLogin default ON on first launch; toggle in tray context menu.
+ *   D-96: stopServer() SIGTERMs the child on every quit path; the child's own exit
+ *         handler restores viz_trace_enabled OFF — the tray never opens a second
+ *         DB write handle for the flag.
+ *   L-10: a missing brain.db shows a dialog and quits; no silent empty-DB spawn.
+ *   D-12: macOS-only APIs (setActivationPolicy, getLoginItemSettings) are guarded
+ *         by process.platform === 'darwin' so the type-check passes on Linux CI.
+ *   T-16-12: 'requires-approval' login-item status opens System Settings immediately
+ *            — never fail silently (macOS 13+ SMAppService caveat).
  */
-import { app } from 'electron';
 
-// Tray app hides from the Dock — it lives in the menu bar only.
-// setActivationPolicy is macOS-only; on Linux/Windows this is a no-op.
-if (typeof app.setActivationPolicy === 'function') {
+import { appendFileSync } from 'fs';
+import { app, Menu, dialog, shell } from 'electron';
+import {
+  ensureServer,
+  stopServer,
+  MissingDbError,
+  MissingBrainJsError,
+} from './server-lifecycle';
+import type { ServerHandle } from './server-lifecycle';
+import { initTrayIcon } from './tray-icon';
+import type { TrayIconHandle } from './tray-icon';
+import { createPopover, togglePopover, setPinned, isPinned } from './popover';
+
+// ---------------------------------------------------------------------------
+// Logging (append-only — never stdout for a background app)
+// ---------------------------------------------------------------------------
+
+const LOG_PATH = '/tmp/brain-memory-tray.log';
+
+function log(msg: string): void {
+  try {
+    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] main: ${msg}\n`);
+  } catch { /* best-effort */ }
+}
+
+// ---------------------------------------------------------------------------
+// D-06: Accessory mode — menu-bar only, no Dock icon, no Cmd-Tab.
+// Must be called before app.ready. Guarded by platform check (D-12).
+// Belt-and-suspenders: LSUIElement: 1 is also set in electron-builder.yml.
+// ---------------------------------------------------------------------------
+
+if (process.platform === 'darwin' && typeof app.setActivationPolicy === 'function') {
   app.setActivationPolicy('accessory');
 }
 
-app.whenReady().then(() => {
-  // Full implementation in plan 16-05.
-  // Stub intentionally left empty — tray window and server spawn added there.
-}).catch(() => {
-  // best-effort — not thrown at the process level
-});
+// ---------------------------------------------------------------------------
+// Login-item helpers (D-08 / T-16-12)
+// ---------------------------------------------------------------------------
+
+/**
+ * Set openAtLogin to true on first launch (status 'not-registered').
+ * macOS only — on Linux getLoginItemSettings() is a no-op.
+ */
+function initLoginItem(): void {
+  if (process.platform !== 'darwin') return;
+  const settings = app.getLoginItemSettings();
+  if (settings.status === 'not-registered') {
+    app.setLoginItemSettings({ openAtLogin: true });
+    checkRequiresApproval();
+  }
+}
+
+/**
+ * T-16-12: Surface a 'requires-approval' status by opening System Settings.
+ * macOS 13+ SMAppService demands explicit user approval in Login Items.
+ * Never fail silently — the user must approve for launch-at-login to work.
+ */
+function checkRequiresApproval(): void {
+  const after = app.getLoginItemSettings();
+  if (after.status === 'requires-approval') {
+    log("openAtLogin requires-approval — opening System Settings (T-16-12)");
+    shell
+      .openExternal(
+        'x-apple.systempreferences:com.apple.LoginItems-Settings.extension',
+      )
+      .catch(() => {
+        // Best-effort: if the URL scheme fails, the user can approve manually.
+      });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Context menu builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the tray right-click context menu.
+ *
+ * Rebuilt after each state change (Pin toggle, Launch-at-login toggle) so
+ * the checkbox states stay in sync with the underlying flags.
+ */
+function buildMenu(
+  popover: Electron.BrowserWindow,
+  icon: TrayIconHandle,
+): Electron.Menu {
+  const loginOpen =
+    process.platform === 'darwin'
+      ? app.getLoginItemSettings().openAtLogin
+      : false;
+
+  return Menu.buildFromTemplate([
+    {
+      label: 'Pin',
+      type: 'checkbox',
+      checked: isPinned(),
+      click() {
+        setPinned(popover, !isPinned());
+        // Rebuild to reflect new checked state
+        icon.tray.setContextMenu(buildMenu(popover, icon));
+      },
+    },
+    {
+      label: 'Launch at login',
+      type: 'checkbox',
+      checked: loginOpen,
+      enabled: process.platform === 'darwin',
+      click() {
+        if (process.platform !== 'darwin') return;
+        const current = app.getLoginItemSettings().openAtLogin;
+        app.setLoginItemSettings({ openAtLogin: !current });
+        // T-16-12: when enabling, check whether approval is required
+        if (!current) {
+          checkRequiresApproval();
+        }
+        // Rebuild to reflect new state
+        icon.tray.setContextMenu(buildMenu(popover, icon));
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click() {
+        app.quit();
+      },
+    },
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
+app
+  .whenReady()
+  .then(async () => {
+    log('app ready');
+
+    // D-08: set openAtLogin default ON on first launch
+    initLoginItem();
+
+    // L-10: ensure viz server is running or can be spawned before creating
+    // the popover/tray — a missing brain.db shows a dialog and quits cleanly.
+    let handle: ServerHandle = { attached: false, child: null };
+
+    // Temporary icon/popover references; assigned after ensureServer resolves.
+    let icon!: TrayIconHandle;
+    let popover!: Electron.BrowserWindow;
+
+    try {
+      handle = await ensureServer({
+        onUnhealthy: () => {
+          log('server unhealthy — dimming tray icon');
+          icon?.setDim();
+        },
+        onHealthy: () => {
+          log('server healthy after respawn — restoring tray icon');
+          icon?.setRest();
+        },
+      });
+    } catch (err) {
+      if (err instanceof MissingDbError) {
+        dialog.showErrorBox(
+          'brain',
+          `DB not found at ${err.dbPath}\n\nRun \`brain init\` first to set up brain-memory.`,
+        );
+      } else if (err instanceof MissingBrainJsError) {
+        dialog.showErrorBox('brain', (err as Error).message);
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        dialog.showErrorBox('brain', `Failed to start viz server: ${msg}`);
+      }
+      app.quit();
+      return;
+    }
+
+    log(`server ready (attached=${handle.attached})`);
+
+    // -- Popover: frameless BrowserWindow that loads the Phase 15 frontend ----
+    popover = createPopover();
+
+    // -- Tray icon: SSE subscription + amber pulse + dim/rest state -----------
+    // Left-click on the tray icon toggles the popover.
+    // Use a two-step let + assignment to safely capture `icon` in the onClick
+    // closure (the callback runs after `icon` is fully assigned — rule: never
+    // call icon.tray synchronously inside initTrayIcon's constructor).
+    icon = initTrayIcon({
+      onClick() {
+        togglePopover(icon.tray, popover);
+      },
+    });
+
+    // -- Context menu (right-click) -------------------------------------------
+    icon.tray.setContextMenu(buildMenu(popover, icon));
+
+    // -- D-96: SIGTERM child on every quit path ------------------------------
+    // stopServer() sets stopping=true (suppresses backoff respawn), clears
+    // the backoff timer, and SIGTERMs the active child. The child's own
+    // process.on('exit') handler restores viz_trace_enabled OFF (D-96).
+    // Never open a second DB write handle for the flag here.
+    app.on('before-quit', () => {
+      log('before-quit: stopping server + disposing tray icon');
+      stopServer(handle);
+      icon.dispose();
+    });
+
+    // -- Menu-bar app must stay alive with no visible windows (D-06) ---------
+    // Without this handler, Electron quits when the last BrowserWindow closes.
+    app.on('window-all-closed', () => {
+      // no-op — the tray lives in the menu bar, not in a window
+    });
+
+    log('tray app fully initialized');
+  })
+  .catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`fatal boot error: ${msg}`);
+    // Ensure a clean exit rather than leaving a zombie process
+    app.quit();
+  });

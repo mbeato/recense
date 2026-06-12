@@ -85,6 +85,11 @@ export interface EnsureServerOpts {
    */
   onUnhealthy?: () => void;
   /**
+   * Called when a respawned server passes its health check (recovered from crash).
+   * Wire this to a "restore tray icon" function in the main orchestrator.
+   */
+  onHealthy?: () => void;
+  /**
    * argv override for resolveDbPath() — for testing; defaults to process.argv.
    */
   argv?: string[];
@@ -103,6 +108,15 @@ let stopping = false;
 
 /** Active backoff timer, if any. Cleared by stopServer(). */
 let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Most recently spawned child process.
+ *
+ * Tracked separately from the ServerHandle returned by ensureServer() so
+ * that stopServer() can SIGTERM the live child even after a crash-backoff
+ * cycle replaced the original child with a new one (D-96 correctness).
+ */
+let activeChild: ChildProcess | null = null;
 
 // ---------------------------------------------------------------------------
 // isServerRunning
@@ -169,6 +183,9 @@ export async function ensureServer(opts: EnsureServerOpts = {}): Promise<ServerH
     env: { ...process.env, BRAIN_MEMORY_DB: dbPath },
     stdio: 'pipe',
   });
+  // Track the active child so stopServer() can SIGTERM the live process even
+  // after a crash-backoff cycle spawned a replacement child (D-96 correctness).
+  activeChild = child;
 
   // T-16-05: pipe child stdout/stderr to the append-only log file
   child.stdout?.on('data', (chunk: Buffer) => {
@@ -217,8 +234,13 @@ export function stopServer(handle: ServerHandle): void {
       clearTimeout(backoffTimer);
       backoffTimer = null;
     }
-    // D-96: SIGTERM so the child's exit handler restores viz_trace_enabled OFF
-    handle.child?.kill('SIGTERM');
+    // D-96: SIGTERM so the child's exit handler restores viz_trace_enabled OFF.
+    // Use activeChild (most recently spawned child) rather than handle.child so
+    // that a crash-backoff respawn cycle does not leave the replacement child
+    // running after quit (D-96 correctness with backoff respawn).
+    const toKill = activeChild ?? handle.child;
+    toKill?.kill('SIGTERM');
+    activeChild = null;
     log('stopServer: SIGTERM sent to child (D-96)');
   } catch { /* best-effort — never throw in cleanup */ }
 }
@@ -253,6 +275,8 @@ function scheduleRespawn(opts: EnsureServerOpts, delayMs: number): void {
           scheduleRespawn(opts, cappedDelay * 2);
         } else {
           log('respawned server is healthy (backoff reset)');
+          // Notify the main orchestrator so it can restore the tray icon state
+          opts.onHealthy?.();
         }
       })
       .catch((err: unknown) => {
