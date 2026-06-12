@@ -25,7 +25,7 @@ mac:
     # LSUIElement:1 covers the edge case before the runtime call fires.
     LSUIElement: 1
   target:
-    - target: dir   # unpacked .app for local dev — open directly from dist-app/mac/brain.app
+    - target: dir   # unpacked .app for local dev — dist-app/mac-arm64/brain.app (arm64) or dist-app/mac/brain.app (x86)
     - target: dmg   # wrapped DMG for sharing a build from the clone
 
 asar: true

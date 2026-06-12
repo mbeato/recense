@@ -41,13 +41,14 @@ This runs TypeScript compilation then `electron-builder --mac dir`, which produc
 an **unsigned local `.app`** in:
 
 ```
-apps/tray/dist-app/mac/brain.app
+apps/tray/dist-app/mac-arm64/brain.app   # Apple Silicon (M1/M2/M3/M4)
+apps/tray/dist-app/mac/brain.app          # Intel (x86_64)
 ```
 
 Open it directly:
 
 ```sh
-open apps/tray/dist-app/mac/brain.app
+open "$(find apps/tray/dist-app -name brain.app -maxdepth 3 | head -1)"
 ```
 
 The build is unsigned (no Apple Developer ID or notarization) — this is intentional.
@@ -64,7 +65,7 @@ on first open if it was copied across volumes (e.g., dragged from a Downloads fo
 If you see "damaged or can't be opened":
 
 ```sh
-xattr -d com.apple.quarantine apps/tray/dist-app/mac/brain.app
+xattr -d com.apple.quarantine "$(find apps/tray/dist-app -name brain.app -maxdepth 3 | head -1)"
 ```
 
 Alternatively: right-click the `.app` in Finder → Open → Open.
