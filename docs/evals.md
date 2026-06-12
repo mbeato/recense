@@ -65,7 +65,7 @@ reports the count in `questions_skipped_error`). They are re-attempted when runn
 
 ```sh
 npm run eval:longmemeval
-# Expected: ~$TBD, ~TBD min (filled in after first recorded run)
+# Recorded 2026-06-12 (knowledge-update subset, n=78): ~$14, ~15 min at --concurrency 8
 ```
 
 Requires `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` in the environment. Keys are read from the environment or `~/.config/brain-memory/sleep.env`.
@@ -74,7 +74,8 @@ Requires `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` in the environment. Keys are r
 
 | System | Headline score | Knowledge-update sub-score | Run date | Commit | Methodology |
 |--------|---------------|---------------------------|----------|--------|-------------|
-| brain-memory | TBD — recorded in 14-05 | TBD — recorded in 14-05 | TBD | TBD | end-to-end QA, GPT-4o-2024-08-06 binary judge |
+| brain-memory (KU subset, n=78) | — (subset run; full-set headline not recorded) | **69.2%** (54/78) | 2026-06-12 | 30b950a | end-to-end QA, Haiku 4.5 answerer, GPT-4o-2024-08-06 binary judge |
+| Full-context Haiku 4.5 (our measured baseline, same questions/scorer) | — | **79.5%** (62/78) | 2026-06-12 | 30b950a | entire haystack in-context, no memory system — `scripts/eval/longmemeval-fullcontext-baseline.cjs` |
 | mem0 (self-reported) | 94.4% | — | — | — | end-to-end QA |
 | Mastra Observational Memory (self-reported) | 95% | — | — | — | end-to-end QA, Gemini 2.5 Flash |
 | agentmemory (self-reported) | 95.2% | — | — | — | **retrieval-only R@5, not end-to-end QA** |
@@ -131,7 +132,7 @@ The ADD-only baseline expected scores: correction rate = 0%, stale rate = 100%, 
 
 ```sh
 npm run eval:correctness
-# Expected: ~$TBD, ~TBD min (filled in after first recorded run)
+# Recorded 2026-06-12: ~$2, ~10 min (API config); local stack ~25 min, $0 LLM cost
 ```
 
 Requires `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` in the environment.
@@ -146,7 +147,8 @@ npm run eval:correctness:dry
 
 | System | Belief-correction rate | Stale-recall rate | Avg duplicates | Tombstone present | Run date | Commit |
 |--------|----------------------|------------------|---------------|-------------------|----------|--------|
-| brain-memory | TBD — recorded in 14-05 | TBD | TBD | TBD | TBD | TBD |
+| brain-memory (API config) | **92.3%** content-correct (12/13; 84.6–92.3% scorer-credited across runs — substring scorer under-credits correct paraphrases) | 7.7% | 1.76 | Yes (70.6%) | 2026-06-12 | 9293be7 |
+| brain-memory (local: granite4.1:8b + qwen3.6:35b-a3b) | 84.6% scorer-credited, content matches API | 15.4% | 1.41 | Yes (76.5%) | 2026-06-12 | 7d76166 |
 | ADD-only baseline | 0% | 100% | 2.0 | No | same run | same |
 
 ---
