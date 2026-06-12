@@ -80,7 +80,7 @@ export function initEffects(ctx) {
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
     uniforms: {
-      rimColor:   { value: new THREE.Color(0x1d6a7a) },  // deep desaturated teal (D-03)
+      rimColor:   { value: new THREE.Color(0x39434e) },  // dim neutral steel — ghost-brain rim
       rimPower:   { value: 3.5 },                        // tighter rim falloff — edge light only
       rimOpacity: { value: 0.22 },
     },

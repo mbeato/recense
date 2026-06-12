@@ -57,9 +57,9 @@ export function initHud(ctx) {
 
   // ── ctx.setSSEStatus ───────────────────────────────────────────────────────
   function setSSEStatus(live) {
-    if (sseDotEl)   sseDotEl.style.background = live ? '#5dd6a0' : '#ffd166';
+    if (sseDotEl)   sseDotEl.style.background = live ? '#7fae93' : '#d9a05c';
     if (sseLabelEl) {
-      sseLabelEl.style.color = live ? '#5dd6a0' : '#ffd166';
+      sseLabelEl.style.color = live ? '#7fae93' : '#d9a05c';
       sseLabelEl.textContent = live ? 'live'    : 'reconnecting…';
     }
   }

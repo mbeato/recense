@@ -160,7 +160,7 @@ export function initDetail(ctx) {
       const r = node.__baseR;
       const ringGeo = new ctx.THREE.RingGeometry(r * 1.4, r * 1.7, 32);
       const ringMat = new ctx.THREE.MeshBasicMaterial({
-        color: 0xffffff,
+        color: 0xd9a05c,
         transparent: true,
         opacity: 0.9,
         side: ctx.THREE.DoubleSide,

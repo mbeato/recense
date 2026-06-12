@@ -68,23 +68,31 @@
  */
 
 // ============================================================================
-// Palette (D-03: bioluminescent deep-sea)
+// Palette (founder-revised at the 15-08 gate: quiet monochrome + ember accent)
 // ============================================================================
-// Type→color is a semantic encoding: distinct hues, all below the bloom
-// threshold so only activation (HOT) breaches it and flares warm.
+// Near-monochrome steel grays with a faint hue cast per semantic type — the
+// scene reads as a quiet ghost-brain at ambient glance, types distinguishable
+// up close. All values sit far below the bloom threshold; the warm HOT amber
+// of a real activation is the only thing that flares and grabs attention.
 
 /**
  * Node colours by semantic type.
  * @type {{entity: number, fact: number, schema: number}}
  */
 export const TYPE_COLOR = {
-  entity: 0x1f8fa6,  // deep desaturated cyan  — specific entities
-  fact:   0x2e8f6a,  // dark sea-green         — general semantic facts
-  schema: 0x6f5fa0,  // dim muted violet       — learned abstraction layer
+  entity: 0x6e7a88,  // steel gray (cool cast)   — specific entities
+  fact:   0x66716a,  // sage gray (green cast)   — general semantic facts
+  schema: 0x6f6880,  // slate gray (violet cast) — learned abstraction layer
 };
 
+/**
+ * Scene background — set via Graph.scene().background (color-managed path).
+ * Near-black with a barely-there cool cast; renders exactly as authored.
+ */
+export const BG_COLOR = 0x030405;
+
 /** Tombstoned nodes: visually muted and de-emphasised */
-export const TOMBSTONE_COLOR = 0x2e3545;
+export const TOMBSTONE_COLOR = 0x252a33;
 
 /**
  * Activation glow colour — warm amber.
@@ -92,7 +100,7 @@ export const TOMBSTONE_COLOR = 0x2e3545;
  * when a real query fires. Kept as a raw hex so JS can pass it directly to
  * THREE.Color or THREE.MeshBasicMaterial.color.
  */
-export const HOT = 0xffe08a;
+export const HOT = 0xffb866;
 
 // ============================================================================
 // Sizing

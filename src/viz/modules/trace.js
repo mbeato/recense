@@ -67,7 +67,7 @@ export function initTrace(ctx) {
   function spawnPulse(from, to) {
     if (!ctx.pulseGroup || !from || !to) return;
     const mat = new THREE.MeshBasicMaterial({
-      color: 0x9fd8ff,
+      color: 0xffd9a0,  // white-gold — pulses belong to the warm activation family
       transparent: true,
       opacity: 0,
       depthWrite: false,

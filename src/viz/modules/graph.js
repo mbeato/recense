@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import {
   TYPE_COLOR,
   TOMBSTONE_COLOR,
+  BG_COLOR,
   BRAIN_SCALE,
   HULL_ROT_X,
   HULL_ROT_Y,
@@ -177,13 +178,13 @@ export function initGraph(ctx) {
   // nodeVisibility / linkVisibility read ctx lazily so lod.js callbacks are
   // picked up even if initLod ran first and set them synchronously.
   const Graph = ctx.ForceGraph3D()(document.getElementById('graph'))
-    .backgroundColor('#060a0f')
+    .backgroundColor('#000000')
     .graphData({ nodes: getVisibleNodes(), links: allLinks })
     .nodeRelSize(nodeRelSize)
     .nodeThreeObject(makeNodeObject)
     .nodeVisibility(n  => ctx.nodeVisible ? ctx.nodeVisible(n)  : true)
     .linkVisibility(l  => ctx.linkVis     ? ctx.linkVis(l)      : true)
-    .linkColor(()      => 'rgba(80,120,160,0.45)')
+    .linkColor(()      => 'rgba(110,118,130,0.32)')
     .linkWidth(0.8)
     .onNodeHover(node  => {
       const tooltipEl = document.getElementById('tooltip');
@@ -237,6 +238,14 @@ export function initGraph(ctx) {
   hullGroup.rotation.set(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
   hullGroup.scale.setScalar(BRAIN_SCALE);   // normalized brain → world; matches containment
   const pulseGroup = new THREE.Group();
+  // Background via scene.background, NOT .backgroundColor(): the latter sets the
+  // renderer clear color, which three r152+ does not color-manage — the composer's
+  // OutputPass then re-encodes it and the rendered background comes out one gamma
+  // step lighter than authored (#060a0f rendered as a washed blue-gray). The
+  // scene.background path is color-managed, so the authored hex is what renders.
+  // .backgroundColor above stays pure black as a safe clear color underneath.
+  Graph.scene().background = new THREE.Color(BG_COLOR);
+
   Graph.scene().add(hullGroup);
   Graph.scene().add(pulseGroup);
   ctx.hullGroup  = hullGroup;
