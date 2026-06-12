@@ -155,10 +155,20 @@ export function initEffects(ctx) {
   };
 
   registerTick((now) => {
-    if (!shimmerActive || !isIdle()) return;
+    if (!shimmerActive || !isIdle()) {
+      // Restore the non-idle base on the idle→active transition so the hull
+      // never stays dimmed at whatever phase the sine wave happened to be in.
+      hullMat.uniforms.rimOpacity.value = 0.22;
+      return;
+    }
     const t = now / 1000;
     // Animate between 0.10 and 0.22 on a ~15.7-second period (0.4 rad/s);
     // peaks at the non-idle base so shimmer only ever dims, never flares.
     hullMat.uniforms.rimOpacity.value = 0.16 + 0.06 * Math.sin(t * 0.4);
   });
+
+  // Arm the shimmer from init: the tick above gates on ctx.isIdle(), so this
+  // only takes visible effect once the idle timeout elapses (D-04). Without
+  // this call shimmerActive stays false forever and the feature is dead code.
+  ctx.setIdleShimmer(true);
 }
