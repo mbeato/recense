@@ -54,6 +54,9 @@ jobs:
 
       # Smoke: eval harness dry-runs — zero API, uses committed fixtures only.
       # Verifies harnesses load dist/ correctly and CLI flags work without spend.
+      - name: Typecheck — apps/tray
+        run: cd apps/tray && npm ci && npx tsc --noEmit
+
       - name: Smoke — eval harness dry-runs (zero API)
         run: |
           node scripts/eval/correctness-harness.cjs --dry-run
