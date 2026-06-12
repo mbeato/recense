@@ -352,6 +352,15 @@ export function initGraph(ctx) {
   // ── Camera framing ────────────────────────────────────────────────────
   // Compact viewports (tray popover ≤500px) sit slightly farther out so the
   // brain clears the frame; full-window framing unchanged (founder-tuned).
+  // Compact also pans toward the brain's front (-x): the mesh's visual center
+  // sits forward of the world origin, so an origin-locked camera crops the
+  // frontal lobe at popover size. Passing lookAt also moves controls.target,
+  // keeping the ambient idle rotation centered on the brain, not the origin.
   const compact = Math.min(window.innerWidth, window.innerHeight) <= 500;
-  Graph.cameraPosition({ z: BRAIN_SCALE * (compact ? 2.35 : 2.2) });
+  if (compact) {
+    const FRAME_X = -85;
+    Graph.cameraPosition({ x: FRAME_X, z: BRAIN_SCALE * 2.35 }, { x: FRAME_X, y: 0, z: 0 });
+  } else {
+    Graph.cameraPosition({ z: BRAIN_SCALE * 2.2 });
+  }
 }
