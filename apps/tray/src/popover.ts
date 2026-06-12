@@ -199,7 +199,7 @@ const DRAG_STRIP_ADD = `(() => {
   const x = document.createElement('div');
   x.textContent = '\u00d7';
   x.title = 'Close (back to menu bar)';
-  x.style.cssText = 'position:absolute;top:3px;left:8px;width:20px;height:20px;'
+  x.style.cssText = 'position:absolute;top:6px;left:8px;width:26px;height:26px;'
     + 'display:flex;align-items:center;justify-content:center;border-radius:6px;'
     + 'cursor:pointer;color:#d9cbc0;background:rgba(26,18,32,0.7);'
     + 'font:15px ui-sans-serif,system-ui;opacity:0.65;-webkit-app-region:no-drag;user-select:none;';
