@@ -24,12 +24,23 @@ export type JudgeRelation = 'confirm' | 'extend' | 'contradict' | 'unrelated';
 /**
  * One verdict per claim weighing it against all K nominated candidates (D-18).
  * magnitude is the judge-emitted PE severity [0,1]; meaningful only for 'contradict' (D-15).
+ *
+ * M2: contradicted_ids lists ALL candidate ids the claim contradicts (not just the primary).
+ * For non-contradict relations this is always []. For 'contradict', best_candidate_id should
+ * also appear in the list. Optional to keep existing test literals compiling; every producer
+ * normalizes to a concrete array (parseVerdict fail-safe, MockJudge default spread).
  */
 export interface JudgeVerdict {
   best_candidate_id: string | null;
   relation: JudgeRelation;
   /** PE severity [0,1]; only meaningful for 'contradict' (D-15). */
   magnitude: number;
+  /**
+   * M2: ALL candidate ids the claim contradicts (including best_candidate_id).
+   * Empty array for any non-contradict relation. Deduped. T-UE6-02: membership
+   * filtering to the actual candidate set happens at the consolidator call site.
+   */
+  contradicted_ids?: string[];
 }
 
 /**
@@ -44,7 +55,7 @@ export interface Judge {
 // Shared safe fallback verdict
 // ---------------------------------------------------------------------------
 
-const SAFE_VERDICT: JudgeVerdict = { best_candidate_id: null, relation: 'unrelated', magnitude: 0 };
+const SAFE_VERDICT: JudgeVerdict = { best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] };
 
 const VALID_RELATIONS = new Set<string>(['confirm', 'extend', 'contradict', 'unrelated']);
 
@@ -96,7 +107,26 @@ function parseVerdict(text: string): JudgeVerdict {
       ? null
       : typeof bestId === 'string' ? bestId : null;
 
-    return { best_candidate_id: candidateId, relation: relation as JudgeRelation, magnitude: mag };
+    // M2: parse contradicted_ids (T-02-PARSE — membership filtering at consolidator call site, not here).
+    // 1. Read field; keep only string entries; dedupe via Set.
+    // 2. Fail-safe: relation === 'contradict' && list empty && candidateId !== null → [candidateId].
+    // 3. Non-contradict relation → force [].
+    const rawIds = obj['contradicted_ids'];
+    let contradictedIds: string[];
+    if (Array.isArray(rawIds)) {
+      contradictedIds = [...new Set(rawIds.filter((x): x is string => typeof x === 'string'))];
+    } else {
+      contradictedIds = [];
+    }
+    if (relation === 'contradict') {
+      if (contradictedIds.length === 0 && candidateId !== null) {
+        contradictedIds = [candidateId];
+      }
+    } else {
+      contradictedIds = [];
+    }
+
+    return { best_candidate_id: candidateId, relation: relation as JudgeRelation, magnitude: mag, contradicted_ids: contradictedIds };
   } catch {
     return SAFE_VERDICT;
   }
@@ -124,7 +154,17 @@ export function parseVerdictForTest(text: string): JudgeVerdict {
  *  3. Both non-contradict but differ → return v1 (first-order verdict wins).
  */
 export function chooseConsistentVerdict(v1: JudgeVerdict, v2: JudgeVerdict): JudgeVerdict {
-  if (v1.relation === v2.relation) return v1;
+  if (v1.relation === v2.relation) {
+    // M2: when both are 'contradict', return v1 spread with contradicted_ids = intersection (conservative).
+    // Both orderings must agree a node is contradicted before it routes; prevents order-swap flip-flop
+    // from tombstoning a node only one ordering flags. (T-UE6-04 / order-swap invariant)
+    if (v1.relation === 'contradict') {
+      const v2Set = new Set(v2.contradicted_ids ?? []);
+      const intersection = (v1.contradicted_ids ?? []).filter(id => v2Set.has(id));
+      return { ...v1, contradicted_ids: intersection };
+    }
+    return v1;
+  }
   if (v1.relation === 'contradict') return v2;
   if (v2.relation === 'contradict') return v1;
   return v1;
@@ -134,13 +174,14 @@ export function chooseConsistentVerdict(v1: JudgeVerdict, v2: JudgeVerdict): Jud
 // Prompt for the AnthropicJudge
 // ---------------------------------------------------------------------------
 
-const JUDGE_PROMPT_PREFIX = `You are a knowledge graph judge. Given a new claim and a list of candidate nodes from a knowledge graph, determine which single candidate (if any) best matches the claim and how they relate.
+const JUDGE_PROMPT_PREFIX = `You are a knowledge graph judge. Given a new claim and a list of candidate nodes from a knowledge graph, determine which candidate(s) (if any) the claim contradicts and which single candidate best matches overall.
 
 Return ONLY valid JSON with exactly these fields:
 {
   "best_candidate_id": "<id of best match, or null if none match>",
   "relation": "<confirm | extend | contradict | unrelated>",
-  "magnitude": <float in [0.0, 1.0] — PE severity; use 0.0 for non-contradict>
+  "magnitude": <float in [0.0, 1.0] — PE severity; use 0.0 for non-contradict>,
+  "contradicted_ids": ["<id>", ...]
 }
 
 Relations:
@@ -148,6 +189,8 @@ Relations:
 - "extend": claim adds new information to the candidate
 - "contradict": claim directly conflicts with the candidate (magnitude = severity of conflict)
 - "unrelated": no meaningful match; use null for best_candidate_id
+
+For relation "contradict": list the ids of ALL candidates the claim contradicts in "contradicted_ids" (best_candidate_id should also appear in the list). For every other relation use an empty array [].
 
 New claim: `;
 
@@ -241,6 +284,8 @@ export class MockJudge implements Judge {
         `MockJudge queue exhausted: all ${this.queue.length} scripted verdicts have been consumed`
       );
     }
-    return this.queue[this.index++]!;
+    const queued = this.queue[this.index++]!;
+    // M2: backward-compatible default — scripted verdicts that omit contradicted_ids emit []
+    return { contradicted_ids: [], ...queued };
   }
 }

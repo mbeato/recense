@@ -17,7 +17,7 @@
 
 import Database from 'better-sqlite3';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { initSchema } from '../src/db/schema';
+import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
@@ -1716,5 +1716,284 @@ describe('Consolidator sink events per applyDecision branch (SEAM-02, D-49)', ()
     await consolidator.consolidate();
 
     expect(nodeVisibleDuringEmit).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M1: Entity-anchored candidate expansion + M2: Multi-candidate routing
+// (plan 260611-ue6)
+// ---------------------------------------------------------------------------
+
+describe('M1/M2: entity-anchored expansion and multi-candidate contradiction routing', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = makeHarness();
+  });
+
+  /**
+   * Insert a consolidation_event row linking a node to an episode.
+   * Mirrors the retrieval-scoping.test.ts precedent.
+   */
+  function linkNodeToEpisode(nodeId: string, episodeId: string): void {
+    h.db.prepare(`
+      INSERT INTO consolidation_event (id, ts, schema_version, event_type, node_id, episode_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(newId(), h.clock.nowMs(), SCHEMA_VERSION, 'strengthen', nodeId, episodeId);
+  }
+
+  // ── M1 provenance-sibling anchor ──────────────────────────────────────────
+
+  it('M1 provenance-sibling: fact sibling of an entity in cosine top-k reaches the judge and is tombstoned', async () => {
+    // Setup: entity (type='entity') seeded with alwaysSame embedding → will appear in cosine top-k.
+    // factSibling (type='fact') seeded WITHOUT an embedding → NOT in cosine top-k.
+    // Both linked to same episode via consolidation_event.
+    // Claim uses ZERO vector → cosine(zero, alwaysSame)=0 < threshold → PRE: auto-unrelated.
+    // POST (M1): entity in top-k with type='entity' → provenance query → finds factSibling →
+    //   anchor candidates non-empty → rescue auto-unrelated → judge called → factSibling tombstoned.
+    const entityId = newId();
+    const factSiblingId = newId();
+    const sharedEpisodeId = newId();
+
+    // Seed entity with alwaysSame embedding so it scores in cosine top-k
+    h.store.upsertNode({ id: entityId, type: 'entity', value: 'Alice the founder', origin: 'observed', s: 0.5, c: 0.7 });
+    const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [entityVec] = await sameEmb.embed(['Alice the founder']);
+    h.store.setEmbedding(entityId, entityVec!);
+
+    // Seed fact sibling WITHOUT an actual embedding blob.
+    // Critical: we mark it as "already embedded" (embedded_hash = value_hash) so that
+    // reembedDirty() does NOT re-embed it using the provider's makeZeroEmbedFn. If
+    // reembedDirty embedded it with a zero vector, topk would include it in cosine candidates
+    // (cosineSimF32(zero, zero)=0, still returned by topk), placing it in cosineIdSet. The M1
+    // provenance expansion would then deduplicate it from anchors → anchors=[] → auto-unrelated.
+    // By setting embedded_hash without an embedding blob, topk (WHERE embedding IS NOT NULL)
+    // skips it while stmtProvenanceSiblingFacts (WHERE f.tombstoned = 0, no embedding filter)
+    // still returns it. Test-only state: embedding IS NULL / embedded_hash IS NOT NULL.
+    h.store.upsertNode({ id: factSiblingId, type: 'fact', value: 'Alice founded Acme Corp', origin: 'observed', s: 0.5, c: 0.7 });
+    h.db.prepare('UPDATE node SET embedded_hash = value_hash WHERE id = ?').run(factSiblingId);
+
+    // Link both to the same episode via consolidation_event
+    linkNodeToEpisode(entityId, sharedEpisodeId);
+    linkNodeToEpisode(factSiblingId, sharedEpisodeId);
+
+    // Judge scripted to contradict the fact sibling (magnitude in reconcile band 0.8-2.0 ratio)
+    // s=0.5, c=0.7 → resistance=0.35; magnitude=0.5 → ratio=0.5/0.35≈1.43 → reconcile → tombstone
+    const judgeVerdict: JudgeVerdict = {
+      best_candidate_id: factSiblingId,
+      relation: 'contradict',
+      magnitude: 0.5,
+      contradicted_ids: [factSiblingId],
+    };
+
+    // Use ZERO embed for claims → cosine(claim, entity) = 0 → below threshold
+    // PRE code: auto-unrelated fires, judge NOT called, factSibling untouched
+    // POST code: entity type='entity' → anchor finds factSibling → rescue → judge called
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'Alice left Acme Corp' }])],
+      judgeScript: [judgeVerdict],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock, sink,
+    );
+
+    h.episodes.append({
+      content: 'Alice left Acme Corp episode',
+      origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-m1-prov',
+    });
+
+    await consolidator.consolidate();
+
+    // M1 assertion: factSibling must have been reached by the judge and tombstoned
+    const factNode = h.store.getNode(factSiblingId);
+    expect(factNode).not.toBeNull();
+    expect(factNode!.tombstoned).toBe(1);  // fails PRE (tombstoned=0), passes POST
+  });
+
+  // ── M1 link-anchor ────────────────────────────────────────────────────────
+
+  it('M1 link-anchor: a node value-matching a claim link is included in judge candidates', async () => {
+    // A node whose normalized value CONTAINS the normalized link value (containment match).
+    // Claim uses ZERO embed → cosine=0 < threshold → PRE: auto-unrelated, judge not called.
+    // POST: link anchor fires → rescue → judge called → node tombstoned.
+    const targetId = newId();
+    h.store.upsertNode({ id: targetId, type: 'fact', value: 'Alice Wonderland is the CEO', origin: 'observed', s: 0.5, c: 0.7 });
+    // Mark target as "already embedded" (embedded_hash = value_hash, embedding blob stays NULL).
+    // This prevents reembedDirty() from assigning a zero vector (which would put target in topk
+    // with score=0, making it enter cosineIdSet, causing the link anchor deduplication to skip
+    // it → anchors=[] → auto-unrelated). The link-anchor SQL (stmtLiveNodesForLinks:
+    // SELECT id, value FROM node WHERE tombstoned = 0) does not filter by embedding, so target
+    // is still reachable via M1. Test-only invariant: embedding IS NULL / embedded_hash IS NOT NULL.
+    h.db.prepare('UPDATE node SET embedded_hash = value_hash WHERE id = ?').run(targetId);
+
+    // s=0.5, c=0.7 → resistance=0.35; magnitude=0.5 → ratio≈1.43 → reconcile
+    const judgeVerdict: JudgeVerdict = {
+      best_candidate_id: targetId,
+      relation: 'contradict',
+      magnitude: 0.5,
+      contradicted_ids: [targetId],
+    };
+
+    // Claim with link 'Alice Wonderland' → normalizeValue("alice wonderland is the ceo").includes("alice wonderland") = true
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'Alice Wonderland left the company', links: ['Alice Wonderland'] }])],
+      judgeScript: [judgeVerdict],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock, sink,
+    );
+
+    h.episodes.append({
+      content: 'Alice Wonderland leaving episode',
+      origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-m1-link',
+    });
+
+    await consolidator.consolidate();
+
+    // M1 assertion: target node must have been reached and tombstoned
+    const node = h.store.getNode(targetId);
+    expect(node).not.toBeNull();
+    expect(node!.tombstoned).toBe(1);  // fails PRE (tombstoned=0), passes POST
+  });
+
+  // ── M1 regression: no links, no entity in top-k → byte-identical to pre-change ──
+
+  it('M1 regression: no links and no entity in cosine top-k → auto-unrelated unchanged, no judge call', async () => {
+    // A single non-entity fact node below cosine threshold with a claim that has no links.
+    // Expansion produces NO anchors → UPDATE-02 fires exactly as before → judge NOT called.
+    const existingId = newId();
+    h.store.upsertNode({ id: existingId, type: 'fact', value: 'Bob runs the bakery', origin: 'observed', s: 0.5, c: 0.7 });
+    const sameEmb = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmb.embed(['Bob runs the bakery']);
+    h.store.setEmbedding(existingId, vec!);
+
+    // Empty judgeScript — if judge is called, MockModelProvider throws.
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),  // cosine=0 < threshold
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'Bob works at a bakery' }])],  // no links
+      judgeScript: [],  // must NOT be consumed
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock, sink,
+    );
+
+    h.episodes.append({
+      content: 'Bob episode',
+      origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-m1-regression',
+    });
+
+    // Should NOT throw (empty judgeScript — judge must never be called)
+    await expect(consolidator.consolidate()).resolves.toBeUndefined();
+
+    // Existing node must NOT be tombstoned (auto-unrelated, not a contradiction)
+    expect(h.store.getNode(existingId)!.tombstoned).toBe(0);
+
+    // Exactly one unrelated event emitted (the standalone new node)
+    const unrelatedEvents = sink.events.filter(e => e.event_type === 'unrelated');
+    expect(unrelatedEvents).toHaveLength(1);
+
+    // Node count: original + newly minted standalone
+    const nodes = h.db.prepare('SELECT * FROM node WHERE tombstoned = 0').all() as NodeRow[];
+    expect(nodes).toHaveLength(2);
+  });
+
+  // ── M2: multi-candidate contradiction routing ────────────────────────────
+
+  it('M2 integration: contradicted_ids=[id1,id2] tombstones BOTH nodes and mints exactly ONE new node', async () => {
+    // Both fact nodes in cosine top-k with score=1.0 (alwaysSame embed vs alwaysSame claim).
+    // Judge returns both in contradicted_ids → primary (id1) tombstoned+new minted; secondary (id2)
+    // tombstoned via applySecondaryContradiction (no extra mint). Exactly 1 live node after.
+    const id1 = newId();
+    const id2 = newId();
+    const alwaysVec = new Float32Array(h.config.embeddingDimensions); alwaysVec[0] = 1.0;
+    h.store.upsertNode({ id: id1, type: 'fact', value: 'Old fact 1 about Alice', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.setEmbedding(id1, alwaysVec);
+    h.store.upsertNode({ id: id2, type: 'fact', value: 'Old fact 2 about Alice', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.setEmbedding(id2, alwaysVec);
+
+    // Both in reconcile band: s=0.5, c=0.7 → resistance=0.35; magnitude=0.5 → ratio≈1.43 → reconcile
+    const verdict: JudgeVerdict = {
+      best_candidate_id: id1,
+      relation: 'contradict',
+      magnitude: 0.5,
+      contradicted_ids: [id1, id2],
+    };
+
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'New fact about Alice' }])],
+      judgeScript: [verdict],
+    });
+    const sink = new MockConsolidationSink();
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock, sink,
+    );
+
+    h.episodes.append({
+      content: 'Alice update',
+      origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-m2-multi',
+    });
+
+    await consolidator.consolidate();
+
+    // PRIMARY: id1 tombstoned by reconcile
+    expect(h.store.getNode(id1)!.tombstoned).toBe(1);
+    // SECONDARY: id2 also tombstoned via applySecondaryContradiction (fails PRE, passes POST)
+    expect(h.store.getNode(id2)!.tombstoned).toBe(1);
+    // Exactly ONE live node (the primary reconcile mint) — no extra nodes from secondaries
+    const liveNodes = h.db.prepare('SELECT * FROM node WHERE tombstoned = 0').all() as NodeRow[];
+    expect(liveNodes).toHaveLength(1);
+    expect(liveNodes[0]!.value).toBe('New fact about Alice');
+  });
+
+  it('M2 guard: hallucinated contradicted_id outside candidate set is filtered and never tombstones', async () => {
+    // Only id1 is in the judge candidate set. The verdict includes a hallucinated id that was
+    // never in the candidate list. T-UE6-02: filter to candidateIdSet before routing — hallucinated
+    // id is dropped, only id1 routes, id1 tombstoned + 1 new node, no crash.
+    const id1 = newId();
+    const alwaysVec = new Float32Array(h.config.embeddingDimensions); alwaysVec[0] = 1.0;
+    h.store.upsertNode({ id: id1, type: 'fact', value: 'Old fact', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.setEmbedding(id1, alwaysVec);
+
+    const hallucinatedId = 'hallucinated-node-id-not-in-db';
+    const verdict: JudgeVerdict = {
+      best_candidate_id: id1,
+      relation: 'contradict',
+      magnitude: 0.5,
+      // hallucinatedId NOT in the candidate set — must be dropped by T-UE6-02 filter
+      contradicted_ids: [id1, hallucinatedId],
+    };
+
+    const provider = new MockModelProvider({
+      embedFn: makeAlwaysSameEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'New fact' }])],
+      judgeScript: [verdict],
+    });
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'Update',
+      origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-m2-guard',
+    });
+
+    // Must not throw — hallucinated id filtered out before routing
+    await expect(consolidator.consolidate()).resolves.toBeUndefined();
+
+    // id1 tombstoned (primary)
+    expect(h.store.getNode(id1)!.tombstoned).toBe(1);
+    // hallucinatedId was never in the DB and was never created
+    expect(h.store.getNode(hallucinatedId)).toBeNull();
   });
 });

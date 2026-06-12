@@ -191,6 +191,17 @@ export interface EngineConfig {
   candidateK: number;
 
   /**
+   * M1: max anchor candidates appended after cosine top-k for contradiction detection (M1).
+   * Anchors come from two sources:
+   *   - Link anchors: live nodes whose value contains a wikilink in the claim's links array.
+   *   - Provenance-sibling anchors: live fact nodes sharing >=1 consolidation_event episode
+   *     with an entity-type node that landed in cosine top-k.
+   * Anchors are appended AFTER cosine candidates, deduped by id, and capped at this limit.
+   * Default 5 matches candidateK — calibration placeholder (D-13 / T-UE6-03).
+   */
+  entityAnchorK: number;
+
+  /**
    * Salience below which a non-hard-keep episode is skipped in consolidation replay (CONSOL-01).
    * 0.2 means episodes with <20% salience are skipped unless force-kept.
    * Calibrate against real transcript cadence — too low wastes LLM budget on noise.
@@ -497,6 +508,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   openaiEmbedModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
   candidateK: 5,
+  entityAnchorK: 5,
   consolSkipThreshold: 0.2,
   consolSkipThresholdAssistant: 0.5,
   unrelatedSimilarityThreshold: 0.3,
