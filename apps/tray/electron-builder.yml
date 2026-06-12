@@ -1,0 +1,36 @@
+appId: com.brainmemory.tray
+productName: brain
+copyright: Copyright © 2026 brain-memory contributors
+
+directories:
+  output: dist-app
+  buildResources: build
+
+files:
+  - dist/**/*
+  - { from: "src/icons", to: "dist/src/icons" }
+  - node_modules/**/*
+
+mac:
+  category: public.app-category.productivity
+  # Unsigned local build — skip code signing (D-11, honest distribution).
+  # The adopter builds the .app themselves from the clone; no download trust needed.
+  identity: null
+  # REQUIRED alongside identity:null — hardened runtime + no signature prevents launch.
+  # (Pitfall 3: identity:null + hardenedRuntime:true → macOS rejects the .app)
+  hardenedRuntime: false
+  extendInfo:
+    # Belt-and-suspenders Dock-hide at the plist level (D-06).
+    # app.setActivationPolicy('accessory') handles it at runtime;
+    # LSUIElement:1 covers the edge case before the runtime call fires.
+    LSUIElement: 1
+  target:
+    - target: dir   # unpacked .app for local dev — open directly from dist-app/mac/brain.app
+    - target: dmg   # wrapped DMG for sharing a build from the clone
+
+asar: true
+asarUnpack:
+  # Safety net: keep any native .node binaries unpacked so require() can load them.
+  # The viz server (with better-sqlite3) runs as an external child process and is
+  # NOT bundled in the .app, but guard here in case a future dependency adds one.
+  - "**/*.node"
