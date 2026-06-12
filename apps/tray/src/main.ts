@@ -246,6 +246,10 @@ app
     // window vanishing with nothing appearing read as "app closed").
     setCollapseHandler(() => {
       if (!popover.isVisible()) togglePopover(icon.tray, popover);
+      // PiP semantics: collapsing a persistent surface yields a persistent
+      // one — pinned (floating, drag strip + close). Tray CLICKS stay
+      // transient per NSPopover convention (founder, 2026-06-12).
+      setPinned(popover, true);
     });
 
     // -- Obsidian-style entry (founder, 2026-06-12) ---------------------------

@@ -23,6 +23,9 @@ import { openMainWindow } from './main-window';
  */
 const EXPAND_SENTINEL = 'http://127.0.0.1:7810/__recense/expand';
 
+/** Sentinel for the pinned strip's close button: unpin + hide (back to ambient). */
+const UNPIN_SENTINEL = 'http://127.0.0.1:7810/__recense/unpin-hide';
+
 /** Injected expand affordance — top-right ↗, subtle, no-drag. */
 const EXPAND_BTN_JS = `(() => {
   if (document.getElementById('recense-expand-btn')) return;
@@ -98,6 +101,12 @@ export function createPopover(): BrowserWindow {
   // → app window); it is prevented like any other navigation, so the page
   // never actually leaves the viz URL.
   win.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith(UNPIN_SENTINEL)) {
+      event.preventDefault();
+      setPinned(win, false); // removes the strip
+      win.hide();            // back to ambient; tray icon remains
+      return;
+    }
     if (url.startsWith(EXPAND_SENTINEL)) {
       event.preventDefault();
       if (_pinned) setPinned(win, false); // also removes the drag strip
@@ -187,6 +196,17 @@ const DRAG_STRIP_ADD = `(() => {
   const pill = document.createElement('div');
   pill.style.cssText = 'margin:7px auto 0;width:44px;height:5px;border-radius:3px;background:rgba(240,233,228,0.28);pointer-events:none;';
   strip.appendChild(pill);
+  const x = document.createElement('div');
+  x.textContent = '\u00d7';
+  x.title = 'Close (back to menu bar)';
+  x.style.cssText = 'position:absolute;top:3px;left:8px;width:20px;height:20px;'
+    + 'display:flex;align-items:center;justify-content:center;border-radius:6px;'
+    + 'cursor:pointer;color:#d9cbc0;background:rgba(26,18,32,0.7);'
+    + 'font:15px ui-sans-serif,system-ui;opacity:0.65;-webkit-app-region:no-drag;user-select:none;';
+  x.addEventListener('mouseenter', () => { x.style.opacity = '1'; });
+  x.addEventListener('mouseleave', () => { x.style.opacity = '0.65'; });
+  x.addEventListener('click', () => { location.href = '${UNPIN_SENTINEL}'; });
+  strip.appendChild(x);
   document.body.appendChild(strip);
   const panel = document.getElementById('panel');
   if (panel) panel.style.setProperty('-webkit-app-region', 'no-drag');
