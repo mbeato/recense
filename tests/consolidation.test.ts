@@ -659,6 +659,10 @@ describe('Consolidator', () => {
       async judge(): Promise<never> {
         throw new Error('judge should not be called');
       },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('judgeBatch should not be called with non-empty items');
+      },
     };
 
     const consolidator = new Consolidator(
@@ -1053,6 +1057,10 @@ describe('Consolidator', () => {
       async judge(): Promise<never> {
         throw new Error('judge should not be called in batch-embed test');
       },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('judgeBatch should not be called in batch-embed test');
+      },
     };
 
     const consolidator = new Consolidator(
@@ -1095,6 +1103,10 @@ describe('Consolidator', () => {
       },
       async judge(): Promise<never> {
         throw new Error('judge should not be called');
+      },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('judgeBatch should not be called with zero claims episode');
       },
     };
 
@@ -1330,6 +1342,10 @@ describe('Consolidator', () => {
       },
       async judge(): Promise<never> {
         throw new Error('judge should not be called');
+      },
+      async judgeBatch(items) {
+        if (items.length === 0) return [];
+        throw new Error('judgeBatch should not be called with non-empty items');
       },
     };
 
@@ -1995,5 +2011,134 @@ describe('M1/M2: entity-anchored expansion and multi-candidate contradiction rou
     expect(h.store.getNode(id1)!.tombstoned).toBe(1);
     // hallucinatedId was never in the DB and was never created
     expect(h.store.getNode(hallucinatedId)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// judgeBatch integration: consolidator issues ONE judgeBatch call per episode
+// (batch amortization, quick task 260612-lc0)
+// ---------------------------------------------------------------------------
+
+describe('Consolidator.judgeBatch integration', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = makeHarness();
+  });
+
+  it('multi-claim episode: exactly ONE judgeBatch call and verdicts land in correct slots', async () => {
+    // Three candidate nodes, each with alwaysSame embedding so all three claims escalate to judge
+    // (cosine=1.0 > threshold, no D-17 exact match → all three go to pendingJudges → one judgeBatch call)
+    const dims = h.config.embeddingDimensions;
+    const alwaysVec = new Float32Array(dims); alwaysVec[0] = 1.0;
+
+    const cA = newId(); const cB = newId(); const cC = newId();
+    h.store.upsertNode({ id: cA, type: 'fact', value: 'Node A', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.upsertNode({ id: cB, type: 'fact', value: 'Node B', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.upsertNode({ id: cC, type: 'fact', value: 'Node C', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.setEmbedding(cA, alwaysVec);
+    h.store.setEmbedding(cB, alwaysVec);
+    h.store.setEmbedding(cC, alwaysVec);
+
+    // Each claim gets a distinct verdict (confirm, extend, unrelated)
+    // judgeScript queues 3 verdicts — judgeBatch drains them via MockModelProvider.judgeBatch
+    const verdicts: JudgeVerdict[] = [
+      { best_candidate_id: cA, relation: 'confirm', magnitude: 0 },
+      { best_candidate_id: cB, relation: 'extend', magnitude: 0 },
+      { best_candidate_id: null, relation: 'unrelated', magnitude: 0 },
+    ];
+
+    let judgeBatchCallCount = 0;
+    const capturedBatchArgs: Array<Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>> = [];
+
+    // Wrap MockModelProvider to count/capture judgeBatch calls
+    const baseProvider = new MockModelProvider({
+      embedFn: (_text: string) => alwaysVec.slice(),
+      generateScript: [JSON.stringify([
+        { type: 'fact', value: 'Claim about A' },
+        { type: 'fact', value: 'Claim about B' },
+        { type: 'fact', value: 'Claim about new thing' },
+      ])],
+      judgeScript: verdicts,
+    });
+
+    const countingProvider: ModelProvider = {
+      async embed(texts: string[]) { return baseProvider.embed(texts); },
+      async generate(prompt: string, opts?: { maxTokens?: number; jsonSchema?: object }) { return baseProvider.generate(prompt, opts); },
+      async judge(claim: string, cands: Array<{ id: string; value: string }>) { return baseProvider.judge(claim, cands); },
+      async judgeBatch(items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>) {
+        judgeBatchCallCount++;
+        capturedBatchArgs.push(items);
+        return baseProvider.judgeBatch(items);
+      },
+    };
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      countingProvider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'multi-claim episode',
+      origin: 'observed', salience: 0.8, hard_keep: 0,
+      role: 'user', session_id: 'sess-batch-assert',
+    });
+
+    await consolidator.consolidate();
+
+    // Key assertion: exactly ONE judgeBatch call for this episode (not 3 separate judge calls)
+    expect(judgeBatchCallCount).toBe(1);
+
+    // The batch received all 3 claims
+    expect(capturedBatchArgs[0]).toHaveLength(3);
+    expect(capturedBatchArgs[0]![0]!.claim).toBe('Claim about A');
+    expect(capturedBatchArgs[0]![1]!.claim).toBe('Claim about B');
+    expect(capturedBatchArgs[0]![2]!.claim).toBe('Claim about new thing');
+
+    // Verdicts land in correct slots (confirm → strengthen A, extend → new node, unrelated → new node)
+    const nodeA = h.store.getNode(cA)!;
+    expect(nodeA.s).toBeGreaterThan(0.5); // confirm strengthened A (user role)
+
+    const allNodes = h.db.prepare('SELECT id, value, tombstoned FROM node').all() as Array<{ id: string; value: string; tombstoned: number }>;
+    const liveNodes = allNodes.filter(n => n.tombstoned === 0);
+    // cA (confirmed, unchanged), cB (extended → new extend node), cC, plus extend+unrelated minted = 5 nodes
+    expect(liveNodes.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('zero-pending-judges episode: judgeBatch called with empty array, returns [] without error', async () => {
+    // All claims fast-path confirm (D-17 exact match) → pendingJudges empty → judgeBatch([]) called
+    const nodeValue = 'exact match node value';
+    const nodeId = newId();
+    h.store.upsertNode({ id: nodeId, type: 'fact', value: nodeValue, origin: 'observed', s: 0.3 });
+    const synth = new MockEmbedder(makeSyntheticEmbedFn(h.config.embeddingDimensions));
+    const [vec] = await synth.embed([nodeValue]);
+    h.store.setEmbedding(nodeId, vec!);
+
+    let judgeBatchCallCount = 0;
+    const provider: ModelProvider = {
+      async embed(texts: string[]) { return texts.map(synth.fn); },
+      async generate() { return JSON.stringify([{ type: 'fact', value: nodeValue }]); }, // D-17 fast path
+      async judge() { throw new Error('judge should not be called'); },
+      async judgeBatch(items) {
+        judgeBatchCallCount++;
+        expect(items).toHaveLength(0); // must be called with empty array
+        return [];
+      },
+    };
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'exact match episode',
+      origin: 'observed', salience: 0.8, hard_keep: 0, role: 'user', session_id: 'sess-empty-batch',
+    });
+
+    await consolidator.consolidate();
+
+    // judgeBatch was called (with empty array); no errors thrown
+    expect(judgeBatchCallCount).toBe(1);
   });
 });
