@@ -101,8 +101,10 @@ export interface EnsureServerOpts {
 
 /**
  * Set to true by stopServer() to prevent the crash-backoff loop from
- * respawning during deliberate tray quit. Reset to false at the start of
- * each ensureServer() call so the tray can respawn after a stop+restart cycle.
+ * respawning during deliberate tray quit. Reset to false by ensureServer()
+ * AFTER its health-check await (and only if stopServer() did not fire during
+ * that yield) so the tray can respawn after a stop+restart cycle without
+ * erasing an in-flight quit signal.
  */
 let stopping = false;
 
@@ -159,6 +161,19 @@ export async function ensureServer(opts: EnsureServerOpts = {}): Promise<ServerH
     return { attached: true, child: null };
   }
 
+  // Re-check after the async yield above: stopServer() may have fired during
+  // the health check (e.g., before-quit racing a backoff retry that already
+  // passed its `stopping` guard). Abort instead of resetting the quit guard
+  // below and spawning a child that nothing will ever SIGTERM (D-96).
+  if (stopping) {
+    log('ensureServer aborted — stopServer() fired during health check');
+    return { attached: false, child: null };
+  }
+
+  // Allow respawn after a previous stop+restart cycle. Everything from here
+  // to spawn() is synchronous, so stopServer() cannot interleave again.
+  stopping = false;
+
   // L-10: guard — abort with typed error when brain.db is missing
   const dbPath = resolveDbPath(opts.argv);
   if (!existsSync(dbPath)) {
@@ -171,9 +186,6 @@ export async function ensureServer(opts: EnsureServerOpts = {}): Promise<ServerH
   if (!brainJs) {
     throw new MissingBrainJsError();
   }
-
-  // Allow respawn after a previous stop+restart cycle
-  stopping = false;
 
   // Spawn the viz server child.
   // - NOT detached: tray owns the child lifecycle.
