@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -60,7 +60,7 @@ export const DDL = `
     rel         TEXT    NOT NULL,
     w           REAL    NOT NULL DEFAULT 0.1,
     last_access INTEGER NOT NULL,
-    kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts')),
+    kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel')),
     PRIMARY KEY (src, dst, rel)
   );
 
@@ -217,6 +217,33 @@ export function initSchema(db: Database.Database): void {
       INSERT INTO node_fts(node_id, value)
       SELECT id, value FROM node WHERE tombstoned = 0
     `);
+  }
+
+  // v7 migration: expand edge.kind CHECK constraint to include 'schema_rel' (Phase 18 SREL-01).
+  // SQLite does not support ALTER TABLE DROP CONSTRAINT, so table recreation is required.
+  // Guard: check whether the existing edge table DDL already includes 'schema_rel' — idempotent
+  // re-run safe. In-memory / fresh DBs already have the updated DDL from above → guard skips.
+  const edgeDdl = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='edge'")
+    .get() as { sql: string } | undefined)?.sql ?? '';
+  if (!edgeDdl.includes('schema_rel')) {
+    // PRAGMA foreign_keys must be set OUTSIDE a transaction (SQLite requirement).
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      CREATE TABLE edge_v7 (
+        src         TEXT    NOT NULL REFERENCES node(id),
+        dst         TEXT    NOT NULL REFERENCES node(id),
+        rel         TEXT    NOT NULL,
+        w           REAL    NOT NULL DEFAULT 0.1,
+        last_access INTEGER NOT NULL,
+        kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel')),
+        PRIMARY KEY (src, dst, rel)
+      );
+      INSERT INTO edge_v7 SELECT * FROM edge;
+      DROP TABLE edge;
+      ALTER TABLE edge_v7 RENAME TO edge;
+      CREATE INDEX IF NOT EXISTS idx_edge_dst ON edge(dst);
+    `);
+    db.pragma('foreign_keys = ON');
   }
 
   // Stamp schema version — read first to guard against downgrade (M-9).
