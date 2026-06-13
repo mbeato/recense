@@ -32,10 +32,16 @@ import {
 // to exactly 1.
 const _sharedGeo = new THREE.SphereGeometry(1, 8, 8);
 
-// Compact viewports (tray popover ≤500px): haze nodes render as barely-there
-// mist so the schema constellation reads at a glance (founder-tuned 2026-06-12).
+// Haze nodes (unclassified — not a schema, not yet a schema member) render as
+// barely-there mist so the schema constellation reads at a glance, in BOTH
+// viewports (founder 2026-06-13: align the full window to the tray to fight
+// clutter as N grows). Compact stays at its founder-tuned 0.12; the full
+// window sits a hair higher (0.16) since it's the exploration surface — and
+// low opacity does NOT block raycasting, so hazed nodes stay clickable.
 const COMPACT = Math.min(window.innerWidth, window.innerHeight) <= 500;
 const HAZE_COMPACT_OPACITY = 0.12;
+const HAZE_FULL_OPACITY = 0.16;
+const HAZE_OPACITY = COMPACT ? HAZE_COMPACT_OPACITY : HAZE_FULL_OPACITY;
 
 // Scratch vectors reused in the hot containment tick (avoids per-tick allocation)
 const _q   = new THREE.Vector3();
@@ -71,7 +77,7 @@ function makeNodeObject(node) {
     color: baseColor.clone(),
     transparent: true,
     opacity: node.tombstoned ? 0.35
-      : (COMPACT && node.__cat === 'haze' ? HAZE_COMPACT_OPACITY : 0.88),
+      : (node.__cat === 'haze' ? HAZE_OPACITY : 0.88),
     depthWrite: true,
   });
 
