@@ -393,6 +393,28 @@ button:hover {
    for the shell-injected drag strip, body height cap lifted so the panel
    itself is the scroll surface. #detail-close is hidden — its handler lives
    in detail.js, which never initializes in detail mode. */
-.detail-page #detail { left: 12px; right: 12px; width: auto; top: 32px; max-height: calc(100vh - 44px); }
+/* The window IS the card — strip the floating-card chrome (background/border/
+   radius/inset) so content sits directly on the window surface. top: 32px is
+   load-bearing: it clears the shell-injected drag strip. */
+.detail-page #detail {
+  left: 0; right: 0; top: 32px; bottom: 0;
+  width: auto; max-height: none;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 8px 16px 14px;
+}
 .detail-page #detail-close { display: none; }
 .detail-page #detail-body { max-height: none; }
+
+/* Palette-styled scrollbar (muted mauve — amber stays activation-only) */
+.detail-page #detail { scrollbar-width: thin; scrollbar-color: rgba(170, 150, 180, 0.28) transparent; }
+.detail-page #detail::-webkit-scrollbar { width: 8px; }
+.detail-page #detail::-webkit-scrollbar-track { background: transparent; }
+.detail-page #detail::-webkit-scrollbar-thumb {
+  background: rgba(170, 150, 180, 0.28);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.detail-page #detail::-webkit-scrollbar-thumb:hover { background: rgba(170, 150, 180, 0.45); background-clip: content-box; }
