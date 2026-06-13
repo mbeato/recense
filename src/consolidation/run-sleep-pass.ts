@@ -25,6 +25,7 @@ import { CandidateRetriever } from '../retrieval/topk';
 import { DefaultModelProvider } from '../model/provider';
 import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
+import { SchemaRelationDeriver } from '../consolidation/schema-relations';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
 
@@ -161,6 +162,9 @@ export async function runConsolidation(
     undefined, sink,
   );
 
+  // D-07: SchemaRelationDeriver — LLM-free, deterministic, no ModelProvider injected.
+  const deriver = new SchemaRelationDeriver(db, store, config, realClock);
+
   const consolidator = new Consolidator(
     db,
     episodes,
@@ -173,6 +177,7 @@ export async function runConsolidation(
     realClock,
     sink,
     log,
+    deriver,
   );
 
   // ── 5. Run the sleep pass ──────────────────────────────────────────────────

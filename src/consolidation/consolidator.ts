@@ -46,6 +46,8 @@ import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
 import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
 import type { SchemaInducer } from './schema-induction';
+import { NoopSchemaRelationDeriver } from './schema-relations';
+import type { SchemaRelationDeriver } from './schema-relations';
 import { NoopConsolidationSink, type ConsolidationSink } from './sink';
 
 // ---------------------------------------------------------------------------
@@ -140,6 +142,7 @@ export class Consolidator {
   private readonly retriever: CandidateRetriever;
   private readonly provider: ModelProvider;
   private readonly inducer: SchemaInducer;
+  private readonly deriver: SchemaRelationDeriver | NoopSchemaRelationDeriver;
   private readonly config: EngineConfig;
   private readonly clock: Clock;
   private readonly sink: ConsolidationSink;
@@ -163,6 +166,7 @@ export class Consolidator {
     clock: Clock = realClock,
     sink: ConsolidationSink = new NoopConsolidationSink(),
     log: (msg: string) => void = () => {},
+    deriver: SchemaRelationDeriver | NoopSchemaRelationDeriver = new NoopSchemaRelationDeriver(),
   ) {
     this.db = db;
     this.episodes = episodes;
@@ -171,6 +175,7 @@ export class Consolidator {
     this.retriever = retriever;
     this.provider = provider;
     this.inducer = inducer;
+    this.deriver = deriver;
     this.config = config;
     this.clock = clock;
     this.sink = sink;
@@ -639,6 +644,10 @@ export class Consolidator {
     // D-37: schema induction after Phase C reembedDirty(), before eviction.
     // Schemas depend on fresh embeddings; tombstoned schemas must be swept in the same pass.
     await this.inducer.induceSchemas();
+    // D-07: schema-relation derivation after induceSchemas() (needs fresh centroids + schema nodes),
+    // before runEvictionSweep(). Artifacts are disposable derived cache — a mid-derive crash
+    // leaves wipe-then-rebuild-clean state on the next pass; no extra try/catch needed.
+    await this.deriver.deriveSchemaRelations();
     this.strength.runEvictionSweep();
   }
 

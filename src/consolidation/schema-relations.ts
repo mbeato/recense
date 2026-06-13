@@ -42,6 +42,20 @@ interface ClusterableNodeRow {
 }
 
 // ---------------------------------------------------------------------------
+// NoopSchemaRelationDeriver — test/legacy default (does nothing)
+// ---------------------------------------------------------------------------
+
+/**
+ * No-op implementation for tests and call sites that don't need schema-relation derivation.
+ * Mirrors the NoopConsolidationSink pattern — satisfies the Consolidator DI contract.
+ */
+export class NoopSchemaRelationDeriver {
+  async deriveSchemaRelations(): Promise<void> {
+    // intentional no-op
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SchemaRelationDeriver
 // ---------------------------------------------------------------------------
 
