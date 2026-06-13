@@ -323,6 +323,39 @@ describe('HybridResponder', () => {
     expect(result.reply).not.toContain('(inferred)');
   });
 
+  // ── WR-01: retrieveRanked on the answer path receives no queryText (hybrid off) ──
+
+  it('WR-01: retrieveRanked on the answer path is called with exactly 3 args (cueVec, k, floor) — no queryText', async () => {
+    // Spy: capture all positional args passed to retrieveRanked
+    let capturedArgs: unknown[] = [];
+    const mockRetrieval = {
+      retrieveRanked: (...args: unknown[]) => {
+        capturedArgs = args;
+        return [{ id: 'mock-wr01', value: 'Max lives in Paris', score: 0.85 }];
+      },
+      retrieve: () => ({ results: [], status: 'unreachable' as const }),
+      retrieveCueless: () => ({ results: [], status: 'ok' as const }),
+    } as unknown as RetrievalEngine;
+
+    // 'Where does Max live?' is interrogative → rewrite fires (2 generate entries: rewrite + compose)
+    const provider = makeStubProvider(
+      h.config.embeddingDimensions, 0,
+      ['Max lives in Paris', 'Max lives in Paris.'],
+    );
+    const recallProvider = makeStubProvider(h.config.embeddingDimensions, 0, []);
+    const recall = makeRecallEngine(h, recallProvider);
+    const responder = new HybridResponder(h.clock, h.config, provider, mockRetrieval, recall, h.episodes);
+
+    await responder.respond('Where does Max live?', 'sess-wr01');
+
+    // retrieveRanked must receive exactly 3 positional args: (cueVec, k, floor)
+    // — no 4th queryText arg means hybridTopk/BM25 is off on the answer path (GAP-03, WR-01)
+    expect(capturedArgs).toHaveLength(3);
+    expect(typeof capturedArgs[0]).toBe('object'); // cueVec: Float32Array
+    expect(capturedArgs[1]).toBe(h.config.rankedRetrievalK);
+    expect(capturedArgs[2]).toBe(h.config.rankedRetrievalFloor);
+  });
+
   // ── safe-null: embed throws → resolves null, never throws ────────────────
 
   // ── LEVER 3: Q->declarative rewrite tests (17-04) ────────────────────────

@@ -164,7 +164,10 @@ export class CandidateRetriever {
    * Fuses with RRF (k=60). Returns top-k fused results with cosine score (when available)
    * for use by retrieveRanked's floor gate.
    *
-   * queryText must come from user/question input, never from LLM output (T-04-03-I).
+   * T-04-03-I: queryText must come from user/question input, never from LLM output.
+   * This contract is upheld: the HybridResponder answer path no longer passes queryText
+   * to retrieveRanked (17-08 GAP-03 — retrieve_miss=0 attribution; 9ea5eabc BM25 regression
+   * removed). Direct callers (e.g. eval harness) must only supply user-derived text.
    * FTS5 MATCH receives only the sanitized ftsQueryFromText() output — never raw text (Pitfall 2).
    * Falls back to cosine-only when FTS5 table is absent or queryText yields no tokens.
    */

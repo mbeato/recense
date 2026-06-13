@@ -107,7 +107,7 @@ export class HybridResponder {
    *    Falls back to raw question on error — rewrite failure never blocks the answer.
    *    ONLY in respond(): SessionStart/retrieveCueless is LLM-free and never calls respond().
    *  3. Online embed: provider.embed([queryForEmbed]).
-   *  4. Facts-first: retrieval.retrieveRanked(cueVec, k, floor, queryForEmbed). If results → compose grounded answer.
+   *  4. Facts-first: retrieval.retrieveRanked(cueVec, k, floor) — pure cosine+temporal only (no BM25/hybrid).
    *     B1 fix: retrieveRanked uses top-k + floor (0.3) instead of the single-hit 0.7 bar.
    *     Question-form cues ("Where does Ana live?") score 0.4–0.6 against stored facts —
    *     structurally below retrieve()'s deletedSimilarityThreshold (0.7) but above the 0.3 floor.
@@ -153,11 +153,16 @@ export class HybridResponder {
       // instead of failing retrieve()'s single-hit 0.7 bar. Staleness guarded by B2: topk
       // returns tombstoned=0 nodes only, and entity invalidation excludes entities whose
       // supporting facts are all tombstoned (previously guarded by T-07-10 via retrieve()).
+      //
+      // LEVER 1 (BM25/hybrid) intentionally absent on the answer path (17-08 GAP-03):
+      //   - retrieve_miss=0 in attribution: BM25 recovered zero gold nodes that cosine missed.
+      //   - 9ea5eabc regression: BM25 over-indexed stale "Hawaii" trip over current "Paris" — removed at root.
+      //   - queryForEmbed continues to feed embed() above (LEVER 3 cosine-asymmetry fix).
+      //   - node_fts + hybridTopk + ftsQueryFromText + rrfFuse infra retained; SCHEMA_VERSION=6 unchanged.
       const ranked = this.retrieval.retrieveRanked(
         cueVec,
         this.config.rankedRetrievalK,
         this.config.rankedRetrievalFloor,
-        queryForEmbed, // LEVER 3: pass rewritten query to hybrid FTS component (17-03 queryText arg)
       );
       if (ranked.length > 0) {
         // Build grounded compose prompt — facts as data content (T-04-03-I)
