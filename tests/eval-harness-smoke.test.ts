@@ -505,6 +505,9 @@ describe('eval-harness-smoke', () => {
 
   it('harness --dry-run --instrument writes one attribution record per question with required keys', () => {
     const INST_OUT = path.join(os.tmpdir(), `harness-instrument-test-${Date.now()}-${process.pid}.jsonl`);
+    // Isolated --out: without it the harness appends to its default OUT_FILE, and the
+    // resume logic would skip all questions on re-runs (no instrument records written).
+    const RUN_OUT = path.join(os.tmpdir(), `harness-instrument-out-${Date.now()}-${process.pid}.jsonl`);
 
     try {
       const result = spawnSync(
@@ -514,6 +517,7 @@ describe('eval-harness-smoke', () => {
           '--dry-run',
           '--instrument',
           '--instrument-out', INST_OUT,
+          '--out', RUN_OUT,
           '--eval', FIXTURE_PATH,
         ],
         { encoding: 'utf8', cwd: path.resolve(__dirname, '..'), timeout: 30_000 },
@@ -544,6 +548,7 @@ describe('eval-harness-smoke', () => {
       }
     } finally {
       try { fs.unlinkSync(INST_OUT); } catch {}
+      try { fs.unlinkSync(RUN_OUT); } catch {}
     }
   });
 
