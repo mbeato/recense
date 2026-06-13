@@ -10,6 +10,10 @@
  *   - Wikilink connection spans, clickable → ctx.selectNode(neighbor)
  *   - Selection ring (THREE.RingGeometry child of node.__mesh)
  *   - Camera focus on select via ctx.Graph.cameraPosition (gently, not a jump)
+ *   - Cross-window focus subscriber (quick-260612-swc): listens on
+ *     BroadcastChannel('recense-viz') for {type:'focus-node', id} from the
+ *     adjacent detail window and focusNode()s the node (reveal + camera +
+ *     amber pulse) — never via selectNode, so no detail-sentinel loop
  *
  * Threat model:
  *   T-10-12: all node values reach the DOM via textContent; innerHTML only used
@@ -294,6 +298,28 @@ export function initDetail(ctx) {
     );
   }
 
+  /**
+   * Focus a node without selecting it (quick-260612-swc): reveal it through
+   * the LOD if hidden (trace semantics — the next trace's fade-back may
+   * re-hide it), fly the camera, fire an amber activation pulse, and hold
+   * full framerate for the motion (markAnimating, NOT markActive — ambient
+   * rotation must not stop; 260612-r9m precedent).
+   *
+   * Deliberately does NOT call selectNode: in shell-compact mode selectNode
+   * navigates to the /__recense/detail sentinel, which would reload the
+   * detail window and loop (detail window → focus → sentinel → reload).
+   * focusNode avoids the loop by construction.
+   */
+  function focusNode(node) {
+    if (ctx.nodeVisible && !ctx.nodeVisible(node)) {
+      ctx.traceNodes.add(node.id);
+      ctx.revealTrace([node], []);
+    }
+    focusCamera(node);
+    if (ctx.activate) ctx.activate(node, 1.0);
+    if (ctx.markAnimating) ctx.markAnimating(800 + 1800);
+  }
+
   // ── Public API: selectNode ─────────────────────────────────────────────────
 
   function selectNode(node) {
@@ -376,6 +402,20 @@ export function initDetail(ctx) {
       closeDetail();
     }
   });
+
+  // Cross-window focus subscriber (quick-260612-swc). app.js only runs
+  // initDetail in normal viz mode — the ?detail= branch loads detail-page.js
+  // and never reaches here, so no mode check is needed. Unknown ids are
+  // ignored silently (the two windows' graph payloads can drift between
+  // sleep passes).
+  if (typeof BroadcastChannel !== 'undefined') {
+    const channel = new BroadcastChannel('recense-viz');
+    channel.addEventListener('message', e => {
+      if (!e.data || e.data.type !== 'focus-node') return;
+      const node = ctx.idMap && ctx.idMap.get(e.data.id);
+      if (node) focusNode(node);
+    });
+  }
 
   // ── Expose on ctx ──────────────────────────────────────────────────────────
   ctx.selectNode  = selectNode;
