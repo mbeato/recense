@@ -94,6 +94,19 @@ const RETRY_ERRORS   = process.argv.includes('--retry-errors');
 const IS_INSTRUMENT  = process.argv.includes('--instrument');
 const KEEP_DBS       = process.argv.includes('--keep-dbs');
 
+// --hybrid: LEVER 1 — replace CandidateRetriever.topk with hybridTopk (BM25+cosine RRF).
+// Uses the SAME primitive as the product path (Pattern 2: one-primitive-two-consumers).
+// No floor applied in eval: every RRF-fused result surfaces regardless of cosine score.
+// Composable with --topk (budget lever) and --temporal.
+const IS_HYBRID  = process.argv.includes('--hybrid');
+
+// --temporal: LEVER 2 — date-annotate answer-prompt entries using MAX(episode.ts) per node.
+// After retrieval, queries the scratch DB for the newest supporting episode ts per retrieved node,
+// sorts entries newest-supported-first, and prefixes each with [YYYY-MM-DD].
+// Orphan nodes (no consolidation_event rows) are treated as undated and not demoted.
+// Composable with --hybrid and --topk.
+const IS_TEMPORAL = process.argv.includes('--temporal');
+
 // --concurrency N (default 4, min 1). Each question has its own scratch DB and no
 // shared state, so in-process parallelism is safe. Probe token accumulation uses
 // plain += after each await — safe because Node.js is single-threaded.
@@ -446,7 +459,7 @@ async function runBoundedPool(items, concurrency, fn) {
         // Step 3: embed the question
         const [queryVec] = await embedder.embed([questionText]);
 
-        // Step 4: retrieve top-K nodes by cosine similarity over the consolidated graph.
+        // Step 4: retrieve top-K nodes over the consolidated graph.
         //
         // The production hook-injection wrapper (RetrievalEngine.retrieve) is NOT used here.
         // That primitive returns at most 1 result and requires cosine >= deletedSimilarityThreshold
@@ -454,24 +467,66 @@ async function runBoundedPool(items, concurrency, fn) {
         // the gold node often sits at cosine ~0.48 (under the gate), so nearly every question
         // would abstain on empty context if we used the production path.
         //
-        // Instead we use CandidateRetriever.topk directly: brute-force cosine over all embedded,
-        // non-tombstoned nodes, returning the top K (--topk flag, default 10). This is the same
-        // substrate the production engine uses internally, without the single-result / threshold
-        // gate that serves a different product feature (hook injection).
+        // Default: CandidateRetriever.topk — brute-force cosine over embedded, non-tombstoned nodes.
+        // --hybrid (LEVER 1): CandidateRetriever.hybridTopk — same primitive as the product path
+        //   (Pattern 2: one-primitive-two-consumers). No floor applied: every RRF-fused result
+        //   surfaces (eval arm keeps no cosine floor; product keeps floor on cosine component).
+        // --temporal (LEVER 2): after retrieval, query MAX(episode.ts) per retrieved node from
+        //   the scratch DB (same join as engine.ts stmtLatestSupportTs), sort entries
+        //   newest-supported-first, and date-prefix each with [YYYY-MM-DD]. Orphans undated.
+        // --topk N: composable with both (budget lever, separate from retrieval strategy).
         let retrievedValues;
         if (queryVec) {
           const evalRetriever    = new CandidateRetriever(scratch.db);
           const evalStore        = new SemanticStore(scratch.db, realClock, { ...DEFAULT_CONFIG, dbPath: scratch.dbPath });
-          const topkResults      = evalRetriever.topk(queryVec, TOP_K);
+          // LEVER 1: route through hybridTopk when --hybrid is set.
+          // ftsQueryFromText sanitisation is handled inside hybridTopk (same as product path).
+          const topkResults = IS_HYBRID
+            ? evalRetriever.hybridTopk(queryVec, questionText, TOP_K)
+            : evalRetriever.topk(queryVec, TOP_K);
           // Expose to instrumentation taps (tap 3: retrieved top-k with scores and values).
           instrumentEvalStore    = evalStore;
           instrumentTopkResults  = topkResults;
-          // CandidateRetriever.topk already excludes tombstoned nodes (SQL: tombstoned = 0).
-          // getNode() resolves each id to its value; skip any id that resolves to null (race guard).
-          retrievedValues = topkResults
-            .map(r => evalStore.getNode(r.id))
-            .filter(n => n !== null)
-            .map(n => n.value);
+          // Resolve node values; skip any id that resolves to null (race guard).
+          let resolvedEntries = topkResults
+            .map(r => ({ id: r.id, node: evalStore.getNode(r.id) }))
+            .filter(({ node }) => node !== null);
+
+          // LEVER 2: temporal annotation when --temporal is set.
+          // Query MAX(episode.ts) per node via the same consolidation_event→episode join
+          // as engine.ts stmtLatestSupportTs. No floor applied — eval arm surfaces all hits.
+          if (IS_TEMPORAL && resolvedEntries.length > 0) {
+            const nodeIdsJson = JSON.stringify(resolvedEntries.map(e => e.id));
+            const tsRows = scratch.db.prepare(`
+              SELECT ce.node_id, MAX(e.ts) AS latest_ts
+              FROM consolidation_event ce
+              JOIN episode e ON ce.episode_id = e.id
+              WHERE ce.node_id IN (SELECT value FROM json_each(?))
+              GROUP BY ce.node_id
+            `).all(nodeIdsJson);
+            const tsMap = new Map(tsRows.map(r => [r.node_id, r.latest_ts]));
+
+            // Sort: among dated nodes, newest-first; undated (orphan) nodes maintain
+            // original rank position (stable sort via origIdx, same as engine.ts).
+            resolvedEntries = resolvedEntries
+              .map((e, origIdx) => ({ e, origIdx }))
+              .sort((a, b) => {
+                const tsA = tsMap.get(a.e.id);
+                const tsB = tsMap.get(b.e.id);
+                if (tsA !== undefined && tsB !== undefined) return tsB - tsA;
+                return a.origIdx - b.origIdx;
+              })
+              .map(({ e, origIdx: _o }) => {
+                const ts = tsMap.get(e.id);
+                if (ts !== undefined) {
+                  const dateStr = new Date(ts).toISOString().slice(0, 10);
+                  return { id: e.id, node: { ...e.node, value: `[${dateStr}] ${e.node.value}` } };
+                }
+                return e;
+              });
+          }
+
+          retrievedValues = resolvedEntries.map(({ node }) => node.value);
         } else {
           // Cueless fallback: no query vector available (embed failed or unavailable).
           // Fall back to RetrievalEngine.retrieveCueless() for ranked cue-less retrieval.

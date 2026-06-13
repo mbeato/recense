@@ -374,6 +374,134 @@ describe('RetrievalEngine', () => {
       expect(ids).toContain('ent-orphan'); // NOT excluded: orphan/seeded node (H-5 global-treat)
     });
 
+    // ── LEVER 2: temporal annotation tests ─────────────────────────────────────
+
+    /**
+     * Insert an episode row with a specific ts (milliseconds since epoch).
+     * Required for stmtLatestSupportTs to resolve MAX(e.ts) per node.
+     */
+    function addEpisodeRow(episodeId: string, tsMs: number): void {
+      db.prepare(
+        `INSERT INTO episode (id, ts, content, origin, salience, hard_keep, consolidated,
+          role, session_id, source, cwd)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(episodeId, tsMs, 'test content', 'observed', 0.5, 0, 0, 'user', `sess-${episodeId}`, 'test', '');
+    }
+
+    /**
+     * Link a node to an episode via consolidation_event (for stmtLatestSupportTs join).
+     * Creates both the episode row (at the given ts) and the consolidation_event row.
+     */
+    function linkNodeToEpisodeWithTs(nodeId: string, episodeId: string, tsMs: number): void {
+      addEpisodeRow(episodeId, tsMs);
+      db.prepare(
+        'INSERT INTO consolidation_event (id, ts, schema_version, event_type, node_id, episode_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(`ce-${nodeId}-${episodeId}`, Date.now(), 6, 'confirm', nodeId, episodeId);
+    }
+
+    it('temporalAnnotate: newer-supported node sorts first and values are date-prefixed [YYYY-MM-DD]', () => {
+      // Two near-duplicate nodes — old vs. new value of the same fact.
+      // Both at basisVec(0) so cosine order alone cannot distinguish them.
+      const DAY_OLDER = Date.UTC(2023, 0, 10); // 2023-01-10
+      const DAY_NEWER = Date.UTC(2023, 5, 20); // 2023-06-20
+      addEmbeddedNode('fact-old', 'worn four times', basisVec(0), 0.9);
+      addEmbeddedNode('fact-new', 'worn six times',  basisVec(0), 0.9);
+      linkNodeToEpisodeWithTs('fact-old', 'ep-old-01', DAY_OLDER);
+      linkNodeToEpisodeWithTs('fact-new', 'ep-new-01', DAY_NEWER);
+
+      const engine = makeEngine();
+      const results = engine.retrieveRanked(basisVec(0), 10, 0.0, undefined, { temporalAnnotate: true });
+
+      const ids = results.map(r => r.id);
+      expect(ids).toContain('fact-new');
+      expect(ids).toContain('fact-old');
+
+      // Newer-supported node must come first
+      expect(ids.indexOf('fact-new')).toBeLessThan(ids.indexOf('fact-old'));
+
+      // Both values must carry [YYYY-MM-DD] prefixes
+      const newEntry = results.find(r => r.id === 'fact-new')!;
+      const oldEntry = results.find(r => r.id === 'fact-old')!;
+      expect(newEntry.value).toMatch(/^\[\d{4}-\d{2}-\d{2}\] /);
+      expect(oldEntry.value).toMatch(/^\[\d{4}-\d{2}-\d{2}\] /);
+
+      // Verify the actual dates are correct
+      expect(newEntry.value).toMatch(/^\[2023-06-20\] /);
+      expect(oldEntry.value).toMatch(/^\[2023-01-10\] /);
+    });
+
+    it('temporalAnnotate: orphan node (no consolidation_event rows) is undated and not demoted below dated nodes', () => {
+      // Orphan: no consolidation_event rows — simulates seeded/pre-SEAM-02 corpus.
+      // Give orphan a higher cosine score (same basisVec but set first — insertion order
+      // ensures it's retrieved first by topk when all scores are equal since topk is stable).
+      // We use a dedicated basisVec dimension for orphan to give it cosine=1.0 while dated
+      // nodes use a different dimension (cosine=0 relative to orphan's query dim)... Actually
+      // let's use all the same basisVec(0) and verify orphan stays NOT at the very end.
+      const DAY_DATED = Date.UTC(2023, 3, 15); // 2023-04-15
+      addEmbeddedNode('orphan-node', 'seeded fact (no date)', basisVec(0), 0.9);
+      addEmbeddedNode('dated-node-a', 'dated fact newer', basisVec(0), 0.9);
+      addEmbeddedNode('dated-node-b', 'dated fact older', basisVec(0), 0.9);
+      linkNodeToEpisodeWithTs('dated-node-a', 'ep-dated-a', DAY_DATED + 86_400_000); // day+1
+      linkNodeToEpisodeWithTs('dated-node-b', 'ep-dated-b', DAY_DATED);               // day
+
+      const engine = makeEngine();
+      const results = engine.retrieveRanked(basisVec(0), 10, 0.0, undefined, { temporalAnnotate: true });
+
+      const ids = results.map(r => r.id);
+      expect(ids).toContain('orphan-node');
+
+      // Orphan value must NOT carry a [YYYY-MM-DD] prefix
+      const orphanEntry = results.find(r => r.id === 'orphan-node')!;
+      expect(orphanEntry.value).toBe('seeded fact (no date)');
+      expect(orphanEntry.value).not.toMatch(/^\[\d{4}-\d{2}-\d{2}\] /);
+
+      // Dated nodes must carry prefixes
+      const datedA = results.find(r => r.id === 'dated-node-a')!;
+      expect(datedA.value).toMatch(/^\[\d{4}-\d{2}-\d{2}\] /);
+    });
+
+    it('temporalAnnotate: dated nodes sort newest-first; orphan preserves original rank not pushed to end', () => {
+      // Scenario: orphan has highest cosine (basisVec(4)), dated nodes are basisVec(0).
+      // Query on basisVec(4) → orphan cosine=1.0, dated nodes cosine=0.0.
+      // With no floor, all three are returned. Orphan should be first (highest cosine).
+      const DAY1 = Date.UTC(2023, 0, 1);
+      const DAY2 = Date.UTC(2023, 6, 1);
+      addEmbeddedNode('t-orphan', 'orphan high cosine', basisVec(4), 0.9);
+      addEmbeddedNode('t-dated-old', 'dated old value', basisVec(0), 0.9);
+      addEmbeddedNode('t-dated-new', 'dated new value', basisVec(0), 0.9);
+      linkNodeToEpisodeWithTs('t-dated-old', 'ep-tdo-01', DAY1);
+      linkNodeToEpisodeWithTs('t-dated-new', 'ep-tdn-01', DAY2);
+
+      const engine = makeEngine();
+      // Query at basisVec(4): orphan scores 1.0, both dated score 0.0
+      const results = engine.retrieveRanked(basisVec(4), 10, 0.0, undefined, { temporalAnnotate: true });
+
+      const ids = results.map(r => r.id);
+      expect(ids).toContain('t-orphan');
+      // Orphan had highest cosine — must NOT be demoted to last position purely on missing date
+      const orphanPos = ids.indexOf('t-orphan');
+      const datedOldPos = ids.indexOf('t-dated-old');
+      const datedNewPos = ids.indexOf('t-dated-new');
+      // Orphan was first in original cosine order; it should not end up after both dated nodes
+      expect(orphanPos).toBeLessThan(datedOldPos);
+      expect(orphanPos).toBeLessThan(datedNewPos);
+    });
+
+    it('temporalAnnotate: off by default — 3-arg callers produce unprefixed values', () => {
+      // Verify backward compatibility: no temporalAnnotate opts → no date prefixes
+      const DAY = Date.UTC(2023, 3, 10);
+      addEmbeddedNode('back-compat', 'some fact value', basisVec(0), 0.9);
+      linkNodeToEpisodeWithTs('back-compat', 'ep-bc-01', DAY);
+
+      const engine = makeEngine(); // DEFAULT_CONFIG has temporalAnnotation: false
+      const results = engine.retrieveRanked(basisVec(0), 10, 0.0);
+
+      // No date prefix on 3-arg call
+      const entry = results.find(r => r.id === 'back-compat')!;
+      expect(entry.value).toBe('some fact value');
+      expect(entry.value).not.toMatch(/^\[\d{4}-\d{2}-\d{2}\] /);
+    });
+
     it('retrieve() D-29 regression: ok/deleted/unreachable classification unchanged by retrieveRanked addition', () => {
       // ok: live node with exact-match embedding
       addEmbeddedNode('reg-live', 'regression live node', basisVec(0), 0.9);

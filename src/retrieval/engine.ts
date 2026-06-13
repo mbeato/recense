@@ -75,6 +75,13 @@ export class RetrievalEngine {
   // Indexed: idx_consolidation_event_node / idx_consolidation_event_episode (v5 schema migration).
   private readonly stmtStaleEntityIds: Database.Statement;
 
+  // LEVER 2 (Phase 17): temporal support signal — MAX(episode.ts) per node via consolidation join.
+  // Accepts a JSON array string of node IDs (json_each binding); returns one row per node that
+  // has at least one consolidation_event row. Nodes absent from the result are orphans/seeded
+  // corpus (no consolidation_event rows) → treated as undated, never demoted on missing data.
+  // Indexed: idx_consolidation_event_node + idx_consolidation_event_episode (v5 schema).
+  private readonly stmtLatestSupportTs: Database.Statement;
+
   constructor(
     db: Database.Database,
     clock: Clock,
@@ -155,6 +162,18 @@ export class RetrievalEngine {
           JOIN node f ON b.node_id = f.id
           WHERE a.node_id = e.id AND f.type = 'fact' AND f.tombstoned = 0
         )
+    `);
+
+    // LEVER 2 (Phase 17): MAX(episode.ts) per candidate node via the consolidation_event join.
+    // The json_each(?) binding accepts a JSON array string so this statement is prepared once
+    // and reused across calls (T-01-SQL). Only returns rows for nodes that have at least one
+    // consolidation_event row — orphan/seeded nodes produce no row and stay undated.
+    this.stmtLatestSupportTs = db.prepare(`
+      SELECT ce.node_id, MAX(e.ts) AS latest_ts
+      FROM consolidation_event ce
+      JOIN episode e ON ce.episode_id = e.id
+      WHERE ce.node_id IN (SELECT value FROM json_each(?))
+      GROUP BY ce.node_id
     `);
   }
 
@@ -341,6 +360,18 @@ export class RetrievalEngine {
    * Below-floor and tombstoned nodes are absent: topk() already excludes tombstoned=1 (T-02-STALE),
    * and the floor gate is applied here.
    *
+   * LEVER 1 (Phase 17): When `queryText` is provided, routes through hybridTopk (BM25+cosine RRF)
+   * instead of pure cosine topk. The floor is applied to the cosine score component of fused
+   * results (BM25-only hits have score=0 — they fail the 0.3 floor in product context by design;
+   * the eval arm uses NO floor to allow all RRF-fused results through).
+   * Existing 3-arg callers (HybridResponder, correctness harness) are byte-for-byte unchanged.
+   *
+   * LEVER 2 (Phase 17): When `opts.temporalAnnotate` or `config.temporalAnnotation` is true,
+   * fetches MAX(episode.ts) per candidate via the consolidation_event→episode join, sorts
+   * candidates newest-supported-first, and prefixes each value with `[YYYY-MM-DD]`. Orphan nodes
+   * (no consolidation_event rows) are treated as undated and never demoted below dated nodes
+   * purely on missing data — they maintain their original cosine/RRF rank position.
+   *
    * B2 entity support-count invalidation: entity nodes that are event-backed, have >=1 fact-sibling
    * (sharing a consolidation_event episode_id), and have NO live (tombstoned=0) fact-sibling are
    * excluded. This prevents a stale "Biscuit is Ana's dog" entity node from winning a query after
@@ -358,15 +389,25 @@ export class RetrievalEngine {
     queryVec: Float32Array,
     k: number,
     floor: number,
+    queryText?: string,
+    opts?: { temporalAnnotate?: boolean },
   ): Array<{ id: string; value: string; score: number }> {
-    // topk returns live (tombstoned=0) nodes sorted descending by cosine (T-02-STALE already guards).
-    const hits = this.retriever.topk(queryVec, k);
+    // LEVER 1: route through hybridTopk when queryText is supplied; else pure cosine topk.
+    // hybridTopk returns results sorted by RRF rank; the cosine score component is preserved
+    // in the score field (BM25-only hits get score=0) for the floor gate below.
+    const hits = queryText
+      ? this.retriever.hybridTopk(queryVec, queryText, k)
+      : this.retriever.topk(queryVec, k);
 
-    // Apply floor threshold and resolve node values.
-    // topk is sorted descending — break early once a score falls below floor.
+    // Apply floor to the cosine score component and resolve node values.
+    // Pure cosine (no queryText): sorted descending → break early once below floor.
+    // Hybrid (queryText): RRF order ≠ cosine order → can't break early; use continue.
     const candidates: Array<{ id: string; value: string; score: number }> = [];
     for (const hit of hits) {
-      if (hit.score < floor) break; // sorted desc: all remaining are also below floor
+      if (hit.score < floor) {
+        if (!queryText) break; // pure cosine: sorted desc → all remaining also below floor
+        else continue;         // hybrid: RRF rank interleaves BM25 hits → must scan all
+      }
       const node = this.store.getNode(hit.id);
       if (!node) continue; // guard: node was deleted between topk scan and getNode
       candidates.push({ id: hit.id, value: node.value, score: hit.score });
@@ -377,8 +418,52 @@ export class RetrievalEngine {
     const staleEntityIds = new Set<string>(
       (this.stmtStaleEntityIds.all() as Array<{ id: string }>).map(r => r.id),
     );
+    const filtered = candidates.filter(r => !staleEntityIds.has(r.id));
 
-    const results = candidates.filter(r => !staleEntityIds.has(r.id));
+    // LEVER 2: temporal annotation (driven by opts.temporalAnnotate OR config.temporalAnnotation).
+    // Fetch MAX(episode.ts) per candidate via json_each binding (prepared once, T-01-SQL).
+    // Orphan nodes have no consolidation_event rows → absent from tsMap → undated.
+    // Sort: among dated nodes, newest-supported-first; undated nodes maintain their original
+    // cosine/RRF rank position (stable sort by originalIndex when comparing dated vs undated).
+    if (opts?.temporalAnnotate ?? this.config.temporalAnnotation) {
+      const nodeIdsJson = JSON.stringify(filtered.map(c => c.id));
+      const tsRows = this.stmtLatestSupportTs.all(nodeIdsJson) as Array<{
+        node_id: string;
+        latest_ts: number;
+      }>;
+      const tsMap = new Map<string, number>(tsRows.map(r => [r.node_id, r.latest_ts]));
+
+      // Stable sort: dated nodes by ts DESC; undated nodes maintain original cosine/RRF rank.
+      // When one entry is dated and the other is not, original index is used as tiebreaker
+      // so undated (orphan) nodes are never demoted purely on missing data.
+      const annotated = filtered
+        .map((c, origIdx) => ({ c, origIdx }))
+        .sort((a, b) => {
+          const tsA = tsMap.get(a.c.id);
+          const tsB = tsMap.get(b.c.id);
+          if (tsA !== undefined && tsB !== undefined) return tsB - tsA; // both dated: newer first
+          return a.origIdx - b.origIdx; // mixed/undated: preserve original rank
+        })
+        .map(({ c }) => {
+          const ts = tsMap.get(c.id);
+          if (ts !== undefined) {
+            // Prefix with ISO date of the newest supporting episode
+            const dateStr = new Date(ts).toISOString().slice(0, 10);
+            return { ...c, value: `[${dateStr}] ${c.value}` };
+          }
+          return c; // orphan: undated, value unchanged
+        });
+
+      // ── Trace emission (D-97 guarded) ────────────────────────────────────────
+      if (this.traceEnabled && annotated.length > 0) {
+        try {
+          this.traceSink.emit({ query_id: newId(), seeds: annotated.map(r => r.id), hops: [] });
+        } catch {
+          // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
+        }
+      }
+      return annotated;
+    }
 
     // ── Trace emission (D-97 guarded, mirrors retrieveCueless ~L279-300) ────────
     // retrieveRanked is flat top-k + floor + stale-entity filter — no spread loop ran,
@@ -388,15 +473,15 @@ export class RetrievalEngine {
     // the inference fallback already emits via RecallEngine. Callers wired with the
     // Noop sink (correctness harness, session-start) have traceEnabled === false and
     // skip this entirely.
-    if (this.traceEnabled && results.length > 0) {
+    if (this.traceEnabled && filtered.length > 0) {
       try {
-        this.traceSink.emit({ query_id: newId(), seeds: results.map(r => r.id), hops: [] });
+        this.traceSink.emit({ query_id: newId(), seeds: filtered.map(r => r.id), hops: [] });
       } catch {
         // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
       }
     }
 
-    return results;
+    return filtered;
   }
 
   /**
