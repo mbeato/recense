@@ -3,7 +3,7 @@
  *
  * Coverage:
  *   - initSchema creates activation_trace idempotently
- *   - schema_version meta stamps SCHEMA_VERSION (5) after initSchema
+ *   - schema_version meta stamps SCHEMA_VERSION (6) after initSchema
  *   - activation_trace columns: id, ts, query_id, seeds, hops
  *   - existing v3 node/edge/episode data is untouched by migration
  *   - SQLiteActivationTraceSink.emit writes a row; seeds/hops round-trip as JSON
@@ -41,14 +41,14 @@ describe('activation_trace table', () => {
     expect(tables).toHaveLength(1);
   });
 
-  it('schema_version meta equals SCHEMA_VERSION (5) after initSchema', () => {
+  it('schema_version meta equals SCHEMA_VERSION (6) after initSchema', () => {
     const db = new Database(':memory:');
     initSchema(db);
     const row = db
       .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string } | undefined;
     expect(row?.value).toBe(String(SCHEMA_VERSION));
-    expect(SCHEMA_VERSION).toBe(5);
+    expect(SCHEMA_VERSION).toBe(6);
   });
 
   it('activation_trace has expected columns (id, ts, query_id, seeds, hops)', () => {
@@ -88,8 +88,8 @@ describe('activation_trace table', () => {
     expect(epCount.cnt).toBe(1);
   });
 
-  it('SCHEMA_VERSION constant equals 5', () => {
-    expect(SCHEMA_VERSION).toBe(5);
+  it('SCHEMA_VERSION constant equals 6', () => {
+    expect(SCHEMA_VERSION).toBe(6);
   });
 });
 
