@@ -6,6 +6,7 @@
  *   GET /index.html → same
  *   GET /vendor/*  → src/viz/vendor/<file> (path-traversal-safe, MIME-guarded)
  *   GET /graph     → { nodes, links } JSON from read-only DB handle
+ *   GET /search?q= → BM25-ranked node IDs (string[]), LLM-free, tombstone-filtered (VIZ-07)
  *   GET /events    → SSE stream: polls activation_trace every 250ms past a cursor
  *
  * Security invariants (threat model T-10-07/08/09/10/11):
@@ -21,12 +22,14 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import Database from 'better-sqlite3';
+import { ftsQueryFromText } from '../retrieval/topk';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const POLL_MS = 250;  // polling interval for activation_trace SSE broadcast
+const SEARCH_LIMIT = 20;  // BM25 result cap for /search?q= endpoint (T-19-03)
 
 // ---------------------------------------------------------------------------
 // /graph link-key contract (LOCKED — Plan 04 frontend depends on this shape)
@@ -126,6 +129,16 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     'SELECT src, dst, rel, w, kind FROM edge'
   );
 
+  // Compile /search BM25 prepared statement once (T-19-01 — query passes through
+  // ftsQueryFromText before reaching MATCH; JOIN ON tombstoned=0 excludes deleted nodes;
+  // ORDER BY rank ascending = best BM25 first; LIMIT caps the result set, T-19-03).
+  const stmtSearch = db.prepare(`
+    SELECT f.node_id AS id
+    FROM node_fts f JOIN node n ON n.id = f.node_id AND n.tombstoned = 0
+    WHERE node_fts MATCH ?
+    ORDER BY rank LIMIT ?
+  `);
+
   // Compile /events polling statement once.
   const stmtTrace = db.prepare(
     'SELECT id, ts, query_id, seeds, hops FROM activation_trace WHERE id > ? ORDER BY id ASC'
@@ -209,6 +222,31 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         const body = JSON.stringify(payload);
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(body);
+      } catch (err) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── /search?q= ─────────────────────────────────────────────────────────
+    // Read-only BM25 route (VIZ-07). Security invariants:
+    //   T-19-01: raw query tokenized + quoted by ftsQueryFromText (never concatenated into SQL).
+    //   T-19-02: inherits Host-header guard above — not bypassed.
+    //   T-19-04: raw query sliced to 200 chars before tokenizing (ReDoS / unbounded-MATCH guard).
+    //   T-19-05: catch returns generic 'internal error'; no SQL/stack detail leaked.
+    //   T-19-06: response is a string[] — no DOM injection; callers set textContent.
+    // NO new Database(), NO embed/LLM/provider, NO outbound fetch.
+    if (url === '/search') {
+      const rawQ = new URLSearchParams(req.url?.split('?')[1] ?? '').get('q') ?? '';
+      const boundQ = rawQ.slice(0, 200); // T-19-04: length cap before tokenizing
+      const ftsQ = ftsQueryFromText(boundQ);
+      try {
+        const ids: string[] = ftsQ
+          ? (stmtSearch.all(ftsQ, SEARCH_LIMIT) as Array<{ id: string }>).map(r => r.id)
+          : [];
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(ids));
       } catch (err) {
         res.writeHead(500, { 'content-type': 'text/plain' });
         res.end('internal error');

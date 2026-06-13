@@ -64,6 +64,7 @@ export function initHud(ctx) {
     }
   }
   ctx.setSSEStatus = setSSEStatus;
+  ctx.showToast = showToast;  // Plan 19-01: exposed for search.js toast calls
 
   // ── Error surfacing without devtools (D-14, Error Surfacing pattern) ───────
   window.addEventListener('error', ev => {

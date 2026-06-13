@@ -298,6 +298,63 @@ describe('GET /events — trace payload shape (CR-01 regression)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// /search?q= BM25 route (VIZ-07, Plan 19-01)
+// ---------------------------------------------------------------------------
+
+describe('GET /search', () => {
+  it('returns 200 with application/json content-type', async () => {
+    const res = await get(port, '/search?q=alice');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('application/json');
+  });
+
+  it('returns empty array for no matches', async () => {
+    const res = await get(port, '/search?q=zzznomatch');
+    expect(JSON.parse(res.body)).toEqual([]);
+  });
+
+  it('returns matching node id for a BM25 hit', async () => {
+    // node_fts is a standalone FTS5 table (no triggers); must insert into both
+    // node and node_fts — matches the engine's manual-sync contract in schema.ts.
+    const writeDb = new Database(tmpDbPath);
+    writeDb.prepare(
+      'INSERT INTO node (id, type, value, value_hash, origin, s, c, last_access, tombstoned, training_eligible, pending_contradictions) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+    ).run('n1', 'entity', 'Alice knows Bob', 'h1', 'observed', 0.5, 0.8, 1, 0, 0, '[]');
+    writeDb.prepare(
+      'INSERT INTO node_fts (node_id, value) VALUES (?, ?)'
+    ).run('n1', 'Alice knows Bob');
+    writeDb.close();
+
+    const res = await get(port, '/search?q=Alice');
+    const ids = JSON.parse(res.body) as string[];
+    expect(ids).toContain('n1');
+  });
+
+  it('excludes tombstoned nodes from results', async () => {
+    // Tombstoned nodes exist in node_fts (sync gap before tombstone() removes them)
+    // but the /search JOIN ON tombstoned=0 filters them out at query time.
+    const writeDb = new Database(tmpDbPath);
+    writeDb.prepare(
+      'INSERT INTO node (id, type, value, value_hash, origin, s, c, last_access, tombstoned, training_eligible, pending_contradictions) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+    ).run('tomb1', 'entity', 'Alice tombstoned', 'h2', 'observed', 0.5, 0.8, 1, 1, 0, '[]');
+    writeDb.prepare(
+      'INSERT INTO node_fts (node_id, value) VALUES (?, ?)'
+    ).run('tomb1', 'Alice tombstoned');
+    writeDb.close();
+
+    const res = await get(port, '/search?q=tombstoned');
+    const ids = JSON.parse(res.body) as string[];
+    expect(ids).not.toContain('tomb1');
+  });
+
+  it('returns [] and 200 (not 500) for an empty query string', async () => {
+    const res = await get(port, '/search?q=');
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Host-header guard (L-5 / DNS rebinding)
 // ---------------------------------------------------------------------------
 
