@@ -29,6 +29,11 @@ export class SemanticStore {
   private readonly stmtInsertNode: Database.Statement;
   private readonly stmtSetEmbedding: Database.Statement;
   private readonly stmtTombstone: Database.Statement;
+  // FTS sync statements — derived-cache mirror of embedding doctrine (T-01-DIRTY).
+  // DELETE-before-INSERT on value change prevents duplicate rows (FTS5 has no uniqueness).
+  // Prepared once in constructor (T-01-SQL); called inside txUpsertNode and tombstone().
+  private readonly stmtFtsDelete: Database.Statement;
+  private readonly stmtFtsInsert: Database.Statement;
   private readonly stmtUpdateContradictions: Database.Statement;
   private readonly stmtGetMeta: Database.Statement;
   private readonly stmtSetMeta: Database.Statement;
@@ -84,6 +89,12 @@ export class SemanticStore {
     this.stmtTombstone = db.prepare(
       'UPDATE node SET tombstoned = 1, training_eligible = 0 WHERE id = ?'
     );
+
+    // FTS sync: stmtFtsDelete/stmtFtsInsert are the ONLY writers of node_fts (derived-cache discipline).
+    // DELETE-then-INSERT prevents duplicate rows on value change (FTS5 has no uniqueness constraint).
+    // Sync rides inside txUpsertNode's IMMEDIATE transaction (single-writer preserved, Pitfall 7).
+    this.stmtFtsDelete = db.prepare('DELETE FROM node_fts WHERE node_id = ?');
+    this.stmtFtsInsert = db.prepare('INSERT INTO node_fts(node_id, value) VALUES (?, ?)');
 
     this.stmtUpdateContradictions = db.prepare(
       'UPDATE node SET pending_contradictions = ? WHERE id = ?'
@@ -171,6 +182,13 @@ export class SemanticStore {
         tombstoned,
         training_eligible: trainingEligible,
       });
+
+      // FTS sync — inside the same IMMEDIATE transaction as the node write (single-writer preserved,
+      // Pitfall 7). DELETE-then-INSERT keeps no stale or duplicate FTS rows.
+      this.stmtFtsDelete.run(params.id);
+      if (tombstoned === 0) {
+        this.stmtFtsInsert.run(params.id, params.value);
+      }
     });
     this.txUpsertNode = (params: UpsertNodeParams) => rawTxUpsertNode.immediate(params);
   }
@@ -231,9 +249,12 @@ export class SemanticStore {
   /**
    * Mark a node as tombstoned (superseded).
    * Clears training_eligible in the same statement.
+   * FTS sync: removes node from node_fts so tombstoned values never surface in MATCH queries.
    */
   tombstone(id: string): void {
     this.stmtTombstone.run(id);
+    // FTS sync: remove from index so tombstoned values never surface in MATCH queries.
+    this.stmtFtsDelete.run(id);
   }
 
   /**

@@ -30,6 +30,42 @@ export function cosineSimF32(a: Float32Array, b: Float32Array): number {
 }
 
 /**
+ * Convert free-form text to an FTS5 MATCH query: tokenize on Unicode letters/digits,
+ * double-quote each token (escaping internal `"` as `""`), join with OR.
+ * Returns null when no tokens are found (caller skips BM25 pass).
+ * Load-bearing: never pass raw text to MATCH — FTS5 query syntax throws on `"`, `-`, parens, operators.
+ * T-17-02-T: this is the sanitization gate; MATCH arg is also bound via `?` in stmtBm25.
+ */
+export function ftsQueryFromText(text: string): string | null {
+  const tokens = text.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (tokens.length === 0) return null;
+  return tokens.map(t => `"${t.replaceAll('"', '""')}"`).join(' OR ');
+}
+
+/**
+ * Reciprocal Rank Fusion over multiple ranked lists.
+ * k=60 is the standard smoothing constant (Cormack et al. 2009; Graphiti/LightRAG precedent).
+ * Score-scale agnostic: RRF uses rank position only, so BM25 (negative-unbounded) and
+ * cosine ([0,1]) combine correctly without normalization.
+ */
+export function rrfFuse(
+  lists: Array<Array<{ id: string }>>,
+  k = 60,
+  topK = 10,
+): Array<{ id: string; rrfScore: number }> {
+  const scores = new Map<string, number>();
+  for (const list of lists) {
+    list.forEach((hit, rank) => {
+      scores.set(hit.id, (scores.get(hit.id) ?? 0) + 1 / (k + rank + 1));
+    });
+  }
+  return [...scores.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topK)
+    .map(([id, rrfScore]) => ({ id, rrfScore }));
+}
+
+/**
  * Brute-force cosine top-k retrieval over embedded, non-tombstoned nodes (STORE-03).
  *
  * Only nodes with `embedding IS NOT NULL AND tombstoned = 0` are scored.
@@ -43,6 +79,11 @@ export class CandidateRetriever {
   private readonly stmtSelectEmbedded: Database.Statement;
   // D-29: second scan includes tombstoned nodes (their embeddings are NOT nulled by tombstone())
   private readonly stmtSelectTombstoned: Database.Statement;
+  // FTS5 BM25 query statement — compiled once (T-01-SQL).
+  // bm25() returns negative-is-better; ORDER BY rank ascending = best first.
+  // JOIN node excludes tombstoned rows (belt-and-braces — sync in tombstone() is structural).
+  // MATCH argument is NEVER raw text: callers must pass ftsQueryFromText(text) output.
+  private readonly stmtBm25: Database.Statement;
 
   constructor(db: Database.Database) {
     // Select only nodes that have been embedded AND are not tombstoned (T-02-STALE)
@@ -53,6 +94,12 @@ export class CandidateRetriever {
     this.stmtSelectTombstoned = db.prepare(
       'SELECT id, embedding FROM node WHERE embedding IS NOT NULL AND tombstoned = 1'
     );
+    this.stmtBm25 = db.prepare(`
+      SELECT f.node_id AS id, bm25(node_fts) AS bm25score
+      FROM node_fts f JOIN node n ON n.id = f.node_id AND n.tombstoned = 0
+      WHERE node_fts MATCH ?
+      ORDER BY rank LIMIT ?
+    `);
   }
 
   /**
@@ -106,5 +153,50 @@ export class CandidateRetriever {
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, k);
+  }
+
+  /**
+   * Hybrid BM25+cosine RRF top-k retrieval (Phase 17 LEVER 1).
+   *
+   * Combines:
+   *  - Cosine list: topk(queryVec, preK) — exact cosine over embedded live nodes.
+   *  - BM25 list: FTS5 MATCH on token-quoted queryText — lexical keyword match.
+   * Fuses with RRF (k=60). Returns top-k fused results with cosine score (when available)
+   * for use by retrieveRanked's floor gate.
+   *
+   * queryText must come from user/question input, never from LLM output (T-04-03-I).
+   * FTS5 MATCH receives only the sanitized ftsQueryFromText() output — never raw text (Pitfall 2).
+   * Falls back to cosine-only when FTS5 table is absent or queryText yields no tokens.
+   */
+  hybridTopk(
+    queryVec: Float32Array,
+    queryText: string,
+    k: number,
+    preK = k * 3,
+  ): Array<{ id: string; score: number }> {
+    // Cosine list (pre-k for fusion input)
+    const cosineList = this.topk(queryVec, preK);
+
+    // BM25 list — sanitize before MATCH (Pitfall 2, T-17-02-T)
+    const ftsQuery = ftsQueryFromText(queryText);
+    let bm25List: Array<{ id: string }> = [];
+    if (ftsQuery) {
+      try {
+        bm25List = this.stmtBm25.all(ftsQuery, preK) as Array<{ id: string }>;
+      } catch {
+        // FTS table absent or MATCH syntax error — fall back to cosine only (graceful degradation)
+        bm25List = [];
+      }
+    }
+
+    // RRF fusion — rank-based, no score normalization needed
+    const fused = rrfFuse([cosineList, bm25List], 60, k);
+
+    // Resolve cosine score for each fused result (needed by retrieveRanked's floor gate)
+    const cosineScoreMap = new Map(cosineList.map(h => [h.id, h.score]));
+    return fused.map(f => ({
+      id: f.id,
+      score: cosineScoreMap.get(f.id) ?? 0,  // 0 for BM25-only hits (no cosine scored)
+    }));
   }
 }
