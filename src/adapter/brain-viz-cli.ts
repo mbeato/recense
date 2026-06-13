@@ -39,7 +39,12 @@ import { startVizServer } from '../viz/server';
 // Constants
 // ---------------------------------------------------------------------------
 
-const PORT = 7810;
+// --port <n> overrides the default (tests must avoid 7810 — the live tray's
+// Recense-spawned viz server holds it whenever the tray app is running).
+const portIdx = process.argv.indexOf('--port');
+const PORT = (portIdx !== -1 && Number(process.argv[portIdx + 1]) > 0)
+  ? Number(process.argv[portIdx + 1])
+  : 7810;
 
 // OQ-1: server-only mode for the tray app (16-02). When --no-open is passed,
 // the viz HTTP server starts normally (D-96 trace flag, exit handlers, stdout URL)

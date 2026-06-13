@@ -8,7 +8,8 @@
  *   2. D-96: meta.viz_trace_enabled = '1' while the server is running.
  *   3. D-96: meta.viz_trace_enabled = '0' after the server receives SIGTERM.
  *
- * This test binds port 7810. Run it serially to avoid conflicts:
+ * This test binds an ephemeral free port (--port) so it never collides with the
+ * tray-owned viz server on 7810. Run it serially:
  *   npx vitest run tests/brain-viz-no-open.test.ts
  *
  * The child is killed in afterEach/finally even on assertion failure (no port leak).
@@ -20,13 +21,33 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
+import { createServer } from 'net';
 import Database from 'better-sqlite3';
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { initSchema } from '../src/db/schema';
 
 const BRAIN_VIZ_JS = join(__dirname, '..', 'dist', 'src', 'adapter', 'brain-viz-cli.js');
 const SKIP_NO_DIST = !existsSync(BRAIN_VIZ_JS);
-const VIZ_URL = 'http://127.0.0.1:7810';
+// Never use the default 7810 here — the live Recense tray keeps a viz server
+// on it, and polling that server makes /graph succeed against the wrong DB.
+let VIZ_URL = '';
+
+/** Ask the OS for a free ephemeral port. */
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      if (addr === null || typeof addr === 'string') {
+        srv.close(() => reject(new Error('could not allocate a free port')));
+        return;
+      }
+      const port = addr.port;
+      srv.close(() => resolve(port));
+    });
+    srv.on('error', reject);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -109,11 +130,17 @@ describe.skipIf(SKIP_NO_DIST).sequential('brain viz --no-open (OQ-1 / D-96)', ()
   });
 
   it('serves /graph and restores D-96 trace flag after SIGTERM', async () => {
-    // ── Spawn the CLI in server-only (--no-open) mode ────────────────────────
-    child = spawn(process.execPath, [BRAIN_VIZ_JS, '--no-open', '--db', dbPath], {
-      env: process.env,
-      stdio: 'pipe',
-    });
+    // ── Spawn the CLI in server-only (--no-open) mode on a free port ─────────
+    const port = await getFreePort();
+    VIZ_URL = `http://127.0.0.1:${port}`;
+    child = spawn(
+      process.execPath,
+      [BRAIN_VIZ_JS, '--no-open', '--db', dbPath, '--port', String(port)],
+      {
+        env: process.env,
+        stdio: 'pipe',
+      },
+    );
 
     let stderr = '';
     child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });

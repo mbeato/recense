@@ -175,6 +175,7 @@ describe('ambientRecall', () => {
 
   it('tuning knobs are exported with the planned values', () => {
     expect(AMBIENT_K).toBe(5);
-    expect(AMBIENT_FLOOR).toBe(0.5);
+    // 0.5 → 0.45 tuned from live-graph score probes (3aa350b)
+    expect(AMBIENT_FLOOR).toBe(0.45);
   });
 });
