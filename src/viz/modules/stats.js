@@ -27,11 +27,13 @@ const QualityTier = { FULL: 0, REDUCED: 1, MINIMAL: 2 };
 Object.freeze(QualityTier);
 
 // ── Idle timeout: silence after this many ms = idle state ────────────────────
-// Compact (tray popover): spin is the resting state — idle from the moment the
-// window opens, pausing only while the pointer is over the brain and resuming
-// 1.2s after it leaves (founder, 2026-06-12). Full window keeps the 8s calm.
+// Spin is the resting state in BOTH viewports: drift resumes 1.2s after the
+// last pointer/keyboard activity (founder 2026-06-13 — the full window's old 8s
+// "calm" felt dead; a quick hover should not freeze the brain for seconds once
+// the mouse leaves). markActive still fires on any mousemove, so 1.2s is the
+// resume delay after the cursor stops moving.
 const COMPACT_VIEW = Math.min(window.innerWidth, window.innerHeight) <= 500;
-const IDLE_TIMEOUT_MS = COMPACT_VIEW ? 1200 : 8000;
+const IDLE_TIMEOUT_MS = 1200;
 
 // ── FPS measurement hysteresis windows ───────────────────────────────────────
 const DEGRADE_FRAMES = 120; // ~2s of low fps before downgrade
