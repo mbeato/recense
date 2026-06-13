@@ -11,6 +11,11 @@
  *   6. construct shared ctx
  *   7. initStats → initHud → initLod → initGraph → initEffects → initTrace → initDetail
  *
+ * Detail mode (quick-260612-sdk): when the page is loaded as /?detail=<id>
+ * (the shell's adjacent detail window), the lean detail-page module renders
+ * instead and ALL 3D/graph boot below is skipped — no UMD injection, no
+ * scene, no module wiring.
+ *
  * No CDN: all imports are local (import map resolves 'three'; ./vendor/ for UMD).
  */
 
@@ -28,6 +33,14 @@ import { initDetail }  from './detail.js';
 // If this assignment comes after the UMD script element, ForceGraph3D will not
 // find THREE and the canvas will be black / throw immediately.
 window.THREE = THREE;
+
+// ── Detail mode branch — /?detail=<id> renders the lean detail page ──────────
+const DETAIL_ID = new URLSearchParams(location.search).get('detail');
+
+if (DETAIL_ID !== null) {
+  const { renderDetailPage } = await import('./detail-page.js');
+  await renderDetailPage(DETAIL_ID);
+} else {
 
 // ── Inject vendored 3d-force-graph UMD bundle ─────────────────────────────────
 // We create the <script> element dynamically (rather than statically in index.html)
@@ -192,3 +205,5 @@ document.addEventListener('mousemove', e => {
 document.addEventListener('keydown', () => {
   if (ctx.markActive) ctx.markActive();
 });
+
+} // end graph-boot else (detail mode skips everything above in this block)

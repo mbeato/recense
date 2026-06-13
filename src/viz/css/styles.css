@@ -387,3 +387,12 @@ button:hover {
     opacity: 0.55;
   }
 }
+
+/* ── Detail-page mode: /?detail=<id> rendered in the adjacent shell window ──
+   The panel IS the surface: full-width with margins, top offset leaves room
+   for the shell-injected drag strip, body height cap lifted so the panel
+   itself is the scroll surface. #detail-close is hidden — its handler lives
+   in detail.js, which never initializes in detail mode. */
+.detail-page #detail { left: 12px; right: 12px; width: auto; top: 32px; max-height: calc(100vh - 44px); }
+.detail-page #detail-close { display: none; }
+.detail-page #detail-body { max-height: none; }
