@@ -42,8 +42,13 @@ export const AMBIENT_K = 5;
  * Minimum cosine for a fact to surface ambiently. Deliberately ABOVE the
  * memory_search floor (0.3): ambient injection is unsolicited, so precision
  * beats recall here.
+ *
+ * Tuned 0.5 → 0.45 against live-graph probes (2026-06-13): memory-shaped
+ * questions top out ~0.45–0.65 while generic coding prompts sit ≤0.43, so 0.5
+ * silently rejected everything. Re-probe after the episode backlog consolidates
+ * — richer fact nodes should widen the gap and may support a higher floor.
  */
-export const AMBIENT_FLOOR = 0.5;
+export const AMBIENT_FLOOR = 0.45;
 
 /** Per-line value cap — keeps the injected block token-lean. */
 export const MAX_VALUE_CHARS = 200;
