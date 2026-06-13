@@ -103,8 +103,11 @@ export class HybridResponder {
    * Steps:
    *  1. Bound query length (T-04-03-I).
    *  2. Wrap everything in try/catch — any throw returns safe-null (never rethrows).
-   *  3. Online embed: provider.embed([boundedQuery]).
-   *  4. Facts-first: retrieval.retrieveRanked(cueVec, k, floor). If results → compose grounded answer.
+   *  LEVER 3 (17-04): Rewrite question to a declarative statement (queryForEmbed).
+   *    Falls back to raw question on error — rewrite failure never blocks the answer.
+   *    ONLY in respond(): SessionStart/retrieveCueless is LLM-free and never calls respond().
+   *  3. Online embed: provider.embed([queryForEmbed]).
+   *  4. Facts-first: retrieval.retrieveRanked(cueVec, k, floor, queryForEmbed). If results → compose grounded answer.
    *     B1 fix: retrieveRanked uses top-k + floor (0.3) instead of the single-hit 0.7 bar.
    *     Question-form cues ("Where does Ana live?") score 0.4–0.6 against stored facts —
    *     structurally below retrieve()'s deletedSimilarityThreshold (0.7) but above the 0.3 floor.
@@ -119,8 +122,30 @@ export class HybridResponder {
     const boundedQuery = question.slice(0, MAX_QUERY_BYTES);
 
     try {
+      // ── LEVER 3: Q->declarative rewrite (17-04) ────────────────────────────
+      // Rewrites the question-form query to a declarative statement before embedding.
+      // Attacks the measured Q->S cosine asymmetry (0.688 vs 0.797): stored facts are
+      // declarative; question-form cues score structurally lower against them. Falls back
+      // to the raw question on any error — rewrite failure must never block the answer
+      // (T-07-04 safe-null discipline). ONLY in respond(): the retrieval primitive
+      // (retrieveRanked, retrieveCueless) is LLM-free and never calls respond() by
+      // construction — the SessionStart hook is structurally separate (D-99 invariant).
+      let queryForEmbed = boundedQuery;
+      try {
+        const rewritePrompt =
+          `Rewrite the following question as a concise declarative statement of fact. ` +
+          `Preserve ALL names, numbers, and proper nouns VERBATIM. ` +
+          `Return ONLY the statement — no preamble, no explanation.\n\n` +
+          `Question: ${boundedQuery}`;
+        const rewritten = (await this.provider.generate(rewritePrompt, { maxTokens: 128 })).trim();
+        if (rewritten) queryForEmbed = rewritten;
+      } catch {
+        // T-07-04: rewrite failure falls back to raw query — never blocks respond()
+        queryForEmbed = boundedQuery;
+      }
+
       // ── (3) Online cue embed ──────────────────────────────────────────────
-      const [cueVec] = await this.provider.embed([boundedQuery]);
+      const [cueVec] = await this.provider.embed([queryForEmbed]);
       if (!cueVec) return HONEST_RESULT;
 
       // ── (4) Facts-first: attempt retrieval of directly-stored facts ───────
@@ -132,6 +157,7 @@ export class HybridResponder {
         cueVec,
         this.config.rankedRetrievalK,
         this.config.rankedRetrievalFloor,
+        queryForEmbed, // LEVER 3: pass rewritten query to hybrid FTS component (17-03 queryText arg)
       );
       if (ranked.length > 0) {
         // Build grounded compose prompt — facts as data content (T-04-03-I)

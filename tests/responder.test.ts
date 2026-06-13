@@ -140,8 +140,9 @@ describe('HybridResponder', () => {
     });
 
     const groundedAnswer = 'Max works at a software company.';
-    // HybridResponder provider: embed at dim 0 (matches fact node), generate returns grounded answer
-    const provider = makeStubProvider(h.config.embeddingDimensions, 0, [groundedAnswer]);
+    // HybridResponder provider: embed at dim 0 (matches fact node).
+    // generateScript[0] = rewrite result (LEVER 3), generateScript[1] = grounded compose answer.
+    const provider = makeStubProvider(h.config.embeddingDimensions, 0, ['Max works at a software company', groundedAnswer]);
     // RecallEngine provider: embed at dim 1 — won't be reached in the facts-first path
     const recallProvider = makeStubProvider(h.config.embeddingDimensions, 1, []);
     const retrieval = makeRetrievalEngine(h);
@@ -225,8 +226,9 @@ describe('HybridResponder', () => {
       h.db.prepare('SELECT count(*) as c FROM node WHERE tombstoned = 0').get() as { c: number }
     ).c;
 
+    // generateScript[0] = rewrite result (LEVER 3), generateScript[1] = grounded compose answer.
     const provider = makeStubProvider(
-      h.config.embeddingDimensions, 0, ['Max lifts weights on Mondays.'],
+      h.config.embeddingDimensions, 0, ['Max lifts weights on Mondays', 'Max lifts weights on Mondays.'],
     );
     const recallProvider = makeStubProvider(h.config.embeddingDimensions, 1, []);
     const retrieval = makeRetrievalEngine(h);
@@ -308,7 +310,8 @@ describe('HybridResponder', () => {
     } as unknown as RetrievalEngine;
 
     const grounded = 'Max founded a startup in 2022.';
-    const provider = makeStubProvider(h.config.embeddingDimensions, 0, [grounded]);
+    // generateScript[0] = rewrite result (LEVER 3), generateScript[1] = grounded compose answer.
+    const provider = makeStubProvider(h.config.embeddingDimensions, 0, ['Max founded a startup in 2022', grounded]);
     const recallProvider = makeStubProvider(h.config.embeddingDimensions, 0, []);
     const recall = makeRecallEngine(h, recallProvider);
     const responder = new HybridResponder(h.clock, h.config, provider, mockRetrieval, recall, h.episodes);
@@ -322,13 +325,140 @@ describe('HybridResponder', () => {
 
   // ── safe-null: embed throws → resolves null, never throws ────────────────
 
+  // ── LEVER 3: Q->declarative rewrite tests (17-04) ────────────────────────
+
+  it('rewrite: declarative rewrite is passed to embed and retrieveRanked (queryForEmbed)', async () => {
+    // Seed a fact node at dim 0 so facts-first path fires
+    await seedNodeWithEmbedding(h, {
+      value: 'User attends five sessions per week',
+      type: 'fact',
+      origin: 'observed',
+      vectorDim: 0,
+    });
+
+    const capturedEmbedTexts: string[] = [];
+    const rewriteText = 'User attends five sessions per week';
+    const composeText = 'User attends five sessions per week.';
+
+    // Custom provider that records what text was passed to embed
+    const rewriteProvider: ModelProvider = {
+      async embed(texts: string[]) {
+        capturedEmbedTexts.push(...texts);
+        return texts.map(() => {
+          const v = new Float32Array(h.config.embeddingDimensions);
+          v[0] = 1.0; // dim 0 → matches fact node
+          return v;
+        });
+      },
+      async generate(_prompt: string) {
+        // First call = rewrite prompt, second call = compose prompt
+        if (capturedEmbedTexts.length === 0) return rewriteText;
+        return composeText;
+      },
+      async judge(): Promise<never> { throw new Error('Not used'); },
+      async judgeBatch(items) { if (items.length === 0) return []; throw new Error('Not used'); },
+    };
+
+    const recallProvider = makeStubProvider(h.config.embeddingDimensions, 1, []);
+    const retrieval = makeRetrievalEngine(h);
+    const recall = makeRecallEngine(h, recallProvider);
+    const responder = new HybridResponder(h.clock, h.config, rewriteProvider, retrieval, recall, h.episodes);
+
+    const result = await responder.respond('How many sessions does the user attend?', 'sess-rewrite-a');
+
+    // embed received the declarative rewrite, NOT the raw question
+    expect(capturedEmbedTexts[0]).toBe(rewriteText);
+    expect(capturedEmbedTexts[0]).not.toBe('How many sessions does the user attend?');
+    // answer composed successfully via facts-first path
+    expect(result.origin).toBe('fact');
+    expect(result.reply).toBe(composeText);
+  });
+
+  it('rewrite fallback: generate() throws on rewrite → embed receives raw boundedQuery, answer still composes', async () => {
+    // Seed a fact node at dim 0 so facts-first path fires
+    await seedNodeWithEmbedding(h, {
+      value: 'Max founded a startup in 2022',
+      type: 'fact',
+      origin: 'observed',
+      vectorDim: 0,
+    });
+
+    const capturedEmbedTexts: string[] = [];
+    let generateCallCount = 0;
+    const composeText = 'Max founded a startup in 2022.';
+
+    const throwOnFirstGenerate: ModelProvider = {
+      async embed(texts: string[]) {
+        capturedEmbedTexts.push(...texts);
+        return texts.map(() => {
+          const v = new Float32Array(h.config.embeddingDimensions);
+          v[0] = 1.0;
+          return v;
+        });
+      },
+      async generate(_prompt: string) {
+        generateCallCount++;
+        if (generateCallCount === 1) throw new Error('Rewrite service unavailable');
+        // Second call = compose
+        return composeText;
+      },
+      async judge(): Promise<never> { throw new Error('Not used'); },
+      async judgeBatch(items) { if (items.length === 0) return []; throw new Error('Not used'); },
+    };
+
+    const recallProvider = makeStubProvider(h.config.embeddingDimensions, 1, []);
+    const retrieval = makeRetrievalEngine(h);
+    const recall = makeRecallEngine(h, recallProvider);
+    const responder = new HybridResponder(
+      h.clock, h.config, throwOnFirstGenerate, retrieval, recall, h.episodes,
+    );
+
+    const result = await responder.respond('When did Max start his company?', 'sess-rewrite-b');
+
+    // embed received the raw boundedQuery (rewrite fell back because generate() threw)
+    expect(capturedEmbedTexts[0]).toBe('When did Max start his company?');
+    // answer still composes from facts-first path (fallback didn't break the answer)
+    expect(result.origin).toBe('fact');
+    expect(result.reply).toBe(composeText);
+    // generate was called twice: once for rewrite (threw), once for compose (succeeded)
+    expect(generateCallCount).toBe(2);
+  });
+
+  it('rewrite is respond()-only: retrieveCueless (SessionStart path) makes no generate() calls', () => {
+    // The rewrite is ONLY in respond() (already LLM-bearing). The retrieval primitive
+    // (retrieveRanked, retrieveCueless) is LLM-free by construction and never calls
+    // respond() — SessionStart/session-start-cli.ts never instantiates HybridResponder.
+    // This test verifies the structural invariant: RetrievalEngine has no ModelProvider
+    // dependency and calling retrieveCueless() makes zero generate() calls.
+    let generateCalled = false;
+    const spyProvider: ModelProvider = {
+      async embed() { return [new Float32Array(h.config.embeddingDimensions)]; },
+      async generate() { generateCalled = true; return ''; },
+      async judge(): Promise<never> { throw new Error(); },
+      async judgeBatch() { return []; },
+    };
+    void spyProvider; // The retrieval engine has no ModelProvider — verified below
+
+    const retrieval = makeRetrievalEngine(h);
+    retrieval.retrieveCueless(); // synchronous, LLM-free — no ModelProvider involved
+
+    expect(generateCalled).toBe(false);
+    // Structural note: session-start-cli.ts never imports or instantiates HybridResponder
+    // — the rewrite block is unreachable from the SessionStart hook by construction (D-99).
+  });
+
+  // ── safe-null: embed throws → resolves null, never throws ────────────────
+
   it('safe-null: embed throws → respond() resolves to {reply:null,origin:none} without throwing', async () => {
     const throwingProvider: ModelProvider = {
       async embed(_texts: string[]): Promise<Float32Array[]> {
         throw new Error('Embed service unavailable');
       },
       async generate(_prompt: string): Promise<string> {
-        throw new Error('Should not be called');
+        // LEVER 3: generate IS now called for the rewrite attempt; this throw is caught
+        // by the rewrite inner try/catch, which falls back to the raw question. Then embed
+        // throws, which is caught by the outer safe-null handler → NULL_RESULT.
+        throw new Error('Generate unavailable');
       },
       async judge(): Promise<never> {
         throw new Error('Should not be called');

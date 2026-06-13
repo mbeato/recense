@@ -488,7 +488,8 @@ describe('mcp-server memory_ask (responder mapping)', () => {
         v[0] = 1.0;
         return v;
       },
-      generateScript: ['Max prefers TypeScript.'],
+      // generateScript[0] = rewrite result (LEVER 3), generateScript[1] = grounded compose answer.
+      generateScript: ['Max prefers TypeScript', 'Max prefers TypeScript.'],
     });
     client = await connectClient({ dbPath, provider: mock });
 

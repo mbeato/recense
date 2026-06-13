@@ -102,7 +102,7 @@ For each item extract:
 - "value": a concise, self-contained third-person claim (e.g. "User's daily commute is 45 minutes each way" not just "commute is 45 min")
 - "links": an array of OTHER item values referenced via [[WikiLink]] syntax in the document, provided WITHOUT the double brackets (omit if none)
 
-Extract BOTH durable facts AND personal episodic details: events attended, purchases made, durations and quantities ("commute is 45 minutes each way"), places visited or mentioned, plans and intentions, dates and schedules, personal preferences, and any fact that the user would want remembered. Values must be self-contained so they are meaningful when recalled without surrounding context.
+Extract BOTH durable facts AND personal episodic details: events attended, purchases made, durations and quantities ("commute is 45 minutes each way"), places visited or mentioned, plans and intentions, dates and schedules, personal preferences, personal records and achievements (personal bests, high scores, completion milestones), durations of ownership or ongoing activity ("has owned their guitar for 3 years", "been running for 6 months"), and any fact that the user would want remembered — including facts mentioned as conversational asides even when the main topic is something else. Values must be self-contained so they are meaningful when recalled without surrounding context.
 
 IMPORTANT: When a statement describes a change or update (using words like "cut to", "moved to", "switched to", "quit", "started", "stopped", "dropped", "no longer"), extract the NEW CURRENT STATE as the fact value — not the change description. Examples:
 - "Jordan cut her plan from Professional to Starter" → "Jordan's active subscription is the Starter tier"
@@ -110,6 +110,8 @@ IMPORTANT: When a statement describes a change or update (using words like "cut 
 - "Oliver moved to lunchtime workouts from early-morning gym sessions" → "Oliver works out at lunchtime on weekdays"
 - "Priya quit her finance analyst role and now leads product" → "Priya works as a product lead"
 - "Marco stopped using Jira and switched to Linear" → "Marco's team tracks tasks in Linear"
+
+IMPORTANT: Look for facts buried in conversational asides (phrases like "by the way", "I just realized", "actually", "oh and") — these often carry significant updates. Extract progress milestones and personal records (e.g., "just hit 20 workouts this month" → "User has completed 20 workouts this month", "personal best of 25 minutes in the 5K" → "User's personal best time in a 5K run is 25 minutes"). Extract durations of ownership or ongoing activity (e.g., "has had my guitar for 3 years" → "User has owned their guitar for about 3 years"). When a numeric count is revised within the conversation, always extract the most recently stated value as the current fact.
 
 Return ONLY a valid JSON array — no preamble, no explanation, no markdown fences.
 
