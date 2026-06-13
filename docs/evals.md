@@ -145,7 +145,65 @@ Estimated cost: ~$4.13 (28 questions). Do NOT source `sleep.env` before running 
 | 17-05 verification run | ~$4.13 | 28-question regression verification with LEVER 1+2+3 |
 | **Cumulative** | **~$6.83** | Phase 17 total (≤$12 cap) |
 
-**Phase outcome:** Criterion A passed (12/18 recovered, well above the ≥5 threshold). Criterion B and C both failed: 1 stable-correct regression on 9ea5eabc (BM25 over-indexing) and EVAL-02 local dropped from 84.6% to 69.2%. The EVAL-02 drop is 2 additional contradiction cases failing, all without tombstones — contradiction not detected. Likely cause: LEVER 5 CONVERSATION_EXTRACTION_PROMPT extension at D-62 changed how the extractor formulates simple facts, making some contradiction pairs fail the PE-gated update. This is a $0-cost diagnostic (revert LEVER 5 and re-run EVAL-02). Operator decision required before phase close.
+**Phase outcome:** Criterion A passed (12/18 recovered, well above the ≥5 threshold). Criterion B and C both failed: 1 stable-correct regression on 9ea5eabc (BM25 over-indexing) and EVAL-02 local dropped from 84.6% to 69.2%. The EVAL-02 drop is 2 additional contradiction cases failing, all without tombstones — contradiction not detected. Likely cause: LEVER 5 CONVERSATION_EXTRACTION_PROMPT extension at D-62 changed how the extractor formulates simple facts, making some contradiction pairs fail the PE-gated update. This is a $0-cost diagnostic (revert LEVER 5 and re-run EVAL-02). Operator decision required before phase close. **→ Diagnosed and resolved 2026-06-13; the LEVER 5 hypothesis was WRONG — see below.**
+
+---
+
+### Phase 17 gap-closure resolution (2026-06-13)
+
+A single budgeted re-verification confirmed **all five criteria pass**. The 17-05 B/C failures were diagnosed and fixed.
+
+**Real root cause of the EVAL-02 regression — judge batching, not LEVER 5.** Reverting LEVER 5 alone *worsened* EVAL-02 to 53.8% (7/13). Bisection of every commit between the 84.6% V8 baseline (`7d76166`) and HEAD found the cause: the `cea0125` judge-batching refactor ("one think block per episode", quick task 260612-lc0), which landed *after* the baseline and was never correctness-validated. Disabling batching (per-claim judging) restored the exact 84.6% baseline (11/13). The 35b judge loses per-pair accuracy when multiple contradiction pairs share one think block.
+
+**Fix (commit `bedd132`):** Per-claim judging is now the engine default; batching is opt-in via `BRAIN_MEMORY_ENABLE_JUDGE_BATCH=1`. A $0/local correctness restoration.
+
+**Settled lever set:**
+
+| Lever | Disposition |
+|-------|-------------|
+| LEVER 1 (`--hybrid`) | **Removed from the answer path** (17-08): caused the lone B regression (BM25 over-indexed "Hawaii" over the current "Paris"); zero attribution upside (retrieve_miss=0). `node_fts` infra retained. |
+| LEVER 2 (`--temporal`) | Adopted. Comparator made deterministic (17-06, CR-01) + UTC date fix (WR-02). |
+| LEVER 3 (`--rewrite`) | Adopted; gated behind an interrogative heuristic (17-08, WR-03). |
+| LEVER 4 | Default (rankedRetrievalK=10). |
+| LEVER 5 (extraction) | **Dropped** (17-07), exonerated as the EVAL-02 cause. The 5 extract-loss failures it targeted (f9e8c073, 72e3ee87, 01493427, e61a7584, 0e4e4c46) were never recovered by it — a documented extract-loss limitation. |
+
+**Re-verification (API stack, n=28, `--temporal --rewrite`, NO `--hybrid`, per-claim, deterministic comparator):**
+
+```
+Overall: 78.6% (22/28) on the regression set (knowledge-update only)
+```
+
+| Criterion | Threshold | Actual | Result |
+|-----------|-----------|--------|--------|
+| A: failures recovered | ≥5/18 | **12/18** (10 true + 2 stochastic) | PASS |
+| B: regressions on stable-correct | 0 | **0/10** (9ea5eabc now answers "Paris") | PASS |
+| C: local EVAL-02 (V8 floor) | ≥84.6% | **84.6%** (11/13, commit bedd132, free local) | PASS |
+| D: full test suite | green | 917 passed / 2 skipped | PASS |
+| E: invariants (D-29, D-99 LLM-free SessionStart, single-writer, no self-confirmation) | intact | via suite | PASS |
+
+Still failing (6/18): the 5 extract-loss IDs above + 9bbe84a2 (consolidate-loss) — well clear of the ≥5 threshold.
+
+**Reproduction:**
+
+```sh
+node scripts/eval/longmemeval-harness.cjs --temporal --rewrite \
+  --eval scripts/eval/results/longmemeval-28-regression.jsonl \
+  --out scripts/eval/results/longmemeval-17-reverify-hypotheses.jsonl
+node scripts/eval/longmemeval-scorer.cjs \
+  --hypotheses scripts/eval/results/longmemeval-17-reverify-hypotheses.jsonl \
+  --eval scripts/eval/results/longmemeval-28-regression.jsonl \
+  --out scripts/eval/results/longmemeval-17-reverify-SCORED.json
+```
+(API stack = engine default Haiku 4.5; do NOT source `sleep.env`. Per-claim judging is the default — no flag needed.)
+
+**API spend (updated):**
+
+| Run | Cost | Purpose |
+|-----|------|---------|
+| 17-01 attribution | ~$2.70 | attribute 18 failures |
+| 17-05 verification | ~$4.13 | first 28-q (LEVER 1+2+3) |
+| 17-09 re-verification | ~$5–6 (est.) | 28-q, settled levers, per-claim (judge round-trips not separately metered; exact billing not pulled) |
+| **Cumulative** | **~$12–12.8** | at/slightly over the $12 soft cap — disclosed |
 
 ---
 
