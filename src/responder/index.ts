@@ -31,6 +31,29 @@ import type { EpisodicStore } from '../db/episode-store';
 // T-04-03-I: bound query length to cap compose prompt size (4 KB is generous)
 const MAX_QUERY_BYTES = 4_000;
 
+/**
+ * Wh-/auxiliary interrogative leads that signal a question-form input.
+ * Used by isInterrogative() to gate the LEVER 3 declarative rewrite (WR-03).
+ * Allocation-free: Set lookup is O(1).
+ */
+const INTERROGATIVE_LEADS = new Set([
+  'what', 'when', 'where', 'who', 'whom', 'whose', 'which', 'why', 'how',
+  'do', 'does', 'did', 'is', 'are', 'was', 'were',
+  'can', 'could', 'should', 'would', 'will',
+]);
+
+/**
+ * Returns true if the query looks like a question — ends with '?' or opens with a
+ * wh-/auxiliary interrogative lead (lowercased first token). Declarative inputs return false
+ * and bypass the LEVER 3 rewrite (WR-03: skip the extra generate() for non-question inputs).
+ */
+function isInterrogative(query: string): boolean {
+  const q = query.trim();
+  if (q.endsWith('?')) return true;
+  const firstWord = q.split(/\s+/)[0]?.toLowerCase() ?? '';
+  return INTERROGATIVE_LEADS.has(firstWord);
+}
+
 /** Honest no-answer string (D-73): owner-neutral, no first-person identity claim, texting-feel. */
 export const HONEST_NO_ANSWER = "don't have that one";
 
@@ -103,7 +126,8 @@ export class HybridResponder {
    * Steps:
    *  1. Bound query length (T-04-03-I).
    *  2. Wrap everything in try/catch — any throw returns safe-null (never rethrows).
-   *  LEVER 3 (17-04): Rewrite question to a declarative statement (queryForEmbed).
+   *  LEVER 3 (17-04, gated 17-08 WR-03): For interrogative inputs only, rewrite to a declarative
+   *    statement (queryForEmbed) — skips the generate() for declarative inputs (no benefit, saves budget).
    *    Falls back to raw question on error — rewrite failure never blocks the answer.
    *    ONLY in respond(): SessionStart/retrieveCueless is LLM-free and never calls respond().
    *  3. Online embed: provider.embed([queryForEmbed]).
@@ -122,26 +146,31 @@ export class HybridResponder {
     const boundedQuery = question.slice(0, MAX_QUERY_BYTES);
 
     try {
-      // ── LEVER 3: Q->declarative rewrite (17-04) ────────────────────────────
+      // ── LEVER 3: Q->declarative rewrite (17-04, gated 17-08 WR-03) ──────────
       // Rewrites the question-form query to a declarative statement before embedding.
       // Attacks the measured Q->S cosine asymmetry (0.688 vs 0.797): stored facts are
-      // declarative; question-form cues score structurally lower against them. Falls back
-      // to the raw question on any error — rewrite failure must never block the answer
-      // (T-07-04 safe-null discipline). ONLY in respond(): the retrieval primitive
-      // (retrieveRanked, retrieveCueless) is LLM-free and never calls respond() by
-      // construction — the SessionStart hook is structurally separate (D-99 invariant).
+      // declarative; question-form cues score structurally lower against them.
+      //
+      // WR-03 (17-08): rewrite is gated behind an interrogative check — declarative inputs
+      // gain nothing from rewriting and skipping the generate() call saves budget. For
+      // interrogative inputs the rewrite fires as before; falls back to the raw question
+      // on any error — rewrite failure must never block the answer (T-07-04 safe-null).
+      // ONLY in respond(): the retrieval primitive (retrieveRanked, retrieveCueless) is
+      // LLM-free and never calls respond() — SessionStart hook is structurally separate (D-99).
       let queryForEmbed = boundedQuery;
-      try {
-        const rewritePrompt =
-          `Rewrite the following question as a concise declarative statement of fact. ` +
-          `Preserve ALL names, numbers, and proper nouns VERBATIM. ` +
-          `Return ONLY the statement — no preamble, no explanation.\n\n` +
-          `Question: ${boundedQuery}`;
-        const rewritten = (await this.provider.generate(rewritePrompt, { maxTokens: 128 })).trim();
-        if (rewritten) queryForEmbed = rewritten;
-      } catch {
-        // T-07-04: rewrite failure falls back to raw query — never blocks respond()
-        queryForEmbed = boundedQuery;
+      if (isInterrogative(boundedQuery)) {
+        try {
+          const rewritePrompt =
+            `Rewrite the following question as a concise declarative statement of fact. ` +
+            `Preserve ALL names, numbers, and proper nouns VERBATIM. ` +
+            `Return ONLY the statement — no preamble, no explanation.\n\n` +
+            `Question: ${boundedQuery}`;
+          const rewritten = (await this.provider.generate(rewritePrompt, { maxTokens: 128 })).trim();
+          if (rewritten) queryForEmbed = rewritten;
+        } catch {
+          // T-07-04: rewrite failure falls back to raw query — never blocks respond()
+          queryForEmbed = boundedQuery;
+        }
       }
 
       // ── (3) Online cue embed ──────────────────────────────────────────────

@@ -480,6 +480,94 @@ describe('HybridResponder', () => {
     // — the rewrite block is unreachable from the SessionStart hook by construction (D-99).
   });
 
+  // ── WR-03: LEVER 3 rewrite gated behind interrogative heuristic (17-08) ──
+
+  it('WR-03: declarative input makes exactly ONE generate() call (compose only, rewrite skipped)', async () => {
+    // Seed a fact so the facts-first path fires and compose is called once
+    await seedNodeWithEmbedding(h, {
+      value: 'Max lives in Paris',
+      type: 'fact',
+      origin: 'observed',
+      vectorDim: 0,
+    });
+
+    let generateCallCount = 0;
+    const capturedEmbedTexts: string[] = [];
+    // Declarative input: no '?', first word 'Max' not in INTERROGATIVE_LEADS → gate skips rewrite
+    const declarativeInput = 'Max lives in Paris.';
+    const composeText = 'Max lives in Paris.';
+
+    const countingProvider: ModelProvider = {
+      async embed(texts: string[]) {
+        capturedEmbedTexts.push(...texts);
+        return texts.map(() => {
+          const v = new Float32Array(h.config.embeddingDimensions);
+          v[0] = 1.0;
+          return v;
+        });
+      },
+      async generate(_prompt: string) {
+        generateCallCount++;
+        return composeText;
+      },
+      async judge(): Promise<never> { throw new Error('Not used'); },
+      async judgeBatch(items) { if (items.length === 0) return []; throw new Error('Not used'); },
+    };
+
+    const recallProvider = makeStubProvider(h.config.embeddingDimensions, 1, []);
+    const retrieval = makeRetrievalEngine(h);
+    const recall = makeRecallEngine(h, recallProvider);
+    const responder = new HybridResponder(h.clock, h.config, countingProvider, retrieval, recall, h.episodes);
+
+    const result = await responder.respond(declarativeInput, 'sess-wr03-decl');
+
+    // Declarative: rewrite skipped → exactly ONE generate() call (compose only)
+    expect(generateCallCount).toBe(1);
+    // embed received the raw declarative input (no rewrite applied)
+    expect(capturedEmbedTexts[0]).toBe(declarativeInput);
+    expect(result.origin).toBe('fact');
+  });
+
+  it('WR-03: interrogative input makes TWO generate() calls (rewrite + compose)', async () => {
+    // Seed a fact so the facts-first path fires and compose is the second generate call
+    await seedNodeWithEmbedding(h, {
+      value: 'Max lives in Paris',
+      type: 'fact',
+      origin: 'observed',
+      vectorDim: 0,
+    });
+
+    let generateCallCount = 0;
+    const rewriteText = 'Max lives in Paris';
+    const composeText = 'Max lives in Paris.';
+
+    const countingProvider: ModelProvider = {
+      async embed(texts: string[]) {
+        return texts.map(() => {
+          const v = new Float32Array(h.config.embeddingDimensions);
+          v[0] = 1.0;
+          return v;
+        });
+      },
+      async generate(_prompt: string) {
+        generateCallCount++;
+        return generateCallCount === 1 ? rewriteText : composeText;
+      },
+      async judge(): Promise<never> { throw new Error('Not used'); },
+      async judgeBatch(items) { if (items.length === 0) return []; throw new Error('Not used'); },
+    };
+
+    const recallProvider = makeStubProvider(h.config.embeddingDimensions, 1, []);
+    const retrieval = makeRetrievalEngine(h);
+    const recall = makeRecallEngine(h, recallProvider);
+    const responder = new HybridResponder(h.clock, h.config, countingProvider, retrieval, recall, h.episodes);
+
+    await responder.respond('Where does Max live?', 'sess-wr03-interrog');
+
+    // Interrogative: rewrite fires → TWO generate() calls (rewrite + compose)
+    expect(generateCallCount).toBe(2);
+  });
+
   // ── safe-null: embed throws → resolves null, never throws ────────────────
 
   it('safe-null: embed throws → respond() resolves to {reply:null,origin:none} without throwing', async () => {
