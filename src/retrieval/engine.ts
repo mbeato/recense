@@ -433,26 +433,29 @@ export class RetrievalEngine {
       }>;
       const tsMap = new Map<string, number>(tsRows.map(r => [r.node_id, r.latest_ts]));
 
-      // Stable sort: dated nodes by ts DESC; undated nodes maintain original cosine/RRF rank.
-      // When one entry is dated and the other is not, original index is used as tiebreaker
-      // so undated (orphan) nodes are never demoted purely on missing data.
-      const annotated = filtered
-        .map((c, origIdx) => ({ c, origIdx }))
-        .sort((a, b) => {
-          const tsA = tsMap.get(a.c.id);
-          const tsB = tsMap.get(b.c.id);
-          if (tsA !== undefined && tsB !== undefined) return tsB - tsA; // both dated: newer first
-          return a.origIdx - b.origIdx; // mixed/undated: preserve original rank
-        })
-        .map(({ c }) => {
-          const ts = tsMap.get(c.id);
-          if (ts !== undefined) {
-            // Prefix with ISO date of the newest supporting episode
-            const dateStr = new Date(ts).toISOString().slice(0, 10);
-            return { ...c, value: `[${dateStr}] ${c.value}` };
-          }
-          return c; // orphan: undated, value unchanged
-        });
+      // CR-01 fix: subsequence reorder — don't express "sort dated sub-sequence in place"
+      // as a mixed comparator (intransitive when an undated node lies between two dated nodes).
+      // Collect the original slot positions occupied by dated nodes (in original order),
+      // sort those slot references newest-first, write the dated nodes back into those same
+      // slots, and leave undated (orphan) nodes fixed at their original positions.
+      const datedSlots: number[] = filtered
+        .map((c, i) => (tsMap.has(c.id) ? i : -1))
+        .filter((i): i is number => i !== -1);
+      const datedSorted: number[] = datedSlots
+        .slice()
+        .sort((i, j) => tsMap.get(filtered[j]!.id)! - tsMap.get(filtered[i]!.id)!);
+      const reordered = filtered.slice();
+      datedSlots.forEach((slot, k) => { reordered[slot] = filtered[datedSorted[k]!]!; });
+      // Apply [YYYY-MM-DD] prefix to dated nodes; leave undated (orphan) values unchanged.
+      const annotated = reordered.map(c => {
+        const ts = tsMap.get(c.id);
+        if (ts !== undefined) {
+          // Prefix with ISO date of the newest supporting episode
+          const dateStr = new Date(ts).toISOString().slice(0, 10);
+          return { ...c, value: `[${dateStr}] ${c.value}` };
+        }
+        return c; // orphan: undated, value unchanged
+      });
 
       // ── Trace emission (D-97 guarded) ────────────────────────────────────────
       if (this.traceEnabled && annotated.length > 0) {
