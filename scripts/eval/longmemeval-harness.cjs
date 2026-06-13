@@ -107,6 +107,19 @@ const IS_HYBRID  = process.argv.includes('--hybrid');
 // Composable with --hybrid and --topk.
 const IS_TEMPORAL = process.argv.includes('--temporal');
 
+// --rewrite: LEVER 3 — rewrite the question to a declarative statement before embedding.
+// Same prompt contract as HybridResponder.respond() in the product path (one-primitive pattern):
+//   "Rewrite as a concise declarative statement. Preserve ALL names/numbers/proper nouns VERBATIM."
+// Uses ANSWER_MODEL (claude-haiku) — one extra Haiku call per question when set.
+// Falls back to the raw question on any error (never blocks a question).
+// CAUTION: adds ~$0.001 per question ($0.028 per question-pair for the 28-question sample).
+//   Run with the 28-regression sample (~$0.80 total) — well within the 17-05 budget.
+// Attribution gate: retrieve_miss=0 in the 18-question eval; rewrite attacks Q->S cosine
+//   asymmetry (0.688 vs 0.797 measured) which would cause misses at scale.
+// LAST lever to combine with --topk 30 (Pitfall 5: wider context can flip abstention questions).
+// Composable with --hybrid, --temporal, --topk.
+const IS_REWRITE = process.argv.includes('--rewrite');
+
 // --concurrency N (default 4, min 1). Each question has its own scratch DB and no
 // shared state, so in-process parallelism is safe. Probe token accumulation uses
 // plain += after each await — safe because Node.js is single-threaded.
@@ -456,8 +469,37 @@ async function runBoundedPool(items, concurrency, fn) {
           }
         );
 
-        // Step 3: embed the question
-        const [queryVec] = await embedder.embed([questionText]);
+        // LEVER 3 (--rewrite): rewrite the question to a declarative statement before embedding.
+        // Same prompt contract as HybridResponder.respond() — one-primitive-two-consumers (Pattern 2).
+        // Falls back to questionText on any error so a failed rewrite never blocks a question.
+        let questionForEmbed = questionText;
+        if (IS_REWRITE) {
+          try {
+            const rewriteResponse = await anthropicClient.messages.create({
+              model:      ANSWER_MODEL,
+              max_tokens: 128,
+              messages:   [{
+                role:    'user',
+                content: `Rewrite the following question as a concise declarative statement of fact. ` +
+                         `Preserve ALL names, numbers, and proper nouns VERBATIM. ` +
+                         `Return ONLY the statement — no preamble, no explanation.\n\n` +
+                         `Question: ${questionText}`,
+              }],
+            });
+            const rewritten = rewriteResponse.content
+              .filter(b => b.type === 'text')
+              .map(b => b.text)
+              .join('')
+              .trim();
+            if (rewritten) questionForEmbed = rewritten;
+          } catch {
+            // Fall back to raw question on error
+            questionForEmbed = questionText;
+          }
+        }
+
+        // Step 3: embed the question (or its declarative rewrite if --rewrite)
+        const [queryVec] = await embedder.embed([questionForEmbed]);
 
         // Step 4: retrieve top-K nodes over the consolidated graph.
         //
@@ -474,15 +516,18 @@ async function runBoundedPool(items, concurrency, fn) {
         // --temporal (LEVER 2): after retrieval, query MAX(episode.ts) per retrieved node from
         //   the scratch DB (same join as engine.ts stmtLatestSupportTs), sort entries
         //   newest-supported-first, and date-prefix each with [YYYY-MM-DD]. Orphans undated.
-        // --topk N: composable with both (budget lever, separate from retrieval strategy).
+        // --rewrite (LEVER 3): questionForEmbed is the rewritten query (or raw fallback); passed
+        //   to hybridTopk for the FTS component when --hybrid is also set.
+        // --topk N: composable with all levers (budget lever, separate from retrieval strategy).
         let retrievedValues;
         if (queryVec) {
           const evalRetriever    = new CandidateRetriever(scratch.db);
           const evalStore        = new SemanticStore(scratch.db, realClock, { ...DEFAULT_CONFIG, dbPath: scratch.dbPath });
           // LEVER 1: route through hybridTopk when --hybrid is set.
           // ftsQueryFromText sanitisation is handled inside hybridTopk (same as product path).
+          // When --rewrite is also set, pass questionForEmbed so FTS uses the declarative form.
           const topkResults = IS_HYBRID
-            ? evalRetriever.hybridTopk(queryVec, questionText, TOP_K)
+            ? evalRetriever.hybridTopk(queryVec, questionForEmbed, TOP_K)
             : evalRetriever.topk(queryVec, TOP_K);
           // Expose to instrumentation taps (tap 3: retrieved top-k with scores and values).
           instrumentEvalStore    = evalStore;
