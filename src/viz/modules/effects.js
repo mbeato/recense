@@ -94,10 +94,20 @@ export function initEffects(ctx) {
 
   // ── STL brain-hull load (CC BY-SA, Nevit Dilmen — attribution: #hull-credit) ─
   //
+  // VIZ-09 (D-06 fallback): render a Taubin-smoothed *display* derivative of the
+  // model rather than the raw scan. The raw 82k-tri mesh's high-frequency cortical
+  // folds present many near-glancing normals from front/top, whose Fresnel rims
+  // stack additively into a jagged silhouette. Smoothing lowers fold amplitude so
+  // the outline reads as a brain from every angle while keeping side-view character.
+  // The derivative ships under the SAME CC BY-SA license + #hull-credit attribution
+  // (brain-model.stl is retained as the upstream source; node containment uses the
+  // occupancy grid, not this mesh, so smoothing the shell does not move any node).
+  // Regenerate via scripts/smooth-display-hull.py (tune iterations for more/less fold).
+  //
   // Path is page-origin-relative (Three.js FileLoader uses fetch internally).
   // Normalization: if occupancy grid is available, use its centroid + normScale so
   // the hull aligns exactly with the containment volume; otherwise just center it.
-  new STLLoader().load('./vendor/brain-model.stl', (geometry) => {
+  new STLLoader().load('./vendor/brain-model-display.stl', (geometry) => {
     if (brainVol) {
       // Match the occupancy-grid normalization used by the seeding pass in graph.js:
       // translate to centroid then scale to the [-1, 1] cube used by brainOccupied().

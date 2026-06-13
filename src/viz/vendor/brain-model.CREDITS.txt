@@ -10,9 +10,16 @@ License:  Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
           https://creativecommons.org/licenses/by-sa/3.0/
           (also dual-licensed GFDL 1.2+ by the author)
 
-Modifications: none to the geometry. The mesh is rendered only as a translucent,
-non-interactive decorative shell enclosing the memory graph; it is not labeled or
-presented as an anatomical reference. Vendored locally (no CDN at runtime, D-93).
+Modifications: brain-model.stl (the original scan) is retained unmodified as the
+upstream source. A derivative, brain-model-display.stl, is generated from it by
+Taubin (lambda/mu) surface smoothing (scripts/smooth-display-hull.py) to lower
+high-frequency cortical-fold amplitude so the decorative shell reads cleanly from
+every viewing angle (VIZ-09); triangle count and gross shape are preserved. The
+viz renders the smoothed derivative. Per CC BY-SA 3.0 ShareAlike, this derivative
+is distributed under the SAME CC BY-SA 3.0 license, with the same Nevit Dilmen
+attribution. The mesh is rendered only as a translucent, non-interactive decorative
+shell enclosing the memory graph; it is not labeled or presented as an anatomical
+reference. Vendored locally (no CDN at runtime, D-93).
 
 A visible credit is shown in the viz UI to satisfy the attribution requirement.
 
