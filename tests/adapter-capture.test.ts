@@ -8,6 +8,13 @@
  *      Stop-shaped stdin payload.
  *  (c) stop-cli exits 0 within a generous timeout (2s) and does NOT wait for its
  *      detached child — i.e., the detached spawn + unref pattern is non-blocking.
+ *  (d) quick-260612-rt1 recall-skip guard paths: slash commands, short prompts,
+ *      and missing-embed-key environments all still capture the episode and emit
+ *      `{}` — recall is skipped before any provider use (ZERO real API calls).
+ *
+ * Determinism: every turn-capture spawn strips OPENAI_API_KEY and points
+ * BRAIN_MEMORY_SLEEP_ENV at a nonexistent path so CI machines with a real key
+ * still exercise the no-key guard (never a real embed).
  */
 import { spawnSync } from 'child_process';
 import { execSync } from 'child_process';
@@ -31,6 +38,46 @@ function rmIfExists(p: string): void {
   try { if (existsSync(p)) unlinkSync(p); } catch { /* ignore */ }
 }
 
+/**
+ * Spawn env for turn-capture tests: NO embed key (deleted even if the host has
+ * one) + sleep.env pointed at a nonexistent path so WR-04 hydration cannot
+ * re-supply it. Guarantees the no-key recall guard fires deterministically —
+ * zero real API calls from spawned CLIs.
+ */
+function noKeyEnv(dbPath: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    BRAIN_MEMORY_DB: dbPath,
+    BRAIN_MEMORY_SLEEP_ENV: '/nonexistent-sleep.env',
+  };
+  delete env['OPENAI_API_KEY'];
+  return env;
+}
+
+/** Run the compiled turn-capture CLI with a UserPromptSubmit payload, no embed key. */
+function runTurnCapture(dbPath: string, prompt: string, sessionId: string) {
+  return spawnSync(
+    process.execPath,
+    [join(DIST_DIR, 'turn-capture-cli.js')],
+    {
+      input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt, session_id: sessionId }),
+      encoding: 'utf8',
+      env: noKeyEnv(dbPath),
+      timeout: 5000,
+    },
+  );
+}
+
+/** Read all episode rows from a temp DB. */
+function readEpisodes(dbPath: string): Array<{ role: string; origin: string; session_id: string; content: string }> {
+  const db = new Database(dbPath);
+  const rows = db.prepare('SELECT * FROM episode ORDER BY ts ASC').all() as Array<{
+    role: string; origin: string; session_id: string; content: string;
+  }>;
+  db.close();
+  return rows;
+}
+
 describe('turn-capture-cli (UserPromptSubmit → role=user)', () => {
   let dbPath: string;
 
@@ -41,42 +88,61 @@ describe('turn-capture-cli (UserPromptSubmit → role=user)', () => {
   it('writes episode with role=user, origin=observed, correct session_id', () => {
     dbPath = makeTempDbPath('turn-capture');
 
-    const payload = JSON.stringify({
-      hook_event_name: 'UserPromptSubmit',
-      prompt: 'Hello, remember my name is Alice',
-      session_id: 'test-session-001',
-    });
-
-    const result = spawnSync(
-      process.execPath,
-      [join(DIST_DIR, 'turn-capture-cli.js')],
-      {
-        input: payload,
-        encoding: 'utf8',
-        env: { ...process.env, BRAIN_MEMORY_DB: dbPath },
-        timeout: 5000,
-      },
-    );
+    // Prompt is ≥12 chars and non-slash — without the no-key env it would attempt
+    // a real embed on a keyed machine. noKeyEnv makes the guard path deterministic;
+    // the observable ({} on stdout) is the same as before quick-260612-rt1.
+    const result = runTurnCapture(dbPath, 'Hello, remember my name is Alice', 'test-session-001');
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe('{}');
 
     // Verify the episode was written to the DB
-    const db = new Database(dbPath);
-    const rows = db.prepare('SELECT * FROM episode ORDER BY ts ASC').all() as Array<{
-      role: string;
-      origin: string;
-      session_id: string;
-      content: string;
-    }>;
-
+    const rows = readEpisodes(dbPath);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.role).toBe('user');
     expect(rows[0]!.origin).toBe('observed');
     expect(rows[0]!.session_id).toBe('test-session-001');
     expect(rows[0]!.content).toContain('Alice');
+  });
 
-    db.close();
+  it('no embed key: capture still writes the episode and stdout is {}', () => {
+    dbPath = makeTempDbPath('turn-capture-nokey');
+
+    const result = runTurnCapture(dbPath, 'a prompt definitely long enough to recall', 'test-session-nokey');
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('{}');
+
+    const rows = readEpisodes(dbPath);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.role).toBe('user');
+    expect(rows[0]!.content).toContain('long enough to recall');
+  });
+
+  it('slash command: recall skipped, episode still captured, stdout {}', () => {
+    dbPath = makeTempDbPath('turn-capture-slash');
+
+    const result = runTurnCapture(dbPath, '/compact some long arguments here', 'test-session-slash');
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('{}');
+
+    const rows = readEpisodes(dbPath);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.content).toContain('/compact');
+  });
+
+  it('short prompt (<12 chars): recall skipped, episode still captured, stdout {}', () => {
+    dbPath = makeTempDbPath('turn-capture-short');
+
+    const result = runTurnCapture(dbPath, 'hi there', 'test-session-short');
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('{}');
+
+    const rows = readEpisodes(dbPath);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.content).toBe('hi there');
   });
 
   it('exits 0 with empty prompt (no episode written, but no error)', () => {
