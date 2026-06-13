@@ -43,7 +43,12 @@ export function initStats(ctx) {
   ctx.registerTick = fn => { callbacks.push(fn); };
 
   // ── Idle state ────────────────────────────────────────────────────────────
-  let lastActiveTime = COMPACT_VIEW ? performance.now() - IDLE_TIMEOUT_MS - 1 : performance.now();
+  // Start "already idle" in BOTH viewports so the brain begins its ambient
+  // drift the moment it appears — the popover did this; the full app window now
+  // matches it instead of waiting out the 8s timeout on first open (founder
+  // 2026-06-13). The per-viewport IDLE_TIMEOUT_MS still governs how long after
+  // a real interaction the drift pauses (compact 1.2s, full 8s).
+  let lastActiveTime = performance.now() - IDLE_TIMEOUT_MS - 1;
   let animUntil = 0; // full-rate deadline for non-interactive animation (traces)
 
   ctx.markActive = () => {
