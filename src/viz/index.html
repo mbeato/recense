@@ -36,6 +36,16 @@
     <button id="btn-log" class="btn-sm">Log</button>
   </div>
   <div id="detail-loading">Initializing graph…</div>
+  <!-- Search affordance — full-window only (D-03 / VIZ-07); CSS gates via .mode-window -->
+  <div id="search-wrap">
+    <div style="position:relative">
+      <input id="search-input" type="search" autocomplete="off"
+             placeholder="search nodes…" aria-label="Search nodes" />
+      <button id="search-clear" type="button" aria-label="Clear search"
+              style="display:none">×</button>
+    </div>
+    <div id="search-count" aria-live="polite"></div>
+  </div>
   <!-- Event log: hidden by default, demoted to toggle (D-14) -->
   <div id="log"></div>
 </div>
