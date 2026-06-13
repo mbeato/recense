@@ -87,6 +87,13 @@ const IS_DRY_RUN     = process.argv.includes('--dry-run');
 const IS_PROBE       = process.argv.includes('--probe');
 const RETRY_ERRORS   = process.argv.includes('--retry-errors');
 
+// --instrument: before scratch.cleanup(), query 4 attribution taps from the scratch DB
+//   and append one JSON record per question to INSTRUMENT_OUT.
+// --keep-dbs: skip the fs.unlink() inside scratch.cleanup() so DBs survive for manual inspection.
+// --instrument-out <path>: override the default sidecar file path (default: attribution-18.jsonl).
+const IS_INSTRUMENT  = process.argv.includes('--instrument');
+const KEEP_DBS       = process.argv.includes('--keep-dbs');
+
 // --concurrency N (default 4, min 1). Each question has its own scratch DB and no
 // shared state, so in-process parallelism is safe. Probe token accumulation uses
 // plain += after each await — safe because Node.js is single-threaded.
@@ -105,8 +112,9 @@ const EVAL_DEFAULT = IS_DRY_RUN
   ? 'scripts/eval/fixtures/longmemeval-mini.jsonl'
   : 'scripts/eval/longmemeval-s.jsonl';
 
-const EVAL_FILE = arg('--eval', EVAL_DEFAULT);
-const OUT_FILE  = arg('--out', 'scripts/eval/results/longmemeval-hypotheses-PENDING.jsonl');
+const EVAL_FILE      = arg('--eval', EVAL_DEFAULT);
+const OUT_FILE       = arg('--out', 'scripts/eval/results/longmemeval-hypotheses-PENDING.jsonl');
+const INSTRUMENT_OUT = arg('--instrument-out', 'scripts/eval/results/attribution-18.jsonl');
 
 const PROBE_LIMIT = 10;
 
@@ -140,7 +148,11 @@ function makeScratchDb() {
     episodes,
     cleanup() {
       try { db.close(); } catch {}
-      try { fs.unlinkSync(dbPath); } catch {}
+      // --keep-dbs: skip unlink so scratch DBs survive for manual attribution inspection.
+      // The db.close() above still runs to release file descriptors.
+      if (!KEEP_DBS) {
+        try { fs.unlinkSync(dbPath); } catch {}
+      }
     },
   };
 }
@@ -365,6 +377,12 @@ async function runBoundedPool(items, concurrency, fn) {
     const scratch = makeScratchDb();
     let result;
 
+    // Hoisted for instrumentation access across branches (taps 3+4).
+    // Set only in real mode; null in dry-run or cueless-fallback paths.
+    let instrumentEvalStore  = null;  // SemanticStore over scratch.db (tap 3)
+    let instrumentTopkResults = null; // raw topk hits [{id, score}]   (tap 3)
+    let instrumentHypothesis  = null; // final answer text              (tap 4)
+
     try {
       if (IS_DRY_RUN) {
         // Dry-run: append episodes for schema validation, skip all LLM steps
@@ -383,6 +401,7 @@ async function runBoundedPool(items, concurrency, fn) {
             ...(tsMs != null ? { ts: tsMs } : {}),
           });
         }
+        instrumentHypothesis = DRY_RUN_STUB_ANSWER;
         result = { question_id: questionId, question_type: questionType, hypothesis: DRY_RUN_STUB_ANSWER };
       } else {
         // Real mode: full pipeline
@@ -441,9 +460,12 @@ async function runBoundedPool(items, concurrency, fn) {
         // gate that serves a different product feature (hook injection).
         let retrievedValues;
         if (queryVec) {
-          const evalRetriever = new CandidateRetriever(scratch.db);
-          const evalStore     = new SemanticStore(scratch.db, realClock, { ...DEFAULT_CONFIG, dbPath: scratch.dbPath });
-          const topkResults   = evalRetriever.topk(queryVec, TOP_K);
+          const evalRetriever    = new CandidateRetriever(scratch.db);
+          const evalStore        = new SemanticStore(scratch.db, realClock, { ...DEFAULT_CONFIG, dbPath: scratch.dbPath });
+          const topkResults      = evalRetriever.topk(queryVec, TOP_K);
+          // Expose to instrumentation taps (tap 3: retrieved top-k with scores and values).
+          instrumentEvalStore    = evalStore;
+          instrumentTopkResults  = topkResults;
           // CandidateRetriever.topk already excludes tombstoned nodes (SQL: tombstoned = 0).
           // getNode() resolves each id to its value; skip any id that resolves to null (race guard).
           retrievedValues = topkResults
@@ -485,6 +507,7 @@ async function runBoundedPool(items, concurrency, fn) {
           .map(b => b.text)
           .join('')
           .trim();
+        instrumentHypothesis = hypothesis;  // expose to instrumentation tap 4
 
         // Accumulate probe tokens (race-safe: += after await, Node single-threaded)
         if (IS_PROBE && answerResponse.usage) {
@@ -504,6 +527,54 @@ async function runBoundedPool(items, concurrency, fn) {
             ? { error: `${quarantineCount} episode(s) quarantined during consolidation — memory incomplete` }
             : {}),
         };
+      }
+
+      // ── Attribution instrumentation dump ────────────────────────────────────
+      // Runs BEFORE scratch.cleanup() (via finally) so the scratch DB is still open.
+      // Dry-run path: writes a minimal record with empty tap arrays (proves flags parse).
+      // Real path: queries all 4 attribution taps from the scratch DB.
+      // Wrapped in try/catch so a tap failure never corrupts the scored result.
+      // Security (T-17-01-I): dumps only claims/nodes/scores/answers/gold — never env vars
+      // or provider config keys (T-05-KEY discipline).
+      if (IS_INSTRUMENT) {
+        try {
+          // Tap 1: extracted claims — consolidation_event rows (event_type, value, episode_id).
+          // In dry-run mode the scratch DB has no consolidation_event rows; array will be empty.
+          const claimRows = IS_DRY_RUN ? [] : scratch.db.prepare(
+            'SELECT event_type, value, episode_id FROM consolidation_event ORDER BY ts'
+          ).all();
+
+          // Tap 2: final graph nodes — all node rows (live and tombstoned) for attribution analysis.
+          // In dry-run mode the node table is empty.
+          const nodeRows = IS_DRY_RUN ? [] : scratch.db.prepare(
+            'SELECT id, type, value, tombstoned, prev_value, s, c FROM node'
+          ).all();
+
+          // Tap 3: retrieved top-k with scores and resolved values.
+          // instrumentEvalStore / instrumentTopkResults are null in dry-run or cueless-fallback.
+          const retrievedWithScores = (instrumentTopkResults || []).map(r => ({
+            id: r.id,
+            score: r.score,
+            value: instrumentEvalStore ? (instrumentEvalStore.getNode(r.id)?.value ?? null) : null,
+          }));
+
+          // Tap 4: the final answer (hypothesis).
+          const attributionRecord = {
+            question_id:   questionId,
+            question_type: questionType,
+            claims:        claimRows,
+            nodes:         nodeRows,
+            retrieved:     retrievedWithScores,
+            hypothesis:    instrumentHypothesis,
+            gold_answer:   q.answer,
+          };
+
+          fs.mkdirSync(path.dirname(path.resolve(INSTRUMENT_OUT)), { recursive: true });
+          fs.appendFileSync(INSTRUMENT_OUT, JSON.stringify(attributionRecord) + '\n');
+        } catch (instErr) {
+          // Non-fatal: log warning but do not disrupt the scored result.
+          process.stderr.write(`[instrument-warn] ${questionId}: ${String(instErr.message || instErr).slice(0, 200)}\n`);
+        }
       }
     } catch (e) {
       // Per-question failure: record error, continue batch (T-14-DSV)

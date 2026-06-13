@@ -492,6 +492,61 @@ describe('eval-harness-smoke', () => {
     expect(values[0]).toBe('eval-fact-0');
   });
 
+  // ── Test 9: --dry-run --instrument smoke — flags parse, code path reachable ─
+  //
+  // Verifies that the --instrument flag is accepted by the harness and that the
+  // instrumentation code path is reachable without any network calls (dry-run mode).
+  //
+  // Checks:
+  //  - Harness exits 0 with --dry-run --instrument
+  //  - The instrument-out file is written with one JSON record per question
+  //  - Each record has the required keys: question_id, claims, nodes, retrieved, hypothesis, gold_answer
+  //  - The hypothesis field is the dry-run stub value (not an LLM response)
+
+  it('harness --dry-run --instrument writes one attribution record per question with required keys', () => {
+    const INST_OUT = path.join(os.tmpdir(), `harness-instrument-test-${Date.now()}-${process.pid}.jsonl`);
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.resolve(__dirname, '../scripts/eval/longmemeval-harness.cjs'),
+          '--dry-run',
+          '--instrument',
+          '--instrument-out', INST_OUT,
+          '--eval', FIXTURE_PATH,
+        ],
+        { encoding: 'utf8', cwd: path.resolve(__dirname, '..'), timeout: 30_000 },
+      );
+
+      expect(result.status).toBe(0);
+
+      // Instrument file must exist and have one record per question in the fixture
+      expect(fs.existsSync(INST_OUT)).toBe(true);
+      const instLines = fs.readFileSync(INST_OUT, 'utf8').split('\n').filter(l => l.trim());
+      expect(instLines.length).toBeGreaterThanOrEqual(1);
+
+      // Each record must have the required attribution keys
+      for (const line of instLines) {
+        const rec = JSON.parse(line) as Record<string, unknown>;
+        expect(rec).toHaveProperty('question_id');
+        expect(rec).toHaveProperty('claims');
+        expect(rec).toHaveProperty('nodes');
+        expect(rec).toHaveProperty('retrieved');
+        expect(rec).toHaveProperty('hypothesis');
+        expect(rec).toHaveProperty('gold_answer');
+        // In dry-run mode, the hypothesis is the stub value (flags are parsed correctly)
+        expect(rec.hypothesis).toBe('dry-run-stub-answer');
+        // Taps are arrays (empty in dry-run, but present)
+        expect(Array.isArray(rec.claims)).toBe(true);
+        expect(Array.isArray(rec.nodes)).toBe(true);
+        expect(Array.isArray(rec.retrieved)).toBe(true);
+      }
+    } finally {
+      try { fs.unlinkSync(INST_OUT); } catch {}
+    }
+  });
+
   // ── Test 6: Resume + --retry-errors — error lines are re-attempted ────────
   //
   // Pre-seeds OUT_FILE with one successful line and one error line.
