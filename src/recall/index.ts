@@ -179,6 +179,44 @@ export class RecallEngine {
       nodeCount++;
     }
 
+    // ── (D-05 / SREL-03): Single sideways schema_rel hop — READ-ONLY ─────────
+    // Follow top-N schema_rel edges (by weight) from the resolved schema to
+    // related schemas, fold their 'abstracts' members into the same neighborhood.
+    // Depth is capped at ONE sideways hop — do NOT recurse into the related
+    // schemas' own schema_rel edges (bounds fan-out and latency, D-05).
+    // Bounded by: recallSidewaysHopBudget (fan-out cap) + recallNeighborhoodBudget (total).
+    // De-duplicates against members already assembled above.
+    // INVARIANT: no upsertNode/upsertEdge/tombstone/strengthen here (D-43, T-04-03-SC).
+    const relatedSchemaEdges = edges
+      .filter(e => e.kind === 'schema_rel')
+      .sort((a, b) => b.w - a.w)
+      .slice(0, this.config.recallSidewaysHopBudget);
+
+    if (relatedSchemaEdges.length > 0) {
+      // Build dedup set from members already assembled (and the schema node itself).
+      const seen = new Set<string>(neighborhood.map(n => n.id));
+      seen.add(schemaNode.id);
+
+      for (const relEdge of relatedSchemaEdges) {
+        if (nodeCount >= this.config.recallNeighborhoodBudget) break;
+        const relatedSchema = this.store.getNode(relEdge.dst);
+        if (!relatedSchema || relatedSchema.tombstoned === 1) continue;
+
+        // Walk this related schema's 'abstracts' members only — no schema_rel recursion.
+        const memberEdges = this.store.getOutEdges(relatedSchema.id)
+          .filter(e => e.kind === 'abstracts');
+        for (const memberEdge of memberEdges) {
+          if (nodeCount >= this.config.recallNeighborhoodBudget) break;
+          if (seen.has(memberEdge.dst)) continue;
+          const member = this.store.getNode(memberEdge.dst);
+          if (!member || member.tombstoned === 1) continue;
+          seen.add(memberEdge.dst);
+          neighborhood.push({ id: member.id, value: member.value });
+          nodeCount++;
+        }
+      }
+    }
+
     // ── Trace emission (D-97 guarded): zero work on the Noop path ────────────
     // seeds = [bestMatch.id]; hops = neighborhood members in rank order.
     // T-10-05: wrapped in try/catch fire-and-forget so a sink error never corrupts recall.
