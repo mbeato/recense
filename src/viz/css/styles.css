@@ -131,8 +131,8 @@ button:hover {
    amber is activation-only, so this never reuses the base `button:hover` amber. */
 #btn-recenter {
   position: fixed;
-  top: 6px;
-  right: 40px;            /* left of the shell-injected expand btn (right:8px, 26px wide, +6 gap) */
+  bottom: 10px;
+  right: 12px;            /* camera-control convention: bottom-right (seed of a future zoom/fit cluster) */
   width: 26px;
   height: 26px;
   padding: 0;
@@ -208,7 +208,7 @@ button:hover {
 /* ── Node type legend — discrete fixed pill, bottom-left ─────────────────── */
 .legend {
   position: fixed;
-  bottom: 10px;
+  bottom: 26px;          /* stacked above the bottom-left attribution */
   left: 12px;
   z-index: 10;
   font-size: 10px;
@@ -236,7 +236,7 @@ button:hover {
 #hull-credit {
   position: fixed;
   bottom: 8px;
-  right: 12px;
+  left: 12px;            /* moved bottom-left (founder, 2026-06-13) — frees bottom-right for recenter */
   z-index: 10;
   font-size: 10px;
   color: #2a2f37;
@@ -413,7 +413,8 @@ button:hover {
   #hull-credit {
     font-size: 8px;
     bottom: 4px;
-    right: 6px;
+    left: 6px;
+    right: auto;
     opacity: 0.55;
   }
 }
