@@ -21,6 +21,20 @@ import { MAX_FAN_OUT, PULSE_MS } from './constants.js';
 // Focus-dim opacity for nodes outside the selected neighborhood
 const FOCUS_DIM_OPACITY = 0.05;
 
+/**
+ * Shell-compact context (quick-260612-sdk): the tray popover loads the page
+ * with ?shell=1 AND is ≤500px in its smaller dimension. There, the in-page
+ * overlay would cover and clip the tiny window — node clicks route to the
+ * adjacent detail BrowserWindow via sentinel navigation instead (the shell
+ * intercepts /__recense/detail by exact pathname and prevents the nav).
+ * Evaluated at click time; same size heuristic as stats.js COMPACT_VIEW,
+ * deliberately defined locally (do NOT import stats.js).
+ */
+function shellCompact() {
+  return new URLSearchParams(location.search).has('shell')
+    && Math.min(window.innerWidth, window.innerHeight) <= 500;
+}
+
 export function initDetail(ctx) {
   // ── DOM refs ───────────────────────────────────────────────────────────────
   const detailEl   = document.getElementById('detail');
@@ -307,20 +321,30 @@ export function initDetail(ctx) {
       node.__mesh.add(selectionRing);
     }
 
-    // 3. Populate detail content (XSS-safe)
-    populateDetail(node);
+    // 3+4. Detail surface — shell-compact routes to the adjacent window via
+    // sentinel navigation (intercepted, never actually navigates); otherwise
+    // the in-page overlay populates and slides in exactly as before.
+    const compact = shellCompact();
+    if (compact) {
+      location.href = '/__recense/detail?id=' + encodeURIComponent(node.id);
+    } else {
+      // 3. Populate detail content (XSS-safe)
+      populateDetail(node);
 
-    // 4. Show panel with slide-in (D-15)
-    showPanel();
+      // 4. Show panel with slide-in (D-15)
+      showPanel();
+    }
 
     // 5. Gently focus camera on the selected node (D-15)
     focusCamera(node);
 
     // 6. Interaction impact: shockwave + micro-recall ripple + focus dim.
     // The shockwave fires unconditionally so orphan facts still land a hit.
+    // Focus dim is skipped in shell-compact: closeDetail is never invoked in
+    // the popover, so the dim would stick with no dismiss path.
     shockwave(node);
     ripple(node);
-    applyFocusDim(node);
+    if (!compact) applyFocusDim(node);
 
     // 7. Reset idle timer so the camera focus is not overridden immediately
     if (typeof ctx.markActive === 'function') ctx.markActive();
