@@ -1,15 +1,16 @@
 /**
- * Behavioral tests for SchemaRelationDeriver (offline schema-relation derivation, SREL-01).
+ * Behavioral tests for SchemaRelationDeriver (offline schema-relation derivation, SREL-01/02).
  *
  * Harness mirrors tests/schema-induction.test.ts: in-memory Database, initSchema,
  * FakeClock, DEFAULT_CONFIG, MockEmbedder, no network.
  *
  * Coverage:
  *   SREL-01  — two schemas with similar centroids → schema_rel edge with cosine as weight
- *   D-04     — deriveSchemaRelations() twice produces identical schema_rel edge set (idempotency)
- *   D-37     — inferred-origin nodes NEVER contribute signal to schema_rel derivation
- *   D-37     — zero schema_rel edges derive from inferred-origin members
+ *   SREL-02  — cluster of ≥2 similar schemas → super-schema node + abstracts child edges (D-03)
  *   D-01     — schemas below threshold produce no schema_rel edge
+ *   D-03     — super-schema-as-schema exclusion: super-schemas never re-clustered as leaf members
+ *   D-04     — deriveSchemaRelations() twice produces identical schema_rel edge set + super-schema set
+ *   D-37     — inferred-origin nodes NEVER contribute signal to schema_rel derivation
  */
 
 import Database from 'better-sqlite3';
@@ -19,9 +20,13 @@ import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
 import { SemanticStore } from '../src/db/semantic-store';
+import { StrengthDecayManager } from '../src/strength/decay';
+import { CandidateRetriever } from '../src/retrieval/topk';
 import { MockEmbedder } from '../src/model/embedder';
-import type { EdgeRow } from '../src/lib/types';
+import { MockModelProvider } from '../src/model/provider';
+import type { EdgeRow, NodeRow } from '../src/lib/types';
 import { SchemaRelationDeriver } from '../src/consolidation/schema-relations';
+import { SchemaInducer } from '../src/consolidation/schema-induction';
 import { newId } from '../src/lib/hash';
 
 // ---------------------------------------------------------------------------
@@ -54,6 +59,8 @@ interface Harness {
   db: Database.Database;
   clock: FakeClock;
   store: SemanticStore;
+  strength: StrengthDecayManager;
+  retriever: CandidateRetriever;
   config: EngineConfig;
 }
 
@@ -64,12 +71,14 @@ function makeHarness(configOverrides?: Partial<EngineConfig>): Harness {
   const config: EngineConfig = {
     ...DEFAULT_CONFIG,
     dbPath: ':memory:',
-    // Low threshold so test schemas relate
+    // Low threshold so test schemas relate (D-01 tests override this)
     schemaRelSimilarityThreshold: 0.5,
     ...configOverrides,
   };
   const store = new SemanticStore(db, clock, config);
-  return { db, clock, store, config };
+  const strength = new StrengthDecayManager(db, clock, config);
+  const retriever = new CandidateRetriever(db);
+  return { db, clock, store, strength, retriever, config };
 }
 
 /**
@@ -307,5 +316,159 @@ describe('SchemaRelationDeriver', () => {
       .prepare("SELECT * FROM edge WHERE kind = 'schema_rel' AND (src = ? OR dst = ?)")
       .all(schemaB, schemaB) as EdgeRow[];
     expect(schemaBEdges).toHaveLength(0);
+  });
+
+  // ── SREL-02 / D-03: super-schema materialization ─────────────────────────
+
+  it('SREL-02 / D-03: two similar schemas cluster into one super-schema node with abstracts edges; lone dissimilar schema produces none', async () => {
+    const dims = h.config.embeddingDimensions;
+    const dims0Embedder = makeSameClusterEmbedder(dims); // all embed at dim 0
+    const dims1Embedder = new MockEmbedder((_t: string) => {
+      const v = new Float32Array(dims); v[1] = 1.0; return v; // orthogonal to dim 0
+    });
+
+    // Schemas A and B: members all at dim 0 → centroids identical → will cluster (cosine 1.0)
+    const memberAIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberAIds.push(await seedNodeWithEmbedding(h, dims0Embedder, { value: `super-a-${i}` }));
+    }
+    const memberBIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberBIds.push(await seedNodeWithEmbedding(h, dims0Embedder, { value: `super-b-${i}` }));
+    }
+    const schemaA = createSchema(h, memberAIds);
+    const schemaB = createSchema(h, memberBIds);
+
+    // Schema C: members at dim 1 → orthogonal centroid → will NOT cluster with A/B
+    const memberCIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberCIds.push(await seedNodeWithEmbedding(h, dims1Embedder, { value: `super-c-${i}` }));
+    }
+    createSchema(h, memberCIds);
+
+    const deriver = new SchemaRelationDeriver(h.db, h.store, h.config, h.clock);
+    await deriver.deriveSchemaRelations();
+
+    // Exactly one super-schema should form (from A + B cluster)
+    const superSchemaNodes = h.db
+      .prepare("SELECT * FROM node WHERE id LIKE 'super::%' AND type = 'schema' AND origin = 'inferred'")
+      .all() as NodeRow[];
+    expect(superSchemaNodes).toHaveLength(1);
+
+    const superId = superSchemaNodes[0]!.id;
+
+    // Super-schema must have exactly 2 abstracts edges (to schemaA and schemaB)
+    const childEdges = h.db
+      .prepare("SELECT * FROM edge WHERE src = ? AND kind = 'abstracts'")
+      .all(superId) as EdgeRow[];
+    expect(childEdges).toHaveLength(2);
+    const childIds = new Set(childEdges.map(e => e.dst));
+    expect(childIds.has(schemaA)).toBe(true);
+    expect(childIds.has(schemaB)).toBe(true);
+  });
+
+  // ── D-04 extended idempotency: schema_rel edges AND super-schema set ──────
+
+  it('D-04 extended: two runs produce identical schema_rel edge set AND identical super-schema node/edge set', async () => {
+    const embedder = makeSameClusterEmbedder(h.config.embeddingDimensions);
+
+    const memberAIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberAIds.push(await seedNodeWithEmbedding(h, embedder, { value: `idem2-a-${i}` }));
+    }
+    const memberBIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberBIds.push(await seedNodeWithEmbedding(h, embedder, { value: `idem2-b-${i}` }));
+    }
+    createSchema(h, memberAIds);
+    createSchema(h, memberBIds);
+
+    const deriver = new SchemaRelationDeriver(h.db, h.store, h.config, h.clock);
+
+    // First run
+    await deriver.deriveSchemaRelations();
+    const relEdges1 = getSchemaRelEdges(h).map(e => `${e.src}|${e.dst}|${e.w}`).sort();
+    const superNodes1 = (h.db
+      .prepare("SELECT id, value FROM node WHERE id LIKE 'super::%'")
+      .all() as Array<{ id: string; value: string }>)
+      .map(n => `${n.id}|${n.value}`).sort();
+    const superEdges1 = (h.db
+      .prepare("SELECT src, dst, kind FROM edge WHERE src LIKE 'super::%' AND kind = 'abstracts'")
+      .all() as Array<{ src: string; dst: string; kind: string }>)
+      .map(e => `${e.src}|${e.dst}`).sort();
+
+    // Second run (D-04 wipe + rebuild)
+    await deriver.deriveSchemaRelations();
+    const relEdges2 = getSchemaRelEdges(h).map(e => `${e.src}|${e.dst}|${e.w}`).sort();
+    const superNodes2 = (h.db
+      .prepare("SELECT id, value FROM node WHERE id LIKE 'super::%'")
+      .all() as Array<{ id: string; value: string }>)
+      .map(n => `${n.id}|${n.value}`).sort();
+    const superEdges2 = (h.db
+      .prepare("SELECT src, dst, kind FROM edge WHERE src LIKE 'super::%' AND kind = 'abstracts'")
+      .all() as Array<{ src: string; dst: string; kind: string }>)
+      .map(e => `${e.src}|${e.dst}`).sort();
+
+    expect(relEdges2).toEqual(relEdges1);
+    expect(superNodes2).toEqual(superNodes1);
+    expect(superEdges2).toEqual(superEdges1);
+    // Sanity: something actually formed
+    expect(superNodes1.length).toBe(1);
+  });
+
+  // ── D-03 critical guard: super-schemas excluded from leaf re-clustering ───
+
+  it('D-03 exclusion guard: after deriver runs, re-running induceSchemas() never adds super-schema as a leaf member', async () => {
+    const embedder = makeSameClusterEmbedder(h.config.embeddingDimensions);
+
+    // Seed 3 facts for schema A and 3 for schema B — identical direction → cluster
+    const memberAIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberAIds.push(await seedNodeWithEmbedding(h, embedder, { value: `excl-a-${i}` }));
+    }
+    const memberBIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberBIds.push(await seedNodeWithEmbedding(h, embedder, { value: `excl-b-${i}` }));
+    }
+    createSchema(h, memberAIds);
+    createSchema(h, memberBIds);
+
+    // Step 1: run deriver → super-schema materialises
+    const deriver = new SchemaRelationDeriver(h.db, h.store, h.config, h.clock);
+    await deriver.deriveSchemaRelations();
+
+    const superNodes = h.db
+      .prepare("SELECT id FROM node WHERE id LIKE 'super::%'")
+      .all() as Array<{ id: string }>;
+    expect(superNodes.length).toBeGreaterThanOrEqual(1); // sanity: at least one super-schema formed
+
+    // Step 2: run induceSchemas() on the same DB (represents the next sleep pass)
+    const inducer = new SchemaInducer(
+      h.db, h.store, h.strength, h.retriever, new MockModelProvider(), h.config, h.clock,
+      async (_values: string[]) => 'excl-schema',
+    );
+    await inducer.induceSchemas();
+
+    // D-03 CRITICAL GUARD: no abstracts edge has a super-schema node as its dst
+    // (i.e., induceSchemas() never adds a super-schema as a clusterable leaf member)
+    const dangling = h.db
+      .prepare(
+        `SELECT * FROM edge WHERE kind = 'abstracts' AND dst LIKE 'super::%'`
+      )
+      .all() as EdgeRow[];
+    // The only abstracts edges with 'super::' prefix on their src side should be
+    // the deriver's own super-schema → child-schema edges. There must be ZERO
+    // where dst LIKE 'super::%' (no leaf schema abstracts a super-schema node).
+    expect(dangling).toHaveLength(0);
+
+    // Additional check: super-schema nodes are NOT in the clusterable set
+    // (i.e., no embedding was set on them by induceSchemas via reembed path)
+    // The type='schema' filter structurally excludes them — verify origin stays 'inferred'
+    for (const { id } of superNodes) {
+      const node = h.store.getNode(id);
+      expect(node).not.toBeNull();
+      expect(node!.type).toBe('schema');
+      expect(node!.origin).toBe('inferred');
+    }
   });
 });
