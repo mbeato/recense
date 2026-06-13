@@ -383,6 +383,31 @@ export interface EngineConfig {
    */
   snapshotMatchThreshold: number;
 
+  // --- Phase 18: schema-relations-engine tunables (SREL-01/02/03) ---
+
+  /**
+   * Min member-centroid cosine for a schema_rel edge to form (SREL-01, D-01).
+   * High default → few, high-confidence edges only. Calibration placeholder (D-13):
+   * start conservative and loosen against observed graph density on real ~1.5k-node brain.db.
+   */
+  schemaRelSimilarityThreshold: number;
+
+  /**
+   * Agglomerative-merge distance cut in (1 − cosine) space (SREL-02, D-03).
+   * Schema pairs whose centroid cosine ≳ 0.65 (1−0.35 = 0.65) merge into a super-schema.
+   * Calibration placeholder (D-13): tune against real brain.db — lower = more aggressive merge.
+   * Consumed by plan 18-02 (SREL-02); present here so 18-01/18-02 stay parallel.
+   */
+  schemaClusterCutHeight: number;
+
+  /**
+   * Max related-schema fan-out for the single sideways recall hop (SREL-03, D-05).
+   * Caps the number of top-N schema_rel neighbours followed per query to bound latency.
+   * Calibration placeholder (D-13): default 3 — start conservative; raise if retrieval proves
+   * too shallow. Consumed by plan 18-03 (SREL-03); present here so waves stay parallel.
+   */
+  recallSidewaysHopBudget: number;
+
   // --- Phase 6: multi-channel ingestion tunables (D-60/D-65/D-68/D-69) ---
 
   /**
@@ -543,6 +568,11 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   echoSimilarityThreshold: 0.85,
   echoRecencyWindowMs: 86_400_000,
   snapshotMatchThreshold: 0.85, // default; recalibrate via scripts/eval/calibrate-snapshot-threshold.cjs (2026-06-09) once eval_snapshot rows exist — must stay above deletedSimilarityThreshold (0.7)
+
+  // Phase 18: schema-relations-engine (SREL-01/02/03) — calibration placeholders (D-13)
+  schemaRelSimilarityThreshold: 0.8,  // start conservative; tune against real brain.db (D-01)
+  schemaClusterCutHeight: 0.35,       // 1−0.35 = 0.65 cosine floor for super-schema merge (D-03); plan 18-02 consumer
+  recallSidewaysHopBudget: 3,         // max related-schema fan-out per sideways hop (D-05); plan 18-03 consumer
 
   // Phase 6: multi-channel ingestion (D-60/D-65/D-68/D-69)
   gmail: {
