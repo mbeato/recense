@@ -311,6 +311,19 @@ export interface EngineConfig {
    */
   rankedRetrievalFloor: number;
 
+  /**
+   * LEVER 2 (Phase 17): date-annotate retrieveRanked answer-prompt entries using MAX(episode.ts)
+   * per node via the consolidation_event → episode join.
+   *
+   * When true: candidate values are prefixed with `[YYYY-MM-DD]` and sorted newest-supported-first.
+   * Orphan nodes (no consolidation_event rows) are treated as undated and never demoted below
+   * dated nodes purely on missing data.
+   *
+   * Default: false — product behaviour is unchanged until measured in 17-05.
+   * Enable via env or config once the 17-05 paid measurement confirms improvement.
+   */
+  temporalAnnotation: boolean;
+
   // --- Phase 4: learning layer tunables (D-35/36/42/45) ---
 
   /**
@@ -522,6 +535,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   deletedSimilarityThreshold: 0.7,
   rankedRetrievalK: 10,     // breadth for product Q&A path; matches memory_search SEARCH_TOP_K
   rankedRetrievalFloor: 0.3, // min cosine for ranked path; matches SEARCH_SCORE_FLOOR (noise < 0.3)
+  temporalAnnotation: false, // LEVER 2: date-annotate answer-prompt entries; default OFF until 17-05 measured
   schemaMinSupport: 3,
   schemaCohesionThreshold: 0.7,
   schemaJoinCentroidThreshold: 0.75,
