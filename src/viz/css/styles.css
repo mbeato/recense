@@ -131,27 +131,27 @@ button:hover {
    amber is activation-only, so this never reuses the base `button:hover` amber. */
 #btn-recenter {
   position: fixed;
-  bottom: 36px;
-  left: 12px;
-  width: 30px;
-  height: 30px;
+  top: 6px;
+  right: 40px;            /* left of the shell-injected expand btn (right:8px, 26px wide, +6 gap) */
+  width: 26px;
+  height: 26px;
   padding: 0;
   margin: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10;
+  z-index: 70;            /* match the expand affordance layer */
   border-radius: 7px;
-  background: rgba(170, 150, 180, 0.07);
-  border: 1px solid rgba(170, 150, 180, 0.18);
-  color: #a99db3;
+  background: rgba(26, 18, 32, 0.7);
+  border: none;
+  color: #d9cbc0;
+  opacity: 0.65;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  -webkit-app-region: no-drag;  /* clickable inside the draggable popover */
+  transition: opacity 0.15s ease;
 }
 #btn-recenter:hover {
-  background: rgba(170, 150, 180, 0.16);
-  border-color: rgba(170, 150, 180, 0.4);
-  color: #c8cfd8;
+  opacity: 1;
 }
 
 .row {
