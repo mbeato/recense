@@ -492,3 +492,47 @@ button:hover {
 #search-count {
   margin-top: 4px; font-size: 11px; color: #565e68; line-height: 1.4;
 }
+
+/* ── Incremental candidate list + topic browser (VIZ-07/08 exploration) ──── */
+#search-results { margin-top: 4px; max-height: 184px; overflow-y: auto; }
+#search-results:empty { display: none; }
+
+.result-row {
+  display: block; width: 100%; box-sizing: border-box;
+  padding: 4px 8px; border-radius: 6px;
+  font-size: 12px; line-height: 1.4; color: #a99db3;
+  cursor: pointer; border: 1px solid transparent;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.result-row:hover,
+.result-row.result-active {
+  background: rgba(170, 150, 180, 0.08);
+  border-color: rgba(217, 160, 92, 0.45);
+}
+.result-kind { color: #565e68; font-size: 10px; margin-right: 6px; }
+
+#topic-wrap { display: none; margin-top: 12px; }
+.mode-window #topic-wrap { display: block; }
+#topic-header {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #565e68; margin-bottom: 4px;
+}
+#topic-list { max-height: 168px; overflow-y: auto; }
+#topic-list:empty::after {
+  content: 'no topics yet'; font-size: 11px; color: #565e68;
+}
+.topic-row {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  padding: 4px 8px; border-radius: 6px;
+  font-size: 12px; line-height: 1.4; color: #a99db3;
+  cursor: pointer; border: 1px solid transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.topic-row:hover,
+.topic-row.topic-active {
+  background: rgba(170, 150, 180, 0.08);
+  border-color: rgba(217, 160, 92, 0.45);
+}
+.topic-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topic-count { color: #565e68; font-size: 10px; flex: none; }

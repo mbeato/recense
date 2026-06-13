@@ -28,6 +28,7 @@ import { initEffects } from './effects.js';
 import { initTrace }   from './trace.js';
 import { initDetail }  from './detail.js';
 import { initSearch }  from './search.js';
+import { initTopics }  from './topics.js';
 
 // ── Spike 001: window.THREE MUST be set BEFORE injecting 3d-force-graph.min.js ─
 // The UMD bundle reads window.THREE at parse time to acquire the THREE namespace.
@@ -192,6 +193,7 @@ initEffects(ctx);
 initTrace(ctx);
 initDetail(ctx);
 initSearch(ctx);  // Plan 19-01: after initDetail — reads ctx.activate, ctx.Graph, ctx.allNodes
+initTopics(ctx);  // Phase 19 exploration: topic browser — after initDetail (reads ctx.selectNode)
 
 // Clear bootstrap loading message now that modules are wired — but NOT when it
 // carries the load-error or empty-graph message set above (clearing those would

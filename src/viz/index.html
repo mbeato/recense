@@ -45,6 +45,13 @@
               style="display:none">×</button>
     </div>
     <div id="search-count" aria-live="polite"></div>
+    <!-- Incremental candidate list (VIZ-07 exploration) — populated as you type -->
+    <div id="search-results" role="listbox" aria-label="Search results"></div>
+  </div>
+  <!-- Topic browser — full-window only; broad entry point (VIZ-08 exploration) -->
+  <div id="topic-wrap">
+    <div id="topic-header">topics</div>
+    <div id="topic-list" role="listbox" aria-label="Topics"></div>
   </div>
   <!-- Event log: hidden by default, demoted to toggle (D-14) -->
   <div id="log"></div>

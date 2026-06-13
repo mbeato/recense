@@ -1,228 +1,188 @@
 /**
  * @module search
- * brain-memory viz — in-app node search module (Plan 19-01, VIZ-07)
+ * brain-memory viz — in-app incremental node search (Plan 19-01 / VIZ-07,
+ * exploration revision: broad → narrow).
  *
  * initSearch(ctx) implements:
  *   - Full-window-only search affordance (gated by .mode-window CSS; graceful
  *     no-op when #search-wrap / #search-input are absent — popover/detail-page)
- *   - GET /search?q= fetch on Enter keypress (BM25, LLM-free, user-initiated D-04)
- *   - Matched nodes glow amber via ctx.activate (Three.js materials only — never HTML)
- *   - Non-matched nodes dim to FOCUS_DIM_OPACITY (0.05) via detail.js pattern
- *   - Camera flies to rank-1 match via ctx.Graph.cameraPosition (800ms smooth)
+ *   - INCREMENTAL GET /search?q= as you type (debounced; BM25, LLM-free,
+ *     user-initiated D-04) — candidates surface without knowing exact terms
+ *   - A clickable candidate LIST (#search-results): scrub it (hover / ↓↑) to
+ *     "peek" each node (amber glow in space), click / Enter to dive in via
+ *     ctx.selectNode (fly + detail panel + traversable connection links).
  *   - #search-count shows "1 match" / "N matches" via textContent (T-10-12)
- *   - No-match/error toasts via ctx.showToast (exposed from hud.js)
- *   - Keyboard nav: ↓/Tab advance, ↑/Shift-Tab retreat, Enter re-fly, Escape clear
- *   - Mutual exclusion with detail.js topic-region (Contract A↔B): closeDetail()
- *     called before search state is applied; ctx.clearSearch exposed for reverse
- *   - ctx.clearSearch exposed for detail.js to call on schema-region activation
+ *   - No-match / error states via the count line + ctx.showToast on fetch fail
+ *   - ctx.clearSearch exposed for detail.js topic-region mutual exclusion
+ *
+ * Why no full-graph dim on each keystroke: dimming every node (O(allNodes)) on
+ * every debounced input was heavy and visually jumpy. The candidate list is the
+ * persistent "where are my matches" view; picking one routes through selectNode,
+ * which applies the neighbourhood focus-dim exactly once.
  *
  * Security:
- *   T-10-12: result count set via textContent; never innerHTML with user data.
- *   T-19-06: matched-node amber glow is a Three.js material change, not DOM injection.
+ *   T-10-12: result rows + count set via textContent; never innerHTML with user data.
+ *   T-19-06: peek glow is a Three.js material change (ctx.activate), not DOM injection.
  *
  * Palette invariants:
  *   HOT amber (#ffb866) appears ONLY on Three.js node materials via ctx.activate.
- *   HTML chrome (input/button/count) stays muted — never apply HOT to HTML elements.
- *   No cyan/teal in any new glow or color assignment.
+ *   HTML chrome stays muted (amber only as a focus/hover border tint). No cyan.
  */
 
-// Focus-dim opacity — mirrors detail.js FOCUS_DIM_OPACITY (0.05) exactly.
-const FOCUS_DIM_OPACITY = 0.05;
+const DEBOUNCE_MS = 200;
+const MAX_ROWS    = 20;   // server already caps SEARCH_LIMIT=20; mirror it client-side
 
 export function initSearch(ctx) {
   // ── DOM refs ──────────────────────────────────────────────────────────────
-  const wrapEl   = document.getElementById('search-wrap');
-  const inputEl  = document.getElementById('search-input');
-  const clearBtn = document.getElementById('search-clear');
-  const countEl  = document.getElementById('search-count');
+  const wrapEl    = document.getElementById('search-wrap');
+  const inputEl   = document.getElementById('search-input');
+  const clearBtn  = document.getElementById('search-clear');
+  const countEl   = document.getElementById('search-count');
+  const resultsEl = document.getElementById('search-results');
 
   // Graceful no-op: popover / detail-page mode has no search DOM (D-03 / CSS gate).
   if (!wrapEl || !inputEl) return;
 
   // ── State ─────────────────────────────────────────────────────────────────
-  let matchIds   = [];  // BM25-ranked node IDs from last successful fetch
-  let cursor     = 0;   // 0 = no keyboard nav; 1..matchIds.length = current match
-  let dimmedNodes = []; // nodes whose opacity was lowered — tracked for restore
+  let matchNodes = [];   // resolved node objects from the last successful fetch
+  let active     = -1;   // index of keyboard-highlighted row (-1 = none)
+  let debounceId = null;
+  let seq        = 0;    // request sequence guard (drop stale responses)
 
-  // ── Focus-dim helpers (mirrors detail.js applyFocusDim / clearFocusDim) ──
+  // ── Peek: light one node so the user sees where a candidate sits in space ──
+  function peek(node) {
+    if (node && ctx.activate) ctx.activate(node, 1.0);
+  }
 
-  /** Dim all nodes except those in keepIds set. Restores previous dim first. */
-  function applySearchDim(keepIds) {
-    clearSearchDim();
-    const keep = new Set(keepIds);
-    for (const n of (ctx.allNodes || [])) {
-      if (keep.has(n.id) || !n.__mat) continue;
-      n.__mat.opacity = FOCUS_DIM_OPACITY;
-      dimmedNodes.push(n);
+  // ── Render the candidate list (textContent only — T-10-12) ────────────────
+  function renderResults() {
+    if (!resultsEl) return;
+    resultsEl.textContent = '';
+    matchNodes.slice(0, MAX_ROWS).forEach((node, i) => {
+      const row = document.createElement('div');
+      row.className = 'result-row';
+      row.setAttribute('role', 'option');
+      if (i === active) row.classList.add('result-active');
+
+      const kind = document.createElement('span');
+      kind.className = 'result-kind';
+      kind.textContent = node.tombstoned ? 'tomb' : (node.type || '·');
+      row.appendChild(kind);
+
+      const label = document.createElement('span');
+      label.textContent = (node.value || node.id || '').slice(0, 80);
+      row.appendChild(label);
+
+      row.addEventListener('mouseenter', () => { active = i; markActiveRow(); peek(node); });
+      row.addEventListener('click', () => pick(i));
+      resultsEl.appendChild(row);
+    });
+  }
+
+  /** Cheap highlight sync without re-rendering rows. */
+  function markActiveRow() {
+    if (!resultsEl) return;
+    const rows = resultsEl.children;
+    for (let i = 0; i < rows.length; i++) {
+      rows[i].classList.toggle('result-active', i === active);
     }
+    if (active >= 0 && rows[active]) rows[active].scrollIntoView({ block: 'nearest' });
   }
 
-  /** Restore all dimmed nodes to their base opacity. */
-  function clearSearchDim() {
-    for (const n of dimmedNodes) {
-      if (n.__mat && n.__baseOp !== undefined) n.__mat.opacity = n.__baseOp;
-    }
-    dimmedNodes = [];
+  /** Dive into a candidate: full selection (camera + detail + connections). */
+  function pick(i) {
+    const node = matchNodes[i];
+    if (!node || !ctx.selectNode) return;
+    active = i;
+    markActiveRow();
+    ctx.selectNode(node);   // flies camera, opens detail w/ traversable links, ripples
+    if (ctx.markActive) ctx.markActive();
   }
 
-  // ── Camera fly-to helper (mirrors detail.js focusCamera) ─────────────────
-
-  /** Fly the camera to frame the given node (smooth 800ms transition). */
-  function flyToNode(node) {
-    if (!ctx.Graph || typeof ctx.Graph.cameraPosition !== 'function') return;
-    const x = node.x || 0, y = node.y || 0, z = node.z || 0;
-    ctx.Graph.cameraPosition(
-      { x: x + 220, y: y + 80, z: z + 220 },
-      { x, y, z },
-      800
-    );
-  }
-
-  // ── Glow helper (mirrors trace.js activate pattern) ───────────────────────
-
-  /** Apply HOT amber glow to matched nodes via ctx.activate (Three.js only). */
-  function glowMatches(nodes) {
-    for (const n of nodes) {
-      if (ctx.activate) ctx.activate(n, 1.0);
-    }
-  }
-
-  // ── Clear / reset search state ────────────────────────────────────────────
-
-  /** Clear all search state: restore dim, hide count, reset cursor. Camera stays. */
-  function clearSearch() {
-    clearSearchDim();
-    matchIds = [];
-    cursor = 0;
-    if (countEl) countEl.textContent = '';
-    if (clearBtn) clearBtn.style.display = 'none';
-    if (inputEl) inputEl.value = '';
-  }
-
-  // ── Submit handler ────────────────────────────────────────────────────────
-
-  async function doSearch() {
+  // ── Incremental fetch (debounced) ─────────────────────────────────────────
+  async function runSearch() {
     const value = inputEl.value.trim();
-    // Minimum 2 chars — do nothing for shorter queries (no fetch, no toast).
-    if (value.length < 2) return;
+    if (value.length < 2) { resetResults(); return; }
 
+    const mySeq = ++seq;
     let ids;
     try {
       const resp = await fetch('/search?q=' + encodeURIComponent(value));
       if (!resp.ok) throw new Error('status ' + resp.status);
       ids = await resp.json();
     } catch (_) {
-      if (ctx.showToast) ctx.showToast('search unavailable — try again');
+      if (mySeq === seq && ctx.showToast) ctx.showToast('search unavailable — try again');
       return;
     }
+    if (mySeq !== seq) return;  // a newer keystroke superseded this response
 
-    // Atomically replace previous state (dim-restore first, then apply new).
-    clearSearchDim();
-    matchIds = [];
-    cursor = 0;
-
-    // Mutual exclusion with topic-region (Contract A↔B): close detail/region first.
-    if (ctx.closeDetail) ctx.closeDetail();
-
-    if (!ids || ids.length === 0) {
-      if (ctx.showToast) ctx.showToast('no matches');
-      if (countEl) countEl.textContent = '';
-      return;
-    }
-
-    // Resolve node objects (some IDs may not be in the loaded graph — skip safely).
-    const matchNodes = [];
-    for (const id of ids) {
+    matchNodes = [];
+    active = -1;
+    for (const id of (ids || [])) {
       const node = ctx.idMap && ctx.idMap.get(id);
       if (node) matchNodes.push(node);
     }
 
-    if (matchNodes.length === 0) {
-      if (ctx.showToast) ctx.showToast('no matches');
-      if (countEl) countEl.textContent = '';
-      return;
-    }
-
-    matchIds = matchNodes.map(n => n.id);
-    cursor = 0;
-
-    // Dim all non-matching nodes; glow all matching nodes (amber HOT via activate).
-    applySearchDim(new Set(matchIds));
-    glowMatches(matchNodes);
-
-    // Fly to rank-1 match.
-    flyToNode(matchNodes[0]);
-
-    // Update result count via textContent (T-10-12 — never innerHTML).
     if (countEl) {
-      countEl.textContent = matchIds.length === 1
-        ? '1 match'
-        : `${matchIds.length} matches`;
+      countEl.textContent = matchNodes.length === 0 ? 'no matches'
+        : matchNodes.length === 1 ? '1 match'
+        : `${matchNodes.length} matches`;
     }
-
-    // Reset idle timer so fly-to isn't overridden immediately.
-    if (ctx.markActive) ctx.markActive();
+    renderResults();
   }
 
-  // ── Keyboard navigation helpers ───────────────────────────────────────────
-
-  /** Re-fly to the node at position `cursor` (1-indexed). */
-  function flyToCursor() {
-    if (cursor < 1 || cursor > matchIds.length) return;
-    const id = matchIds[cursor - 1];
-    const node = ctx.idMap && ctx.idMap.get(id);
-    if (node) flyToNode(node);
+  /** Clear the candidate list + count but keep the typed query. */
+  function resetResults() {
+    matchNodes = [];
+    active = -1;
+    if (resultsEl) resultsEl.textContent = '';
+    if (countEl) countEl.textContent = '';
   }
 
-  // ── Input event: toggle × clear button visibility ─────────────────────────
+  /** Full clear: query, list, count, × button. Camera/selection untouched. */
+  function clearSearch() {
+    if (debounceId) { clearTimeout(debounceId); debounceId = null; }
+    seq++;                         // invalidate any in-flight response
+    resetResults();
+    if (inputEl) inputEl.value = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+  }
+
+  // ── Input: debounced incremental search + × visibility ────────────────────
   inputEl.addEventListener('input', () => {
-    if (clearBtn) {
-      clearBtn.style.display = inputEl.value ? 'flex' : 'none';
-    }
+    if (clearBtn) clearBtn.style.display = inputEl.value ? 'flex' : 'none';
+    if (debounceId) clearTimeout(debounceId);
+    debounceId = setTimeout(runSearch, DEBOUNCE_MS);
   });
 
-  // ── Keydown: Enter submit + ↓↑/Tab/Shift-Tab nav + Escape clear ──────────
+  // ── Keyboard: ↓/↑ scrub (peek), Enter dive, Escape clear ──────────────────
   inputEl.addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      if (cursor > 0 && matchIds.length > 0) {
-        // Re-fly to current keyboard-nav position (no re-fetch).
-        flyToCursor();
-      } else {
-        doSearch();
-      }
+    if (e.key === 'Escape') { clearSearch(); return; }
+
+    if (e.key === 'ArrowDown' && matchNodes.length) {
+      e.preventDefault();
+      active = active < Math.min(matchNodes.length, MAX_ROWS) - 1 ? active + 1 : 0;
+      markActiveRow(); peek(matchNodes[active]);
       return;
     }
-
-    if (e.key === 'Escape') {
-      clearSearch();
+    if (e.key === 'ArrowUp' && matchNodes.length) {
+      e.preventDefault();
+      active = active > 0 ? active - 1 : Math.min(matchNodes.length, MAX_ROWS) - 1;
+      markActiveRow(); peek(matchNodes[active]);
       return;
     }
-
-    // ↓ / Tab: advance cursor (wrap). Only when results are active.
-    if ((e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) && matchIds.length > 0) {
-      e.preventDefault(); // don't shift focus on Tab
-      cursor = cursor < matchIds.length ? cursor + 1 : 1;
-      flyToCursor();
-      return;
-    }
-
-    // ↑ / Shift-Tab: retreat cursor (wrap). Only when results are active.
-    if ((e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) && matchIds.length > 0) {
-      e.preventDefault(); // don't shift focus on Shift-Tab
-      cursor = cursor > 1 ? cursor - 1 : matchIds.length;
-      flyToCursor();
+    if (e.key === 'Enter' && matchNodes.length) {
+      e.preventDefault();
+      pick(active >= 0 ? active : 0);   // dive into highlighted, else rank-1
       return;
     }
   });
 
-  // ── × clear button click ──────────────────────────────────────────────────
+  // ── × clear button ────────────────────────────────────────────────────────
   if (clearBtn) {
-    clearBtn.addEventListener('click', () => {
-      clearSearch();
-      inputEl.focus();
-    });
+    clearBtn.addEventListener('click', () => { clearSearch(); inputEl.focus(); });
   }
 
-  // ── ctx exposure ──────────────────────────────────────────────────────────
+  // ── ctx exposure (detail.js calls this for topic-region mutual exclusion) ──
   ctx.clearSearch = clearSearch;
 }
