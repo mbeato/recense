@@ -129,9 +129,10 @@ button:hover {
 /* Recenter control (quick-260612-v79) — fixed bottom-left above the legend,
    visible in full + compact, hidden in detail-page mode. Muted palette only:
    amber is activation-only, so this never reuses the base `button:hover` amber. */
+/* Popover default: stacked under the expand button (top:6 + 26 + 6 gap, right:8). */
 #btn-recenter {
   position: fixed;
-  top: 38px;             /* directly below the expand affordance (top:6px + 26px + 6 gap), same right edge */
+  top: 38px;
   right: 8px;
   width: 26px;
   height: 26px;
@@ -152,6 +153,15 @@ button:hover {
 }
 #btn-recenter:hover {
   opacity: 1;
+}
+
+/* App window: align under the collapse button (top:10 + 30 + 6 gap, right:12)
+   and size up to match its slightly larger chrome (quick-260612-v79 follow-up). */
+.mode-window #btn-recenter {
+  top: 46px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
 }
 
 .row {

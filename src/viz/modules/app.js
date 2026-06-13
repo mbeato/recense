@@ -54,6 +54,14 @@ await new Promise((resolve, reject) => {
   document.head.appendChild(s);
 });
 
+// Tag the document so chrome (e.g. #btn-recenter) can align with each shell's
+// injected affordance: the popover (?shell=1) carries the expand button at
+// top:6/right:8 (26px); the promoted app window carries the collapse button at
+// top:10/right:12 (larger). Drives the context CSS in styles.css.
+document.documentElement.classList.add(
+  new URLSearchParams(location.search).has('shell') ? 'mode-popover' : 'mode-window'
+);
+
 /** @type {Function} — read after UMD load guarantees it is populated */
 const ForceGraph3D = window.ForceGraph3D;
 

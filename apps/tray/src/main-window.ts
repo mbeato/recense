@@ -46,10 +46,10 @@ const COLLAPSE_BTN_JS = `(() => {
   btn.id = 'recense-collapse-btn';
   btn.textContent = '\u2199';
   btn.title = 'Collapse to menu bar';
-  btn.style.cssText = 'position:fixed;top:10px;right:12px;z-index:70;width:26px;height:26px;'
+  btn.style.cssText = 'position:fixed;top:10px;right:12px;z-index:70;width:30px;height:30px;'
     + 'display:flex;align-items:center;justify-content:center;border-radius:7px;cursor:pointer;'
     + 'color:#d9cbc0;background:rgba(26,18,32,0.7);'
-    + 'font:15px ui-sans-serif,system-ui;opacity:0.65;user-select:none;';
+    + 'font:17px ui-sans-serif,system-ui;opacity:0.65;user-select:none;';
   btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });
   btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.65'; });
   btn.addEventListener('click', () => { location.href = '${COLLAPSE_SENTINEL}'; });
