@@ -487,6 +487,39 @@ describe('RetrievalEngine', () => {
       expect(orphanPos).toBeLessThan(datedNewPos);
     });
 
+    it('temporalAnnotate: undated node BETWEEN two dated nodes keeps its slot; dated nodes reorder newest-first (CR-01 regression)', () => {
+      // Exact CR-01 reachable cycle: X(dated-old, origIdx 0), Y(undated, origIdx 1), Z(dated-new, origIdx 2).
+      // All three at basisVec(0) so topk's stable insertion-order sort determines initial rank.
+      // Subsequence-reorder: datedSlots = {0, 2}; sorted newest-first → {cr01-dated-new, cr01-dated-old};
+      //   slot 0 → cr01-dated-new, slot 1 → cr01-undated (fixed), slot 2 → cr01-dated-old.
+      const DAY_OLD = Date.UTC(2022, 0, 1);  // 2022-01-01
+      const DAY_NEW = Date.UTC(2024, 5, 15); // 2024-06-15
+      addEmbeddedNode('cr01-dated-old', 'old fact value',    basisVec(0), 0.9);
+      addEmbeddedNode('cr01-undated',   'undated fact value', basisVec(0), 0.9);
+      addEmbeddedNode('cr01-dated-new', 'new fact value',    basisVec(0), 0.9);
+      linkNodeToEpisodeWithTs('cr01-dated-old', 'ep-cr01-old', DAY_OLD);
+      // cr01-undated has NO linkNodeToEpisodeWithTs call — orphan, no consolidation_event rows.
+      linkNodeToEpisodeWithTs('cr01-dated-new', 'ep-cr01-new', DAY_NEW);
+
+      const engine = makeEngine();
+      const results = engine.retrieveRanked(basisVec(0), 10, 0.0, undefined, { temporalAnnotate: true });
+
+      // Deterministic contract: dated nodes fill their original slots newest-first;
+      // undated node stays fixed at its original slot (slot 1, between the two dated nodes).
+      expect(results.map(r => r.id)).toEqual(['cr01-dated-new', 'cr01-undated', 'cr01-dated-old']);
+
+      // Undated node must NOT carry a [YYYY-MM-DD] prefix
+      const undatedEntry = results.find(r => r.id === 'cr01-undated')!;
+      expect(undatedEntry.value).toBe('undated fact value');
+      expect(undatedEntry.value).not.toMatch(/^\[\d{4}-\d{2}-\d{2}\] /);
+
+      // Both dated values must carry [YYYY-MM-DD] prefixes
+      const newEntry = results.find(r => r.id === 'cr01-dated-new')!;
+      const oldEntry = results.find(r => r.id === 'cr01-dated-old')!;
+      expect(newEntry.value).toMatch(/^\[\d{4}-\d{2}-\d{2}\] /);
+      expect(oldEntry.value).toMatch(/^\[\d{4}-\d{2}-\d{2}\] /);
+    });
+
     it('temporalAnnotate: off by default — 3-arg callers produce unprefixed values', () => {
       // Verify backward compatibility: no temporalAnnotate opts → no date prefixes
       const DAY = Date.UTC(2023, 3, 10);
