@@ -47,17 +47,28 @@ export async function renderDetailPage(nodeId) {
     detailEl.classList.add('panel-open');
   }
 
-  // Esc → shell close sentinel (relative path; exact-pathname intercepted).
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') location.href = '/__recense/detail-close';
-  });
-
   // Cross-window focus channel (quick-260612-swc): same-origin renderers in
   // the same Electron session share BroadcastChannel — zero shell involvement.
   // Guarded so a plain browser without the API (or with no listener) is a no-op.
   const channel = typeof BroadcastChannel !== 'undefined'
     ? new BroadcastChannel('recense-viz')
     : null;
+
+  // Single user-close path (quick-260612-v79): broadcast clear-focus so the
+  // popover's subscriber drops its selection ring + focus dim, then navigate to
+  // the shell close sentinel. Used by both Esc and the shell-injected × button.
+  // NOT beforeunload: neighbor clicks / popover-driven in-place loadURL updates
+  // would fire it spuriously and clear the ring for the node being viewed.
+  function requestClose() {
+    if (channel) channel.postMessage({ type: 'clear-focus' });
+    location.href = '/__recense/detail-close';
+  }
+  window.__recenseRequestClose = requestClose;
+
+  // Esc → single close path (relative path; exact-pathname intercepted).
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') requestClose();
+  });
 
   // ── Fetch graph data — honest error states, never a silent blank window ──
   let data = null;

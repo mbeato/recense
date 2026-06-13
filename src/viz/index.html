@@ -47,6 +47,19 @@
   <span class="dot dot-schema">●</span> schema
 </div>
 
+<!-- Recenter camera control (quick-260612-v79) — top-level, OUTSIDE #panel so
+     the compact `#panel { display:none }` rule never hides it. Inline crosshair
+     SVG: no font dependency, no external URL. -->
+<button id="btn-recenter" type="button" aria-label="Recenter camera" title="Recenter">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <circle cx="12" cy="12" r="5" />
+    <line x1="12" y1="1" x2="12" y2="5" />
+    <line x1="12" y1="19" x2="12" y2="23" />
+    <line x1="1" y1="12" x2="5" y2="12" />
+    <line x1="19" y1="12" x2="23" y2="12" />
+  </svg>
+</button>
+
 <!-- Tap-to-dismiss layer behind the detail panel -->
 <div id="backdrop"></div>
 
