@@ -65,6 +65,9 @@ interface SchemaWithCentroid {
  * Pure function — no side effects, no imports beyond cosineSimF32.
  */
 function avgLinkageDist(vecsA: Float32Array[], vecsB: Float32Array[]): number {
+  // Guard against division by zero: an empty side yields NaN, and NaN compares false under
+  // every `<`/`===` in the merge loop, which would silently suppress all merges (WR-01).
+  if (vecsA.length === 0 || vecsB.length === 0) return Infinity;
   let sum = 0;
   for (const a of vecsA) {
     for (const b of vecsB) {
@@ -213,11 +216,14 @@ export class SchemaRelationDeriver {
     if (schemaNodes.length < 2) {
       // Fewer than 2 schemas → no pairs to relate and no clusters to form.
       // Still wipe any prior derived artifacts for D-04 idempotency.
+      // .immediate(): acquire the write lock up front, matching the rest of the sleep pass's
+      // Phase B discipline (M-5) — a DEFERRED txn can hit SQLITE_BUSY_SNAPSHOT when the viz
+      // server holds a concurrent SHARED read lock (WR-02).
       this.db.transaction(() => {
         this.stmtDeleteSchemaRelEdges.run();
         this.stmtDeleteSuperSchemaEdges.run();
         this.stmtDeleteSuperSchemaNodes.run();
-      })();
+      }).immediate();
       return;
     }
 
@@ -327,7 +333,7 @@ export class SchemaRelationDeriver {
       // SREL-02: materialize super-schema cluster nodes + abstracts edges.
       // Wipe + recreate runs inside this same atomic transaction (D-04).
       this.deriveSuperSchemas(clusters, schemaValueById, nowMs);
-    })();
+    }).immediate(); // M-5 write-lock discipline — avoid SQLITE_BUSY_SNAPSHOT (WR-02)
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────

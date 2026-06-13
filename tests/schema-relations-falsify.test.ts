@@ -382,4 +382,67 @@ describe('SchemaRelationDeriver — falsification', () => {
     expect(inferredEp!.role).toBe('assistant');
     expect(inferredEp!.content).toBe('inferred answer from schema prior');
   });
+
+  // ── CR-01 regression: sideways hop must follow schema_rel edges in BOTH directions ──
+  // schema_rel edges are stored undirected with a lexicographic src<dst convention, so the
+  // resolved schema can be the edge's dst. A getOutEdges-only hop silently misses those
+  // (~50% of pairs). This test wires the edge as src=B, dst=A and queries to match A, forcing
+  // the in-edge path; it asserts B's members actually reach the compose prompt. Before the fix
+  // (in-edge scan + 'abstracts' filter on the primary loop) this FAILS — the prior D-43 test
+  // could not catch it because inference is non-null from A's own members alone.
+  it('CR-01: sideways hop reaches the related schema via an IN-edge (resolved schema is dst)', async () => {
+    const dims = h.config.embeddingDimensions;
+    const dim0 = new Float32Array(dims); dim0[0] = 1.0; // query + schema A + A's members
+    const dim1 = new Float32Array(dims); dim1[1] = 1.0; // schema B + B's members (orthogonal)
+
+    // Schema A (matches the query at dim0) with two observed members at dim0.
+    const aEmbedder = new MockEmbedder((_t: string) => dim0.slice());
+    const aMem0 = await seedNodeWithEmbedding(h, aEmbedder, { value: 'cr01-a-member-0' });
+    const aMem1 = await seedNodeWithEmbedding(h, aEmbedder, { value: 'cr01-a-member-1' });
+    const schemaAId = newId();
+    h.store.upsertNode({ id: schemaAId, type: 'schema', value: 'schema-cr01-a', origin: 'inferred' });
+    h.store.setEmbedding(schemaAId, dim0.slice());
+    h.store.upsertEdge({ src: schemaAId, dst: aMem0, rel: 'abstracts', w: 0.9, kind: 'abstracts' });
+    h.store.upsertEdge({ src: schemaAId, dst: aMem1, rel: 'abstracts', w: 0.9, kind: 'abstracts' });
+
+    // Schema B (orthogonal so it is NOT the topk match) with two distinctly-named members.
+    const bEmbedder = new MockEmbedder((_t: string) => dim1.slice());
+    const bMem0 = await seedNodeWithEmbedding(h, bEmbedder, { value: 'cr01-b-member-0' });
+    const bMem1 = await seedNodeWithEmbedding(h, bEmbedder, { value: 'cr01-b-member-1' });
+    const schemaBId = newId();
+    h.store.upsertNode({ id: schemaBId, type: 'schema', value: 'schema-cr01-b', origin: 'inferred' });
+    h.store.setEmbedding(schemaBId, dim1.slice());
+    h.store.upsertEdge({ src: schemaBId, dst: bMem0, rel: 'abstracts', w: 0.9, kind: 'abstracts' });
+    h.store.upsertEdge({ src: schemaBId, dst: bMem1, rel: 'abstracts', w: 0.9, kind: 'abstracts' });
+
+    // schema_rel wired B → A: A (the resolved schema) is the dst, so only getInEdges(A) finds it.
+    h.store.upsertEdge({
+      src: schemaBId, dst: schemaAId, rel: 'schema_rel', w: 0.95, kind: 'schema_rel',
+      last_access: h.clock.nowMs(),
+    });
+
+    // Capture the compose prompt to prove B's members entered the neighborhood.
+    let capturedPrompt = '';
+    const provider = new MockModelProvider({
+      embedFn: (_t: string) => dim0.slice(),
+      generateScript: ['inferred answer'],
+    });
+    const origGenerate = provider.generate.bind(provider);
+    provider.generate = async (prompt: string, opts?: { maxTokens?: number; jsonSchema?: object }) => {
+      capturedPrompt = prompt;
+      return origGenerate(prompt, opts);
+    };
+
+    const engine = new RecallEngine(
+      h.db, h.clock, h.config, provider, h.retriever, h.store, h.strength, h.episodes,
+    );
+    const result = await engine.recall('cr01 query', 'session-cr01');
+
+    expect(result.inference).not.toBeNull();
+    // The sideways hop reached schema B via the in-edge → B's members are in the prompt.
+    expect(capturedPrompt).toContain('cr01-b-member-0');
+    expect(capturedPrompt).toContain('cr01-b-member-1');
+    // The related schema's LABEL node must NOT be injected as a member (IN-02 pollution guard).
+    expect(capturedPrompt).not.toContain('schema-cr01-b');
+  });
 });

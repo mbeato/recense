@@ -172,6 +172,10 @@ export class RecallEngine {
 
     for (const edge of edges) {
       if (nodeCount >= this.config.recallNeighborhoodBudget) break;
+      // Primary neighborhood is the schema's MEMBERS only (schema→member = 'abstracts').
+      // Skip 'schema_rel' edges here — those are the sideways hop below, and their dst is a
+      // related schema label node, not a member (would pollute the neighborhood otherwise).
+      if (edge.kind !== 'abstracts') continue;
       const neighbor = this.store.getNode(edge.dst);
       if (!neighbor || neighbor.tombstoned === 1) continue;
 
@@ -187,8 +191,17 @@ export class RecallEngine {
     // Bounded by: recallSidewaysHopBudget (fan-out cap) + recallNeighborhoodBudget (total).
     // De-duplicates against members already assembled above.
     // INVARIANT: no upsertNode/upsertEdge/tombstone/strengthen here (D-43, T-04-03-SC).
-    const relatedSchemaEdges = edges
+    // schema_rel edges are stored undirected with a lexicographic src<dst convention
+    // (schema-relations.ts), so the resolved schema may be EITHER endpoint. We must scan
+    // both out-edges (resolved schema is src) AND in-edges (resolved schema is dst), else
+    // ~50% of related schemas are silently missed for larger-id schemas (CR-01).
+    const outRel = edges
       .filter(e => e.kind === 'schema_rel')
+      .map(e => ({ relatedId: e.dst, w: e.w }));
+    const inRel = this.store.getInEdges(schemaNode.id)
+      .filter(e => e.kind === 'schema_rel')
+      .map(e => ({ relatedId: e.src, w: e.w }));
+    const relatedSchemaEdges = [...outRel, ...inRel]
       .sort((a, b) => b.w - a.w)
       .slice(0, this.config.recallSidewaysHopBudget);
 
@@ -199,7 +212,7 @@ export class RecallEngine {
 
       for (const relEdge of relatedSchemaEdges) {
         if (nodeCount >= this.config.recallNeighborhoodBudget) break;
-        const relatedSchema = this.store.getNode(relEdge.dst);
+        const relatedSchema = this.store.getNode(relEdge.relatedId);
         if (!relatedSchema || relatedSchema.tombstoned === 1) continue;
 
         // Walk this related schema's 'abstracts' members only — no schema_rel recursion.

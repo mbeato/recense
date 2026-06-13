@@ -228,7 +228,13 @@ export function initSchema(db: Database.Database): void {
   if (!edgeDdl.includes('schema_rel')) {
     // PRAGMA foreign_keys must be set OUTSIDE a transaction (SQLite requirement).
     db.pragma('foreign_keys = OFF');
+    // Wrap the create/copy/drop/rename in an explicit transaction so a crash mid-swap
+    // rolls back atomically (CR-02): without it, SQLite auto-commits each statement, and a
+    // crash between `DROP TABLE edge` and the RENAME would leave the edge table gone while a
+    // fresh empty `edge` (with up-to-date DDL) is recreated on restart — silently skipping
+    // re-migration and permanently losing the entire edge graph. SQLite allows DDL in a txn.
     db.exec(`
+      BEGIN;
       CREATE TABLE edge_v7 (
         src         TEXT    NOT NULL REFERENCES node(id),
         dst         TEXT    NOT NULL REFERENCES node(id),
@@ -241,8 +247,9 @@ export function initSchema(db: Database.Database): void {
       INSERT INTO edge_v7 SELECT * FROM edge;
       DROP TABLE edge;
       ALTER TABLE edge_v7 RENAME TO edge;
-      CREATE INDEX IF NOT EXISTS idx_edge_dst ON edge(dst);
+      COMMIT;
     `);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_edge_dst ON edge(dst);`);
     db.pragma('foreign_keys = ON');
   }
 
