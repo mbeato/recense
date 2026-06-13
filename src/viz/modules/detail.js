@@ -411,9 +411,15 @@ export function initDetail(ctx) {
   if (typeof BroadcastChannel !== 'undefined') {
     const channel = new BroadcastChannel('recense-viz');
     channel.addEventListener('message', e => {
-      if (!e.data || e.data.type !== 'focus-node') return;
-      const node = ctx.idMap && ctx.idMap.get(e.data.id);
-      if (node) focusNode(node);
+      if (!e.data) return;
+      if (e.data.type === 'focus-node') {
+        const node = ctx.idMap && ctx.idMap.get(e.data.id);
+        if (node) focusNode(node);
+      } else if (e.data.type === 'clear-focus') {
+        // Detail window closed (× or Esc): drop the popover's selection ring +
+        // focus dim. closeDetail no-ops safely when nothing is selected.
+        closeDetail();
+      }
     });
   }
 

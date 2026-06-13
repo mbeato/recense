@@ -126,6 +126,34 @@ button:hover {
   padding: 3px 8px;
 }
 
+/* Recenter control (quick-260612-v79) — fixed bottom-left above the legend,
+   visible in full + compact, hidden in detail-page mode. Muted palette only:
+   amber is activation-only, so this never reuses the base `button:hover` amber. */
+#btn-recenter {
+  position: fixed;
+  bottom: 36px;
+  left: 12px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: 7px;
+  background: rgba(170, 150, 180, 0.07);
+  border: 1px solid rgba(170, 150, 180, 0.18);
+  color: #a99db3;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+#btn-recenter:hover {
+  background: rgba(170, 150, 180, 0.16);
+  border-color: rgba(170, 150, 180, 0.4);
+  color: #c8cfd8;
+}
+
 .row {
   display: flex;
   gap: 6px;
@@ -371,6 +399,8 @@ button:hover {
   #panel .row { margin: 0; }
   /* Legend removed at popover scale (founder, 2026-06-12) — the pill is just the SSE dot */
   .legend { display: none; }
+  /* Recenter button stays visible at popover scale (quick-260612-v79) */
+  #btn-recenter { display: flex; }
   /* Detail panel must fit inside the small window */
   #detail {
     width: calc(100vw - 24px);
@@ -406,6 +436,8 @@ button:hover {
 }
 .detail-page #detail-close { display: none; }
 .detail-page #detail-body { max-height: none; }
+/* No graph in detail-window mode — the recenter button has nothing to act on (quick-260612-v79) */
+.detail-page #btn-recenter { display: none; }
 
 /* Palette-styled scrollbar (muted mauve — amber stays activation-only) */
 .detail-page #detail { scrollbar-width: thin; scrollbar-color: rgba(170, 150, 180, 0.28) transparent; }

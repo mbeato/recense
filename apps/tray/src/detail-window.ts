@@ -54,7 +54,10 @@ const DETAIL_STRIP_ADD = `(() => {
     + 'font:15px ui-sans-serif,system-ui;opacity:0.65;-webkit-app-region:no-drag;user-select:none;';
   x.addEventListener('mouseenter', () => { x.style.opacity = '1'; });
   x.addEventListener('mouseleave', () => { x.style.opacity = '0.65'; });
-  x.addEventListener('click', () => { location.href = '/__recense/detail-close'; });
+  x.addEventListener('click', () => {
+    if (typeof window.__recenseRequestClose === 'function') window.__recenseRequestClose();
+    else location.href = '/__recense/detail-close';
+  });
   strip.appendChild(x);
   document.body.appendChild(strip);
   const detail = document.getElementById('detail');

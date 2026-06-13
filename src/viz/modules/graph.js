@@ -362,11 +362,31 @@ export function initGraph(ctx) {
   // sits forward of the world origin, so an origin-locked camera crops the
   // frontal lobe at popover size. Passing lookAt also moves controls.target,
   // keeping the ambient idle rotation centered on the brain, not the origin.
-  const compact = Math.min(window.innerWidth, window.innerHeight) <= 500;
-  if (compact) {
-    const FRAME_X = -42;
-    Graph.cameraPosition({ x: FRAME_X, z: BRAIN_SCALE * 2.35 }, { x: FRAME_X, y: 0, z: 0 });
-  } else {
-    Graph.cameraPosition({ z: BRAIN_SCALE * 2.2 });
+  // recenter(ms) is the single framing source (quick-260612-v79): boot calls
+  // recenter(0) for the instant founder-tuned framing; #btn-recenter animates it.
+  // `compact` is read at CALL time so it's correct in either viewport. The
+  // explicit {0,0,0} lookAt resets controls.target so framing restores
+  // deterministically regardless of current pan/orbit (founder: restore Y/Z +
+  // zoom/distance; X rotation doesn't matter). At boot (ms=0) target is already
+  // origin, so this is visually identical to the prior framing call.
+  function recenter(ms = 700) {
+    const compact = Math.min(window.innerWidth, window.innerHeight) <= 500;
+    // Pause idle drift around the transition so it lands (markActive). Skip at
+    // boot (ms===0) to keep boot behavior unchanged.
+    if (ms > 0 && ctx.markActive) ctx.markActive();
+    if (compact) {
+      const FRAME_X = -42;
+      Graph.cameraPosition({ x: FRAME_X, z: BRAIN_SCALE * 2.35 }, { x: FRAME_X, y: 0, z: 0 }, ms);
+    } else {
+      Graph.cameraPosition({ z: BRAIN_SCALE * 2.2 }, { x: 0, y: 0, z: 0 }, ms);
+    }
+    if (ms > 0 && ctx.markActive) ctx.markActive();
   }
+  ctx.recenter = recenter;
+  recenter(0);
+
+  // Always-visible recenter control (visible in compact popover where #panel is
+  // display:none). graph.js owns framing — recenter is in scope, no ctx lookup.
+  const btnRecenter = document.getElementById('btn-recenter');
+  if (btnRecenter) btnRecenter.addEventListener('click', () => recenter());
 }
