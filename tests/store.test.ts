@@ -369,6 +369,45 @@ describe('SemanticStore', () => {
     });
   });
 
+  // ── FTS sync (Phase 17 v6 migration) ────────────────────────────────────
+
+  describe('FTS sync (Phase 17 v6 migration)', () => {
+    it('upsertNode adds a live node to node_fts', () => {
+      store.upsertNode({ id: 'fts-1', type: 'fact', value: 'Kansas City Masterpiece BBQ sauce', origin: 'observed' });
+      const rows = db.prepare("SELECT node_id, value FROM node_fts WHERE node_id = 'fts-1'").all() as Array<{ node_id: string; value: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.value).toBe('Kansas City Masterpiece BBQ sauce');
+    });
+
+    it('tombstone() removes the node from node_fts', () => {
+      store.upsertNode({ id: 'fts-2', type: 'fact', value: 'Sweet Baby Rays', origin: 'observed' });
+      store.tombstone('fts-2');
+      const rows = db.prepare("SELECT * FROM node_fts WHERE node_id = 'fts-2'").all();
+      expect(rows).toHaveLength(0);
+    });
+
+    it('value update DELETEs old FTS row and INSERTs new one (no duplicates)', () => {
+      store.upsertNode({ id: 'fts-3', type: 'fact', value: 'old value', origin: 'observed' });
+      store.upsertNode({ id: 'fts-3', type: 'fact', value: 'new value', origin: 'observed' });
+      const rows = db.prepare("SELECT value FROM node_fts WHERE node_id = 'fts-3'").all() as Array<{ value: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.value).toBe('new value');
+    });
+
+    it('drift check: no FTS rows for tombstoned or missing nodes after sequence of operations', () => {
+      store.upsertNode({ id: 'fts-4', type: 'fact', value: 'initial value', origin: 'observed' });
+      store.upsertNode({ id: 'fts-4', type: 'fact', value: 'updated value', origin: 'observed' });
+      store.upsertNode({ id: 'fts-5', type: 'fact', value: 'another node', origin: 'observed' });
+      store.tombstone('fts-5');
+      const driftCount = (db.prepare(`
+        SELECT count(*) AS n FROM node_fts f
+        LEFT JOIN node n ON f.node_id = n.id
+        WHERE n.id IS NULL OR n.tombstoned = 1
+      `).get() as { n: number }).n;
+      expect(driftCount).toBe(0);
+    });
+  });
+
   // ── upsertEdge / meta (STORE-01) ────────────────────────────────────────
 
   describe('upsertEdge (STORE-01)', () => {
