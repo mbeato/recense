@@ -229,7 +229,12 @@ function parseSessionDate(dateStr) {
   const cleaned = dateStr.replace(/\s*\([A-Za-z]+\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
   // Normalise date separators: "2023/05/20 02:21" -> "2023-05-20 02:21"
   const normalized = cleaned.replace(/\//g, '-');
-  const ms = Date.parse(normalized);
+  // WR-02 fix: Date.parse("YYYY-MM-DD HH:MM") (space-separated, non-ISO) is parsed as LOCAL
+  // time by V8. Normalise to an explicit UTC instant so the [YYYY-MM-DD] prefix rendered back
+  // via toISOString() (UTC) is always correct regardless of host timezone.
+  // "2023-05-20 02:21" → "2023-05-20T02:21Z" (only the first space is replaced).
+  const utcNormalized = normalized.replace(' ', 'T') + 'Z';
+  const ms = Date.parse(utcNormalized);
   return isNaN(ms) ? null : ms;
 }
 
@@ -551,24 +556,28 @@ async function runBoundedPool(items, concurrency, fn) {
             `).all(nodeIdsJson);
             const tsMap = new Map(tsRows.map(r => [r.node_id, r.latest_ts]));
 
-            // Sort: among dated nodes, newest-first; undated (orphan) nodes maintain
-            // original rank position (stable sort via origIdx, same as engine.ts).
-            resolvedEntries = resolvedEntries
-              .map((e, origIdx) => ({ e, origIdx }))
-              .sort((a, b) => {
-                const tsA = tsMap.get(a.e.id);
-                const tsB = tsMap.get(b.e.id);
-                if (tsA !== undefined && tsB !== undefined) return tsB - tsA;
-                return a.origIdx - b.origIdx;
-              })
-              .map(({ e, origIdx: _o }) => {
-                const ts = tsMap.get(e.id);
-                if (ts !== undefined) {
-                  const dateStr = new Date(ts).toISOString().slice(0, 10);
-                  return { id: e.id, node: { ...e.node, value: `[${dateStr}] ${e.node.value}` } };
-                }
-                return e;
-              });
+            // CR-01 fix: subsequence reorder matching engine.ts — don't express "sort dated
+            // sub-sequence in place" as a mixed comparator (intransitive when an undated node
+            // lies between two dated nodes). Collect original slot positions of dated nodes,
+            // sort those positions newest-first, write dated nodes back into those slots,
+            // leave undated (orphan) entries fixed at their original positions.
+            const datedSlots = resolvedEntries
+              .map((e, i) => (tsMap.has(e.id) ? i : -1))
+              .filter(i => i !== -1);
+            const datedSorted = datedSlots
+              .slice()
+              .sort((i, j) => tsMap.get(resolvedEntries[j].id) - tsMap.get(resolvedEntries[i].id));
+            const reordered = resolvedEntries.slice();
+            datedSlots.forEach((slot, k) => { reordered[slot] = resolvedEntries[datedSorted[k]]; });
+            // Apply [YYYY-MM-DD] prefix to dated nodes; leave undated (orphan) values unchanged.
+            resolvedEntries = reordered.map(e => {
+              const ts = tsMap.get(e.id);
+              if (ts !== undefined) {
+                const dateStr = new Date(ts).toISOString().slice(0, 10);
+                return { id: e.id, node: { ...e.node, value: `[${dateStr}] ${e.node.value}` } };
+              }
+              return e;
+            });
           }
 
           retrievedValues = resolvedEntries.map(({ node }) => node.value);
