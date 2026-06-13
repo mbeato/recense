@@ -124,10 +124,17 @@ const AUTH_HEADER = { authorization: `Bearer ${TEST_TOKEN}` };
 let serverResult: BrainHttpServer;
 let port: number;
 let tmpDbPath: string;
+let tmpLockPath: string;
 
 beforeEach(async () => {
   port = await getFreePort();
   tmpDbPath = makeTempDbPath();
+  // Hermetic per-test lock path — prevents contention with the hourly sleep pass or
+  // parallel test workers holding /tmp/brain-memory-sleep.lock (same pattern as
+  // mcp-server.test.ts). Must be set before createBrainHttpServer so wireMemoryEngine
+  // picks up the override via getLockPath() at call time (DEBT-02).
+  tmpLockPath = path.join(os.tmpdir(), `serve-test-lock-${Date.now()}-${Math.random().toString(36).slice(2)}.lock`);
+  process.env['BRAIN_MEMORY_LOCK_PATH'] = tmpLockPath;
 
   // Must use a file-based DB — better-sqlite3 cannot open :memory: with { readonly: true }
   // (required by separateReadHandle: true)
@@ -151,6 +158,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await serverResult.close();
   try { fs.unlinkSync(tmpDbPath); } catch { /* ignore */ }
+  delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+  try { fs.unlinkSync(tmpLockPath); } catch { /* ignore */ }
 });
 
 // ---------------------------------------------------------------------------
