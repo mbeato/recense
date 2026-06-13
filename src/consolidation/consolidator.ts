@@ -560,9 +560,26 @@ export class Consolidator {
         // Amortizes one think block across N claims; ≤2 LLM calls total (forward + optional
         // contradict-only swap). If the batch rejects, the episode is quarantined per H-2.
         // T-02-ASYNC: this single await is Phase A — before any db.transaction (CONSOL-02).
-        const judgeVerdicts = await this.provider.judgeBatch(
-          pendingJudges.map(p => ({ claim: p.claimValue, candidates: p.candidates }))
-        );
+        //
+        // Judge batching DEFAULTS OFF (260613). The cea0125 batch-of-N path was a perf
+        // optimization (one think block amortized across N claims) that was NEVER
+        // correctness-validated and regressed local EVAL-02 belief-correction 84.6% -> 53.8%:
+        // the 35b judge loses per-pair accuracy when several contradiction pairs share one
+        // think block. Per-claim judging is the validated baseline behavior. Batching is now
+        // OPT-IN via BRAIN_MEMORY_ENABLE_JUDGE_BATCH=1 for stacks where it has been validated.
+        // items.length===1 delegates to this.judge() byte-identically (judgeBatch contract),
+        // so the per-claim path is exactly the pre-batching behavior.
+        const judgeVerdicts = process.env.BRAIN_MEMORY_ENABLE_JUDGE_BATCH === '1'
+          ? await this.provider.judgeBatch(
+              pendingJudges.map(p => ({ claim: p.claimValue, candidates: p.candidates }))
+            )
+          : await Promise.all(
+              pendingJudges.map(p =>
+                this.provider
+                  .judgeBatch([{ claim: p.claimValue, candidates: p.candidates }])
+                  .then(r => r[0]!)
+              )
+            );
 
         // Fill judge-escalated slots in original claim order
         for (let i = 0; i < pendingJudges.length; i++) {

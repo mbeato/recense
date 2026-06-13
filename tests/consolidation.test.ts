@@ -2015,8 +2015,9 @@ describe('M1/M2: entity-anchored expansion and multi-candidate contradiction rou
 });
 
 // ---------------------------------------------------------------------------
-// judgeBatch integration: consolidator issues ONE judgeBatch call per episode
-// (batch amortization, quick task 260612-lc0)
+// judgeBatch integration: per-claim judging is the DEFAULT (260613 — batching regressed
+// local EVAL-02 84.6%->53.8%); batching is opt-in via BRAIN_MEMORY_ENABLE_JUDGE_BATCH=1
+// (perf path from quick task 260612-lc0).
 // ---------------------------------------------------------------------------
 
 describe('Consolidator.judgeBatch integration', () => {
@@ -2026,9 +2027,9 @@ describe('Consolidator.judgeBatch integration', () => {
     h = makeHarness();
   });
 
-  it('multi-claim episode: exactly ONE judgeBatch call and verdicts land in correct slots', async () => {
+  it('multi-claim episode (default per-claim): one single-item judgeBatch call per claim; verdicts land in correct slots', async () => {
     // Three candidate nodes, each with alwaysSame embedding so all three claims escalate to judge
-    // (cosine=1.0 > threshold, no D-17 exact match → all three go to pendingJudges → one judgeBatch call)
+    // (cosine=1.0 > threshold, no D-17 exact match → all three go to pendingJudges → three per-claim judgeBatch calls)
     const dims = h.config.embeddingDimensions;
     const alwaysVec = new Float32Array(dims); alwaysVec[0] = 1.0;
 
@@ -2086,14 +2087,17 @@ describe('Consolidator.judgeBatch integration', () => {
 
     await consolidator.consolidate();
 
-    // Key assertion: exactly ONE judgeBatch call for this episode (not 3 separate judge calls)
-    expect(judgeBatchCallCount).toBe(1);
+    // Default (per-claim) judging: one single-item judgeBatch call per pending claim.
+    expect(judgeBatchCallCount).toBe(3);
 
-    // The batch received all 3 claims
-    expect(capturedBatchArgs[0]).toHaveLength(3);
+    // Each call carried exactly one claim, in original claim order.
+    expect(capturedBatchArgs).toHaveLength(3);
+    expect(capturedBatchArgs[0]).toHaveLength(1);
+    expect(capturedBatchArgs[1]).toHaveLength(1);
+    expect(capturedBatchArgs[2]).toHaveLength(1);
     expect(capturedBatchArgs[0]![0]!.claim).toBe('Claim about A');
-    expect(capturedBatchArgs[0]![1]!.claim).toBe('Claim about B');
-    expect(capturedBatchArgs[0]![2]!.claim).toBe('Claim about new thing');
+    expect(capturedBatchArgs[1]![0]!.claim).toBe('Claim about B');
+    expect(capturedBatchArgs[2]![0]!.claim).toBe('Claim about new thing');
 
     // Verdicts land in correct slots (confirm → strengthen A, extend → new node, unrelated → new node)
     const nodeA = h.store.getNode(cA)!;
@@ -2105,8 +2109,8 @@ describe('Consolidator.judgeBatch integration', () => {
     expect(liveNodes.length).toBeGreaterThanOrEqual(4);
   });
 
-  it('zero-pending-judges episode: judgeBatch called with empty array, returns [] without error', async () => {
-    // All claims fast-path confirm (D-17 exact match) → pendingJudges empty → judgeBatch([]) called
+  it('zero-pending-judges episode (all D-17 fast-path): no judge call is made (per-claim default)', async () => {
+    // All claims fast-path confirm (D-17 exact match) → pendingJudges empty → per-claim default makes zero judgeBatch calls
     const nodeValue = 'exact match node value';
     const nodeId = newId();
     h.store.upsertNode({ id: nodeId, type: 'fact', value: nodeValue, origin: 'observed', s: 0.3 });
@@ -2138,7 +2142,61 @@ describe('Consolidator.judgeBatch integration', () => {
 
     await consolidator.consolidate();
 
-    // judgeBatch was called (with empty array); no errors thrown
+    // Per-claim default: no pending judges → no judgeBatch call at all (and no error).
+    expect(judgeBatchCallCount).toBe(0);
+  });
+
+  it('opt-in BRAIN_MEMORY_ENABLE_JUDGE_BATCH=1: multi-claim episode issues exactly ONE batched judgeBatch call', async () => {
+    const dims = h.config.embeddingDimensions;
+    const alwaysVec = new Float32Array(dims); alwaysVec[0] = 1.0;
+    const cA = newId(); const cB = newId(); const cC = newId();
+    h.store.upsertNode({ id: cA, type: 'fact', value: 'Node A', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.upsertNode({ id: cB, type: 'fact', value: 'Node B', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.upsertNode({ id: cC, type: 'fact', value: 'Node C', origin: 'observed', s: 0.5, c: 0.7 });
+    h.store.setEmbedding(cA, alwaysVec); h.store.setEmbedding(cB, alwaysVec); h.store.setEmbedding(cC, alwaysVec);
+
+    const verdicts: JudgeVerdict[] = [
+      { best_candidate_id: cA, relation: 'confirm', magnitude: 0 },
+      { best_candidate_id: cB, relation: 'extend', magnitude: 0 },
+      { best_candidate_id: null, relation: 'unrelated', magnitude: 0 },
+    ];
+    let judgeBatchCallCount = 0;
+    const capturedBatchArgs: Array<Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>> = [];
+    const baseProvider = new MockModelProvider({
+      embedFn: (_text: string) => alwaysVec.slice(),
+      generateScript: [JSON.stringify([
+        { type: 'fact', value: 'Claim about A' },
+        { type: 'fact', value: 'Claim about B' },
+        { type: 'fact', value: 'Claim about new thing' },
+      ])],
+      judgeScript: verdicts,
+    });
+    const countingProvider: ModelProvider = {
+      async embed(texts: string[]) { return baseProvider.embed(texts); },
+      async generate(prompt: string, opts?: { maxTokens?: number; jsonSchema?: object }) { return baseProvider.generate(prompt, opts); },
+      async judge(claim: string, cands: Array<{ id: string; value: string }>) { return baseProvider.judge(claim, cands); },
+      async judgeBatch(items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>) {
+        judgeBatchCallCount++; capturedBatchArgs.push(items); return baseProvider.judgeBatch(items);
+      },
+    };
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      countingProvider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+    h.episodes.append({
+      content: 'multi-claim episode', origin: 'observed', salience: 0.8, hard_keep: 0,
+      role: 'user', session_id: 'sess-batch-optin',
+    });
+
+    process.env.BRAIN_MEMORY_ENABLE_JUDGE_BATCH = '1';
+    try {
+      await consolidator.consolidate();
+    } finally {
+      delete process.env.BRAIN_MEMORY_ENABLE_JUDGE_BATCH;
+    }
+
+    // Opt-in batching: exactly one judgeBatch call carrying all 3 claims.
     expect(judgeBatchCallCount).toBe(1);
+    expect(capturedBatchArgs[0]).toHaveLength(3);
   });
 });
