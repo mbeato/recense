@@ -242,10 +242,23 @@ const DRAG_STRIP_ADD = `(() => {
   x.addEventListener('click', () => { location.href = '${UNPIN_SENTINEL}'; });
   strip.appendChild(x);
   document.body.appendChild(strip);
+  // Reparent the expand affordance INTO the strip as a no-drag child: its
+  // top half overlaps the 26px drag band, and a no-drag *sibling* does not
+  // reliably carve out of an app-region:drag region (only nested no-drag
+  // children do — the × close proves the pattern). position:fixed keeps its
+  // screen coords unchanged. (Recenter sits at top:38, below the strip.)
+  const ex = document.getElementById('recense-expand-btn');
+  if (ex) strip.appendChild(ex);
   const panel = document.getElementById('panel');
   if (panel) panel.style.setProperty('-webkit-app-region', 'no-drag');
 })();`;
-const DRAG_STRIP_REMOVE = `document.getElementById('recense-drag-strip')?.remove();`;
+// Rescue the reparented expand button back to <body> before removing the strip,
+// so unpinning never destroys it.
+const DRAG_STRIP_REMOVE = `(() => {
+  const ex = document.getElementById('recense-expand-btn');
+  if (ex) document.body.appendChild(ex);
+  document.getElementById('recense-drag-strip')?.remove();
+})();`;
 
 /**
  * Set the pin state.
