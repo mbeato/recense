@@ -36,17 +36,26 @@ const VERTEX_SHADER = /* glsl */`
 `;
 
 // ── Fresnel fragment shader ────────────────────────────────────────────────
-// fresnel = pow(1 - |dot(viewDir, normal)|, rimPower)
-// — brighter at glancing angles (edge-lit), dark toward screen center (glass-interior)
+// fresnel = pow(1 - cosA, rimPower) — brighter at glancing angles (edge-lit)
+// outerWeight = pow(cosA, foldSuppress) — suppresses interior-fold rim stacking
+// Together: true outer silhouette edge stays lit; sub-silhouette interior folds
+// (low cosA, near-glancing) receive attenuated opacity so they don't additively
+// stack into the jagged head-on / top-down noise outline (D-05 / D-06 primary fix).
 const FRAGMENT_SHADER = /* glsl */`
   uniform vec3  rimColor;
   uniform float rimPower;
   uniform float rimOpacity;
+  uniform float foldSuppress;
   varying vec3  vNormal;
   varying vec3  vViewDir;
   void main() {
-    float fresnel = pow(1.0 - abs(dot(vViewDir, vNormal)), rimPower);
-    gl_FragColor = vec4(rimColor, fresnel * rimOpacity);
+    float cosA        = abs(dot(vViewDir, vNormal));
+    float fresnel     = pow(1.0 - cosA, rimPower);
+    // Interior folds present low cosA (near-glancing normals) and light additively,
+    // stacking into a jagged silhouette. outerWeight = pow(cosA, foldSuppress) pushes
+    // their opacity toward zero while leaving high-cosA (true outer silhouette) intact.
+    float outerWeight = pow(cosA, foldSuppress);
+    gl_FragColor = vec4(rimColor, fresnel * rimOpacity * outerWeight);
   }
 `;
 
@@ -80,9 +89,10 @@ export function initEffects(ctx) {
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
     uniforms: {
-      rimColor:   { value: new THREE.Color(0x453d46) },  // rose-tinted charcoal — faint warm rim
-      rimPower:   { value: 3.5 },                        // tighter rim falloff — edge light only
-      rimOpacity: { value: 0.22 },
+      rimColor:     { value: new THREE.Color(0x453d46) },  // rose-tinted charcoal — faint warm rim
+      rimPower:     { value: 3.5 },                        // tighter rim falloff — edge light only
+      rimOpacity:   { value: 0.22 },
+      foldSuppress: { value: 2.0 },                        // interior-fold rim attenuation (D-05/D-06 VIZ-09)
     },
     transparent: true,
     depthWrite: false,
