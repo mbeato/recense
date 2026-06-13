@@ -84,6 +84,69 @@ Requires `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` in the environment. Keys are r
 
 The knowledge-update sub-score is reported separately because it is the most architecturally relevant number for brain-memory's core claim: if a stored belief is contradicted by new information, does the system return the current value or a stale one? The headline score aggregates across all categories, which may obscure this signal.
 
+### Phase 17: lever adoption — regression-set verification (2026-06-13)
+
+**Goal:** Attribute the 18 knowledge-update failures from the 69.2% run to pipeline stage, implement LLM-free-first levers, and confirm ≥5/18 recovered with zero regressions on the 10 stable-correct members.
+
+**Levers adopted (all implemented in Phase 17, $0 LLM-cost in engine):**
+
+| Lever | Flag | Mechanism |
+|-------|------|-----------|
+| LEVER 1 | `--hybrid` | FTS5 BM25 + cosine RRF hybrid retrieval (hybridTopk) in retrieveRanked; replaces pure cosine |
+| LEVER 2 | `--temporal` | Temporal newest-first tie-breaking: conflicting nodes with equal retrieval score sorted by MAX(episode.ts) descending |
+| LEVER 3 | `--rewrite` | Ask-time Q→declarative rewrite: question embedded for retrieval as a declarative statement (queryForEmbed), not the raw question |
+| LEVER 4 | *(default)* | rankedRetrievalK=10; no gold nodes ranked 11–30 in attribution analysis, so no change |
+| LEVER 5 | *(D-62 seam)* | CONVERSATION_EXTRACTION_PROMPT extended at per-source seam for aside facts, personal records, durations, numeric corrections |
+
+**Verification run (API stack, n=28):**
+
+28-question regression set: 18 attribution-run failures + 10 stable-correct members (selected from the 78-subset run). Run with `--hybrid --temporal --rewrite` on the API stack (Haiku 4.5 extraction/judging/answering, GPT-4o-2024-08-06 scorer). No local model providers — API stack only for comparability.
+
+**Comparison baseline disclosure:** The per-question labels come from the attribution re-run (`attribution-18.json`), NOT from the original 69.2% recorded run. The attribution run was an independent API run at default settings (no levers) to identify which 18 questions failed and why. These two baselines are close but not identical due to stochasticity; 2/18 were flagged `recovered_on_rerun=True` (stochastic recoveries present regardless of levers). Recovery counts include both true failures (16) and stochastic recoveries (2) for completeness.
+
+**Results:**
+
+```
+Overall: 75.0% (21/28) on the regression set (knowledge-update questions only)
+```
+
+| Criterion | Threshold | Actual | Result |
+|-----------|-----------|--------|--------|
+| A: failures recovered (0→1 vs attribution baseline) | ≥5/18 | **12/18** (10/16 true + 2/2 stochastic) | PASS |
+| B: regressions on stable-correct (1→0) | 0 | **1** (9ea5eabc: "most recent family trip") | FAIL |
+| C: local EVAL-02 correctness (V8 floor) | ≥84.6% | **69.2%** (9/13; commit 97ec947) | FAIL |
+| D: full test suite | green | 912/914 green, 2 skipped | PASS |
+
+**Regression detail (9ea5eabc):** The question asks for the user's most recent family trip destination. This question was stable-correct in both the original 69.2% run and the attribution re-run but regressed with LEVER 1+2+3 active. Probable cause: FTS5 BM25 over-weights the keyword "Hawaii" (which appears in multiple sessions) relative to the newer "Paris" trip, so hybrid retrieval ranks the stale fact above the current value. The LEVER 2 temporal sort does not rescue it because both episode timestamps are close enough that BM25 score dominates RRF. This is a retrieval-layer issue, not an extraction or consolidation issue.
+
+**Abstention member (6aeb4375_abs):** Correctly recovered (label 1). No abstention regression.
+
+**Reproduction command:**
+
+```sh
+# API-stack run (Haiku extract/judge/answer; GPT-4o scorer)
+node scripts/eval/longmemeval-harness.cjs \
+  --hybrid --temporal --rewrite \
+  --eval scripts/eval/results/longmemeval-28-regression.jsonl
+
+node scripts/eval/longmemeval-scorer.cjs \
+  --hypotheses scripts/eval/results/longmemeval-17-verify-hypotheses.jsonl \
+  --eval scripts/eval/results/longmemeval-28-regression.jsonl \
+  --out scripts/eval/results/longmemeval-17-verify-SCORED.json
+```
+
+Estimated cost: ~$4.13 (28 questions). Do NOT source `sleep.env` before running — it sets `BRAIN_MEMORY_*_PROVIDER=local` which switches to Ollama and produces incomparable results.
+
+**API spend (Phase 17):**
+
+| Run | Cost | Purpose |
+|-----|------|---------|
+| 17-01 attribution run | ~$2.70 | Instrument harness, attribute 18 failures |
+| 17-05 verification run | ~$4.13 | 28-question regression verification with LEVER 1+2+3 |
+| **Cumulative** | **~$6.83** | Phase 17 total (≤$12 cap) |
+
+**Phase outcome:** Criterion A passed (12/18 recovered, well above the ≥5 threshold). Criterion B and C both failed: 1 stable-correct regression on 9ea5eabc (BM25 over-indexing) and EVAL-02 local dropped from 84.6% to 69.2%. The EVAL-02 drop is 2 additional contradiction cases failing, all without tombstones — contradiction not detected. Likely cause: LEVER 5 CONVERSATION_EXTRACTION_PROMPT extension at D-62 changed how the extractor formulates simple facts, making some contradiction pairs fail the PE-gated update. This is a $0-cost diagnostic (revert LEVER 5 and re-run EVAL-02). Operator decision required before phase close.
+
 ---
 
 ## EVAL-02: Correctness suite (belief-correction)
@@ -148,7 +211,8 @@ npm run eval:correctness:dry
 | System | Belief-correction rate | Stale-recall rate | Avg duplicates | Tombstone present | Run date | Commit |
 |--------|----------------------|------------------|---------------|-------------------|----------|--------|
 | brain-memory (API config) | **92.3%** content-correct (12/13; 84.6–92.3% scorer-credited across runs — substring scorer under-credits correct paraphrases) | 7.7% | 1.76 | Yes (70.6%) | 2026-06-12 | 9293be7 |
-| brain-memory (local: granite4.1:8b + qwen3.6:35b-a3b) | 84.6% scorer-credited, content matches API | 15.4% | 1.41 | Yes (76.5%) | 2026-06-12 | 7d76166 |
+| brain-memory (local: granite4.1:8b + qwen3.6:35b-a3b) V8 | **84.6%** scorer-credited, content matches API | 15.4% | 1.41 | Yes (76.5%) | 2026-06-12 | 7d76166 |
+| brain-memory (local: granite4.1:8b + qwen3.6:35b-a3b) post-Phase-17 | **69.2%** (9/13) — REGRESSION vs V8; 4 failures, 3 without tombstone | 30.8% | 1.65 | Yes (58.8%) | 2026-06-13 | 97ec947 |
 | ADD-only baseline | 0% | 100% | 2.0 | No | same run | same |
 
 ---
