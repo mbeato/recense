@@ -385,6 +385,23 @@ export function initGraph(ctx) {
   ctx.recenter = recenter;
   recenter(0);
 
+  // ── Track window resize ────────────────────────────────────────────────
+  // 3d-force-graph does NOT auto-resize its canvas to the window in this setup
+  // (verified: the canvas stayed at boot dimensions on window resize, so the
+  // brain never rescaled). Push the new viewport size to the Graph on resize —
+  // this resizes the renderer, the post-processing (bloom) composer, and the
+  // camera aspect, so the brain grows/shrinks/zooms with the window while
+  // preserving the user's current orbit and zoom (no reframe). rAF-coalesced so
+  // a drag-resize fires at most once per frame.
+  let resizeRaf = null;
+  window.addEventListener('resize', () => {
+    if (resizeRaf !== null) return;
+    resizeRaf = requestAnimationFrame(() => {
+      resizeRaf = null;
+      Graph.width(window.innerWidth).height(window.innerHeight);
+    });
+  });
+
   // Always-visible recenter control (visible in compact popover where #panel is
   // display:none). graph.js owns framing — recenter is in scope, no ctx lookup.
   const btnRecenter = document.getElementById('btn-recenter');
