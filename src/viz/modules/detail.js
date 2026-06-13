@@ -163,10 +163,15 @@ export function initDetail(ctx) {
     dimmedNodes = [];
   }
 
-  /** Remove the selection ring from the previous node. */
+  /** Remove the selection ring from the previous node and free its GPU resources. */
   function clearSelection() {
-    if (selectionRing && selectedNode && selectedNode.__mesh) {
-      selectedNode.__mesh.remove(selectionRing);
+    if (selectionRing) {
+      if (selectedNode && selectedNode.__mesh) selectedNode.__mesh.remove(selectionRing);
+      // Dispose geometry + material — selectNode allocates a fresh RingGeometry +
+      // MeshBasicMaterial every click; without disposal they leak per selection and
+      // GPU memory pressure degrades the framerate over a session.
+      if (selectionRing.geometry) selectionRing.geometry.dispose();
+      if (selectionRing.material) selectionRing.material.dispose();
     }
     selectionRing = null;
     selectedNode  = null;
