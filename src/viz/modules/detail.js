@@ -322,6 +322,29 @@ export function initDetail(ctx) {
 
   // ── Public API: selectNode ─────────────────────────────────────────────────
 
+  /**
+   * Return member nodes of a schema node: walk the adjacency list for edges
+   * where kind='abstracts' and the edge is OUTGOING from schemaNode (schema →
+   * member direction). Resolves each target id via ctx.idMap.
+   * SC2: member set derives strictly from engine-served abstracts edges, not
+   *      any client-side name/string heuristic.
+   */
+  function getSchemaMembers(schemaNode) {
+    const edges = (ctx.adj && ctx.adj.get(schemaNode.id)) || [];
+    const members = [];
+    for (const e of edges) {
+      if (e.kind === 'abstracts') {
+        const sid = typeof e.source === 'object' ? e.source.id : e.source;
+        if (sid === schemaNode.id) {  // outgoing only — schema → member
+          const tid = typeof e.target === 'object' ? e.target.id : e.target;
+          const member = ctx.idMap && ctx.idMap.get(tid);
+          if (member) members.push(member);
+        }
+      }
+    }
+    return members;
+  }
+
   function selectNode(node) {
     // 1. Clear previous selection
     clearSelection();
@@ -370,7 +393,40 @@ export function initDetail(ctx) {
     // the popover, so the dim would stick with no dismiss path.
     shockwave(node);
     ripple(node);
-    if (!compact) applyFocusDim(node);
+    if (!compact) {
+      applyFocusDim(node);
+
+      // Topic-region extension (Phase 19 / VIZ-08): if the selected node is a
+      // schema, glow the schema + all abstracts-member nodes amber and dim
+      // everything else to FOCUS_DIM_OPACITY as one cohesive region.
+      // User-initiated only (D-04). Region highlight is a static category state;
+      // traveling pulse is reserved for SSE traces (ephemeral event signal) — not used here.
+      if (node.__cat === 'schema') {
+        // Mutual exclusion with search (Contract A↔B): clear active search state first
+        // so search dim/glow does not layer under the region state.
+        if (ctx.clearSearch) ctx.clearSearch();
+
+        const members = getSchemaMembers(node);
+
+        // Activate schema node + all members to HOT amber via ctx.activate.
+        // Never set __mat.color to HOT directly — always go through ctx.activate.
+        if (ctx.activate) ctx.activate(node, 1.0);
+        for (const m of members) {
+          if (ctx.activate) ctx.activate(m, 1.0);
+        }
+
+        // Replace neighbourhood-based dim with schema-membership dim.
+        // Keep set = schema node + all member nodes; dim everything else.
+        // clearFocusDim() first so we start from a clean slate.
+        clearFocusDim();
+        const keepIds = new Set([node.id, ...members.map(m => m.id)]);
+        for (const n of (ctx.allNodes || [])) {
+          if (keepIds.has(n.id) || !n.__mat) continue;
+          n.__mat.opacity = FOCUS_DIM_OPACITY;
+          dimmedNodes.push(n);
+        }
+      }
+    }
 
     // 7. Reset idle timer so the camera focus is not overridden immediately
     if (typeof ctx.markActive === 'function') ctx.markActive();
