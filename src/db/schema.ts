@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -194,6 +194,30 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_edge_dst
       ON edge(dst);
   `);
+
+  // v6 migration: FTS5 keyword index for hybrid BM25+cosine retrieval (Phase 17 LEVER 1).
+  // Standalone table (not external-content): node.id is TEXT PK with unstable implicit rowid
+  // → external-content FTS5 would silently corrupt on VACUUM. Standalone + manual sync is correct.
+  // node_id UNINDEXED: not a retrieval column; used only for JOIN to node table.
+  // Backfill from live (non-tombstoned) nodes — rebuildable derived cache (mirrors embedding doctrine).
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS node_fts USING fts5(
+      node_id UNINDEXED,
+      value,
+      tokenize='unicode61 remove_diacritics 2'
+    );
+  `);
+
+  // Backfill: only if empty (idempotent re-run safe).
+  // Only live (tombstoned=0) nodes enter the index; tombstone() sync keeps it current.
+  // Plain DELETE FROM node_fts WHERE ... works; the special 'delete' command does NOT — do not use.
+  const ftsCount = (db.prepare('SELECT count(*) AS n FROM node_fts').get() as { n: number }).n;
+  if (ftsCount === 0) {
+    db.exec(`
+      INSERT INTO node_fts(node_id, value)
+      SELECT id, value FROM node WHERE tombstoned = 0
+    `);
+  }
 
   // Stamp schema version — read first to guard against downgrade (M-9).
   // Throws when stored > SCHEMA_VERSION so a stale launchd binary can't re-stamp a future DB
