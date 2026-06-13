@@ -12,6 +12,9 @@
 import { BrowserWindow, Tray } from 'electron';
 import { join } from 'path';
 import { openMainWindow } from './main-window';
+// No cycle: detail-window.ts imports nothing from popover.ts — the popover
+// window is passed as an argument to openDetailWindow.
+import { openDetailWindow, hideDetailWindow, getDetailWindow } from './detail-window';
 
 /**
  * Sentinel URL for the injected expand button (promote popover → app window).
@@ -92,7 +95,10 @@ export function createPopover(): BrowserWindow {
   // Load while show:false so visibilityState starts as 'hidden'.
   // The Phase 15 D-07 render-pause activates immediately; rendering is
   // paused until the first win.show() call.
-  win.loadURL('http://127.0.0.1:7810').catch(() => {
+  // ?shell=1 marks the shell context for the viz (detail.js shellCompact):
+  // the server strips query strings before routing, so it still serves
+  // index.html unchanged.
+  win.loadURL('http://127.0.0.1:7810/?shell=1').catch(() => {
     // Server may not be up yet — renderer will retry when shown.
   });
 
@@ -101,6 +107,22 @@ export function createPopover(): BrowserWindow {
   // → app window); it is prevented like any other navigation, so the page
   // never actually leaves the viz URL.
   win.webContents.on('will-navigate', (event, url) => {
+    // Detail sentinel — MUST be intercepted BEFORE the generic loopback check
+    // (it starts with the loopback prefix, so the generic branch would let it
+    // through and the page would actually navigate to a 404). EXACT pathname
+    // comparison: '/__recense/detail-close' prefix-matches '/__recense/detail',
+    // so startsWith is a bug here.
+    try {
+      const u = new URL(url);
+      if (u.pathname === '/__recense/detail') {
+        event.preventDefault();
+        const id = u.searchParams.get('id');
+        if (id) openDetailWindow(id, win);
+        return;
+      }
+    } catch {
+      // unparseable URL — fall through to the generic guards below
+    }
     if (url.startsWith(UNPIN_SENTINEL)) {
       event.preventDefault();
       setPinned(win, false); // removes the strip
@@ -134,12 +156,24 @@ export function createPopover(): BrowserWindow {
 
   // D-04: blur-dismiss — hide the popover on loss of focus unless pinned.
   // Pinned windows survive blur and remain as an always-on-top floating surface.
+  // The hide decision is deferred one tick: when focus moved to the detail
+  // window the popover must NOT hide (getFocusedWindow does not resolve the
+  // new focus synchronously inside the blur event).
   win.on('blur', () => {
     if (Date.now() < _blurGraceUntil) return;
-    if (!_pinned) {
+    if (_pinned) return;
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      const f = BrowserWindow.getFocusedWindow();
+      if (f !== null && f === getDetailWindow()) return;
       win.hide();
-    }
+    }, 0);
   });
+
+  // Every popover-hide path (blur, togglePopover, unpin sentinel, expand
+  // sentinel, collapse handler) also hides the detail window — one hook
+  // covers them all; main.ts needs no changes.
+  win.on('hide', () => hideDetailWindow());
 
   return win;
 }
