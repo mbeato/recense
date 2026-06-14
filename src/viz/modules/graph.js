@@ -84,6 +84,27 @@ function makeNodeObject(node) {
     depthWrite: true,
   });
 
+  // Subtle self-colored Fresnel rim — gives each orb a little depth (reads as a lit
+  // sphere, not a flat disc) in the project's existing rim language (the hull uses
+  // the same effect). On-palette: it brightens the node's OWN colour at the
+  // silhouette, never amber, so D-04 (no fake activation) holds. Cheap: no extra
+  // geometry/draw calls; identical injected source means all nodes share ONE compiled
+  // program. For a unit sphere centred at the origin the local position equals the
+  // normal, so we avoid the (unlit) normal attribute MeshBasic may omit. If a three.js
+  // chunk name ever changes, the .replace() is a silent no-op (rim absent, never broken).
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>',
+        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
+      .replace('#include <begin_vertex>',
+        '#include <begin_vertex>\nvRimV = normalize(cameraPosition - (modelMatrix * vec4(transformed, 1.0)).xyz);\nvRimN = normalize(mat3(modelMatrix) * transformed);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>',
+        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
+      .replace('#include <dithering_fragment>',
+        '#include <dithering_fragment>\nfloat _rim = pow(1.0 - abs(dot(normalize(vRimV), normalize(vRimN))), 3.0);\ngl_FragColor.rgb += _rim * 0.22 * gl_FragColor.rgb;');
+  };
+
   const mesh = new THREE.Mesh(_sharedGeo, mat);
   mesh.scale.setScalar(radius);
 
