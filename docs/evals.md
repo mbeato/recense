@@ -271,6 +271,7 @@ npm run eval:correctness:dry
 | recense (API config) | **92.3%** content-correct (12/13; 84.6–92.3% scorer-credited across runs — substring scorer under-credits correct paraphrases) | 7.7% | 1.76 | Yes (70.6%) | 2026-06-12 | 9293be7 |
 | recense (local: granite4.1:8b + qwen3.6:35b-a3b) V8 | **84.6%** scorer-credited, content matches API | 15.4% | 1.41 | Yes (76.5%) | 2026-06-12 | 7d76166 |
 | recense (local: granite4.1:8b + qwen3.6:35b-a3b) post-Phase-17 | **69.2%** (9/13) — REGRESSION vs V8; 4 failures, 3 without tombstone | 30.8% | 1.65 | Yes (58.8%) | 2026-06-13 | 97ec947 |
+| recense (local V8) — **re-verified post-scrub** | **84.6%** (11/13) — matches V8 exactly; confirms the brain→recense rename + history scrub did not regress the engine | 15.4% | 1.18 | Yes (76.5%) | 2026-06-14 | e54cfab |
 | ADD-only baseline | 0% | 100% | 2.0 | No | same run | same |
 
 ---
