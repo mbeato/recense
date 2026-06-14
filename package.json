@@ -8,13 +8,13 @@
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "bin": {
-    "recense": "dist/src/adapter/brain.js"
+    "recense": "dist/src/adapter/recense.js"
   },
   "scripts": {
     "build": "tsc",
-    "postbuild": "chmod +x dist/src/adapter/brain.js && node scripts/copy-viz-assets.cjs",
+    "postbuild": "chmod +x dist/src/adapter/recense.js && node scripts/copy-viz-assets.cjs",
     "pretest": "npm run build",
-    "init": "npm run build && node dist/src/adapter/brain.js init",
+    "init": "npm run build && node dist/src/adapter/recense.js init",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "tsx src/index.ts",
@@ -26,6 +26,7 @@
     "eval:longmemeval": "npm run build && node scripts/eval/longmemeval-harness.cjs",
     "eval:longmemeval:probe": "npm run build && node scripts/eval/longmemeval-harness.cjs --probe",
     "eval:longmemeval:dry": "npm run build && node scripts/eval/longmemeval-harness.cjs --dry-run",
+    "eval:injection": "npm run build && node scripts/eval/injection-efficiency-harness.cjs",
     "build:client": "tsc -p clients/telegram/tsconfig.json"
   },
   "dependencies": {
