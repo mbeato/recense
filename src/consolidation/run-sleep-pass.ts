@@ -33,29 +33,61 @@ import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 import { newId } from '../lib/hash';
 
 /**
- * Phase 19 viz lighting: emit ONE coherent, flag-gated activation trace seeded with
- * the nodes a sleep pass genuinely touched (created / updated / tombstoned /
- * abstracted) since `sinceTs`, read from the consolidation_event provenance the pass
- * just wrote. So the second brain visibly lights up when it does real work on its own.
- *
- * Honest by construction — every seed is a node the pass actually touched; if it
- * touched nothing, nothing fires. Flag-gated via the switchable sink (writes only
- * while a viz window holds viz_trace_enabled on) and cross-process for free: the viz
- * polls the same activation_trace table over WAL. Fire-and-forget — viz lighting must
- * NEVER surface to or affect the consolidation result (mirrors the engine emit guard,
- * T-10-05). Exported for direct verification.
+ * Phase 19 cascade tunables (Item 2 transport (b): the pass spaces emits).
+ * The spacing lives entirely AFTER consolidate() — it never touches the critical
+ * graph writer or its transaction.
  */
-export function lightConsolidatedNodes(db: Database.Database, clock: Clock, sinceTs: number): void {
+/** Max node-ops replayed as cascade steps. Bounds the extra background-process
+ *  lifetime to ~CASCADE_MAX * CASCADE_GAP_MS (≈7s); a longer pass shows its
+ *  opening flurry, then stops (honest truncation, never fabrication). */
+export const CASCADE_MAX = 24;
+/** Gap between cascade emits (ms). ~matches the viz poll (POLL_MS=250) so the
+ *  frontend picks up roughly one activation per poll instead of a single burst. */
+export const CASCADE_GAP_MS = 300;
+
+/** Default spacer — real wall-clock sleep. Injectable so tests stay instant. */
+const realSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Phase 19 viz lighting: replay the consolidation_event provenance a sleep pass just
+ * wrote as a PROGRESSIVE, spaced cascade — one tiny flag-gated activation trace per
+ * genuine node operation (created / updated / tombstoned / abstracted) since
+ * `sinceTs`, in chronological (ts ASC) order. Because schema-induction, belief
+ * correction, and tombstoning run at different times within the pass, replaying by
+ * ts reproduces that progression for free, so the second brain reads as THINKING
+ * rather than firing one summary pulse.
+ *
+ * Honest by construction — every emit is a node the pass actually touched; a no-op
+ * pass fires nothing. Flag-gated via the switchable sink (writes only while a viz
+ * window holds viz_trace_enabled on); when OFF it returns immediately (no sleeping,
+ * no waste). Cross-process for free: the viz polls the same activation_trace table
+ * over WAL. Fire-and-forget — wrapped in try/catch so viz lighting can NEVER surface
+ * to or affect the consolidation result (mirrors the engine emit guard, T-10-05).
+ * Awaited inside the caller's lock so it never writes to a closing DB. Exported for
+ * direct verification; `sleep` is injectable so tests don't wall-clock-block.
+ */
+export async function lightConsolidatedNodes(
+  db: Database.Database,
+  clock: Clock,
+  sinceTs: number,
+  sleep: (ms: number) => Promise<void> = realSleep,
+): Promise<void> {
   try {
     const traceSink = new SwitchableActivationTraceSink(db, clock);
-    traceSink.refresh();
-    const touched = (db.prepare(
-      `SELECT DISTINCT node_id FROM consolidation_event
+    // Flag OFF → nothing to do; bail before any query or sleep (no waste).
+    if (!traceSink.refresh()) return;
+    const ops = db.prepare(
+      `SELECT node_id FROM consolidation_event
        WHERE ts >= ? AND node_id IS NOT NULL
-       ORDER BY ts DESC LIMIT 12`,
-    ).all(sinceTs) as Array<{ node_id: string }>).map(r => r.node_id);
-    if (touched.length > 0) {
-      traceSink.emit({ query_id: newId(), seeds: touched, hops: [] });
+       ORDER BY ts ASC LIMIT ?`,
+    ).all(sinceTs, CASCADE_MAX) as Array<{ node_id: string }>;
+    for (let i = 0; i < ops.length; i++) {
+      const op = ops[i];
+      if (!op) continue;
+      traceSink.emit({ query_id: newId(), seeds: [op.node_id], hops: [] });
+      // Space between steps so the viz replays a cascade, not a burst — but not
+      // after the last, so we don't hold the lock for a trailing idle gap.
+      if (i < ops.length - 1) await sleep(CASCADE_GAP_MS);
     }
   } catch {
     // Never let viz lighting affect the pass.
@@ -220,7 +252,8 @@ export async function runConsolidation(
   await consolidator.consolidate();
 
   // Phase 19: light the second brain when it does real work on its own.
-  lightConsolidatedNodes(db, realClock, passStartTs);
+  // Awaited so the spaced cascade completes inside the caller's lock/DB lifetime.
+  await lightConsolidatedNodes(db, realClock, passStartTs);
 
   // ── 6. Log SEAM-02 event summary (counts/types only — T-05-SINK-KEY) ──────
   const evtSummary = db
