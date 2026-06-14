@@ -74,52 +74,6 @@ function truncLabel(s, max) {
   return (sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/\s+$/, '') + '…';
 }
 
-// ── Layer 2: sparse hub labels (named-constellation at rest) ───────────────
-// Only well-populated SCHEMA nodes carry a name at rest, so the field reads as a
-// map without clutter. Raise LABEL_MIN_MEMBERS for fewer labels, lower for more.
-const LABEL_MIN_MEMBERS = 3;   // a schema needs ≥ this many members to earn a label
-const LABEL_MAX_CHARS   = 22;  // tight topic name; full text is in the hover/detail
-const LABEL_WORLD_H     = 16;  // sprite height in world units (readability vs size)
-const LABEL_GAP         = 6;   // gap above the orb
-
-/**
- * Build a camera-facing text label as a canvas-texture sprite (standard three.js
- * technique — no new dependency). Dim brand text on a light dark backing for
- * legibility over the field (same intent as the hover label). Supersampled ×2 for
- * crisp text; depthWrite off (never occludes), depthTest on (can be occluded → less
- * clutter). Stays under the bloom threshold so labels never glow.
- */
-function makeLabelSprite(text) {
-  const DPR = 2, fontPx = 26, padX = 10, padY = 6, radius = 6;
-  const fontSpec = `${fontPx}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
-  const measureCtx = document.createElement('canvas').getContext('2d');
-  measureCtx.font = fontSpec;
-  const textW = Math.ceil(measureCtx.measureText(text).width);
-  const w = textW + padX * 2, h = fontPx + padY * 2;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = w * DPR; canvas.height = h * DPR;
-  const c = canvas.getContext('2d');
-  c.scale(DPR, DPR);
-  c.font = fontSpec;
-  c.textBaseline = 'middle';
-  // Rounded dark backing — contrast from opacity, not a blur.
-  c.fillStyle = 'rgba(20, 14, 26, 0.66)';
-  c.beginPath();
-  c.moveTo(radius, 0);
-  c.arcTo(w, 0, w, h, radius); c.arcTo(w, h, 0, h, radius);
-  c.arcTo(0, h, 0, 0, radius); c.arcTo(0, 0, w, 0, radius);
-  c.closePath(); c.fill();
-  c.fillStyle = '#cdc3d4';
-  c.fillText(text, padX, h / 2 + 1);
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
-  const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(LABEL_WORLD_H * (w / h), LABEL_WORLD_H, 1);
-  return sprite;
-}
 
 /**
  * Build (or reuse) the THREE.Mesh for a node.
@@ -128,9 +82,7 @@ function makeLabelSprite(text) {
  * __actGain so trace.js can drive the activation animation.
  */
 function makeNodeObject(node) {
-  // Cache the rendered object (orb, or a Group of orb+label for hubs) separately
-  // from node.__mesh — which must always remain the ORB for trace/hover scaling.
-  if (node.__obj3d) return node.__obj3d;
+  if (node.__mesh) return node.__mesh;
 
   const radius = nodeRadius(node);
   const baseColor = node.tombstoned
@@ -178,20 +130,6 @@ function makeNodeObject(node) {
   node.__act     = 0;                   // activation level [0,1]
   node.__actGain = node.__cat === 'schema' ? 1.2 : 1.0; // schemas pulse brighter
 
-  // Layer 2: well-populated schema hubs carry a name at rest → return a Group of
-  // orb + label sprite. node.__mesh stays the orb (activation/hover untouched); the
-  // Group is what 3d-force-graph positions, and LOD .visible toggles both together.
-  if (node.__cat === 'schema' && (node.__members || 0) >= LABEL_MIN_MEMBERS) {
-    const sprite = makeLabelSprite(truncLabel(node.value || node.id || '', LABEL_MAX_CHARS));
-    sprite.position.set(0, radius + LABEL_GAP, 0);
-    const group = new THREE.Group();
-    group.add(mesh);
-    group.add(sprite);
-    node.__obj3d = group;
-    return group;
-  }
-
-  node.__obj3d = mesh;
   return mesh;
 }
 
