@@ -33,8 +33,28 @@
     </dict>
 
     <!--
-        StartCalendarInterval: run once per hour (at :00) after any wake.
-        launchd catches missed runs after sleep — unlike cron.
+        WatchPaths (L8N-01): on-write trigger — fires the same wrapper whenever the
+        dirty-sentinel file is touched by EpisodicStore.append() after a new episode
+        write. This cuts consolidation latency from up to ~1h to ~seconds after a write.
+        __DIRTY_SENTINEL__ → absolute path to the sentinel file, substituted by
+                             scripts/setup-dogfood.sh. Default:
+                             ~/.config/brain-memory/.episodes-dirty
+        ThrottleInterval=120s coalesces write bursts — launchd will not re-fire the
+        job more than once per 120s, guarding the Anthropic judge against rapid bursts.
+    -->
+    <key>WatchPaths</key>
+    <array>
+        <string>__DIRTY_SENTINEL__</string>
+    </array>
+
+    <!-- ThrottleInterval: debounce/rate-limit for WatchPaths fires (seconds). -->
+    <key>ThrottleInterval</key>
+    <integer>120</integer>
+
+    <!--
+        StartCalendarInterval: hourly floor — run once per hour (at :00) after any wake.
+        Kept alongside WatchPaths so the sleep pass still runs even when no writes occur
+        (e.g. strength decay, eviction). launchd catches missed runs after sleep.
         Minute=0 only (no Hour key) means: fire at the top of every hour.
     -->
     <key>StartCalendarInterval</key>

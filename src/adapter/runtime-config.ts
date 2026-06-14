@@ -92,6 +92,22 @@ export function loadConfiguredEnv(
 }
 
 /**
+ * Resolve the dirty-sentinel path for on-write sleep-pass triggering (L8N-01).
+ * Returns BRAIN_MEMORY_DIRTY_SENTINEL from process.env, or '' (disabled) if unset.
+ *
+ * The dispatcher's existing hydrateRuntimeEnv() populates this var from sleep.env for
+ * hook processes (turn-capture, stop) before they build their config. The launchd
+ * sleep-pass and ingest jobs source sleep.env directly via the wrapper script — so
+ * all four writer paths see the same path that the launchd WatchPaths watcher watches.
+ *
+ * '' = disabled (no filesystem access) — safe default when the env var is absent,
+ * which covers tests, embedded uses, and installs that haven't re-run setup-dogfood.sh.
+ */
+export function resolveDirtySentinelPath(): string {
+  return process.env['BRAIN_MEMORY_DIRTY_SENTINEL'] ?? '';
+}
+
+/**
  * Hydrate process.env from the configured env file (sleep.env) for any key NOT already
  * set in the ambient environment, then return the keys it applied.
  *

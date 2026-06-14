@@ -453,6 +453,18 @@ export interface EngineConfig {
    */
   enabledSources: string[];
 
+  // --- On-write sleep-pass trigger (L8N-01) ---
+
+  /**
+   * Path to the dirty-sentinel file touched on every real new non-inferred episode write.
+   * Empty string = disabled (fail-safe default — no filesystem access unless set).
+   * Set to ~/.config/brain-memory/.episodes-dirty in the dogfood/launchd setup via
+   * BRAIN_MEMORY_DIRTY_SENTINEL; launchd WatchPaths watches the same path.
+   * The touch is a no-op when this field is empty — unit tests and embedded uses
+   * never hit the filesystem (matches the coldStartMemoryDir / transcripts.dir pattern).
+   */
+  dirtySentinelPath?: string;
+
   // --- Phase 7: iMessage channel (D-70/D-71/D-74) ---
 
   /**
@@ -595,5 +607,8 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
     allowlist: [],           // [] = answers no one (D-74 fail-closed); add your own handle(s)
     pollIntervalMs: 2_000,   // 2s poll cadence — near-instant feel, tunable (D-71)
   },
+
+  // On-write sleep-pass trigger (L8N-01)
+  dirtySentinelPath: '', // empty = disabled; set BRAIN_MEMORY_DIRTY_SENTINEL or configure
 
 };

@@ -32,7 +32,7 @@
  */
 import { appendFileSync } from 'fs';
 import Database from 'better-sqlite3';
-import { hydrateRuntimeEnv, resolveDbPath } from './runtime-config';
+import { hydrateRuntimeEnv, resolveDbPath, resolveDirtySentinelPath } from './runtime-config';
 import { initSchema } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   if (promptText) {
     // CR-01: --db (pinned by `brain init`) > BRAIN_MEMORY_DB env > shared default.
     const dbPath = resolveDbPath();
-    const config = { ...DEFAULT_CONFIG, dbPath };
+    const config = { ...DEFAULT_CONFIG, dbPath, dirtySentinelPath: resolveDirtySentinelPath() };
     const db = new Database(dbPath);
     initSchema(db);
 

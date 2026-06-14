@@ -76,6 +76,13 @@ WRAPPER="$SCRIPT_DIR/sleep-pass-launchd.sh"
 # Env var overrides; default ~/.config/brain-memory/sleep.env. NEVER committed.
 ENV_FILE="${BRAIN_MEMORY_SLEEP_ENV:-$HOME/.config/brain-memory/sleep.env}"
 
+# Dirty-sentinel path for the on-write sleep-pass trigger (L8N-01).
+# EpisodicStore.append() touches this file on every real new non-inferred write;
+# launchd WatchPaths watches it and fires the sleep pass within seconds.
+# Both writer (BRAIN_MEMORY_DIRTY_SENTINEL in sleep.env → hook processes via
+# hydrateRuntimeEnv) and watcher (plist WatchPaths) use the SAME path.
+DIRTY_SENTINEL="${BRAIN_MEMORY_DIRTY_SENTINEL:-$HOME/.config/brain-memory/.episodes-dirty}"
+
 # launchd plist locations
 PLIST_TEMPLATE="$SCRIPT_DIR/com.brain-memory.sleep-pass.plist.template"
 LAUNCHAGENTS_DIR="$HOME/Library/LaunchAgents"
@@ -159,6 +166,10 @@ BRAIN_MEMORY_DB=$DB_PATH
 BRAIN_MEMORY_EXTRACTOR_PROVIDER=$EXTRACTOR_PROVIDER
 BRAIN_MEMORY_LOCAL_MODEL=$LOCAL_MODEL
 BRAIN_MEMORY_JUDGE_PROVIDER=$JUDGE_PROVIDER
+# On-write sleep-pass trigger (L8N-01): touched by EpisodicStore.append() on every
+# real new non-inferred write; also watched by launchd WatchPaths in the plist.
+# Both writer (hooks via hydrateRuntimeEnv) and watcher use this same path.
+BRAIN_MEMORY_DIRTY_SENTINEL=$DIRTY_SENTINEL
 $ANTHROPIC_LINE
 $OPENAI_LINE
 # ── Optional Gmail ingestion creds (D-68) — uncomment + fill in to enable Gmail ──
@@ -181,10 +192,12 @@ echo ""
 echo "==> [3/6] Installing launchd LaunchAgent..."
 mkdir -p "$LAUNCHAGENTS_DIR"
 
-# Render plist template: wrapper path + env-file path (keys live in the env file).
+# Render plist template: wrapper path + env-file path + dirty-sentinel path.
+# Keys live in the env file; __DIRTY_SENTINEL__ sets WatchPaths for on-write triggering.
 sed \
     -e "s|__WRAPPER__|$WRAPPER|g" \
     -e "s|__ENV_FILE__|$ENV_FILE|g" \
+    -e "s|__DIRTY_SENTINEL__|$DIRTY_SENTINEL|g" \
     "$PLIST_TEMPLATE" > "$PLIST_DST"
 echo "    Plist written: $PLIST_DST"
 

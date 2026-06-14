@@ -42,7 +42,7 @@ import { TranscriptAdapter } from '../source/transcript-adapter';
 import { ObsidianAdapter } from '../source/obsidian-adapter';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { acquireLock, releaseLock } from './lockfile';
-import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
+import { resolveDbPath as resolveSharedDbPath, resolveDirtySentinelPath } from './runtime-config';
 
 const LOG_PATH = '/tmp/brain-memory-ingest.log';
 
@@ -205,7 +205,7 @@ async function main(): Promise<void> {
     initSchema(db);
 
     // ── 4. Build config + stores ─────────────────────────────────────────────
-    const config = { ...DEFAULT_CONFIG, dbPath };
+    const config = { ...DEFAULT_CONFIG, dbPath, dirtySentinelPath: resolveDirtySentinelPath() };
 
     // For single-source runs, filter enabledSources to only the requested adapter.
     // This lets manual backfill runs target a single source without editing config.
