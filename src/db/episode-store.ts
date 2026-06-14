@@ -14,6 +14,7 @@
  *  - Scoring lives exclusively in AllocationGate (INGEST-02).
  */
 import Database from 'better-sqlite3';
+import { utimesSync, openSync, closeSync } from 'fs';
 import { newId } from '../lib/hash';
 import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
@@ -152,6 +153,34 @@ export class EpisodicStore {
   }
 
   /**
+   * Touch the dirty-sentinel file (L8N-01) to signal that a new episode was written.
+   * launchd WatchPaths watches this file and runs the sleep-pass wrapper within seconds.
+   *
+   * Design invariants:
+   *  - No-op when config.dirtySentinelPath is empty/undefined (default OFF).
+   *  - Synchronous, sub-millisecond — NEVER throws or awaits (CLAUDE.md: online write
+   *    path stays fast and LLM-free; never block the write).
+   *  - Swallows ALL errors via a double-layer try/catch.
+   *  - Strategy: utimesSync first (fast mtime bump if file exists); on ENOENT fall back
+   *    to closeSync(openSync(path, 'a')) to create the file.
+   */
+  private touchDirtySentinel(): void {
+    const sentinelPath = this.config.dirtySentinelPath;
+    if (!sentinelPath) return;
+    const now = new Date();
+    try {
+      utimesSync(sentinelPath, now, now);
+    } catch {
+      // File doesn't exist yet — create it
+      try {
+        closeSync(openSync(sentinelPath, 'a'));
+      } catch {
+        // Swallow all errors — never throw into append()
+      }
+    }
+  }
+
+  /**
    * Insert one episode row and return it. Idempotent on (source, external_id) when
    * external_id is non-null — a second call with the same pair returns the original row
    * without inserting a duplicate (D-59 dedup backstop). When external_id is null (legacy
@@ -187,6 +216,13 @@ export class EpisodicStore {
     // Return the pre-existing row so the caller receives a valid EpisodeRow (not undefined).
     if (info.changes === 0 && external_id !== null) {
       return this.stmtGetBySourceExternal.get(source, external_id) as EpisodeRow;
+    }
+
+    // Real new insert (info.changes === 1). Touch the dirty-sentinel to trigger the
+    // sleep pass via launchd WatchPaths, UNLESS this is an inferred episode (D-43:
+    // inferred episodes never consolidate — must not trigger a consolidation pass).
+    if (params.origin !== 'inferred') {
+      this.touchDirtySentinel();
     }
 
     // Normal path: return the freshly inserted row.
