@@ -18,6 +18,7 @@
 import Database from 'better-sqlite3';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
+import type { Clock } from '../lib/clock';
 import { EpisodicStore } from '../db/episode-store';
 import { SemanticStore } from '../db/semantic-store';
 import { StrengthDecayManager } from '../strength/decay';
@@ -28,6 +29,38 @@ import { SchemaInducer } from '../consolidation/schema-induction';
 import { SchemaRelationDeriver } from '../consolidation/schema-relations';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
+import { SwitchableActivationTraceSink } from '../viz/activation-sink';
+import { newId } from '../lib/hash';
+
+/**
+ * Phase 19 viz lighting: emit ONE coherent, flag-gated activation trace seeded with
+ * the nodes a sleep pass genuinely touched (created / updated / tombstoned /
+ * abstracted) since `sinceTs`, read from the consolidation_event provenance the pass
+ * just wrote. So the second brain visibly lights up when it does real work on its own.
+ *
+ * Honest by construction — every seed is a node the pass actually touched; if it
+ * touched nothing, nothing fires. Flag-gated via the switchable sink (writes only
+ * while a viz window holds viz_trace_enabled on) and cross-process for free: the viz
+ * polls the same activation_trace table over WAL. Fire-and-forget — viz lighting must
+ * NEVER surface to or affect the consolidation result (mirrors the engine emit guard,
+ * T-10-05). Exported for direct verification.
+ */
+export function lightConsolidatedNodes(db: Database.Database, clock: Clock, sinceTs: number): void {
+  try {
+    const traceSink = new SwitchableActivationTraceSink(db, clock);
+    traceSink.refresh();
+    const touched = (db.prepare(
+      `SELECT DISTINCT node_id FROM consolidation_event
+       WHERE ts >= ? AND node_id IS NOT NULL
+       ORDER BY ts DESC LIMIT 12`,
+    ).all(sinceTs) as Array<{ node_id: string }>).map(r => r.node_id);
+    if (touched.length > 0) {
+      traceSink.emit({ query_id: newId(), seeds: touched, hops: [] });
+    }
+  } catch {
+    // Never let viz lighting affect the pass.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Provider overlay — moved here from sleep-pass-cli (re-exported for back-compat)
@@ -181,7 +214,13 @@ export async function runConsolidation(
   );
 
   // ── 5. Run the sleep pass ──────────────────────────────────────────────────
+  // Provenance high-water mark so Phase-19 viz lighting (below) can scope exactly
+  // the nodes THIS pass touches — consolidation_event.ts (ms) bounds the pass.
+  const passStartTs = realClock.nowMs();
   await consolidator.consolidate();
+
+  // Phase 19: light the second brain when it does real work on its own.
+  lightConsolidatedNodes(db, realClock, passStartTs);
 
   // ── 6. Log SEAM-02 event summary (counts/types only — T-05-SINK-KEY) ──────
   const evtSummary = db
