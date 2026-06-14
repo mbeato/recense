@@ -271,3 +271,75 @@ describe('flag: viz_trace_enabled gate controls sink injection', () => {
     db.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// engine: retrieveRanked vizFloor — Phase 19 "light every read" (real read,
+// injection unchanged). The trace lights nodes the topk scan GENUINELY reached
+// down to vizFloor even when none cleared the injection floor; returned/injected
+// results stay floor-gated; nothing fires when the scan reaches nothing.
+// ---------------------------------------------------------------------------
+
+describe('engine: retrieveRanked vizFloor lights genuinely-retrieved nodes below the injection floor', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = makeDb(); });
+  afterEach(() => { db.close(); });
+
+  // Unit vector whose cosine with makeVec(0) ([1,0,…]) is exactly `c`.
+  function vecWithCosine(c: number): Float32Array {
+    const v = new Float32Array(DIMS);
+    v[0] = c;
+    v[1] = Math.sqrt(Math.max(0, 1 - c * c));
+    return v;
+  }
+
+  function seedThreeNodes(store: SemanticStore) {
+    store.upsertNode({ id: 'hi',  type: 'fact', value: 'high match', origin: 'observed', s: 0.7 });
+    store.upsertNode({ id: 'mid', type: 'fact', value: 'mid match',  origin: 'observed', s: 0.6 });
+    store.upsertNode({ id: 'lo',  type: 'fact', value: 'low match',  origin: 'observed', s: 0.5 });
+    store.setEmbedding('hi',  vecWithCosine(0.60)); // ≥ injection floor 0.45
+    store.setEmbedding('mid', vecWithCosine(0.35)); // < 0.45 but ≥ vizFloor 0.25
+    store.setEmbedding('lo',  vecWithCosine(0.10)); // < vizFloor 0.25
+  }
+
+  it('vizFloor: trace lights [hi, mid] while injected set stays [hi]', () => {
+    const { clock, store, retriever, strength, gate } = makeRetrievalDeps(db);
+    seedThreeNodes(store);
+    const sink = new MockActivationTraceSink();
+    const engine = new RetrievalEngine(db, clock, BASE_CONFIG, retriever, store, strength, gate, sink);
+
+    const results = engine.retrieveRanked(makeVec(0), 5, 0.45, undefined, { vizFloor: 0.25 });
+
+    // Injection/returned set unchanged — floor-gated at 0.45.
+    expect(results.map(r => r.id)).toEqual(['hi']);
+    // Trace lit the genuinely-retrieved set down to vizFloor: includes below-floor
+    // 'mid', excludes below-vizFloor 'lo'.
+    expect(sink.traces).toHaveLength(1);
+    expect([...sink.traces[0]!.seeds].sort()).toEqual(['hi', 'mid']);
+  });
+
+  it('without vizFloor: unchanged — trace seeds equal the injected set [hi]', () => {
+    const { clock, store, retriever, strength, gate } = makeRetrievalDeps(db);
+    seedThreeNodes(store);
+    const sink = new MockActivationTraceSink();
+    const engine = new RetrievalEngine(db, clock, BASE_CONFIG, retriever, store, strength, gate, sink);
+
+    const results = engine.retrieveRanked(makeVec(0), 5, 0.45);
+
+    expect(results.map(r => r.id)).toEqual(['hi']);
+    expect(sink.traces).toHaveLength(1);
+    expect([...sink.traces[0]!.seeds]).toEqual(['hi']);
+  });
+
+  it('honesty guard: scan reaches nothing ≥ vizFloor → no trace fires', () => {
+    const { clock, store, retriever, strength, gate } = makeRetrievalDeps(db);
+    seedThreeNodes(store);
+    const sink = new MockActivationTraceSink();
+    const engine = new RetrievalEngine(db, clock, BASE_CONFIG, retriever, store, strength, gate, sink);
+
+    // Query orthogonal to every node (dim 5) → all cosines 0 < vizFloor.
+    const results = engine.retrieveRanked(makeVec(5), 5, 0.45, undefined, { vizFloor: 0.25 });
+
+    expect(results).toHaveLength(0);
+    expect(sink.traces).toHaveLength(0);
+  });
+});
