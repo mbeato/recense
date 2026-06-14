@@ -13,3 +13,17 @@ scripts/eval/longmemeval-s.jsonl
 sleep.env
 *.sleep.env
 # (results/ NOT fully ignored — dated committed results live here; only PENDING intermediates are ignored above)
+
+# --- Open-source hygiene (internal/private; kept local, never published) ---
+# GSD planning state — local working docs, not part of the public project
+.planning/
+.DS_Store
+# personal DB snapshots
+brain.db.pre-unification-*
+# Eval DATA/RESULTS stay local; the harness CODE (.cjs/.sh) is committed.
+scripts/eval/results/
+scripts/eval/*-results.json
+scripts/eval/*-results-*.json
+scripts/eval/judge-eval-set.json
+scripts/eval/*-batch-haiku.json
+scripts/eval/*.csv
