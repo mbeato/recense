@@ -35,13 +35,51 @@ const _dir = new THREE.Vector3();
 const _up  = new THREE.Vector3(0, 1, 0);
 const _q   = new THREE.Quaternion();
 
+// ── Pathway wavefront shader ───────────────────────────────────────────────
+// "Light in the wire" (GMUNK / Tron, Territory Studio): a band of light races
+// along the edge from→to and the wire behind it glows then decays — never a bead
+// riding on top. vT runs 0 (from) → 1 (to) along a unit-height cylinder; the head
+// is a bright band at uWavefront with a soft decaying tail behind it. Additive so
+// it (and only it — amber on activation) catches the bloom. uIntensity carries the
+// asymmetric ignite/decay envelope.
+const WAVEFRONT_VERT = `
+  varying float vT;
+  void main() {
+    vT = position.y + 0.5;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const WAVEFRONT_FRAG = `
+  uniform vec3  uColor;
+  uniform float uWavefront;
+  uniform float uIntensity;
+  varying float vT;
+  void main() {
+    float head = smoothstep(0.14, 0.0, abs(vT - uWavefront));
+    float tail = vT < uWavefront ? exp(-(uWavefront - vT) * 3.5) * 0.45 : 0.0;
+    float a = (head + tail) * uIntensity;
+    if (a <= 0.002) discard;
+    gl_FragColor = vec4(uColor, a);
+  }
+`;
+// Asymmetric timing (ms): fast attack, head sweep, long ease-out decay.
+const WF_ATTACK = 140;
+const WF_SWEEP  = 520;
+const WF_DECAY  = 900;
+const WF_LIFE   = WF_SWEEP + WF_DECAY;
+
+/** Clamped smoothstep on [0,1]. */
+function _smooth01(x) { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); }
+
 // ============================================================================
 // initTrace(ctx) — entry point
 // ============================================================================
 
 export function initTrace(ctx) {
-  // ── Shared pulse geometry (exactly one allocation for all pulse meshes) ───
-  const _pulseGeo = new THREE.CylinderGeometry(1.5, 1.5, 1, 6, 1);
+  // ── Shared wavefront geometry: unit-height tube, scaled to each edge's length
+  // on Y and oriented along the edge. Thin radius gives the wire body so the glow
+  // reads without looking like a fat rod. One allocation for all wavefront meshes.
+  const _pulseGeo = new THREE.CylinderGeometry(1.3, 1.3, 1, 6, 1);
 
   // Convert HOT constant to a THREE.Color for lerping
   const HOT_COLOR = new THREE.Color(HOT);
@@ -62,19 +100,27 @@ export function initTrace(ctx) {
   }
 
   // ── spawnPulse(from, to) ──────────────────────────────────────────────────
-  // Creates a traveling lit-wire segment that sweeps from→to.
-  // Uses the shared _pulseGeo; each pulse owns only its MeshBasicMaterial.
+  // Ignites a full-edge wavefront: a band of amber light races from→to and the
+  // wire glows then decays (see WAVEFRONT_* shader above). Uses the shared
+  // _pulseGeo; each wavefront owns only its (cheap) ShaderMaterial, disposed on
+  // completion. Name kept for callers (trace BFS + detail.js ripple).
   function spawnPulse(from, to) {
     if (!ctx.pulseGroup || !from || !to) return;
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xffd9a0,  // white-gold — pulses belong to the warm activation family
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor:     { value: HOT_COLOR },
+        uWavefront: { value: 0 },
+        uIntensity: { value: 0 },
+      },
+      vertexShader: WAVEFRONT_VERT,
+      fragmentShader: WAVEFRONT_FRAG,
       transparent: true,
-      opacity: 0,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
     const mesh = new THREE.Mesh(_pulseGeo, mat);
     ctx.pulseGroup.add(mesh);
-    pulses.push({ from, to, t0: performance.now(), mesh });
+    pulses.push({ from, to, t0: performance.now(), mesh, mat });
   }
 
   // ── Per-frame tick (registered with the stats master rAF loop) ────────────
@@ -110,15 +156,14 @@ export function initTrace(ctx) {
       node.__mesh.scale.setScalar((node.__baseR || 1) * (1 + a * 0.35));
     }
 
-    // -- Pulse travel: sweep lit segment source→tip then fade -----------------
+    // -- Pathway wavefront: light races from→to, then the wire glows + decays --
     for (let i = pulses.length - 1; i >= 0; i--) {
       const p = pulses[i];
-      const t = (now - p.t0) / PULSE_MS;
+      const elapsed = now - p.t0;
 
-      if (t >= 1) {
-        // Completed: remove mesh and dispose per-pulse material
+      if (elapsed >= WF_LIFE) {
         ctx.pulseGroup.remove(p.mesh);
-        p.mesh.material.dispose();
+        p.mat.dispose();
         pulses.splice(i, 1);
         continue;
       }
@@ -132,37 +177,26 @@ export function initTrace(ctx) {
 
       if (len < 0.001) {
         ctx.pulseGroup.remove(p.mesh);
-        p.mesh.material.dispose();
+        p.mat.dispose();
         pulses.splice(i, 1);
         continue;
       }
 
-      // Tip advances from source to dest over the full PULSE_MS.
-      // The lit segment is a short window behind the tip (~30 % of edge length).
-      const tipFrac  = t;
-      const tailFrac = Math.max(0, t - 0.35);
-
-      const cx = fx + dx * ((tipFrac + tailFrac) / 2);
-      const cy = fy + dy * ((tipFrac + tailFrac) / 2);
-      const cz = fz + dz * ((tipFrac + tailFrac) / 2);
-      const segLen = len * (tipFrac - tailFrac);
-
-      p.mesh.position.set(cx, cy, cz);
-
-      // Scale: cylinder height = 1, so Y-scale = segment length
-      p.mesh.scale.set(1, Math.max(0.01, segLen), 1);
-
-      // Align cylinder Y-axis to edge direction (shared scratch objects)
+      // Span the FULL edge: midpoint position, Y-scale = edge length, oriented
+      // along the edge. The shader (not the geometry) carries the moving light.
+      p.mesh.position.set((fx + tx) / 2, (fy + ty) / 2, (fz + tz) / 2);
+      p.mesh.scale.set(1, len, 1);
       _dir.set(dx, dy, dz).normalize();
       _q.setFromUnitVectors(_up, _dir);
       p.mesh.setRotationFromQuaternion(_q);
 
-      // Opacity: ramp in quickly, sustain, fade out in final 20 %
-      const fade =
-        t < 0.1 ? t / 0.1
-        : t < 0.8 ? 1
-        : (1 - t) / 0.2;
-      p.mesh.material.opacity = fade * 0.85;
+      // Head sweeps 0→1 over WF_SWEEP, then holds at the far end while the wire
+      // decays. Envelope = fast attack (easeOutCubic) × long ease-out decay.
+      const wf   = Math.min(1, elapsed / WF_SWEEP);
+      const up   = 1 - Math.pow(1 - Math.min(1, elapsed / WF_ATTACK), 3);
+      const down = elapsed > WF_SWEEP ? 1 - _smooth01((elapsed - WF_SWEEP) / WF_DECAY) : 1;
+      p.mat.uniforms.uWavefront.value = wf;
+      p.mat.uniforms.uIntensity.value = up * down * 0.9;
     }
   }
 
