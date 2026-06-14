@@ -1,6 +1,6 @@
 # Recense evals
 
-This document covers the two published evaluations — EVAL-01 (LongMemEval-S) and EVAL-02 (EVAL-02: Correctness suite) — along with the methodology behind each, the judge-model validation evidence, and the honest caveats that context any published numbers.
+This document covers the three published evaluations — EVAL-01 (LongMemEval-S), EVAL-02 (Correctness suite), and EVAL-03 (Injection efficiency) — along with the methodology behind each, the judge-model validation evidence, and the honest caveats that context any published numbers.
 
 The goal is reproducibility and honesty, not benchmark warfare. recense numbers are published at face value with repro commands, cost estimates, and methodology disclosure. Competitor figures are self-reported with differing methodologies; we note the differences explicitly. If a number looks bad, that is intentional — we publish whatever the harness produces.
 
@@ -337,9 +337,29 @@ At 63 chars/node average, a flat-file-of-everything exceeds the 500-token recens
 
 ### Competitor comparison
 
-<!-- COMPETITOR FIGURES PENDING: research agent in flight; orchestrator fills sourced figures -->
+"Tokens injected per session" is a recense-specific metric. Most memory systems do not publish a per-session injection token count as a headline number — they report retrieval accuracy or a savings ratio against full-context. The table below collects what competitors *do* publish on the nearest axes (token efficiency, latency, LongMemEval accuracy), so the comparison is explicit about what is and is not head-to-head. **Every figure is vendor-self-reported unless flagged `(independent)`. No fully independent reproduction of any vendor's own headline number was found.** Research date 2026-06-14.
 
-"Tokens injected per session" is a recense-specific metric. Most memory systems do not publish per-session injection token counts as a headline number — they report retrieval accuracy or storage efficiency on standardized benchmarks. The closest published axis is mem0's token-savings claim, but the methodology (what constitutes the baseline, what portion of memory is injected per session) is not directly comparable without running both systems against the same session corpus. Any head-to-head comparison in this section will include the source, the methodology, and the measurement date.
+| System | Token-efficiency claim | Latency claim | LongMemEval (method) | Source |
+|--------|-----------------------|---------------|----------------------|--------|
+| **mem0** | >90% vs full-context | 91% lower p95 vs full-context | None — uses LOCOMO end-to-end QA instead | [arXiv:2504.19413](https://arxiv.org/abs/2504.19413) (Apr 2025) |
+| **Zep / Graphiti** | not published | ~90% vs full-context | overall 63.8%→71.2%; **KU 74.4% / 83.3%** end-to-end QA | [arXiv:2501.13956](https://arxiv.org/abs/2501.13956) (Jan 2025) |
+| **Mastra** (OM *research*, not shipped product) | 3–6× (text) / 5–40× (tool-heavy) vs raw history | not published | overall 94.87%; **KU 96.2%** end-to-end QA | [mastra.ai/research](https://mastra.ai/research/observational-memory) (Feb 2026) |
+| **Supermemory** | 99.4% @15 vs full histories | "sub-300ms" (no baseline) | **95% = Recall@15 (retrieval, NOT QA)**; separate 85.4% QA | [supermemory.ai/research](https://supermemory.ai/research) (May 2026) |
+| **Letta / MemGPT** | not published | not published | None — LOCOMO 74.0% QA | letta.com blogs (Aug 2025) |
+| **Cognee** | not published | not published | None — HotpotQA-24 subset, F1 0.84 | [cognee.ai](https://www.cognee.ai/) (Aug 2025) |
+| **LangMem** | none (vendor); ~1M tok/run *(independent)* | none (vendor); ~2,200s/run *(independent)* | None — LoCoMo 57.2% QA *(independent)* | [arXiv:2510.18866](https://arxiv.org/abs/2510.18866) (Oct 2025) |
+| **agentmemory** | none | none | none | no published benchmarks |
+| *LongMemEval paper baseline (GPT-4o)* | — | — | full-context ~60.6% overall, oracle ~87% | [arXiv:2410.10813](https://arxiv.org/abs/2410.10813) (Oct 2024) |
+
+KU = knowledge-update sub-score. The paper's full-context GPT-4o KU number is not cleanly tabulated; Zep independently puts it at 78.2%, consistent with recense's own 79.5% full-context KU baseline (EVAL-01).
+
+**Comparability caveats — what is and is not head-to-head:**
+
+1. **A bounded per-session budget is not a "% reduction vs full-context."** recense's claim is an *absolute ceiling* (≤500 tok injected per session). mem0 (>90%), Supermemory (99.4%), Zep, and Mastra (3–40×) report a *relative delta* against dumping the entire history — the most expensive possible baseline. A system can report "99% reduction" while still injecting far more than 500 tokens, or with a budget that grows with history. Only Mastra OM (~30k avg context) and Supermemory (~720 mean tokens) give absolute figures, and Supermemory's is a retrieval-set size, not a full injected-context measurement.
+2. **Latency claims are also "vs full-context"** (mem0 91% p95, Zep ~90%) — retrieval+answer time against stuffing everything in, not recense's LLM-free online inject path. Supermemory's "sub-300ms" states no baseline, hardware, or dataset.
+3. **Accuracy methodology splits the field, and it matters most for knowledge-update.** recense's 69.2% KU is end-to-end QA on LongMemEval-S. Comparable *in kind*: Zep (KU 74.4%/83.3%) and Mastra OM (KU 96.2%) — both end-to-end QA, both self-reported. **Not comparable:** Supermemory's flagship 95% is Recall@15 (retrieval-only — whether the right memory was in the top-15, not whether the answer was correct), which reads systematically higher than QA accuracy; mem0, Letta, and Cognee report a *different benchmark* (LOCOMO / HotpotQA), so cross-benchmark comparison is invalid; LangMem has no LongMemEval number at all.
+4. **Belief-correction is essentially unbenchmarked by competitors.** recense's belief-correction eval (EVAL-02, 84.6–92.3% vs 0% add-only) has one honest external analog: Zep openly reports it *loses* to full-context on the KU sub-score on GPT-4o-mini (76.9%→74.4%) — the same shape as recense's own 69.2% vs 79.5% admission. Most vendors do not isolate the stale-belief-update case.
+5. **Provenance flags.** Every competitor headline here is vendor-self-reported except LangMem's (independent, and unflattering). LOCOMO is contested as too easy to discriminate memory systems (argued by Letta itself). Cognee's n=24 and Supermemory's two unreconciled overall numbers (95% Recall@15 vs 85.4% QA) are weak evidence. A "agentmemory 96.2% #1 on LongMemEval" claim circulating on GitHub belongs to an *unrelated* repo, not the `agentmemory` library, and is unverified.
 
 ### Honesty disclosures
 
