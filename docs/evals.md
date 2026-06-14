@@ -392,7 +392,7 @@ The broader judge eval (48-case mined set) and extraction model bake-off are doc
 
 5. **Competitor numbers are self-reported with differing methodologies.** The comparison rows in EVAL-01's results table are taken from vendor documentation and academic papers, not from running those systems through the same harness. Methodology differs: agentmemory's 95.2% is retrieval-only R@5, which is not the same measurement as end-to-end question answering. We flag each comparison row's methodology explicitly; no head-to-head rerun is claimed or implied.
 
-6. **Published numbers are pinned to a commit.** The recorded scores in this document and the README are dated and tied to the engine version and commit hash that produced them. Brain-memory's architecture may improve or regress between releases; numbers are re-recorded at significant releases, not guaranteed fresh at any given HEAD.
+6. **Published numbers are pinned to a commit.** The recorded scores in this document and the README are dated and tied to the engine version and commit hash that produced them. Recense's architecture may improve or regress between releases; numbers are re-recorded at significant releases, not guaranteed fresh at any given HEAD.
 
 7. **EVAL-03 injection numbers are a snapshot, not a production SLA.** The injection token count and reduction percentage from EVAL-03 reflect a specific db snapshot and flat-file state. Token reduction will vary based on how many relevant nodes exist, what the current db contains, and how the flat-file baseline evolves. The O(1) budget ceiling (500 tokens) is a config constant; the baseline and db content are user-dependent.
 

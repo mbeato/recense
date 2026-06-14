@@ -1,4 +1,4 @@
-# Brain-Memory Foundation
+# Recense Foundation
 
 A faithful, citation-backed model of how the human brain forms, stores, strengthens, retrieves, updates, and forgets memories — assembled as the research foundation for a brain-inspired AI agent-memory engine.
 
