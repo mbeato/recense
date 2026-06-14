@@ -275,6 +275,89 @@ npm run eval:correctness:dry
 
 ---
 
+## EVAL-03: Injection efficiency
+
+### What it measures
+
+EVAL-03 measures recense's bounded per-session SessionStart injection cost versus the flat `MEMORY.md` index it replaced (D-33). It answers the question: how many tokens does recense inject into a Claude Code session, and how does that compare to reading the equivalent flat-file index?
+
+The eval is **$0 and LLM-free** — it uses pure SQLite reads against the live `recense.db`, spawns the production `session-start-cli` (which is itself LLM-free and embedding-free by design), and counts characters via the `chars/4` proxy the CLI already uses for its own char cap. It measures **injection cost, not retrieval quality** (see EVAL-01 for QA accuracy).
+
+### Methodology
+
+Three measurements, all computed live from the real db and the real injection path:
+
+**(a) Point estimate** — spawn `dist/src/adapter/session-start-cli.js --db <db>` with a synthetic `SessionStart` stdin payload, parse the `hookSpecificOutput.additionalContext` field, and measure the injected payload's character/token count and line count. Read the flat `MEMORY.md` baseline file and count its characters, tokens, and top-level list entries (`^- ` lines). Report the delta as token-reduction percentage.
+
+**(b) O(1)-bounded vs O(n) scaling projection** — from the db, compute `n_live_nodes = COUNT(*) WHERE tombstoned=0` and `avg_chars = AVG(LENGTH(value)) WHERE tombstoned=0`. Project a hypothetical "flat-file-of-everything" (one line per fact, no dedup) token cost at current n and 2x/5x/10x multiples. recense's injection is bounded at `DEFAULT_CONFIG.injectionTokenBudget` tokens (read from config, never hardcoded), so the budget line is constant. All projected numbers are labeled as upper bounds. The crossover point (where the flat projection first exceeds the recense budget) is computed and reported.
+
+**(c) Live belief-correction count** — `tombstoned = COUNT(*) WHERE tombstoned=1`; `prev_value_corrections = COUNT(*) WHERE prev_value IS NOT NULL`; `episodes = COUNT(*) FROM episode`. These are in-place auto-corrections the engine made that a flat file would require manual edits for.
+
+Token counting uses `Math.round(chars/4)` — the same proxy the session-start-cli uses for its char cap (`injectionTokenBudget × 4`). This is not a real tokenizer.
+
+### Run
+
+```sh
+npm run eval:injection
+```
+
+Requires no API keys ($0, LLM-free). Degrades gracefully (`exit 0`, prints "no data") when the db is missing or empty — safe to run in CI without a live db.
+
+### Recorded results
+
+Run date: 2026-06-14. Commit: d4b1b46 (engine v0.1.0, db snapshot at 3,591 live nodes).
+
+**Point estimate:**
+
+| Metric | recense | Flat MEMORY.md baseline |
+|--------|---------|------------------------|
+| Chars injected | 1,707 | 6,328 |
+| Tokens injected (~) | 427 | 1,582 |
+| Nodes / entries | 6 nodes | 20 entries |
+| Token reduction | **73%** fewer tokens than the flat baseline | — |
+
+**Scaling projection (O(1) vs O(n), upper bound):**
+
+| Node count | Flat-of-everything tokens (projected) | recense budget |
+|------------|---------------------------------------|---------------|
+| 3,591 (current) | 56,558 (projected upper bound) | 500 tokens |
+| 7,182 (2x) | 113,117 (projected upper bound) | 500 tokens |
+| 17,955 (5x) | 282,791 (projected upper bound) | 500 tokens |
+| 35,910 (10x) | 565,583 (projected upper bound) | 500 tokens |
+
+At 63 chars/node average, a flat-file-of-everything exceeds the 500-token recense budget at approximately 32 nodes. recense's current db has 3,591 live nodes — roughly 113× past the crossover.
+
+**Belief-correction count:**
+
+| Metric | Count |
+|--------|-------|
+| Tombstoned nodes | 30 |
+| Prev-value corrections | 26 |
+| Episode rows total | 1,072 |
+
+### Competitor comparison
+
+<!-- COMPETITOR FIGURES PENDING: research agent in flight; orchestrator fills sourced figures -->
+
+"Tokens injected per session" is a recense-specific metric. Most memory systems do not publish per-session injection token counts as a headline number — they report retrieval accuracy or storage efficiency on standardized benchmarks. The closest published axis is mem0's token-savings claim, but the methodology (what constitutes the baseline, what portion of memory is injected per session) is not directly comparable without running both systems against the same session corpus. Any head-to-head comparison in this section will include the source, the methodology, and the measurement date.
+
+### Honesty disclosures
+
+recense does NOT win on every dimension:
+
+1. **Hot-path latency: ~100-150ms vs instant flat-file read.** SessionStart injection is pure synchronous SQLite reads, but it still takes ~100-150ms on the hook path. A flat `MEMORY.md` read via the existing hook is essentially instant (single file read, no SQLite). recense trades some hook latency for bounded, prioritized injection. The latency is documented in the session-start-cli source and is a known trade-off (T-03-3-D).
+
+2. **Raw QA accuracy: 69.2% vs 79.5% full-context.** On the LongMemEval-S knowledge-update subset (n=78), recense scores 69.2% versus 79.5% for full-context Haiku 4.5 (all sessions in-context, no memory system). recense injects fewer tokens than full context and still lags the full-context ceiling by ~10 percentage points. See EVAL-01 for full methodology and breakdown.
+
+### EVAL-03 Caveats
+
+- `chars/4` is an approximation, not a real tokenizer. Actual token counts depend on the tokenizer, model, and content composition (code vs. prose). The char proxy is consistent with the session-start-cli's own cap and provides a reproducible relative comparison, not an absolute token guarantee.
+- The flat-file-of-everything projection assumes one line per live node with no deduplication and is a deliberate upper bound. A real flat index (like the `MEMORY.md` this replaced) dedups manually and stays much smaller in practice — see the actual 20-entry / 1,582-token flat baseline in the point-estimate table for a realistic comparison.
+- All numbers are pinned to a db snapshot (d4b1b46) and the flat file at that date. Both will drift as the db grows and the flat index is updated. Re-run `npm run eval:injection` to get current figures.
+- This eval measures injection cost, not retrieval quality. It does not measure whether the 6 injected nodes are the *right* ones, or what the marginal information value of injecting them is. That is a separate measurement.
+
+---
+
 ## Supporting evidence: judge-model validation
 
 The judge that scores EVAL-01 (GPT-4o-2024-08-06) and the internal recense contradiction judge (used in the sleep pass) were separately validated against a hand-labeled gold set before being trusted.
@@ -310,6 +393,8 @@ The broader judge eval (48-case mined set) and extraction model bake-off are doc
 5. **Competitor numbers are self-reported with differing methodologies.** The comparison rows in EVAL-01's results table are taken from vendor documentation and academic papers, not from running those systems through the same harness. Methodology differs: agentmemory's 95.2% is retrieval-only R@5, which is not the same measurement as end-to-end question answering. We flag each comparison row's methodology explicitly; no head-to-head rerun is claimed or implied.
 
 6. **Published numbers are pinned to a commit.** The recorded scores in this document and the README are dated and tied to the engine version and commit hash that produced them. Brain-memory's architecture may improve or regress between releases; numbers are re-recorded at significant releases, not guaranteed fresh at any given HEAD.
+
+7. **EVAL-03 injection numbers are a snapshot, not a production SLA.** The injection token count and reduction percentage from EVAL-03 reflect a specific db snapshot and flat-file state. Token reduction will vary based on how many relevant nodes exist, what the current db contains, and how the flat-file baseline evolves. The O(1) budget ceiling (500 tokens) is a config constant; the baseline and db content are user-dependent.
 
 ---
 
