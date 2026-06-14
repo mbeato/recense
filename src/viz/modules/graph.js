@@ -292,6 +292,14 @@ export function initGraph(ctx) {
   // .backgroundColor above stays pure black as a safe clear color underneath.
   Graph.scene().background = new THREE.Color(BG_COLOR);
 
+  // Atmospheric depth: far nodes recede into the field instead of sitting equally
+  // crisp (the flat-starfield tell). Linear fog matched to the background fades the
+  // far side of the cloud into the aubergine; near side stays sharp. Near/far scale
+  // with BRAIN_SCALE — widen them if it reads too hazy, tighten for more depth.
+  // Node MeshBasicMaterial fogs by default; the hull's Fresnel shader and the trace
+  // wavefront shader don't sample fog, so the shell and active pathways stay crisp.
+  Graph.scene().fog = new THREE.Fog(BG_COLOR, BRAIN_SCALE * 1.8, BRAIN_SCALE * 4.2);
+
   // ── Stuck-drag guard (pinned tray window) ─────────────────────────────
   // If pointerup is lost (popover hidden mid-drag, drag ends outside the
   // frameless window), OrbitControls keeps tracking the pointer and rotates
