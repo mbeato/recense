@@ -278,7 +278,7 @@ describe('ObsidianAdapter — recursive vault walk (D-67/T-04-PATH)', () => {
 
   it('returns records from nested subdirectories (recursive walk)', async () => {
     const sub1 = path.join(tempDir, 'projects');
-    const sub2 = path.join(tempDir, 'projects', 'brain-memory');
+    const sub2 = path.join(tempDir, 'projects', 'recense');
     fs.mkdirSync(sub2, { recursive: true });
     fs.writeFileSync(path.join(tempDir, 'root-note.md'), 'Root level note.');
     fs.writeFileSync(path.join(sub1, 'project-note.md'), 'Project note.');

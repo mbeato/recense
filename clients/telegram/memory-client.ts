@@ -1,7 +1,7 @@
 /**
  * HTTP memory client for the Telegram reference client.
  *
- * Provides ask() and search() against brain serve over plain-fetch HTTP REST.
+ * Provides ask() and search() against recense serve over plain-fetch HTTP REST.
  * POST /v1/ask and POST /v1/search with Authorization: Bearer token (D-01).
  *
  * Performs NO retry and NO logging — the caller (index.ts) owns the never-throw /
@@ -29,9 +29,9 @@ export interface MemoryClient {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an HTTP memory client bound to a specific brain serve instance.
+ * Create an HTTP memory client bound to a specific recense serve instance.
  *
- * @param serveUrl   Base URL of brain serve (e.g. 'http://127.0.0.1:7701')
+ * @param serveUrl   Base URL of recense serve (e.g. 'http://127.0.0.1:7701')
  * @param serveToken Bearer token for the serve's auth endpoint; sent as-is even
  *                   when empty (serve will return 401, caller handles the error).
  */

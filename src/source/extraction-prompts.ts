@@ -45,9 +45,9 @@ Return ONLY a valid JSON array — no preamble, no explanation, no markdown fenc
 
 Example:
 [
-  {"type":"entity","value":"Jane Doe is the founder","links":["brain-memory project"]},
+  {"type":"entity","value":"Jane Doe is the founder","links":["recense project"]},
   {"type":"fact","value":"Never inflate metrics","links":[]},
-  {"type":"entity","value":"brain-memory project"}
+  {"type":"entity","value":"recense project"}
 ]
 
 Document type: `;
@@ -72,9 +72,9 @@ Return ONLY a valid JSON array — no preamble, no explanation, no markdown fenc
 
 Example:
 [
-  {"type":"entity","value":"Jane Doe is the founder","links":["brain-memory project"]},
+  {"type":"entity","value":"Jane Doe is the founder","links":["recense project"]},
   {"type":"fact","value":"Never inflate metrics","links":[]},
-  {"type":"entity","value":"brain-memory project"}
+  {"type":"entity","value":"recense project"}
 ]
 
 Document type: `;
@@ -115,11 +115,11 @@ Return ONLY a valid JSON array — no preamble, no explanation, no markdown fenc
 
 Example:
 [
-  {"type":"entity","value":"Jane Doe is the founder","links":["brain-memory project"]},
+  {"type":"entity","value":"Jane Doe is the founder","links":["recense project"]},
   {"type":"fact","value":"User's daily commute is 45 minutes each way"},
   {"type":"fact","value":"User attended the React Summit conference in Amsterdam"},
   {"type":"fact","value":"User prefers dark roast coffee in the morning"},
-  {"type":"entity","value":"brain-memory project"}
+  {"type":"entity","value":"recense project"}
 ]
 
 Document type: `;
@@ -176,7 +176,7 @@ Return ONLY a valid JSON array — no preamble, no explanation, no markdown fenc
 
 Example:
 [
-  {"type":"entity","value":"EpisodicStore","links":["brain-memory project"]},
+  {"type":"entity","value":"EpisodicStore","links":["recense project"]},
   {"type":"fact","value":"EpisodicStore enforces append-only writes with no deletes","links":["EpisodicStore"]},
   {"type":"fact","value":"The spec requires all SQL to use parameterized statements (T-02-SQL)","links":[]}
 ]

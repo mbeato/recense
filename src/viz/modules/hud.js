@@ -1,6 +1,6 @@
 /**
  * @module hud
- * brain-memory viz — receding chrome HUD module (Plan 15-06, Task 2)
+ * recense viz — receding chrome HUD module (Plan 15-06, Task 2)
  *
  * initHud(ctx) implements:
  *   - ctx.logEvent(cat, msg)    — append timestamped entry to the event log

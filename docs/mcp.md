@@ -1,9 +1,9 @@
-# brain-memory MCP server
+# Recense MCP server
 
-`brain mcp` exposes exactly three tools over stdio: `memory_search`, `memory_add`, and
+`recense mcp` exposes exactly three tools over stdio: `memory_search`, `memory_add`, and
 `memory_ask`. There is nothing to deploy — your MCP client (Claude Code, Claude Desktop, or
 any standalone agent speaking stdio MCP) spawns the process from its config entry and talks
-JSON-RPC over stdin/stdout. The server reads and writes the same `brain.db` the Claude Code
+JSON-RPC over stdin/stdout. The server reads and writes the same `recense.db` the Claude Code
 hooks use.
 
 Unregistering the config entry is the off-switch: stdio servers are client-spawned, so
@@ -13,14 +13,14 @@ removing the entry stops all MCP access immediately.
 
 ## Register with Claude Code
 
-Both forms point `--db` at your live database. **The path must match what `brain init`
+Both forms point `--db` at your live database. **The path must match what `recense init`
 pinned** — the DB path you chose in the wizard (the same one the hooks and the sleep-pass
 scheduler use). Do not point it at an arbitrary location.
 
 ### CLI form
 
 ```sh
-claude mcp add --scope user --transport stdio brain-memory -- node /path/to/brain-memory/dist/src/adapter/brain.js mcp --db /path/to/brain.db
+claude mcp add --scope user --transport stdio recense -- node /path/to/recense/dist/src/adapter/brain.js mcp --db /path/to/recense.db
 ```
 
 ### JSON form (`~/.claude.json`)
@@ -28,18 +28,18 @@ claude mcp add --scope user --transport stdio brain-memory -- node /path/to/brai
 ```json
 {
   "mcpServers": {
-    "brain-memory": {
+    "recense": {
       "type": "stdio",
       "command": "node",
-      "args": ["/path/to/brain-memory/dist/src/adapter/brain.js", "mcp", "--db", "/path/to/brain.db"]
+      "args": ["/path/to/recense/dist/src/adapter/brain.js", "mcp", "--db", "/path/to/recense.db"]
     }
   }
 }
 ```
 
-Replace `/path/to/brain-memory` with your clone's absolute path (the compiled entry point
-lives under `dist/` — run `npm run build` first) and `/path/to/brain.db` with the DB path
-`brain init` pinned (e.g. `~/.config/brain-memory/brain.db`).
+Replace `/path/to/recense` with your clone's absolute path (the compiled entry point
+lives under `dist/` — run `npm run build` first) and `/path/to/recense.db` with the DB path
+`recense init` pinned (e.g. `~/.config/recense/recense.db`).
 
 ## Register with Claude Desktop
 
@@ -119,4 +119,4 @@ Both layers stay — they are complementary, not alternatives:
 
 No hook functionality moves to MCP. If you only register the MCP server, you get deliberate
 access without ambient injection; if you only wire the hooks, you get ambient memory without
-mid-session tools. Running both gives the full surface against the same `brain.db`.
+mid-session tools. Running both gives the full surface against the same `recense.db`.

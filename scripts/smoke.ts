@@ -36,7 +36,7 @@ try {
   store.upsertNode({
     id: nodeId,
     type: 'fact',
-    value: 'Max is the founder of brain-memory',
+    value: 'Max is the founder of recense',
     origin: 'asserted_by_user',
     c: 0.8,
   });

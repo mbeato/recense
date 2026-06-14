@@ -2,22 +2,22 @@
  * Snapshot-match threshold calibration eval — DEBT-04.
  *
  * Sweeps snapshotMatchThreshold (0.70→0.95, step 0.01) against the eval_snapshot rows
- * in the founder's brain.db and reports the cosine distribution + per-threshold match rate.
+ * in the founder's recense.db and reports the cosine distribution + per-threshold match rate.
  *
  * Usage (run from repo root after `npm run build`):
  *
- *   BRAIN_MEMORY_DB=/path/to/brain.db OPENAI_API_KEY=... \
+ *   RECENSE_DB=/path/to/recense.db OPENAI_API_KEY=... \
  *   node scripts/eval/calibrate-snapshot-threshold.cjs
  *
  * Optional flags:
- *   --db    /path/to/brain.db    (overrides BRAIN_MEMORY_DB)
+ *   --db    /path/to/recense.db    (overrides RECENSE_DB)
  *   --out   results.json         (write detailed results to JSON; default: print only)
  *   --step  0.01                 (threshold sweep step; default 0.01)
  *
- * Security (T-09-15): opens brain.db with { readonly: true } — never writes the graph.
+ * Security (T-09-15): opens recense.db with { readonly: true } — never writes the graph.
  *
  * NOTES:
- *  - Requires a populated eval_snapshot table (add anchors via `brain snapshot`).
+ *  - Requires a populated eval_snapshot table (add anchors via `recense snapshot`).
  *  - Requires OPENAI_API_KEY for embedding.
  *  - Requires compiled dist/ (run `npm run build` first).
  *  - Calling replaySnapshots() once with threshold=0.0 collects all cosine values;
@@ -30,7 +30,7 @@ const path  = require('path');
 
 // ---- arg parsing -----------------------------------------------------------
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i !== -1 ? process.argv[i + 1] : d; };
-const DB_PATH  = arg('--db',   process.env['BRAIN_MEMORY_DB'] || '');
+const DB_PATH  = arg('--db',   process.env['RECENSE_DB'] || '');
 const OUT      = arg('--out',  null);
 const STEP     = parseFloat(arg('--step', '0.01'));
 const SWEEP_LO = 0.70;
@@ -77,11 +77,11 @@ async function embed(texts) {
 (async () => {
   // 1. Validate DB path
   if (!DB_PATH) {
-    console.error('[calibrate] No DB path. Set BRAIN_MEMORY_DB or pass --db /path/to/brain.db');
+    console.error('[calibrate] No DB path. Set RECENSE_DB or pass --db /path/to/recense.db');
     process.exit(1);
   }
   if (!fs.existsSync(DB_PATH)) {
-    console.error(`[calibrate] brain.db not found at: ${DB_PATH}`);
+    console.error(`[calibrate] recense.db not found at: ${DB_PATH}`);
     process.exit(1);
   }
 
@@ -93,7 +93,7 @@ async function embed(texts) {
     const { c } = db.prepare('SELECT COUNT(*) AS c FROM eval_snapshot').get();
     if (c === 0) {
       console.log('[calibrate] eval_snapshot table is empty.');
-      console.log('[calibrate] Add reference anchors first via `brain snapshot` CLI,');
+      console.log('[calibrate] Add reference anchors first via `recense snapshot` CLI,');
       console.log('[calibrate] then re-run this script to measure the threshold.');
       console.log('[calibrate] Exiting — no calibration data available.');
       db.close();

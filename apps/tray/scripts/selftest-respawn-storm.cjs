@@ -61,9 +61,9 @@ function cleanup() {
 // ── Env overrides (win over sleep.env per runtime-paths resolution) ──────────
 // Set BEFORE requiring the lifecycle module so no real config is read/touched.
 
-process.env.BRAIN_MEMORY_NODE_BIN = process.execPath;
-process.env.BRAIN_MEMORY_BRAIN_JS = crashScript;
-process.env.BRAIN_MEMORY_DB = fakeDb;
+process.env.RECENSE_NODE_BIN = process.execPath;
+process.env.RECENSE_BRAIN_JS = crashScript;
+process.env.RECENSE_DB = fakeDb;
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 

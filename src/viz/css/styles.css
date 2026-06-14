@@ -1,5 +1,5 @@
 /* ============================================================================
-   brain-memory · activations — design system
+   recense · activations — design system
    Recense palette (founder-locked 2026-06-11, field warmed 2026-06-12):
    deep warm-aubergine background, muted rose/slate/mauve nodes at rest,
    warm amber as the ONLY activation signal. Never reintroduce cyan/teal.
@@ -56,7 +56,7 @@ html, body {
 /* App-window mode: inset the panel so its top-right × clears the tray app's
    injected collapse button (recense-collapse-btn — fixed top:10/right:12, 30px,
    z-index 70). Without this the × renders under the collapse control. Harmless
-   in the `brain viz` CLI window (no collapse button — just a small extra inset). */
+   in the `recense viz` CLI window (no collapse button — just a small extra inset). */
 .mode-window #detail { right: 48px; }
 
 /* ── Tooltip ─────────────────────────────────────────────────────────────── */
@@ -416,7 +416,7 @@ button:hover {
 /* ── Compact mode — tray popover (≤500px either dimension) ──────────────────
    The 340×340 pinned/popover window gets a minimal, discrete overlay:
    panel collapses to an SSE dot + tiny legend pill; title, counts, buttons,
-   and log are hidden. Full-window `brain viz` is unaffected. */
+   and log are hidden. Full-window `recense viz` is unaffected. */
 @media (max-width: 500px), (max-height: 500px) {
   /* No chrome at popover scale — the tray icon itself signals health (D-05) */
   #panel { display: none; }

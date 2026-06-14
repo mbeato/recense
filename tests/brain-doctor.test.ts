@@ -8,14 +8,14 @@
  *   checkDb:
  *     (a) passes on a fresh initSchema'd in-memory DB at the current SCHEMA_VERSION
  *     (b) fails when the stored schema_version does not match SCHEMA_VERSION
- *     (c) fails when BRAIN_MEMORY_DB is not set (empty string)
+ *     (c) fails when RECENSE_DB is not set (empty string)
  *     (d) fails when the DB path is unreachable
  *   checkNodeAbi:
- *     (e) fails (ok:false) with a hint when BRAIN_MEMORY_NODE_BIN is unset
+ *     (e) fails (ok:false) with a hint when RECENSE_NODE_BIN is unset
  *   checkHooks:
- *     (f) passes when all three events have a brain hook command
- *     (g) fails when an event is missing a brain hook
- *     (h) accepts the pre-migration brain-memory/dist/src/adapter/ path form
+ *     (f) passes when all three events have a recense hook command
+ *     (g) fails when an event is missing a recense hook
+ *     (h) accepts the pre-migration recense/dist/src/adapter/ path form
  *   failure aggregation:
  *     (i) process.exitCode reflects non-zero when any check fails
  */
@@ -73,10 +73,10 @@ describe('checkDb', () => {
     try { require('fs').unlinkSync(tmpPath); } catch { /* ignore */ }
   });
 
-  it('(c) fails when dbPath is empty (BRAIN_MEMORY_DB not set)', () => {
+  it('(c) fails when dbPath is empty (RECENSE_DB not set)', () => {
     const result = checkDb('');
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain('BRAIN_MEMORY_DB not set');
+    expect(result.detail).toContain('RECENSE_DB not set');
   });
 
   it('(d) fails when DB path is unreachable', () => {
@@ -91,28 +91,28 @@ describe('checkDb', () => {
 // ---------------------------------------------------------------------------
 
 describe('checkNodeAbi', () => {
-  const origNodeBin = process.env['BRAIN_MEMORY_NODE_BIN'];
+  const origNodeBin = process.env['RECENSE_NODE_BIN'];
 
   afterEach(() => {
     if (origNodeBin !== undefined) {
-      process.env['BRAIN_MEMORY_NODE_BIN'] = origNodeBin;
+      process.env['RECENSE_NODE_BIN'] = origNodeBin;
     } else {
-      delete process.env['BRAIN_MEMORY_NODE_BIN'];
+      delete process.env['RECENSE_NODE_BIN'];
     }
   });
 
-  it('(e) fails with a hint when BRAIN_MEMORY_NODE_BIN is unset', () => {
-    delete process.env['BRAIN_MEMORY_NODE_BIN'];
+  it('(e) fails with a hint when RECENSE_NODE_BIN is unset', () => {
+    delete process.env['RECENSE_NODE_BIN'];
     const result = checkNodeAbi();
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain('BRAIN_MEMORY_NODE_BIN not set');
-    expect(result.detail).toContain('brain init');
+    expect(result.detail).toContain('RECENSE_NODE_BIN not set');
+    expect(result.detail).toContain('recense init');
   });
 
-  it('(e2) passes when BRAIN_MEMORY_NODE_BIN is the currently running node binary (ABI match)', () => {
+  it('(e2) passes when RECENSE_NODE_BIN is the currently running node binary (ABI match)', () => {
     // process.execPath is the node binary that is running these tests — it compiled
     // better-sqlite3 and can certainly load it. This test is the canonical ABI-match path.
-    process.env['BRAIN_MEMORY_NODE_BIN'] = process.execPath;
+    process.env['RECENSE_NODE_BIN'] = process.execPath;
     const result = checkNodeAbi();
     // Must succeed: same node binary → same NODE_MODULE_VERSION → ABI match.
     expect(result.ok).toBe(true);
@@ -144,7 +144,7 @@ describe('checkHooks', () => {
    * The exported checkHooks accepts an optional override path for testing.
    */
 
-  it('(f) passes when all three events have a brain hook command (new form)', () => {
+  it('(f) passes when all three events have a recense hook command (new form)', () => {
     const settings = {
       hooks: {
         SessionStart:      [{ hooks: [{ type: 'command', command: '/usr/local/bin/node /path/brain.js hook session-start' }] }],
@@ -185,12 +185,12 @@ describe('checkHooks', () => {
     try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
   });
 
-  it('(h) accepts pre-migration brain-memory/dist/src/adapter/ path form', () => {
+  it('(h) accepts pre-migration recense/dist/src/adapter/ path form', () => {
     const settings = {
       hooks: {
-        SessionStart:     [{ hooks: [{ type: 'command', command: '/path/brain-memory/dist/src/adapter/session-start-cli.js' }] }],
-        UserPromptSubmit: [{ hooks: [{ type: 'command', command: '/path/brain-memory/dist/src/adapter/turn-capture-cli.js' }] }],
-        Stop:             [{ hooks: [{ type: 'command', command: '/path/brain-memory/dist/src/adapter/stop-cli.js' }] }],
+        SessionStart:     [{ hooks: [{ type: 'command', command: '/path/recense/dist/src/adapter/session-start-cli.js' }] }],
+        UserPromptSubmit: [{ hooks: [{ type: 'command', command: '/path/recense/dist/src/adapter/turn-capture-cli.js' }] }],
+        Stop:             [{ hooks: [{ type: 'command', command: '/path/recense/dist/src/adapter/stop-cli.js' }] }],
       },
     };
     const tmpDir  = join(tmpdir(), `brain-doctor-hooks-legacy-${process.pid}`);

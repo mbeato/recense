@@ -1,8 +1,8 @@
 /**
- * brain viz — local brain-activation visualization launcher (VIZ-03).
+ * recense viz — local brain-activation visualization launcher (VIZ-03).
  *
  * What it does:
- *   1. Opens a WRITE handle to brain.db solely to flip meta.viz_trace_enabled = '1' (D-96).
+ *   1. Opens a WRITE handle to recense.db solely to flip meta.viz_trace_enabled = '1' (D-96).
  *   2. Registers process exit handlers to restore the flag to '0' on any exit (runtime
  *      off-switch — the prior dogfood incident showed plan-ordering alone is not enough).
  *   3. Starts the read-only viz HTTP/SSE server on PORT (127.0.0.1 only, D-95/T-10-09).
@@ -48,7 +48,7 @@ const PORT = (portIdx !== -1 && Number(process.argv[portIdx + 1]) > 0)
 
 // OQ-1: server-only mode for the tray app (16-02). When --no-open is passed,
 // the viz HTTP server starts normally (D-96 trace flag, exit handlers, stdout URL)
-// but no browser window is opened. This keeps D-09 (windowed brain viz) intact.
+// but no browser window is opened. This keeps D-09 (windowed recense viz) intact.
 const noOpen = process.argv.includes('--no-open');
 
 // ---------------------------------------------------------------------------
@@ -60,9 +60,9 @@ async function main(): Promise<void> {
   const dbPath = resolveDbPath();
 
   // L-10: guard against silently creating an empty DB on an unconfigured machine.
-  // If brain.db does not exist yet, the user must run `brain init` first.
+  // If recense.db does not exist yet, the user must run `recense init` first.
   if (!existsSync(dbPath)) {
-    process.stderr.write(`brain viz: DB not found at ${dbPath} — run \`brain init\` first\n`);
+    process.stderr.write(`recense viz: DB not found at ${dbPath} — run \`recense init\` first\n`);
     process.exit(1);
   }
 
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
 
   // ── 4. Open a chromeless app-window (D-103) ─────────────────────────────────
   // Skipped when --no-open is passed (OQ-1: tray spawns the server headless).
-  // D-09: omitting --no-open preserves the existing windowed brain viz behaviour.
+  // D-09: omitting --no-open preserves the existing windowed recense viz behaviour.
   if (!noOpen) {
     // Launch the Chrome binary DIRECTLY with --app=<url>. The previous form,
     // `open -a "Google Chrome" --args --app=<url>`, silently DROPS --args when Chrome
@@ -124,11 +124,11 @@ async function main(): Promise<void> {
   }
 
   // ── 5. Print URL to stdout (headless/CI usability) ─────────────────────────
-  process.stdout.write(`brain viz → ${url}\n`);
+  process.stdout.write(`recense viz → ${url}\n`);
   process.stdout.write('Press Ctrl-C to stop.\n');
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`brain viz fatal: ${err}\n`);
+  process.stderr.write(`recense viz fatal: ${err}\n`);
   process.exit(1);
 });

@@ -34,7 +34,7 @@ import { MockModelProvider } from '../src/model/provider';
  * The fact value that the MockClaimExtractor will extract from the episode.
  * This value must appear in retrieveCueless() results after consolidation.
  */
-const FACT_VALUE = 'brain-memory stores memories using SQLite and TypeScript';
+const FACT_VALUE = 'recense stores memories using SQLite and TypeScript';
 
 /**
  * Deterministic mock provider: returns a unit vector in dimension 0 for any text.

@@ -1,5 +1,5 @@
 /**
- * Shared row types and enumerations for the brain-memory engine.
+ * Shared row types and enumerations for the recense engine.
  * Field names mirror spec §1 data model exactly.
  */
 

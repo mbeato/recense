@@ -112,15 +112,15 @@ export interface ProviderOverlay {
 /**
  * Resolve the model-provider overlay from env, FAIL-SAFE:
  *  - Provider precedence: env[roleEnvKey] (if set+valid) →
- *    BRAIN_MEMORY_MODEL_PROVIDER (if set+valid) → DEFAULT_CONFIG.modelProvider.
+ *    RECENSE_MODEL_PROVIDER (if set+valid) → DEFAULT_CONFIG.modelProvider.
  *    Unknown/empty values at any tier are skipped (fail-safe, default unchanged).
  *  - When (and only when) the resolved provider is 'local', optional
- *    BRAIN_MEMORY_LOCAL_MODEL / BRAIN_MEMORY_LOCAL_BASE_URL overlay localModel /
+ *    RECENSE_LOCAL_MODEL / RECENSE_LOCAL_BASE_URL overlay localModel /
  *    localBaseUrl; absent → DEFAULT_CONFIG values are kept.
  *  - Per-role local model (V5 postmortem 2026-06-12): when roleEnvKey is set, a
  *    role-specific model key derived by replacing the _PROVIDER suffix with
- *    _LOCAL_MODEL (e.g. BRAIN_MEMORY_JUDGE_LOCAL_MODEL) takes precedence over
- *    BRAIN_MEMORY_LOCAL_MODEL. Roles validated independently (extraction bake-off
+ *    _LOCAL_MODEL (e.g. RECENSE_JUDGE_LOCAL_MODEL) takes precedence over
+ *    RECENSE_LOCAL_MODEL. Roles validated independently (extraction bake-off
  *    → qwen2.5:7b; judge eval v2 → qwen3.6:35b-a3b) need independent pins.
  *  - roleEnvKey is optional: calling with no role key behaves EXACTLY as the
  *    original single-overlay resolver (backward-compatible — bc2 tests).
@@ -134,7 +134,7 @@ export function resolveProviderOverlay(
     (VALID_PROVIDERS as readonly string[]).includes(v ?? '');
 
   const roleRaw = roleEnvKey ? env[roleEnvKey] : undefined;
-  const baseRaw = env['BRAIN_MEMORY_MODEL_PROVIDER'];
+  const baseRaw = env['RECENSE_MODEL_PROVIDER'];
   const provider: ModelProvider = isValid(roleRaw)
     ? roleRaw
     : isValid(baseRaw)
@@ -148,8 +148,8 @@ export function resolveProviderOverlay(
     const roleModelKey = roleEnvKey?.endsWith('_PROVIDER')
       ? roleEnvKey.replace(/_PROVIDER$/, '_LOCAL_MODEL')
       : undefined;
-    const localModel = (roleModelKey && env[roleModelKey]) || env['BRAIN_MEMORY_LOCAL_MODEL'];
-    const localBaseUrl = env['BRAIN_MEMORY_LOCAL_BASE_URL'];
+    const localModel = (roleModelKey && env[roleModelKey]) || env['RECENSE_LOCAL_MODEL'];
+    const localBaseUrl = env['RECENSE_LOCAL_BASE_URL'];
     if (localModel) overlay.localModel = localModel;
     if (localBaseUrl) overlay.localBaseUrl = localBaseUrl;
   }
@@ -190,8 +190,8 @@ export async function runConsolidation(
   // Per-role provider routing in the SAME process (fail-safe overlay each):
   //  - judgeConfig    → AnthropicJudge + SchemaInducer default namingFn.
   //  - extractorConfig → AnthropicClaimExtractor.
-  const judgeConfig = { ...config, ...resolveProviderOverlay(env, 'BRAIN_MEMORY_JUDGE_PROVIDER') };
-  const extractorConfig = { ...config, ...resolveProviderOverlay(env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER') };
+  const judgeConfig = { ...config, ...resolveProviderOverlay(env, 'RECENSE_JUDGE_PROVIDER') };
+  const extractorConfig = { ...config, ...resolveProviderOverlay(env, 'RECENSE_EXTRACTOR_PROVIDER') };
   // resolved providers only — never secrets/keys
   log(`extractor: ${extractorConfig.modelProvider} | judge: ${judgeConfig.modelProvider}`);
 

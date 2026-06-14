@@ -61,8 +61,8 @@ describe('ProviderClaimExtractor', () => {
 describe('resolveColdStartPaths', () => {
   it('env values override the empty-string defaults', () => {
     const env: NodeJS.ProcessEnv = {
-      BRAIN_MEMORY_COLD_START_MEMORY_DIR: '/custom/memory',
-      BRAIN_MEMORY_COLD_START_CLAUDE_FILE: '/custom/CLAUDE.md',
+      RECENSE_COLD_START_MEMORY_DIR: '/custom/memory',
+      RECENSE_COLD_START_CLAUDE_FILE: '/custom/CLAUDE.md',
     };
     const { memoryDir, claudeFile } = resolveColdStartPaths(env);
     expect(memoryDir).toBe('/custom/memory');
@@ -77,7 +77,7 @@ describe('resolveColdStartPaths', () => {
 
   it('memoryDir set in env + claudeFile absent → memoryDir from env, claudeFile empty', () => {
     const env: NodeJS.ProcessEnv = {
-      BRAIN_MEMORY_COLD_START_MEMORY_DIR: '/my/memory',
+      RECENSE_COLD_START_MEMORY_DIR: '/my/memory',
     };
     const { memoryDir, claudeFile } = resolveColdStartPaths(env);
     expect(memoryDir).toBe('/my/memory');

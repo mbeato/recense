@@ -1,32 +1,32 @@
 # brain tray app
 
-Always-accessible menu-bar app that shows the brain-memory second brain without opening a browser. The tray icon pulses amber when real activation traces fire; the popover loads the Phase 15 3D viz frontend over loopback.
+Always-accessible menu-bar app that shows the recense second brain without opening a browser. The tray icon pulses amber when real activation traces fire; the popover loads the Phase 15 3D viz frontend over loopback.
 
 ---
 
 ## Prerequisites
 
-A working `brain init` install is required before running the tray app:
+A working `recense init` install is required before running the tray app:
 
-1. Clone and install brain-memory:
+1. Clone and install recense:
    ```sh
-   git clone https://github.com/<owner>/brain-memory.git
-   cd brain-memory
+   git clone https://github.com/<owner>/recense.git
+   cd recense
    npm install
    npm run init
    ```
 
 2. Verify the install is healthy:
    ```sh
-   brain doctor
+   recense doctor
    ```
 
-   The tray app reads `BRAIN_MEMORY_NODE_BIN` and `BRAIN_MEMORY_SLEEP_JS` from
-   `~/.config/brain-memory/sleep.env` (written by `brain init`). If `brain doctor`
+   The tray app reads `RECENSE_NODE_BIN` and `RECENSE_SLEEP_JS` from
+   `~/.config/recense/sleep.env` (written by `recense init`). If `recense doctor`
    reports a missing DB or unconfigured keys, resolve those before opening the tray.
 
-3. `brain.db` must exist at the configured path (`~/.config/brain-memory/brain.db`
-   by default, or the `BRAIN_MEMORY_DB` env var). The tray app will show an error
+3. `recense.db` must exist at the configured path (`~/.config/recense/recense.db`
+   by default, or the `RECENSE_DB` env var). The tray app will show an error
    dialog and quit if the DB is absent.
 
 ---
@@ -76,10 +76,10 @@ Alternatively: right-click the `.app` in Finder → Open → Open.
 
 ### Server attachment (D-07)
 
-At launch the tray checks whether port 7810 is already bound. If `brain viz` is
+At launch the tray checks whether port 7810 is already bound. If `recense viz` is
 running, the tray attaches to that server — no second server is spawned. If nothing
 is on 7810, the tray spawns the viz server as a child process using the pinned system
-node from `BRAIN_MEMORY_NODE_BIN`.
+node from `RECENSE_NODE_BIN`.
 
 ### Launch at login (D-08)
 
@@ -93,7 +93,7 @@ If approval is needed, the tray opens that pane automatically.
 
 ### Trace flag and quit (D-96)
 
-The tray spawns the viz server with `brain viz --no-open` and SIGTERMs it on every
+The tray spawns the viz server with `recense viz --no-open` and SIGTERMs it on every
 quit path (`before-quit`). The child's own exit handler restores `viz_trace_enabled`
 to OFF. The tray never opens a second write handle to the DB for this flag.
 
@@ -120,7 +120,7 @@ Running the tray app on Linux is not validated. Issues welcome.
 
 Left-click on the tray icon opens/closes the popover anchored below the icon. The
 popover loads the Phase 15 3D viz frontend at `http://127.0.0.1:7810` — the same
-frontend `brain viz` serves in a browser.
+frontend `recense viz` serves in a browser.
 
 ---
 

@@ -18,7 +18,7 @@ disclosure timeline with you.
 
 ## Scope
 
-brain-memory is a local, single-tenant memory engine that runs on the user's
+recense is a local, single-tenant memory engine that runs on the user's
 own machine with their own API keys. It opens a **read-only** local HTTP server
 for the optional visualizer (bound to `127.0.0.1`) and never transmits memory
 contents to any third party beyond the model/embedding provider the user

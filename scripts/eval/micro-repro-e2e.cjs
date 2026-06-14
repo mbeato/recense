@@ -4,9 +4,9 @@
  * Mirrors correctness-harness.cjs runBrainMemoryCase() exactly.
  *
  * Run:
- *   OPENAI_API_KEY=... BRAIN_MEMORY_EXTRACTOR_PROVIDER=local \
- *   BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL=granite4.1:8b \
- *   BRAIN_MEMORY_JUDGE_PROVIDER=local BRAIN_MEMORY_JUDGE_LOCAL_MODEL=qwen3.6:35b-a3b \
+ *   OPENAI_API_KEY=... RECENSE_EXTRACTOR_PROVIDER=local \
+ *   RECENSE_EXTRACTOR_LOCAL_MODEL=granite4.1:8b \
+ *   RECENSE_JUDGE_PROVIDER=local RECENSE_JUDGE_LOCAL_MODEL=qwen3.6:35b-a3b \
  *   node scripts/eval/micro-repro-e2e.cjs
  */
 'use strict';
@@ -136,8 +136,8 @@ async function runCase(caseId) {
 
 async function main() {
   console.log('\n=== E2E repro: real granite4.1:8b extraction + real judge ===\n');
-  console.log(`Extractor: ${process.env.BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL || 'default'}`);
-  console.log(`Judge: ${process.env.BRAIN_MEMORY_JUDGE_LOCAL_MODEL || 'default'}`);
+  console.log(`Extractor: ${process.env.RECENSE_EXTRACTOR_LOCAL_MODEL || 'default'}`);
+  console.log(`Judge: ${process.env.RECENSE_JUDGE_LOCAL_MODEL || 'default'}`);
 
   const targetCases = [4, 5, 11, 12];
 

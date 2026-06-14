@@ -224,7 +224,7 @@ describe('SwitchableActivationTraceSink', () => {
     // Starts disabled — nothing written.
     sink.emit({ query_id: 'q1', seeds: ['a'], hops: [] });
     expect(count(db)).toBe(0);
-    // `brain viz` flips the flag AFTER the (long-running) process is already up.
+    // `recense viz` flips the flag AFTER the (long-running) process is already up.
     setFlag(db, '1');
     expect(sink.refresh()).toBe(true);
     sink.emit({ query_id: 'q2', seeds: ['b'], hops: [] });

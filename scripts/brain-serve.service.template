@@ -1,14 +1,14 @@
-# brain-serve.service.template — systemd unit for `brain serve` (SERVE-03 / D-14)
+# brain-serve.service.template — systemd unit for `recense serve` (SERVE-03 / D-14)
 #
 # Placeholders substituted by envsubst from exported shell variables
 # (see docs/server-mode.md for the copy-paste command):
-#   YOUR_USER             — the Linux user account that owns the brain-memory install
-#   BRAIN_MEMORY_DIR      — absolute path to the brain-memory repo root (e.g. /home/user/brain-memory)
-#   BRAIN_MEMORY_NODE_BIN — absolute path to the pinned Node.js binary (output of `brain doctor`)
+#   YOUR_USER             — the Linux user account that owns the recense install
+#   RECENSE_DIR      — absolute path to the recense repo root (e.g. /home/user/recense)
+#   RECENSE_NODE_BIN — absolute path to the pinned Node.js binary (output of `recense doctor`)
 #   BRAIN_JS              — absolute path to the compiled entry point
-#                           (e.g. /home/user/brain-memory/dist/src/adapter/brain.js)
-#   PORT                  — port for brain serve to listen on (default: 7701)
-#   HOST                  — bind address for brain serve (default: 127.0.0.1 — loopback-only,
+#                           (e.g. /home/user/recense/dist/src/adapter/brain.js)
+#   PORT                  — port for recense serve to listen on (default: 7701)
+#   HOST                  — bind address for recense serve (default: 127.0.0.1 — loopback-only,
 #                           the Caddy reverse proxy connects to it locally; set 0.0.0.0 only
 #                           for direct remote exposure without a local reverse proxy, e.g. a
 #                           container publishing the port or a trusted LAN)
@@ -17,19 +17,19 @@
 # Templates use dollar-brace placeholders (VAR syntax) instantiated by the envsubst command in docs/server-mode.md.
 
 [Unit]
-Description=brain-memory HTTP server
+Description=recense HTTP server
 After=network.target
 
 [Service]
 Type=simple
 User=${YOUR_USER}
-WorkingDirectory=${BRAIN_MEMORY_DIR}
-ExecStart=${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} serve --host ${HOST} --port ${PORT}
+WorkingDirectory=${RECENSE_DIR}
+ExecStart=${RECENSE_NODE_BIN} ${BRAIN_JS} serve --host ${HOST} --port ${PORT}
 # Pin the Node.js binary so better-sqlite3 loads with the matching ABI (NODE_MODULE_VERSION).
 # A bare `node` from /usr/bin resolves a different binary and breaks the native addon on restart.
-Environment=BRAIN_MEMORY_NODE_BIN=${BRAIN_MEMORY_NODE_BIN}
-# Source BRAIN_SERVE_TOKEN and API keys from the chmod-600 env file written by `brain init`.
-EnvironmentFile=${HOME}/.config/brain-memory/sleep.env
+Environment=RECENSE_NODE_BIN=${RECENSE_NODE_BIN}
+# Source BRAIN_SERVE_TOKEN and API keys from the chmod-600 env file written by `recense init`.
+EnvironmentFile=${HOME}/.config/recense/sleep.env
 Restart=on-failure
 RestartSec=5
 

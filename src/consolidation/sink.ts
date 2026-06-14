@@ -24,7 +24,7 @@
  *   T-05-SINK-TX:    emit() must be called INSIDE an existing per-episode db.transaction
  *                    (enforced by Consolidator/SchemaInducer callers; this file cannot
  *                    enforce the call-site, but the grep gate in the verify step checks it).
- *   T-05-SINK-WRITE: this plan writes ONLY to brain.db copies; production activation is
+ *   T-05-SINK-WRITE: this plan writes ONLY to recense.db copies; production activation is
  *                    gated behind Plan 05-05.
  *   T-05-SINK-KEY:   log emits event counts/types only; no keys or node PII beyond the
  *                    existing sleep pass.

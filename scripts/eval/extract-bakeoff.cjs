@@ -1,5 +1,5 @@
 /**
- * Claim-extraction model bake-off (read-only on brain.db for inputs).
+ * Claim-extraction model bake-off (read-only on recense.db for inputs).
  *
  * WHY: extraction is the high-volume, latency-dominating step of the sleep pass (1 call per
  * episode). It is forgiving (safe-fallback parsing — bad output just drops claims, never corrupts
@@ -7,14 +7,14 @@
  * judge stays on the strong model (see judge eval). 35b-a3b-with-thinking is too slow (~11 min/episode
  * sleep pass). This finds a fast extractor for split-routing.
  *
- * Method: pull K real episodes from brain.db; run the engine's REAL extraction prompt + parser
+ * Method: pull K real episodes from recense.db; run the engine's REAL extraction prompt + parser
  * (faithful copies of src/model/claim-extractor.ts) through each candidate model; measure
  * latency + parse-success + claim count; then have a strong reference model (Haiku) score each
  * candidate's claims for faithfulness+coverage vs the source (1–5).
  *
  * Run:
  *   NODE_PATH=$(pwd)/node_modules node scripts/eval/extract-bakeoff.cjs \
- *     --db ./brain.db --n 5 \
+ *     --db ./recense.db --n 5 \
  *     --ollama "qwen2.5:3b-instruct,qwen2.5:7b-instruct,qwen3-vl:8b-instruct-q8_0" \
  *     --haiku claude-haiku-4-5
  * Requires ANTHROPIC_API_KEY (Haiku baseline + the quality judge). Ollama must be up with models pulled.
@@ -24,7 +24,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i !== -1 ? process.argv[i + 1] : d; };
-const DB = arg('--db', './brain.db');
+const DB = arg('--db', './recense.db');
 const N = parseInt(arg('--n', '5'), 10);
 const HAIKU = arg('--haiku', 'claude-haiku-4-5');
 const OLLAMA_MODELS = (arg('--ollama', '') || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -42,9 +42,9 @@ Return ONLY a valid JSON array — no preamble, no explanation, no markdown fenc
 
 Example:
 [
-  {"type":"entity","value":"Jane Doe is the founder","links":["brain-memory project"]},
+  {"type":"entity","value":"Jane Doe is the founder","links":["recense project"]},
   {"type":"fact","value":"Never inflate metrics","links":[]},
-  {"type":"entity","value":"brain-memory project"}
+  {"type":"entity","value":"recense project"}
 ]
 
 Document type: `;

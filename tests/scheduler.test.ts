@@ -126,7 +126,7 @@ describe('runSchedulerCommand — linux', () => {
     vi.clearAllMocks();
   });
 
-  it('install → prints guidance mentioning brain scheduler run (not launchd)', () => {
+  it('install → prints guidance mentioning recense scheduler run (not launchd)', () => {
     const logOutput: string[] = [];
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation((msg: unknown) => {
       logOutput.push(String(msg));
@@ -135,7 +135,7 @@ describe('runSchedulerCommand — linux', () => {
     runSchedulerCommand('install', []);
 
     const joined = logOutput.join('\n');
-    expect(joined).toContain('brain scheduler run');
+    expect(joined).toContain('recense scheduler run');
     // Must NOT call launchctl commands
     const execCalls = vi.mocked(execSync).mock.calls.map(c => c[0] as string);
     expect(execCalls.every(c => !c.includes('launchctl'))).toBe(true);
@@ -143,13 +143,13 @@ describe('runSchedulerCommand — linux', () => {
     consoleSpy.mockRestore();
   });
 
-  it('status → calls pgrep -f "brain scheduler run"', () => {
+  it('status → calls pgrep -f "recense scheduler run"', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     runSchedulerCommand('status', []);
 
     const calls = vi.mocked(execSync).mock.calls.map(c => c[0] as string);
-    expect(calls.some(c => c.includes('pgrep') && c.includes('brain scheduler run'))).toBe(true);
+    expect(calls.some(c => c.includes('pgrep') && c.includes('recense scheduler run'))).toBe(true);
 
     consoleSpy.mockRestore();
   });

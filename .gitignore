@@ -19,7 +19,7 @@ sleep.env
 .planning/
 .DS_Store
 # personal DB snapshots
-brain.db.pre-unification-*
+recense.db.pre-unification-*
 # Eval DATA/RESULTS stay local; the harness CODE (.cjs/.sh) is committed.
 scripts/eval/results/
 scripts/eval/*-results.json

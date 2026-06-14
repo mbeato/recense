@@ -4,13 +4,13 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.brain-memory.telegram-client</string>
+    <string>com.recense.telegram-client</string>
 
     <!--
         ProgramArguments: bash + the committed, secret-free launchd wrapper.
         Placeholder substituted by scripts/setup-telegram-client.sh:
           __WRAPPER__ → absolute path to scripts/telegram-client-launchd.sh
-        The wrapper sources the gitignored env file (path from BRAIN_MEMORY_SLEEP_ENV
+        The wrapper sources the gitignored env file (path from RECENSE_SLEEP_ENV
         below) for keys + config, then execs node on the compiled Telegram client.
     -->
     <key>ProgramArguments</key>
@@ -23,12 +23,12 @@
         EnvironmentVariables: only the env-file path. All other config — client JS path,
         bot token, serve URL, serve token, allowlist — lives in the gitignored env file
         (chmod 600), written additively by scripts/setup-telegram-client.sh.
-        __ENV_FILE__ → absolute path to the sleep env file (BRAIN_MEMORY_SLEEP_ENV),
-                       default ~/.config/brain-memory/sleep.env.
+        __ENV_FILE__ → absolute path to the sleep env file (RECENSE_SLEEP_ENV),
+                       default ~/.config/recense/sleep.env.
     -->
     <key>EnvironmentVariables</key>
     <dict>
-        <key>BRAIN_MEMORY_SLEEP_ENV</key>
+        <key>RECENSE_SLEEP_ENV</key>
         <string>__ENV_FILE__</string>
     </dict>
 
@@ -42,8 +42,8 @@
 
     <!-- Redirect stdout/stderr to log files. Secrets never appear here. -->
     <key>StandardOutPath</key>
-    <string>/tmp/brain-memory-telegram-client.log</string>
+    <string>/tmp/recense-telegram-client.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/brain-memory-telegram-client-err.log</string>
+    <string>/tmp/recense-telegram-client-err.log</string>
 </dict>
 </plist>

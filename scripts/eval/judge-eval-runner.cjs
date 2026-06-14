@@ -1,5 +1,5 @@
 /**
- * Judge eval-runner — Haiku 4.5 vs local Qwen candidates on the brain-memory judge task.
+ * Judge eval-runner — Haiku 4.5 vs local Qwen candidates on the recense judge task.
  * Read-only experiment; touches no repo code. Run from the repo so node_modules resolves:
  *
  *   NODE_PATH=$(pwd)/node_modules \

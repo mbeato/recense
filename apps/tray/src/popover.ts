@@ -1,7 +1,7 @@
 /**
  * apps/tray/src/popover.ts
  *
- * Frameless BrowserWindow that serves as the brain viz popover panel (D-04).
+ * Frameless BrowserWindow that serves as the recense viz popover panel (D-04).
  * Loads the unchanged Phase 15 frontend at http://127.0.0.1:7810 (D-03/D-102).
  * Navigation is locked to the loopback origin (T-16-10).
  * Electron 42 security defaults are preserved — contextIsolation, sandbox,

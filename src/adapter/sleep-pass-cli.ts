@@ -31,14 +31,14 @@ import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 export type { ProviderOverlay } from '../consolidation/run-sleep-pass';
 export { VALID_PROVIDERS, resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 
-const LOG_PATH = '/tmp/brain-memory-sleep.log';
+const LOG_PATH = '/tmp/recense-sleep.log';
 
 /** Append a timestamped line to the log file (never stdout). */
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] sleep-pass: ${msg}\n`);
 
 // M-8: delegate to the shared resolveDbPath with fallbackToDefault=false so a missing
-// --db flag / BRAIN_MEMORY_DB env causes the missing-path exit (process.exit(0) below).
+// --db flag / RECENSE_DB env causes the missing-path exit (process.exit(0) below).
 function resolveDbPath(): string | undefined {
   return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
 }
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   // here — before acquireLock() — so this exit is always lock-free.
   const dbPath = resolveDbPath();
   if (!dbPath) {
-    log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
+    log('No DB path supplied (--db <path> or RECENSE_DB env var) — exiting');
     process.exit(0);
   }
 

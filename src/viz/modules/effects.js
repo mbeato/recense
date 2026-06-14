@@ -1,6 +1,6 @@
 /**
  * @module effects
- * brain-memory viz — cinematic effects: Fresnel rim-lit glass hull + UnrealBloomPass + idle shimmer.
+ * recense viz — cinematic effects: Fresnel rim-lit glass hull + UnrealBloomPass + idle shimmer.
  *
  * Exported API:
  *   initEffects(ctx) — call AFTER Graph is initialized.

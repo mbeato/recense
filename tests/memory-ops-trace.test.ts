@@ -8,7 +8,7 @@
  *   2. flag=1 before wiring: search writes exactly one row — seeds contain the
  *      surfaced node id, hops is [].
  *   3. flag flip mid-process (load-bearing): a long-running process picks up a
- *      `brain viz` flag flip on the next search WITHOUT restart (per-request
+ *      `recense viz` flag flip on the next search WITHOUT restart (per-request
  *      traceSink.refresh()), in both directions (off→on→off).
  *   4. zero-hit search: no row even when flag=1 (no empty-seeds emission).
  *

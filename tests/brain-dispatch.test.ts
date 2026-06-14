@@ -6,7 +6,7 @@
  * The pretest build script (M-11) ensures dist/ is always fresh before `npm test`.
  *
  * The key behavior under test:
- *   `brain ingest --db <tmp> <unknown-source>` must reach the child with all three tokens
+ *   `recense ingest --db <tmp> <unknown-source>` must reach the child with all three tokens
  *   (--db <path> <source>) so ingest-cli.ts logs "Unknown source '<source>'".
  *   Before the H-1 fix, argv.slice(4) dropped the <source> token; the child defaulted to
  *   --all, never logged the unknown source, and the test would have failed.
@@ -19,14 +19,14 @@ import { tmpdir } from 'os';
 import { describe, it, expect } from 'vitest';
 
 const BRAIN_JS = join(__dirname, '..', 'dist', 'src', 'adapter', 'brain.js');
-const INGEST_LOG = '/tmp/brain-memory-ingest.log';
+const INGEST_LOG = '/tmp/recense-ingest.log';
 
 // Skip the entire suite when dist/ has not been built (CI guard).
 const SKIP_NO_DIST = !existsSync(BRAIN_JS);
 
 describe.skipIf(SKIP_NO_DIST)('brain dispatcher (12-05): init dispatch regression', () => {
-  it('brain init with non-TTY stdin exits 1 and prints interactive terminal error', () => {
-    // Spawn brain init with stdio:'pipe' (non-TTY stdin). The non-TTY guard added in
+  it('recense init with non-TTY stdin exits 1 and prints interactive terminal error', () => {
+    // Spawn recense init with stdio:'pipe' (non-TTY stdin). The non-TTY guard added in
     // 12-05 must fire before any side effects: exit 1 + stderr containing
     // 'interactive terminal'. This proves the dispatcher reaches brain-init's main()
     // instead of the pre-fix silent exit-0 no-op (bare require() with require.main guard).
@@ -38,7 +38,7 @@ describe.skipIf(SKIP_NO_DIST)('brain dispatcher (12-05): init dispatch regressio
         timeout: 15_000,
         env: {
           ...process.env,
-          BRAIN_MEMORY_SLEEP_ENV: throwawayEnv, // defense-in-depth: guard exits before any write
+          RECENSE_SLEEP_ENV: throwawayEnv, // defense-in-depth: guard exits before any write
         },
       });
       // Must exit 1 (NOT 0 — the pre-fix silent no-op exited 0)
@@ -65,14 +65,14 @@ describe.skipIf(SKIP_NO_DIST)('brain dispatcher (H-1): argv[3..] forwarding', ()
     try { writeFileSync(INGEST_LOG, ''); } catch { /* ignore — log may not exist yet */ }
 
     try {
-      // Spawn: brain ingest --db <tmpDb> <uniqueSource>
+      // Spawn: recense ingest --db <tmpDb> <uniqueSource>
       // With the pre-fix slice(4), the child only received `[uniqueSource]` minus `--db <path>`,
       // so it had no --db and would exit before logging. With the fix (slice(3)), the child
       // receives `['ingest', '--db', tmpDb, uniqueSource]` → resolves dbPath + logs unknown source.
       spawnSync(process.execPath, [BRAIN_JS, 'ingest', '--db', tmpDb, uniqueSource], {
         stdio: 'pipe',
         timeout: 15_000,
-        env: { ...process.env, BRAIN_MEMORY_DB: '' }, // clear env DB so --db flag must work
+        env: { ...process.env, RECENSE_DB: '' }, // clear env DB so --db flag must work
       });
 
       // Read the ingest log

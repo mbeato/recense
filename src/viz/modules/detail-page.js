@@ -1,6 +1,6 @@
 /**
  * @module detail-page
- * brain-memory viz — lean detail-only render path (quick-260612-sdk).
+ * recense viz — lean detail-only render path (quick-260612-sdk).
  *
  * Rendered when the page is loaded as /?detail=<nodeId> — the adjacent
  * frameless detail window opened by the tray shell next to the compact

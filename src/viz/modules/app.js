@@ -1,6 +1,6 @@
 /**
  * @module app
- * brain-memory viz — bootstrap entry module (Plan 15-07).
+ * recense viz — bootstrap entry module (Plan 15-07).
  *
  * Spike-001 load-order (non-negotiable):
  *   1. import THREE via the import map ('three' → ./vendor/three.module.js)

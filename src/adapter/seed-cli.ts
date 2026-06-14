@@ -31,14 +31,14 @@ import { ColdStartSeeder } from '../seeder/cold-start';
 import { acquireLock, releaseLock } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 
-const LOG_PATH = '/tmp/brain-memory-seed.log';
+const LOG_PATH = '/tmp/recense-seed.log';
 
 /** Append a timestamped line to the log file (never stdout). */
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] brain-seed: ${msg}\n`);
 
 /**
- * Resolve dbPath from --db <path> argv or BRAIN_MEMORY_DB env var.
+ * Resolve dbPath from --db <path> argv or RECENSE_DB env var.
  * Returns undefined if neither is supplied.
  *
  * M-8: delegates to the shared resolveDbPath with fallbackToDefault=false.
@@ -58,10 +58,10 @@ export function resolveColdStartPaths(env: NodeJS.ProcessEnv): {
   claudeFile: string;
 } {
   const memoryDir =
-    (env['BRAIN_MEMORY_COLD_START_MEMORY_DIR'] ?? '').trim() ||
+    (env['RECENSE_COLD_START_MEMORY_DIR'] ?? '').trim() ||
     DEFAULT_CONFIG.coldStartMemoryDir;
   const claudeFile =
-    (env['BRAIN_MEMORY_COLD_START_CLAUDE_FILE'] ?? '').trim() ||
+    (env['RECENSE_COLD_START_CLAUDE_FILE'] ?? '').trim() ||
     DEFAULT_CONFIG.coldStartClaudeFile;
   return { memoryDir, claudeFile };
 }
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──
   const dbPath = resolveDbPath();
   if (!dbPath) {
-    log('no DB path (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
+    log('no DB path (--db <path> or RECENSE_DB env var) — exiting');
     process.exit(0);
   }
 
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
   const { memoryDir, claudeFile } = resolveColdStartPaths(process.env);
   if (!memoryDir && !claudeFile) {
     log(
-      'nothing to seed — set BRAIN_MEMORY_COLD_START_MEMORY_DIR / BRAIN_MEMORY_COLD_START_CLAUDE_FILE',
+      'nothing to seed — set RECENSE_COLD_START_MEMORY_DIR / RECENSE_COLD_START_CLAUDE_FILE',
     );
     process.exit(0);
   }
@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     // ── 5. Resolve extractor provider overlay (T-08-KEY: log name only) ───
     const extractorOverlay = resolveProviderOverlay(
       process.env,
-      'BRAIN_MEMORY_EXTRACTOR_PROVIDER',
+      'RECENSE_EXTRACTOR_PROVIDER',
     );
     const extractorConfig = { ...config, ...extractorOverlay };
     log(`extractor provider: ${extractorConfig.modelProvider}`); // resolved name only — never keys

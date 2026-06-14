@@ -8,7 +8,7 @@
  *  - consumeStdin() MUST be called first — the hook harness blocks on write if not drained.
  *  - LLM-free and embedding-free: only RetrievalEngine + synchronous SQLite reads.
  *  - READ-ONLY (M-3): opens the DB with {readonly:true, fileMustExist:true}; never runs
- *    initSchema or any DDL. Writer CLIs (sleep-pass, recall, brain init) own migrations.
+ *    initSchema or any DDL. Writer CLIs (sleep-pass, recall, recense init) own migrations.
  *    On missing DB or schema_version mismatch, emits empty context and exits 0 cleanly.
  *  - Output is token-budgeted: engine already bounds the set; final string is also
  *    defensively truncated to injectionTokenBudget × 4 chars (T-03-3-I) and hard-capped
@@ -37,7 +37,7 @@ import { AllocationGate } from '../gate/allocation-gate';
 import { RetrievalEngine } from '../retrieval/engine';
 
 const EVENT = 'SessionStart';
-const ERROR_LOG = '/tmp/brain-memory-hook-errors.log';
+const ERROR_LOG = '/tmp/recense-hook-errors.log';
 
 /**
  * 10,000-char hard cap from the Claude Code hook contract (RESEARCH §1.1).
@@ -82,21 +82,21 @@ async function main(): Promise<void> {
   // Type-guard cwd from the hook payload (T-03-3-T; hot path — no LLM/embedding calls added)
   const cwd = typeof input['cwd'] === 'string' ? input['cwd'] : '';
 
-  // CR-01: --db (pinned by `brain init`) > BRAIN_MEMORY_DB env > shared default.
+  // CR-01: --db (pinned by `recense init`) > RECENSE_DB env > shared default.
   const dbPath = resolveDbPath();
   const config = { ...DEFAULT_CONFIG, dbPath };
 
   // M-3 LOCKED: open read-only — never run DDL or initSchema on the hot hook path.
   // A missing DB (fresh install, writer not yet run) or a schema_version mismatch (binary
   // older/newer than the DB) emits empty context and exits 0 cleanly.
-  // Writer CLIs (brain init / sleep-pass / recall) own migrations.
+  // Writer CLIs (recense init / sleep-pass / recall) own migrations.
   let db: Database.Database;
   try {
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
   } catch (err) {
     appendFileSync(
       ERROR_LOG,
-      `[${new Date().toISOString()}] session-start-cli: DB unavailable (${dbPath}): ${err} — run a writer CLI (brain init / brain sleep-pass) to initialise; emitting empty context\n`
+      `[${new Date().toISOString()}] session-start-cli: DB unavailable (${dbPath}): ${err} — run a writer CLI (recense init / recense sleep-pass) to initialise; emitting empty context\n`
     );
     emitContext('');
     process.exit(0);
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
       ERROR_LOG,
       `[${new Date().toISOString()}] session-start-cli: schema_version mismatch ` +
       `(stored=${vRow?.value ?? 'absent'}, binary=${SCHEMA_VERSION}) — ` +
-      `run a writer CLI (brain init / brain sleep-pass) to migrate; emitting empty context\n`
+      `run a writer CLI (recense init / recense sleep-pass) to migrate; emitting empty context\n`
     );
     db.close();
     emitContext('');

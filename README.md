@@ -1,14 +1,14 @@
-# brain-memory
+# Recense
 
-Memory that stays correct. When a fact changes, brain-memory updates the belief in place — prediction-error-gated, tombstoned, auditable — instead of storing both versions and hoping retrieval picks the right one.
+Memory that stays correct. When a fact changes, recense updates the belief in place — prediction-error-gated, tombstoned, auditable — instead of storing both versions and hoping retrieval picks the right one.
 
-Open-source, self-hosted, single-user, bring-your-own-keys. You clone it, wire your own API keys, and run it on your own machine. Memory never leaves your machine to a brain-memory service.
+Open-source, self-hosted, single-user, bring-your-own-keys. You clone it, wire your own API keys, and run it on your own machine. Memory never leaves your machine to a recense service.
 
 ---
 
 ## The problem with AI memory
 
-| The complaint | What brain-memory does instead | Evidence |
+| The complaint | What recense does instead | Evidence |
 |---------------|-------------------------------|----------|
 | Stale facts coexist with new ones — memory never corrects itself ([mem0 #4896](https://github.com/mem0ai/mem0/issues/4896): semantically contradictory facts stored side-by-side, MD5 dedup only) | PE-gated reconsolidation: a contradiction triggers a judge call; the old belief is tombstoned in place and the new one written — one surviving belief, not two | EVAL-02: belief-correction suite |
 | Self-confirmation loops inflate noise ([mem0 #4573](https://github.com/mem0ai/mem0/issues/4573): one hallucinated fact became 808 duplicates because recalled output was re-extracted as new input) | Provenance enforcement: the engine's own inferred output can never count as evidence; the self-confirmation loop is closed by construction, not by prompt | Architecture invariant — `source_inference_id` flag blocks the loop at the write path |
@@ -22,7 +22,7 @@ Open-source, self-hosted, single-user, bring-your-own-keys. You clone it, wire y
 
 See [docs/evals.md](docs/evals.md) for full methodology, case-set description, judge-validation evidence, and caveats.
 
-| Eval | brain-memory | Comparison | Methodology | Run date | Repro |
+| Eval | recense | Comparison | Methodology | Run date | Repro |
 |------|-------------|------------|-------------|----------|-------|
 | LongMemEval-S, knowledge-update subset (n=78, end-to-end QA) | **69.2%** (54/78) | **Full-context Haiku: 79.5%** (same questions, same answer model, same scorer — measured by us, not self-reported); agentmemory: 95.2% (self-reported, **retrieval-only R@5** — not end-to-end QA) | full ~48-session haystack ingest → consolidation → retrieval → Haiku 4.5 answer, GPT-4o-2024-08-06 binary judge | 2026-06-12 | `npm run eval:longmemeval` (~$14, ~15 min) |
 | EVAL-02: Correctness suite (belief-correction) | **92.3%** (12/13 content-correct, API) · **84.6%** scorer-credited (11/13) on the free local stack | ADD-only baseline: **0%** (same cases, no consolidation) | end-to-end engine, scratch DB, 17 fictional-persona cases, graph-state verification (tombstones + duplicate counts) | 2026-06-13 (commit bedd132) | `npm run eval:correctness` (~$2 API / $0 local, ~10–40 min) |
@@ -45,8 +45,8 @@ Optional (macOS only):
 ### Install
 
 ```sh
-git clone https://github.com/<owner>/brain-memory.git
-cd brain-memory
+git clone https://github.com/<owner>/recense.git
+cd recense
 npm install
 npm run init
 ```
@@ -55,29 +55,29 @@ npm run init
 
 > **Local development (npm link):** To use the `brain` CLI from a local clone without a global npm install, run `npm link` once after `npm install`. This creates a global symlink to your working tree so `brain` resolves to `dist/src/adapter/brain.js` in your clone. Run `npm unlink brain` to remove it. `npm link` does NOT auto-rebuild — run `npm run build` after making source changes.
 
-`npm run build` compiles the TypeScript source to `dist/`. `npm run init` runs the build then launches `brain init` — a guided wizard that:
+`npm run build` compiles the TypeScript source to `dist/`. `npm run init` runs the build then launches `recense init` — a guided wizard that:
 
-1. Prompts for your DB path (where `brain.db` will live)
+1. Prompts for your DB path (where `recense.db` will live)
 2. Collects and live-validates your API keys
-3. Captures the correct `node` binary path (required by the scheduler and hooks — BRAIN_MEMORY_NODE_BIN)
-4. Writes `~/.config/brain-memory/sleep.env` (`chmod 600`)
-5. Registers the sleep-pass scheduler (macOS: launchd; Linux: prints `brain scheduler run` guidance)
+3. Captures the correct `node` binary path (required by the scheduler and hooks — RECENSE_NODE_BIN)
+4. Writes `~/.config/recense/sleep.env` (`chmod 600`)
+5. Registers the sleep-pass scheduler (macOS: launchd; Linux: prints `recense scheduler run` guidance)
 6. Wires the three Claude Code hooks into `~/.claude/settings.json`
 7. Optionally seeds from an existing `MEMORY.md` (`[y/N]` — default No)
 
-`brain init` is idempotent — re-run it to update keys or recapture the node binary after switching Node versions.
+`recense init` is idempotent — re-run it to update keys or recapture the node binary after switching Node versions.
 
 After init, verify the install:
 
 ```sh
-brain doctor
+recense doctor
 ```
 
 ### BYO-keys
 
-`brain init` creates and writes `~/.config/brain-memory/sleep.env` with `chmod 600`. **You do not need to create this file manually** unless you prefer to skip the wizard.
+`recense init` creates and writes `~/.config/recense/sleep.env` with `chmod 600`. **You do not need to create this file manually** unless you prefer to skip the wizard.
 
-If you set it up manually, create `~/.config/brain-memory/sleep.env` (`chmod 600`) with:
+If you set it up manually, create `~/.config/recense/sleep.env` (`chmod 600`) with:
 
 ```sh
 ANTHROPIC_API_KEY=your-anthropic-key-here
@@ -87,46 +87,46 @@ OPENAI_API_KEY=your-openai-key-here
 For the Telegram channel (macOS), also add:
 
 ```sh
-BRAIN_MEMORY_TELEGRAM_TOKEN=123456:ABC-your-bot-token-here
+RECENSE_TELEGRAM_TOKEN=123456:ABC-your-bot-token-here
 ```
 
 Keys are never logged or stored outside this file. The scheduler and hooks read keys from the environment at runtime via the SDK defaults.
 
 ### Cold-start seed
 
-Before the sleep pass can consolidate anything there must be nodes in the graph. `brain init` offers a one-shot seed at the end of the wizard (`[y/N]` — default No). You can also run it later:
+Before the sleep pass can consolidate anything there must be nodes in the graph. `recense init` offers a one-shot seed at the end of the wizard (`[y/N]` — default No). You can also run it later:
 
 ```sh
-brain seed
+recense seed
 ```
 
-The seed reads your existing memory files (configured via `BRAIN_MEMORY_COLD_START_MEMORY_DIR` and `BRAIN_MEMORY_COLD_START_CLAUDE_FILE`), extracts entity and fact claims, and writes them into the SQLite graph.
+The seed reads your existing memory files (configured via `RECENSE_COLD_START_MEMORY_DIR` and `RECENSE_COLD_START_CLAUDE_FILE`), extracts entity and fact claims, and writes them into the SQLite graph.
 
 **One-shot:** once the seeder finishes successfully it sets a `seeded` meta flag. Re-running against the same database is a no-op — it exits 0 without re-extracting anything.
 
 **Safe no-op on misconfiguration:** if neither source path resolves to any files (e.g. you ran it before setting the env vars), the seeder exits 0 *without* burning the one-shot flag. Fix the paths and re-run.
 
-**Lock-guarded:** `brain seed` acquires the shared single-writer lock before opening the database. It is safe to run while the Telegram watcher or the hourly sleep-pass is active — they will wait or skip their cycle rather than colliding.
+**Lock-guarded:** `recense seed` acquires the shared single-writer lock before opening the database. It is safe to run while the Telegram watcher or the hourly sleep-pass is active — they will wait or skip their cycle rather than colliding.
 
 ---
 
 ## Interfaces
 
-brain-memory is a pure memory system — any agent or channel can sit on top of it. Three tiers of reach:
+recense is a pure memory system — any agent or channel can sit on top of it. Three tiers of reach:
 
 | Tier | How | Deploy needed? |
 |------|-----|----------------|
 | Local | Claude Code hooks (ambient), stdio MCP server (deliberate) | No |
 | Channel | Telegram bot (always-on watcher, macOS) | No |
-| Remote | `brain serve` HTTP API / MCP-over-HTTP | Yes — same clone, any host |
+| Remote | `recense serve` HTTP API / MCP-over-HTTP | Yes — same clone, any host |
 
 ### Claude Code hooks
 
-The hooks wire ambient memory into every Claude Code session. The SessionStart hook injects relevant memory at session start (LLM-free, fast); turn capture feeds the episodic log as you work. Wired automatically by `brain init`. See the command reference below.
+The hooks wire ambient memory into every Claude Code session. The SessionStart hook injects relevant memory at session start (LLM-free, fast); turn capture feeds the episodic log as you work. Wired automatically by `recense init`. See the command reference below.
 
 ### MCP server (stdio)
 
-`brain mcp` starts a stdio MCP server that gives any local MCP client (Claude Code, Claude Desktop, standalone agents) deliberate on-demand access to the same `brain.db` the hooks use. The client spawns the process per its config entry — zero deployment. Three tools: `memory_search`, `memory_add`, `memory_ask`. See [docs/mcp.md](docs/mcp.md) for registration config and full tool semantics.
+`recense mcp` starts a stdio MCP server that gives any local MCP client (Claude Code, Claude Desktop, standalone agents) deliberate on-demand access to the same `recense.db` the hooks use. The client spawns the process per its config entry — zero deployment. Three tools: `memory_search`, `memory_add`, `memory_ask`. See [docs/mcp.md](docs/mcp.md) for registration config and full tool semantics.
 
 If you are coming from `@modelcontextprotocol/server-memory`, here is how the vocabularies map:
 
@@ -146,7 +146,7 @@ Our `memory_add` ≈ server-memory's `add_observations`, except writes are episo
 
 ### Reference client
 
-brain-memory is a pure memory system — any agent or channel can sit on top of it by calling the REST interface. The reference client shows the template: receive a message → call `/v1/ask` or `/v1/search` with a Bearer token → present provenance correctly → fail closed when configuration is absent. See [docs/reference-client.md](docs/reference-client.md).
+recense is a pure memory system — any agent or channel can sit on top of it by calling the REST interface. The reference client shows the template: receive a message → call `/v1/ask` or `/v1/search` with a Bearer token → present provenance correctly → fail closed when configuration is absent. See [docs/reference-client.md](docs/reference-client.md).
 
 ### Telegram channel
 
@@ -166,10 +166,10 @@ Message [@userinfobot](https://t.me/userinfobot) on Telegram. It replies with yo
 
 **Step 3 — Put the token in sleep.env**
 
-Add the line to `~/.config/brain-memory/sleep.env`:
+Add the line to `~/.config/recense/sleep.env`:
 
 ```sh
-BRAIN_MEMORY_TELEGRAM_TOKEN=123456:ABC-your-bot-token-here
+RECENSE_TELEGRAM_TOKEN=123456:ABC-your-bot-token-here
 ```
 
 **Step 4 — Configure the channel in `src/lib/config.ts`**
@@ -197,8 +197,8 @@ bash scripts/setup-watcher.sh
 `setup-watcher.sh` does the following:
 
 1. Builds the project (`npm run build`) and verifies the compiled watcher CLI exists
-2. Adds `BRAIN_MEMORY_WATCHER_JS` to `~/.config/brain-memory/sleep.env` (additive — does not clobber your existing API keys or token)
-3. Renders the launchd plist template, lints it with `plutil`, and bootstraps the `com.brain-memory.watcher` KeepAlive job via `launchctl`
+2. Adds `RECENSE_WATCHER_JS` to `~/.config/recense/sleep.env` (additive — does not clobber your existing API keys or token)
+3. Renders the launchd plist template, lints it with `plutil`, and bootstraps the `com.recense.watcher` KeepAlive job via `launchctl`
 4. Prints rollback instructions
 
 The watcher runs as a `KeepAlive` job — launchd restarts it automatically if it exits.
@@ -206,8 +206,8 @@ The watcher runs as a `KeepAlive` job — launchd restarts it automatically if i
 Alternatively, run it directly in a terminal (with sleep.env sourced):
 
 ```sh
-source ~/.config/brain-memory/sleep.env
-node dist/src/adapter/watcher-cli.js --db /Users/<you>/.config/brain-memory/brain.db
+source ~/.config/recense/sleep.env
+node dist/src/adapter/watcher-cli.js --db /Users/<you>/.config/recense/recense.db
 ```
 
 **Step 6 — Verify**
@@ -217,7 +217,7 @@ DM your bot a question. You should receive a reply within a few seconds. Schema-
 To check the watcher log:
 
 ```sh
-tail -f /tmp/brain-memory-watcher.log
+tail -f /tmp/recense-watcher.log
 ```
 
 Note: the bot only answers while your Mac is awake — this is a local self-hosted service, not a cloud process.
@@ -237,7 +237,7 @@ To use iMessage:
 
 ### Privacy stance
 
-brain-memory is a **read-only query surface**. It answers questions from allowlisted senders; it never ingests your message history. The only write the watcher performs per query is an ephemeral inferred episode logged under the single-writer lock (origin `inferred`, salience 0, never promoted to a graph fact). Your conversation history is never read by the memory engine — the channel delivers only the inbound question text.
+recense is a **read-only query surface**. It answers questions from allowlisted senders; it never ingests your message history. The only write the watcher performs per query is an ephemeral inferred episode logged under the single-writer lock (origin `inferred`, salience 0, never promoted to a graph fact). Your conversation history is never read by the memory engine — the channel delivers only the inbound question text.
 
 ---
 
@@ -245,19 +245,19 @@ brain-memory is a **read-only query surface**. It answers questions from allowli
 
 | Command | Description |
 |---------|-------------|
-| `brain init` | Guided bootstrap wizard — run once after clone, or re-run to update config |
-| `brain doctor` | Health audit: DB, API keys, scheduler, hooks, Node ABI |
-| `brain scheduler install` | macOS: register the launchd sleep-pass agent. Linux: prints `brain scheduler run` guidance |
-| `brain scheduler status` | Check whether the scheduler is registered / running |
-| `brain scheduler run` | Linux: start hourly sleep-pass in the foreground (stops when the process exits) |
-| `brain recall` | Query memory from the command line |
-| `brain seed` | One-shot cold-start seed from existing memory files |
-| `brain ingest` | Run the source adapter pass (email, transcripts, Obsidian vault) |
-| `brain sleep-pass` | Run one consolidation pass immediately |
-| `brain snapshot` | Export a DB snapshot |
+| `recense init` | Guided bootstrap wizard — run once after clone, or re-run to update config |
+| `recense doctor` | Health audit: DB, API keys, scheduler, hooks, Node ABI |
+| `recense scheduler install` | macOS: register the launchd sleep-pass agent. Linux: prints `recense scheduler run` guidance |
+| `recense scheduler status` | Check whether the scheduler is registered / running |
+| `recense scheduler run` | Linux: start hourly sleep-pass in the foreground (stops when the process exits) |
+| `recense recall` | Query memory from the command line |
+| `recense seed` | One-shot cold-start seed from existing memory files |
+| `recense ingest` | Run the source adapter pass (email, transcripts, Obsidian vault) |
+| `recense sleep-pass` | Run one consolidation pass immediately |
+| `recense snapshot` | Export a DB snapshot |
 | `brain watcher` | Start the Telegram / iMessage query watcher (macOS only) |
-| `brain mcp` | Start a stdio MCP server exposing memory_search / memory_add / memory_ask to any local MCP client (Claude Code, Claude Desktop). Requires `--db <path>`. |
-| `brain hook session-start \| turn-capture \| stop` | Claude Code hook handlers — wired automatically by `brain init` |
+| `recense mcp` | Start a stdio MCP server exposing memory_search / memory_add / memory_ask to any local MCP client (Claude Code, Claude Desktop). Requires `--db <path>`. |
+| `recense hook session-start \| turn-capture \| stop` | Claude Code hook handlers — wired automatically by `recense init` |
 
 ---
 
@@ -266,14 +266,14 @@ brain-memory is a **read-only query surface**. It answers questions from allowli
 | Platform | Scheduler | Claude Code hooks | Query channel |
 |----------|-----------|-------------------|---------------|
 | **macOS** (full support) | launchd — always-on, survives reboots | ✓ | Telegram (launchd KeepAlive) · iMessage (optional, see above) |
-| **Linux** | `brain scheduler run` — foreground, stops with process¹ | ✓³ | — (channel watcher is macOS-only in v2.0) |
+| **Linux** | `recense scheduler run` — foreground, stops with process¹ | ✓³ | — (channel watcher is macOS-only in v2.0) |
 | **Windows** | WSL — community-supported² | WSL² | WSL² |
 
-¹ **Linux scheduler caveat:** `brain scheduler run` starts an hourly croner tick in the foreground. The process stops when your terminal session ends — there is no background daemon or reboot-survival on Linux in v2.0. Reboot-survival via a systemd unit is planned for v2.1. Until then, restart `brain scheduler run` manually after reboots.
+¹ **Linux scheduler caveat:** `recense scheduler run` starts an hourly croner tick in the foreground. The process stops when your terminal session ends — there is no background daemon or reboot-survival on Linux in v2.0. Reboot-survival via a systemd unit is planned for v2.1. Until then, restart `recense scheduler run` manually after reboots.
 
 ² **Windows:** Native Windows is out of scope. Under WSL2 the engine, hooks, and foreground scheduler are *expected* to work, but this path is **not covered by CI or an install smoke** — community reports welcome. The channel watcher (Telegram/iMessage) behaves as on Linux (not supported in v2.0).
 
-³ **Linux verification scope:** the engine, hooks, and scheduler are exercised by the CI build + unit suite on `ubuntu-22.04` (PORT-02). An end-to-end `brain init` install smoke on a fresh Linux machine is not yet in CI (planned) — the install path is unit-tested, not yet integration-tested.
+³ **Linux verification scope:** the engine, hooks, and scheduler are exercised by the CI build + unit suite on `ubuntu-22.04` (PORT-02). An end-to-end `recense init` install smoke on a fresh Linux machine is not yet in CI (planned) — the install path is unit-tested, not yet integration-tested.
 
 ---
 
@@ -291,7 +291,7 @@ brain-memory is a **read-only query surface**. It answers questions from allowli
 
 - [docs/evals.md](docs/evals.md) — full eval methodology, case-set description, judge-validation evidence, and caveats
 - [docs/mcp.md](docs/mcp.md) — MCP server registration config and tool semantics
-- [docs/server-mode.md](docs/server-mode.md) — `brain serve` HTTP API reference
+- [docs/server-mode.md](docs/server-mode.md) — `recense serve` HTTP API reference
 - [docs/reference-client.md](docs/reference-client.md) — reference client template and provenance handling
 - [docs/tray-app.md](docs/tray-app.md) — menu-bar tray app: build from source, lifecycle, Gatekeeper caveat
 

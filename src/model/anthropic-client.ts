@@ -25,7 +25,7 @@ import { OllamaClient } from './ollama-client';
  * The response Message type (including TextBlock) comes from @anthropic-ai/sdk,
  * so Anthropic.TextBlock narrowing at call sites is valid for both providers.
  *
- * The optional `extra` second argument carries brain-memory-internal options that are
+ * The optional `extra` second argument carries recense-internal options that are
  * transport-specific (e.g. jsonSchema for the OllamaClient native constrained-decoding
  * path). For Anthropic/Vertex transports the extra arg lands in the ignored RequestOptions
  * slot — jsonSchema never reaches the Anthropic API body (QUICK-260612-clb, T-CLB-seam).
@@ -56,7 +56,7 @@ export type AnthropicLike = {
  * staying well inside the 30-min H-4 lock-reclaim window (worst case: 3 retries ×
  * 300 s = 15 min).
  *
- * SDK_MAX_RETRIES is env-overridable via BRAIN_MEMORY_SDK_MAX_RETRIES.
+ * SDK_MAX_RETRIES is env-overridable via RECENSE_SDK_MAX_RETRIES.
  * The eval harness sets it to 10 before loading dist modules so that engine-level
  * 429s during consolidation self-throttle via the SDK's native retry-after backoff,
  * rather than failing after the default 2 attempts.
@@ -65,7 +65,7 @@ export type AnthropicLike = {
 export const SDK_TIMEOUT_MS = 60_000;
 export const LOCAL_SDK_TIMEOUT_MS = 300_000;
 export const SDK_MAX_RETRIES: number = (() => {
-  const raw = process.env['BRAIN_MEMORY_SDK_MAX_RETRIES'];
+  const raw = process.env['RECENSE_SDK_MAX_RETRIES'];
   if (!raw) return 2;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n >= 0 ? n : 2;

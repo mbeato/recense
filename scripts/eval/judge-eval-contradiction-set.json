@@ -67,7 +67,7 @@
   },
   {
     "case_id": 3,
-    "claim": "brain-memory runs as a multi-tenant production service handling concurrent traffic from many users.",
+    "claim": "recense runs as a multi-tenant production service handling concurrent traffic from many users.",
     "candidates": [
       {
         "id": "90d83cb5-b9b8-46ea-b673-cf4b2b1fc159",
@@ -133,16 +133,16 @@
   },
   {
     "case_id": 5,
-    "claim": "To fix the cross-project bleed, move the three hooks out of brain-memory/.claude/settings.json and back into the global ~/.claude/settings.json.",
+    "claim": "To fix the cross-project bleed, move the three hooks out of recense/.claude/settings.json and back into the global ~/.claude/settings.json.",
     "candidates": [
       {
         "id": "f37355ad-283c-421f-bcf6-1ea6baf57855",
-        "value": "Cross-project bleed: hooks are global, so every session in every project writes to/reads from one brain.db",
+        "value": "Cross-project bleed: hooks are global, so every session in every project writes to/reads from one recense.db",
         "cosine": 0.683
       },
       {
         "id": "92efa003-c757-447d-9353-57be637ff1c6",
-        "value": "Fast mitigation for cross-project bleed: move three hooks from ~/.claude/settings.json to brain-memory/.claude/settings.json",
+        "value": "Fast mitigation for cross-project bleed: move three hooks from ~/.claude/settings.json to recense/.claude/settings.json",
         "cosine": 1
       },
       {
@@ -152,7 +152,7 @@
       },
       {
         "id": "1fd158d4-5474-4b35-854e-c8f4dc0a0701",
-        "value": "Cross-project bleed detected with spot-card-spot-visits-paging-design appearing in brain-memory injection",
+        "value": "Cross-project bleed detected with spot-card-spot-visits-paging-design appearing in recense injection",
         "cosine": 0.553
       }
     ],
@@ -317,7 +317,7 @@
       },
       {
         "id": "15cdfd3b-dca3-4724-b012-8d77bfc35128",
-        "value": "Validate quota works end-to-end on real brain.db before raising limits",
+        "value": "Validate quota works end-to-end on real recense.db before raising limits",
         "cosine": 0.488
       }
     ],
@@ -397,26 +397,26 @@
   },
   {
     "case_id": 13,
-    "claim": "The engine's brain.db now holds roughly 1,300 live nodes.",
+    "claim": "The engine's recense.db now holds roughly 1,300 live nodes.",
     "candidates": [
       {
         "id": "4eafd839-65e8-44d4-a725-c16c8d7126fe",
-        "value": "brain.db holds 149 live nodes from sessions with engine ranking and injecting top ~2000 chars",
+        "value": "recense.db holds 149 live nodes from sessions with engine ranking and injecting top ~2000 chars",
         "cosine": 1
       },
       {
         "id": "19873adb-07f1-4799-b515-9a465b8adefd",
-        "value": "brain.db",
+        "value": "recense.db",
         "cosine": 0.691
       },
       {
         "id": "180f0c82-3a76-4d5c-a5eb-f002c259c2d2",
-        "value": "brain.db holds 66 induced schema nodes",
+        "value": "recense.db holds 66 induced schema nodes",
         "cosine": 0.672
       },
       {
         "id": "0b01b4de-2f06-40f5-af9c-f11c0819f9b6",
-        "value": "brain.db starts empty and fills as conversation progresses",
+        "value": "recense.db starts empty and fills as conversation progresses",
         "cosine": 0.648
       }
     ],

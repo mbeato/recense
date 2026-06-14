@@ -113,7 +113,7 @@ function safeVendorPath(segment: string): string | null {
 /**
  * Start the viz HTTP server.
  *
- * @param dbPath - Absolute path to brain.db; opened read-only (D-95, T-10-08).
+ * @param dbPath - Absolute path to recense.db; opened read-only (D-95, T-10-08).
  * @param port   - TCP port to listen on (bound to 127.0.0.1 only, T-10-09).
  * @returns The http.Server instance (call .close() to stop).
  */
@@ -276,7 +276,7 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         res.writeHead(503, { 'content-type': 'text/html' });
         res.end(
           '<!doctype html><html><body>' +
-          '<p>brain viz — frontend not yet built. Run plan 04 to generate index.html.</p>' +
+          '<p>recense viz — frontend not yet built. Run plan 04 to generate index.html.</p>' +
           '</body></html>'
         );
         return;

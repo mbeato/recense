@@ -1,4 +1,4 @@
-# brain-scheduler.service.template — systemd unit for `brain scheduler run` (SERVE-03 / D-14)
+# brain-scheduler.service.template — systemd unit for `recense scheduler run` (SERVE-03 / D-14)
 #
 # Companion to brain-serve.service.template. Runs the hourly sleep-pass (consolidation)
 # so the semantic graph stays current on a headless Linux host.
@@ -7,25 +7,25 @@
 # envsubst command in docs/server-mode.md.
 #
 # Placeholders substituted by envsubst from exported shell variables:
-#   YOUR_USER             — the Linux user account that owns the brain-memory install
-#   BRAIN_MEMORY_DIR      — absolute path to the brain-memory repo root
-#   BRAIN_MEMORY_NODE_BIN — absolute path to the pinned Node.js binary
+#   YOUR_USER             — the Linux user account that owns the recense install
+#   RECENSE_DIR      — absolute path to the recense repo root
+#   RECENSE_NODE_BIN — absolute path to the pinned Node.js binary
 #   BRAIN_JS              — absolute path to the compiled entry point
 #   HOME                  — absolute path to the user's home directory
 #
 # Templates use dollar-brace placeholders (VAR syntax) instantiated by the envsubst command in docs/server-mode.md.
 
 [Unit]
-Description=brain-memory scheduler (hourly sleep pass)
+Description=recense scheduler (hourly sleep pass)
 After=network.target
 
 [Service]
 Type=simple
 User=${YOUR_USER}
-WorkingDirectory=${BRAIN_MEMORY_DIR}
-ExecStart=${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} scheduler run
-Environment=BRAIN_MEMORY_NODE_BIN=${BRAIN_MEMORY_NODE_BIN}
-EnvironmentFile=${HOME}/.config/brain-memory/sleep.env
+WorkingDirectory=${RECENSE_DIR}
+ExecStart=${RECENSE_NODE_BIN} ${BRAIN_JS} scheduler run
+Environment=RECENSE_NODE_BIN=${RECENSE_NODE_BIN}
+EnvironmentFile=${HOME}/.config/recense/sleep.env
 Restart=on-failure
 RestartSec=30
 

@@ -66,11 +66,11 @@ function runCLI(seed: (store: SemanticStore) => void): {
     db.close();
   }
 
-  // Spawn compiled CLI — passes stdin payload and routes BRAIN_MEMORY_DB to the temp file
+  // Spawn compiled CLI — passes stdin payload and routes RECENSE_DB to the temp file
   const result = spawnSync(process.execPath, [COMPILED_CLI], {
     input: STDIN_PAYLOAD,
     encoding: 'utf8',
-    env: { ...process.env, BRAIN_MEMORY_DB: dbPath },
+    env: { ...process.env, RECENSE_DB: dbPath },
     timeout: 10_000,
   });
 
@@ -94,7 +94,7 @@ describe('session-start-cli (ADAPT-01)', () => {
       store.upsertNode({
         id: newId(),
         type: 'fact',
-        value: 'brain-memory is written in TypeScript',
+        value: 'recense is written in TypeScript',
         origin: 'observed',
       });
     });
@@ -215,7 +215,7 @@ describe('session-start-cli — M-3 read-only guard (requires build)', () => {
     const result = spawnSync(process.execPath, [COMPILED_CLI], {
       input: STDIN_PAYLOAD,
       encoding: 'utf8',
-      env: { ...process.env, BRAIN_MEMORY_DB: dbPath },
+      env: { ...process.env, RECENSE_DB: dbPath },
       timeout: 10_000,
     });
 
@@ -250,7 +250,7 @@ describe('session-start-cli — M-3 read-only guard (requires build)', () => {
     const result = spawnSync(process.execPath, [COMPILED_CLI], {
       input: STDIN_PAYLOAD,
       encoding: 'utf8',
-      env: { ...process.env, BRAIN_MEMORY_DB: nonExistentPath },
+      env: { ...process.env, RECENSE_DB: nonExistentPath },
       timeout: 10_000,
     });
 

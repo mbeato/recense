@@ -23,11 +23,11 @@ import { join } from 'path';
 /**
  * Default lock path (module-level constant, backward-compat export).
  * Tests that need the hermetic per-pid path should read `getLockPath()` or
- * set `process.env['BRAIN_MEMORY_LOCK_PATH']` before calling acquireLock/releaseLock.
+ * set `process.env['RECENSE_LOCK_PATH']` before calling acquireLock/releaseLock.
  *
  * Exported so tests can reference the default value when needed.
  */
-export const LOCK_PATH = join(tmpdir(), 'brain-memory-sleep.lock');
+export const LOCK_PATH = join(tmpdir(), 'recense-sleep.lock');
 
 /**
  * DEBT-02: resolve the effective lock path at CALL TIME (not module-load time).
@@ -37,11 +37,11 @@ export const LOCK_PATH = join(tmpdir(), 'brain-memory-sleep.lock');
  * Reading the env var inside each function ensures the override is visible even
  * when set after the module has already been imported.
  *
- * Returns `BRAIN_MEMORY_LOCK_PATH` env var if set, otherwise the default LOCK_PATH.
+ * Returns `RECENSE_LOCK_PATH` env var if set, otherwise the default LOCK_PATH.
  * Zero production-behavior change when the env var is unset.
  */
 function getLockPath(): string {
-  return process.env['BRAIN_MEMORY_LOCK_PATH'] ?? LOCK_PATH;
+  return process.env['RECENSE_LOCK_PATH'] ?? LOCK_PATH;
 }
 
 /**

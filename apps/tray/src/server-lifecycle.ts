@@ -3,13 +3,13 @@
  *
  * Design invariants:
  *   D-07:  if port 7810 is already serving, attach instead of spawning a second server.
- *   L-10:  abort with MissingDbError when brain.db is absent (caller shows dialog + quits).
+ *   L-10:  abort with MissingDbError when recense.db is absent (caller shows dialog + quits).
  *   D-96:  the spawned child owns viz_trace_enabled via its own exit handlers.
  *          The tray's sole obligation is to SIGTERM the child on all quit paths.
  *          Never open a second DB write handle for the flag from here.
  *   T-16-03: spawn on resolveNodeBin() (pinned system node), NEVER on the Electron binary.
- *            Pass ONLY BRAIN_MEMORY_DB additively. Do not add NODE_MODE env vars to child.
- *   T-16-05: pipe child output to append-only /tmp/brain-memory-tray.log — never tray stdout.
+ *            Pass ONLY RECENSE_DB additively. Do not add NODE_MODE env vars to child.
+ *   T-16-05: pipe child output to append-only /tmp/recense-tray.log — never tray stdout.
  *   T-16-06: exponential backoff (1s→30s cap) with a `stopping` guard prevents tight respawn
  *            loops on a persistently-failing server. At most ONE respawn timer is ever
  *            pending (scheduleRespawn is a no-op while a timer is live), and the backoff
@@ -25,7 +25,7 @@ import { resolveNodeBin, resolveBrainJs, resolveDbPath } from './runtime-paths';
 // Constants
 // ---------------------------------------------------------------------------
 
-const LOG_PATH = '/tmp/brain-memory-tray.log';
+const LOG_PATH = '/tmp/recense-tray.log';
 const HEALTH_PORT = 7810;
 const BACKOFF_INITIAL_MS = 1_000;
 const BACKOFF_CAP_MS = 30_000;
@@ -55,13 +55,13 @@ export interface ServerHandle {
 }
 
 /**
- * Thrown by ensureServer() when brain.db is missing (L-10).
+ * Thrown by ensureServer() when recense.db is missing (L-10).
  * The 16-05 caller converts this to dialog.showErrorBox + app.quit.
  */
 export class MissingDbError extends Error {
   readonly dbPath: string;
   constructor(dbPath: string) {
-    super(`brain viz: DB not found at ${dbPath} — run \`brain init\` first`);
+    super(`recense viz: DB not found at ${dbPath} — run \`recense init\` first`);
     this.name = 'MissingDbError';
     this.dbPath = dbPath;
   }
@@ -73,8 +73,8 @@ export class MissingDbError extends Error {
 export class MissingBrainJsError extends Error {
   constructor() {
     super(
-      'brain viz: cannot resolve brain.js entry — ' +
-        'set BRAIN_MEMORY_BRAIN_JS or BRAIN_MEMORY_SLEEP_JS in sleep.env',
+      'recense viz: cannot resolve brain.js entry — ' +
+        'set RECENSE_BRAIN_JS or RECENSE_SLEEP_JS in sleep.env',
     );
     this.name = 'MissingBrainJsError';
   }
@@ -159,11 +159,11 @@ export async function isServerRunning(port: number = HEALTH_PORT): Promise<boole
  * Attach to the viz server if port 7810 is already bound (D-07), else spawn it.
  *
  * Spawn shape: spawn(nodeBin, [brainJs, 'viz', '--no-open'], {
- *   env: { ...process.env, BRAIN_MEMORY_DB: dbPath }, stdio: 'pipe' })
+ *   env: { ...process.env, RECENSE_DB: dbPath }, stdio: 'pipe' })
  *
  * Crash backoff is registered on the spawned child's 'exit' event.
  *
- * @throws MissingDbError   if brain.db does not exist (L-10).
+ * @throws MissingDbError   if recense.db does not exist (L-10).
  * @throws MissingBrainJsError if brain.js entry cannot be resolved.
  */
 export async function ensureServer(opts: EnsureServerOpts = {}): Promise<ServerHandle> {
@@ -186,7 +186,7 @@ export async function ensureServer(opts: EnsureServerOpts = {}): Promise<ServerH
   // to spawn() is synchronous, so stopServer() cannot interleave again.
   stopping = false;
 
-  // L-10: guard — abort with typed error when brain.db is missing
+  // L-10: guard — abort with typed error when recense.db is missing
   const dbPath = resolveDbPath(opts.argv);
   if (!existsSync(dbPath)) {
     throw new MissingDbError(dbPath);
@@ -202,9 +202,9 @@ export async function ensureServer(opts: EnsureServerOpts = {}): Promise<ServerH
   // Spawn the viz server child.
   // - NOT detached: tray owns the child lifecycle.
   // - stdio: 'pipe': output piped to append-only log (never tray stdout — T-16-05).
-  // - Pass ONLY BRAIN_MEMORY_DB additively. No extra NODE_MODE vars (T-16-03).
+  // - Pass ONLY RECENSE_DB additively. No extra NODE_MODE vars (T-16-03).
   const child = spawn(nodeBin, [brainJs, 'viz', '--no-open'], {
-    env: { ...process.env, BRAIN_MEMORY_DB: dbPath },
+    env: { ...process.env, RECENSE_DB: dbPath },
     stdio: 'pipe',
   });
   // Track the active child so stopServer() can SIGTERM the live process even

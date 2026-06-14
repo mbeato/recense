@@ -17,11 +17,11 @@ import { MockModelProvider } from '../src/model/provider';
 describe('parseClaims: real model output shapes', () => {
   it('parses claims wrapped in ```json fences (the production bug)', () => {
     const fenced =
-      '```json\n[\n  {"type":"entity","value":"brain-memory project","links":[]},\n' +
-      '  {"type":"fact","value":"Preferred test runner for brain-memory project is vitest","links":["brain-memory project"]}\n]\n```';
+      '```json\n[\n  {"type":"entity","value":"recense project","links":[]},\n' +
+      '  {"type":"fact","value":"Preferred test runner for recense project is vitest","links":["recense project"]}\n]\n```';
     const claims = parseClaims(fenced);
     expect(claims).toHaveLength(2);
-    expect(claims[0]).toMatchObject({ type: 'entity', value: 'brain-memory project' });
+    expect(claims[0]).toMatchObject({ type: 'entity', value: 'recense project' });
     expect(claims[1]).toMatchObject({ type: 'fact' });
   });
 

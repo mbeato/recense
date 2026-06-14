@@ -1,7 +1,7 @@
 /**
  * serve-cli — HTTP serving mode adapter (Phase 12, SERVE-01/SERVE-02).
  *
- * Entry point: `brain serve --db <path>` (dispatched via spawnScript from brain.ts).
+ * Entry point: `recense serve --db <path>` (dispatched via spawnScript from brain.ts).
  *
  * Exposes two surface protocols on one port (D-01):
  *   REST  — POST /v1/search|add|ask with Phase 11 response shapes (D-04)
@@ -9,7 +9,7 @@
  *   Health — GET /health (unauthenticated, D-13)
  *
  * Auth (SERVE-02): Bearer token required for every path except /health. Token is
- * born on first `brain serve` run (crypto.randomBytes(32)), stored in chmod-600
+ * born on first `recense serve` run (crypto.randomBytes(32)), stored in chmod-600
  * sleep.env as BRAIN_SERVE_TOKEN, printed once, never again (D-05/D-06/D-07).
  *
  * Security invariants:
@@ -35,7 +35,7 @@ import { resolveDbPath, sleepEnvPath } from './runtime-config';
 // Constants
 // ---------------------------------------------------------------------------
 
-const LOG_PATH = '/tmp/brain-memory-serve.log';
+const LOG_PATH = '/tmp/recense-serve.log';
 
 /** 64KB body cap (D-11): incremental byte counting — content-length is not trusted. */
 const BODY_SIZE_LIMIT = 65_536;
@@ -114,12 +114,12 @@ export function resolveServeToken(envPath: string = sleepEnvPath()): string {
   // exports) — printing the token there violates the "never in logs" invariant.
   // Non-TTY runs are pointed at sleep.env, the token's canonical chmod-600 home.
   if (process.stdout.isTTY) {
-    process.stdout.write('\nbrain serve: token generated.\n');
+    process.stdout.write('\nrecense serve: token generated.\n');
     process.stdout.write(`  BRAIN_SERVE_TOKEN=${token}\n`);
     process.stdout.write('  Record this token — it will NOT be printed again.\n\n');
   } else {
     process.stdout.write(
-      `\nbrain serve: token generated and stored in ${envPath} ` +
+      `\nrecense serve: token generated and stored in ${envPath} ` +
       `(not printed — stdout is not a TTY; read it with: grep '^BRAIN_SERVE_TOKEN=' ${envPath})\n\n`,
     );
   }
@@ -224,10 +224,10 @@ function jsonError(res: http.ServerResponse, status: number, body: unknown): voi
  */
 function buildMcpServer(ops: MemoryOps): McpServer {
   const mcpServer = new McpServer(
-    { name: 'brain-memory', version: '0.1.0' },
+    { name: 'recense', version: '0.1.0' },
     {
       instructions:
-        'brain-memory tools: memory_search (LLM-free semantic retrieval), memory_add ' +
+        'recense tools: memory_search (LLM-free semantic retrieval), memory_add ' +
         '(record a fact/observation), memory_ask (question answering over memory). ' +
         'Writes land as episodes; abstraction/consolidation runs in the hourly sleep pass, not inline.',
     },
@@ -483,8 +483,8 @@ if (require.main === module) {
       // WR-02: a long-running server must fail LOUDLY on misconfiguration. Exit-0 with
       // log-file-only output is the hook convention; under systemd (Restart=on-failure)
       // it meant silent service death with nothing in journalctl.
-      process.stderr.write('brain serve: no DB path supplied (--db <path> or BRAIN_MEMORY_DB) — exiting\n');
-      log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
+      process.stderr.write('recense serve: no DB path supplied (--db <path> or RECENSE_DB) — exiting\n');
+      log('No DB path supplied (--db <path> or RECENSE_DB env var) — exiting');
       process.exit(1);
     }
 
@@ -500,7 +500,7 @@ if (require.main === module) {
       const raw = process.argv[portIdx + 1];
       const parsed = Number(raw);
       if (!raw || !Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-        process.stderr.write(`brain serve: invalid --port value '${raw ?? ''}' — expected an integer between 1 and 65535\n`);
+        process.stderr.write(`recense serve: invalid --port value '${raw ?? ''}' — expected an integer between 1 and 65535\n`);
         process.exit(1);
       }
       port = parsed;
@@ -512,7 +512,7 @@ if (require.main === module) {
     const { server, close } = await createBrainHttpServer({ dbPath, token });
 
     server.listen(port, host, () => {
-      process.stdout.write(`brain serve: listening on http://${host}:${port}\n`);
+      process.stdout.write(`recense serve: listening on http://${host}:${port}\n`);
     });
 
     // Pitfall 6: async drain before exit — never synchronous process.exit without close().

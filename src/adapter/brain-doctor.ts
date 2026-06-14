@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * brain doctor — 6-dimension install health audit (INSTALL-04; dimension 6 added in Phase 12).
+ * recense doctor — 6-dimension install health audit (INSTALL-04; dimension 6 added in Phase 12).
  *
  * Checks six fixed dimensions and prints a human-readable pass/fail per
  * dimension. Exits non-zero if any dimension fails. `--json` is deferred
@@ -11,7 +11,7 @@
  *   2. API key validity via live calls (Anthropic + OpenAI)
  *   3. Scheduler registered + running
  *   4. Hooks wired in ~/.claude/settings.json
- *   5. Node ABI match (BRAIN_MEMORY_NODE_BIN vs better-sqlite3 build)
+ *   5. Node ABI match (RECENSE_NODE_BIN vs better-sqlite3 build)
  *   6. Serve token presence + env file mode (BRAIN_SERVE_TOKEN in chmod-600 sleep.env)
  *
  * Design invariants:
@@ -19,7 +19,7 @@
  *  - API key values are never written to stdout (T-09-09).
  *  - Failures aggregated; process.exitCode set at the end (CR-02: no
  *    process.exit() inside try/finally).
- *  - BRAIN_MEMORY_NODE_BIN used for ABI check (not process.execPath).
+ *  - RECENSE_NODE_BIN used for ABI check (not process.execPath).
  *
  * Threat mitigations:
  *  - T-09-09: live-key check reports valid/invalid only; never echoes key bytes.
@@ -50,7 +50,7 @@ function fail(detail: string): CheckResult { return { ok: false, detail }; }
 // ── Dimension 1: DB reachability + schema version ─────────────────────────────
 
 /**
- * Open BRAIN_MEMORY_DB read-only, read meta.schema_version, compare to
+ * Open RECENSE_DB read-only, read meta.schema_version, compare to
  * the imported SCHEMA_VERSION constant.
  *
  * T-09-10: { readonly: true } prevents any accidental write.
@@ -59,7 +59,7 @@ function fail(detail: string): CheckResult { return { ok: false, detail }; }
  */
 export function checkDb(dbPath: string): CheckResult {
   if (!dbPath) {
-    return fail('BRAIN_MEMORY_DB not set — run `brain init`');
+    return fail('RECENSE_DB not set — run `recense init`');
   }
   try {
     const db = new Database(dbPath, { readonly: true });
@@ -69,7 +69,7 @@ export function checkDb(dbPath: string): CheckResult {
     db.close();
     const v = row?.value;
     if (v !== String(SCHEMA_VERSION)) {
-      return fail(`schema version mismatch: got ${v ?? '(none)'}, want ${SCHEMA_VERSION} — run \`brain init\``);
+      return fail(`schema version mismatch: got ${v ?? '(none)'}, want ${SCHEMA_VERSION} — run \`recense init\``);
     }
     return pass(`DB at ${dbPath} — schema v${v}`);
   } catch (e) {
@@ -146,7 +146,7 @@ export async function checkApiKeys(): Promise<CheckResult> {
 // ── Dimension 3: Scheduler registered + running ───────────────────────────────
 
 /**
- * macOS: checks launchctl for com.brain-memory.sleep-pass.
+ * macOS: checks launchctl for com.recense.sleep-pass.
  * Linux: pgrep-based liveness (informational — not a hard fail per D-92).
  *
  * @exported — used by tests; platform-specific branches make it deterministic
@@ -156,32 +156,32 @@ export function checkScheduler(): CheckResult {
   if (process.platform === 'darwin') {
     const result = spawnSync(
       'launchctl',
-      ['list', 'com.brain-memory.sleep-pass'],
+      ['list', 'com.recense.sleep-pass'],
       { stdio: 'pipe' },
     );
     if (result.status === 0) {
-      return pass('com.brain-memory.sleep-pass registered (macOS launchd)');
+      return pass('com.recense.sleep-pass registered (macOS launchd)');
     }
-    return fail('com.brain-memory.sleep-pass not registered — run `brain scheduler install`');
+    return fail('com.recense.sleep-pass not registered — run `recense scheduler install`');
   }
   // Linux: foreground process only (D-92 honesty principle).
   // WR-04: tolerate the compiled entry point — the systemd unit runs
   // `node .../brain.js scheduler run`, so the pattern must match both the npm bin
-  // shim (`brain scheduler run`) and the direct invocation (`brain.js scheduler run`).
+  // shim (`recense scheduler run`) and the direct invocation (`brain.js scheduler run`).
   const result = spawnSync('pgrep', ['-f', 'brain(\\.js)? scheduler run'], { stdio: 'pipe' });
   if (result.status === 0) {
-    return pass('brain scheduler run process detected');
+    return pass('recense scheduler run process detected');
   }
   // Not running is informational on Linux (D-92) — not a hard failure
-  return pass('scheduler: not running (start with `brain scheduler run`; for reboot-survival on Linux install the brain-scheduler systemd unit — see docs/server-mode.md)');
+  return pass('scheduler: not running (start with `recense scheduler run`; for reboot-survival on Linux install the brain-scheduler systemd unit — see docs/server-mode.md)');
 }
 
 // ── Dimension 4: Hooks wired in settings.json ─────────────────────────────────
 
 /**
  * Reads ~/.claude/settings.json and checks SessionStart, UserPromptSubmit,
- * and Stop each have a brain hook entry (new `brain ... hook` form OR the
- * pre-migration `brain-memory/dist/src/adapter/` path).
+ * and Stop each have a recense hook entry (new `brain ... hook` form OR the
+ * pre-migration `recense/dist/src/adapter/` path).
  *
  * @param settingsOverridePath — override the default path for testing.
  * @exported — used by tests to verify hook detection without modifying the
@@ -190,7 +190,7 @@ export function checkScheduler(): CheckResult {
 export function checkHooks(settingsOverridePath?: string): CheckResult {
   const settingsPath = settingsOverridePath ?? join(homedir(), '.claude', 'settings.json');
   if (!existsSync(settingsPath)) {
-    return fail('~/.claude/settings.json not found — run `brain init`');
+    return fail('~/.claude/settings.json not found — run `recense init`');
   }
   let settings: Record<string, unknown>;
   try {
@@ -202,7 +202,7 @@ export function checkHooks(settingsOverridePath?: string): CheckResult {
 
   const hooks = settings['hooks'] as Record<string, unknown> | undefined;
   if (!hooks) {
-    return fail('no hooks section in settings.json — run `brain init`');
+    return fail('no hooks section in settings.json — run `recense init`');
   }
 
   const events = ['SessionStart', 'UserPromptSubmit', 'Stop'] as const;
@@ -216,14 +216,14 @@ export function checkHooks(settingsOverridePath?: string): CheckResult {
         // New-style: command contains 'brain' AND 'hook'
         // Pre-migration: command contains the old dist path
         return (cmd.includes('brain') && cmd.includes('hook')) ||
-               cmd.includes('brain-memory/dist/src/adapter/');
+               cmd.includes('recense/dist/src/adapter/');
       }),
     );
     if (!hasBrainHook) missing.push(event);
   }
 
   if (missing.length > 0) {
-    return fail(`hooks not wired for: ${missing.join(', ')} — run \`brain init\``);
+    return fail(`hooks not wired for: ${missing.join(', ')} — run \`recense init\``);
   }
   return pass('SessionStart, UserPromptSubmit, Stop wired');
 }
@@ -231,16 +231,16 @@ export function checkHooks(settingsOverridePath?: string): CheckResult {
 // ── Dimension 5: Node ABI match ───────────────────────────────────────────────
 
 /**
- * Spawn BRAIN_MEMORY_NODE_BIN and require better-sqlite3.
+ * Spawn RECENSE_NODE_BIN and require better-sqlite3.
  * Non-zero exit or NODE_MODULE_VERSION in stderr = ABI mismatch.
  *
- * @exported — used by tests to assert fail behavior when BRAIN_MEMORY_NODE_BIN
+ * @exported — used by tests to assert fail behavior when RECENSE_NODE_BIN
  *             is unset, without requiring a live node binary.
  */
 export function checkNodeAbi(): CheckResult {
-  const nodeBin = process.env['BRAIN_MEMORY_NODE_BIN'];
+  const nodeBin = process.env['RECENSE_NODE_BIN'];
   if (!nodeBin) {
-    return fail('BRAIN_MEMORY_NODE_BIN not set — run `brain init`');
+    return fail('RECENSE_NODE_BIN not set — run `recense init`');
   }
   // IN-04: print the SPAWNED binary's NODE_MODULE_VERSION before loading the addon.
   // Reporting process.versions.modules here would show the doctor process's NMV —
@@ -253,7 +253,7 @@ export function checkNodeAbi(): CheckResult {
   if (result.status !== 0) {
     const stderr = (result.stderr?.toString() ?? '');
     if (stderr.includes('NODE_MODULE_VERSION')) {
-      return fail('ABI mismatch — re-run `brain init` to recapture node binary');
+      return fail('ABI mismatch — re-run `recense init` to recapture node binary');
     }
     return fail(`better-sqlite3 load error: ${stderr.slice(0, 200)}`);
   }
@@ -268,7 +268,7 @@ export function checkNodeAbi(): CheckResult {
  * is chmod-600.
  *
  * Three outcomes:
- *  - env file absent → pass (token only needed when running `brain serve`)
+ *  - env file absent → pass (token only needed when running `recense serve`)
  *  - env file present, mode != 0600 → fail with the actual mode and hint
  *  - env file present, 0600, no BRAIN_SERVE_TOKEN → pass (will generate on first serve)
  *  - env file present, 0600, BRAIN_SERVE_TOKEN set → pass
@@ -280,13 +280,13 @@ export function checkNodeAbi(): CheckResult {
  */
 export function checkServeToken(envPath: string = sleepEnvPath()): CheckResult {
   if (!existsSync(envPath)) {
-    return pass('BRAIN_SERVE_TOKEN not set (no serve token needed unless running `brain serve`)');
+    return pass('BRAIN_SERVE_TOKEN not set (no serve token needed unless running `recense serve`)');
   }
   try {
     const { mode } = statSync(envPath);
     // eslint-disable-next-line no-bitwise
     if ((mode & 0o777) !== 0o600) {
-      return fail(`env file mode is ${(mode & 0o777).toString(8)}, want 0600 — run \`brain init\``);
+      return fail(`env file mode is ${(mode & 0o777).toString(8)}, want 0600 — run \`recense init\``);
     }
   } catch (e) {
     return fail(`cannot stat env file: ${e}`);
@@ -294,7 +294,7 @@ export function checkServeToken(envPath: string = sleepEnvPath()): CheckResult {
   const env = resolveExistingEnv(envPath);
   const token = env.get('BRAIN_SERVE_TOKEN');
   if (!token) {
-    return pass('BRAIN_SERVE_TOKEN not set (will generate on first `brain serve` run)');
+    return pass('BRAIN_SERVE_TOKEN not set (will generate on first `recense serve` run)');
   }
   // T-12-10: report presence only — token value is never included in the detail string.
   return pass('BRAIN_SERVE_TOKEN set, env file mode 0600');
@@ -309,8 +309,8 @@ interface DoctorDimension {
 
 async function runDoctor(): Promise<void> {
   // CR-01: resolve the same DB the hooks/init use (env > shared default), so a
-  // `brain doctor` run immediately after `brain init` audits the configured DB
-  // instead of falsely reporting "BRAIN_MEMORY_DB not set" when the var is only
+  // `recense doctor` run immediately after `recense init` audits the configured DB
+  // instead of falsely reporting "RECENSE_DB not set" when the var is only
   // in the env file and not the shell.
   const dbPath = resolveDbPath();
 
@@ -323,7 +323,7 @@ async function runDoctor(): Promise<void> {
     { name: 'Serve token', result: checkServeToken()     },
   ];
 
-  process.stdout.write('brain doctor:\n');
+  process.stdout.write('recense doctor:\n');
 
   let failures = 0;
   for (const dim of dimensions) {
@@ -351,7 +351,7 @@ async function runDoctor(): Promise<void> {
 // check helpers triggered live API calls, process spawns, and exitCode mutation.
 if (require.main === module) {
   runDoctor().catch((err: unknown) => {
-    process.stderr.write(`brain doctor fatal: ${err}\n`);
+    process.stderr.write(`recense doctor fatal: ${err}\n`);
     process.exitCode = 1;
   });
 }

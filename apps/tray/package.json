@@ -1,5 +1,5 @@
 {
-  "name": "@brain-memory/tray",
+  "name": "@recense/tray",
   "version": "0.1.0",
   "private": true,
   "main": "dist/src/main.js",

@@ -6,24 +6,24 @@
 # Detached via nohup so it survives the Claude Code session. Results land in
 # scripts/eval/results/correctness-LOCAL-V8.json; log alongside.
 set -uo pipefail
-cd $HOME/brain-memory
+cd $HOME/recense
 
 set -a
 source .env 2>/dev/null || true
-source $HOME/.config/brain-memory/sleep.env 2>/dev/null || true
+source $HOME/.config/recense/sleep.env 2>/dev/null || true
 set +a
 
-export BRAIN_MEMORY_JUDGE_PROVIDER=local
-export BRAIN_MEMORY_EXTRACTOR_PROVIDER=local
+export RECENSE_JUDGE_PROVIDER=local
+export RECENSE_EXTRACTOR_PROVIDER=local
 # Per-role pins (resolveProviderOverlay role-specific keys) — the validated split.
 # Extractor: granite4.1:8b — ADOPTED via V8 (84.6% scorer / 92.3% content-correct,
 # vs qwen2.5:7b's V6 61.5%). The V7 "rejection" (38.5%) was an infra bug — 60s SDK
 # timeout vs Ollama-serialized concurrent judge calls (fixed 1849c27, LOCAL_SDK_TIMEOUT_MS).
 # Known residual: bare-entity nodes can win query-probe retrieval (V8 case 13 → "Biscuit").
-export BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL=granite4.1:8b
-export BRAIN_MEMORY_JUDGE_LOCAL_MODEL=qwen3.6:35b-a3b
+export RECENSE_EXTRACTOR_LOCAL_MODEL=granite4.1:8b
+export RECENSE_JUDGE_LOCAL_MODEL=qwen3.6:35b-a3b
 # Unset the sleep.env shared override so the per-role pins are the only model selectors.
-unset BRAIN_MEMORY_LOCAL_MODEL
+unset RECENSE_LOCAL_MODEL
 
 LOG=scripts/eval/results/overnight-local-run.log
 echo "=== overnight local eval start: $(date) ===" >> "$LOG"

@@ -31,7 +31,7 @@
  *        -o scripts/eval/longmemeval-s.jsonl
  *
  * Key requirements:
- *  - Every question runs on a fresh scratch DB; the live brain.db env var is never read (T-14-DB).
+ *  - Every question runs on a fresh scratch DB; the live recense.db env var is never read (T-14-DB).
  *  - Answer generation uses claude-haiku (cheap); GPT-4o is reserved for the scorer.
  *  - runConsolidation() is called ONCE per question, AFTER all session appends (Pitfall 4).
  *  - --probe runs exactly 10 questions, reports $/question and wall-clock, then exits 0.
@@ -51,11 +51,11 @@ const os   = require('os');
 const Anthropic = require('@anthropic-ai/sdk');
 
 // ---- SDK retry budget (must be set BEFORE loading dist modules) -------------
-// anthropic-client.ts reads BRAIN_MEMORY_SDK_MAX_RETRIES at module-load time.
+// anthropic-client.ts reads RECENSE_SDK_MAX_RETRIES at module-load time.
 // 10 retries + SDK-native retry-after backoff = self-throttling under 429 load.
 // Set only if the caller has not already overridden it.
-if (!process.env.BRAIN_MEMORY_SDK_MAX_RETRIES) {
-  process.env.BRAIN_MEMORY_SDK_MAX_RETRIES = '10';
+if (!process.env.RECENSE_SDK_MAX_RETRIES) {
+  process.env.RECENSE_SDK_MAX_RETRIES = '10';
 }
 
 // Engine internals — require dist (run `npm run build` before this script).
@@ -157,7 +157,7 @@ const DRY_RUN_STUB_ANSWER = 'dry-run-stub-answer';
 /**
  * Creates a unique temp-file SQLite DB, initialises the schema, and returns
  * an object with the db instance, path, pre-wired EpisodicStore, and cleanup().
- * NEVER touches the live brain.db path — always a fresh isolated temp path (T-14-DB).
+ * NEVER touches the live recense.db path — always a fresh isolated temp path (T-14-DB).
  */
 function makeScratchDb() {
   const dbPath = path.join(
@@ -387,7 +387,7 @@ async function runBoundedPool(items, concurrency, fn) {
   // higher retry budget set above (SDK reads env at construction time only for
   // the Anthropic SDK default, but we pass it here to be explicit and consistent
   // with what the dist modules use via SDK_MAX_RETRIES).
-  const harnessMaxRetries = Math.max(1, parseInt(process.env.BRAIN_MEMORY_SDK_MAX_RETRIES || '10', 10) || 10);
+  const harnessMaxRetries = Math.max(1, parseInt(process.env.RECENSE_SDK_MAX_RETRIES || '10', 10) || 10);
   const anthropicClient = IS_DRY_RUN ? null : new Anthropic({ maxRetries: harnessMaxRetries });
 
   // ---- telemetry state (shared across workers, safe: += after await) --------
@@ -597,7 +597,7 @@ async function runBoundedPool(items, concurrency, fn) {
         // Step 6: generate answer with Haiku (cheap model — GPT-4o reserved for scorer).
         //
         // Prompt structure is an equivalent of the official LongMemEval QA template
-        // (src/generation/run_generation.py), adapted for brain-memory's memory-node
+        // (src/generation/run_generation.py), adapted for recense's memory-node
         // retrieval format (retrieved nodes rather than raw session history). The
         // structure is: history entries → current date → question → "Answer:".
         // The open-ended "Answer:" (no "just the factual answer" constraint) allows

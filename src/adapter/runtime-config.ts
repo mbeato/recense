@@ -2,12 +2,12 @@
  * runtime-config — single source of truth for how brain hooks/CLIs discover
  * their DB path and runtime environment.
  *
- * Phase 9 CR-01 fix: `brain init` and the three Claude Code hooks previously
- * hard-coded THREE different default DB paths and only read BRAIN_MEMORY_DB from
+ * Phase 9 CR-01 fix: `recense init` and the three Claude Code hooks previously
+ * hard-coded THREE different default DB paths and only read RECENSE_DB from
  * the process env — which the shell Claude Code launches the hooks from does not
- * have. The result: a default `brain init` install silently operated the hooks on
+ * have. The result: a default `recense init` install silently operated the hooks on
  * an empty DB at the wrong path. The default path is now defined ONCE here,
- * `brain init` pins `--db <path>` into each settings.json hook command, and the
+ * `recense init` pins `--db <path>` into each settings.json hook command, and the
  * per-turn sleep pass inherits API keys from the configured env file (WR-04).
  */
 import { existsSync, readFileSync } from 'fs';
@@ -16,26 +16,26 @@ import { join } from 'path';
 
 /**
  * The one true default DB location.
- * MUST stay in sync across `brain init` and every hook/CLI — never re-derive it
+ * MUST stay in sync across `recense init` and every hook/CLI — never re-derive it
  * inline. This is the value whose divergence caused CR-01.
  */
 export function defaultDbPath(): string {
-  return join(homedir(), '.config', 'brain-memory', 'brain.db');
+  return join(homedir(), '.config', 'recense', 'recense.db');
 }
 
-/** Default location of the env file written by `brain init` (chmod-600). */
+/** Default location of the env file written by `recense init` (chmod-600). */
 export function sleepEnvPath(): string {
   return (
-    process.env['BRAIN_MEMORY_SLEEP_ENV'] ??
-    join(homedir(), '.config', 'brain-memory', 'sleep.env')
+    process.env['RECENSE_SLEEP_ENV'] ??
+    join(homedir(), '.config', 'recense', 'sleep.env')
   );
 }
 
 /**
  * Resolve the DB path for a hook/CLI invocation.
- * Precedence: `--db <path>` argv flag > BRAIN_MEMORY_DB env > defaultDbPath().
+ * Precedence: `--db <path>` argv flag > RECENSE_DB env > defaultDbPath().
  *
- * Pinning `--db` into the settings.json hook commands (done by `brain init`)
+ * Pinning `--db` into the settings.json hook commands (done by `recense init`)
  * makes the init-configured DB authoritative regardless of the env Claude Code
  * launches the hook process with.
  *
@@ -59,7 +59,7 @@ export function resolveDbPath(
   if (i !== -1 && typeof argv[i + 1] === 'string' && argv[i + 1] !== '') {
     return argv[i + 1] as string;
   }
-  const fromEnv = process.env['BRAIN_MEMORY_DB'];
+  const fromEnv = process.env['RECENSE_DB'];
   if (fromEnv !== undefined) return fromEnv;
   if (opts.fallbackToDefault !== false) return defaultDbPath();
   return undefined;
@@ -93,7 +93,7 @@ export function loadConfiguredEnv(
 
 /**
  * Resolve the dirty-sentinel path for on-write sleep-pass triggering (L8N-01).
- * Returns BRAIN_MEMORY_DIRTY_SENTINEL from process.env, or '' (disabled) if unset.
+ * Returns RECENSE_DIRTY_SENTINEL from process.env, or '' (disabled) if unset.
  *
  * The dispatcher's existing hydrateRuntimeEnv() populates this var from sleep.env for
  * hook processes (turn-capture, stop) before they build their config. The launchd
@@ -104,7 +104,7 @@ export function loadConfiguredEnv(
  * which covers tests, embedded uses, and installs that haven't re-run setup-dogfood.sh.
  */
 export function resolveDirtySentinelPath(): string {
-  return process.env['BRAIN_MEMORY_DIRTY_SENTINEL'] ?? '';
+  return process.env['RECENSE_DIRTY_SENTINEL'] ?? '';
 }
 
 /**

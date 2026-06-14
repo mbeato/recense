@@ -1,6 +1,6 @@
 appId: com.brainmemory.tray
 productName: Recense
-copyright: Copyright © 2026 brain-memory contributors
+copyright: Copyright © 2026 recense contributors
 
 directories:
   output: dist-app

@@ -1,18 +1,18 @@
 /**
- * smoke-schema — Phase 4 headline demo: schema induction on a real brain.db copy.
+ * smoke-schema — Phase 4 headline demo: schema induction on a real recense.db copy.
  *
  * Success criterion 1 (ROADMAP Phase 4): "A named generalization the user never stated,
- * observable on the founder's real brain.db."
+ * observable on the founder's real recense.db."
  *
  * Steps:
- *   1. Resolve brain.db path from --db <path> or BRAIN_MEMORY_DB env var.
- *   2. Copy brain.db to a temp path so the original is never mutated.
+ *   1. Resolve recense.db path from --db <path> or RECENSE_DB env var.
+ *   2. Copy recense.db to a temp path so the original is never mutated.
  *   3. Open the temp copy, run initSchema (idempotent), build config.
  *   4. Run one Consolidator.consolidate() with real OpenAIEmbedder + Anthropic naming.
  *   5. Print every type='schema' node's value (the named generalizations).
  *
  * Dependencies: OPENAI_API_KEY + ANTHROPIC_API_KEY (or ANTHROPIC_VERTEX_* for Vertex).
- * NOT part of the automated vitest gate — requires real API keys and a populated brain.db.
+ * NOT part of the automated vitest gate — requires real API keys and a populated recense.db.
  *
  * Threat mitigations:
  *  - T-04-01-K: keys read from process.env via SDK default — never literals, never logged.
@@ -35,7 +35,7 @@ import { Consolidator } from '../src/consolidation/consolidator';
 import type { NodeRow } from '../src/lib/types';
 
 /**
- * Resolve brain.db path from --db <path> argv or BRAIN_MEMORY_DB env var.
+ * Resolve recense.db path from --db <path> argv or RECENSE_DB env var.
  * Returns undefined if neither is supplied.
  */
 function resolveDbPath(): string | undefined {
@@ -43,14 +43,14 @@ function resolveDbPath(): string | undefined {
   if (dbArgIdx !== -1 && process.argv[dbArgIdx + 1]) {
     return process.argv[dbArgIdx + 1];
   }
-  return process.env['BRAIN_MEMORY_DB'];
+  return process.env['RECENSE_DB'];
 }
 
 async function main(): Promise<void> {
   // ── 1. Resolve source DB path ────────────────────────────────────────────
   const sourceDbPath = resolveDbPath();
   if (!sourceDbPath) {
-    console.error('[smoke-schema] No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var)');
+    console.error('[smoke-schema] No DB path supplied (--db <path> or RECENSE_DB env var)');
     process.exit(1);
   }
   if (!existsSync(sourceDbPath)) {
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   }
 
   // ── 2. Copy to temp path — never mutate the original ────────────────────
-  const tempDbPath = join(tmpdir(), `brain-memory-schema-smoke-${Date.now()}.db`);
+  const tempDbPath = join(tmpdir(), `recense-schema-smoke-${Date.now()}.db`);
   console.log(`[smoke-schema] Copying ${sourceDbPath} → ${tempDbPath}`);
   copyFileSync(sourceDbPath, tempDbPath);
 
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
     );
 
     // ── 6. Run the sleep pass ─────────────────────────────────────────────
-    console.log('[smoke-schema] Running consolidate() on real brain.db copy...');
+    console.log('[smoke-schema] Running consolidate() on real recense.db copy...');
     await consolidator.consolidate();
     console.log('[smoke-schema] Consolidation complete');
 
@@ -105,7 +105,7 @@ async function main(): Promise<void> {
 
     if (schemasAfter.length === 0) {
       console.log('  (none) — not enough clusterable nodes or cohesion too low.');
-      console.log('  Ensure brain.db has ≥ schemaMinSupport (3) similar fact/entity nodes with embeddings.');
+      console.log('  Ensure recense.db has ≥ schemaMinSupport (3) similar fact/entity nodes with embeddings.');
     } else {
       for (const s of schemasAfter) {
         const isNew = !nodesBefore.some(b => b.id === s.id);

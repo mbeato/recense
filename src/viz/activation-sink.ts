@@ -121,7 +121,7 @@ export class NoopActivationTraceSink implements ActivationTraceSink {
 /**
  * A sink whose backing implementation flips between SQLite and Noop at runtime
  * based on the `viz_trace_enabled` meta flag, so a long-running process (the
- * launchd watcher) starts/stops tracing when `brain viz` toggles the flag —
+ * launchd watcher) starts/stops tracing when `recense viz` toggles the flag —
  * WITHOUT a restart. Engines hold a stable reference to this wrapper; the owner
  * calls refresh() (cheap indexed meta read) once per poll tick to re-evaluate.
  *

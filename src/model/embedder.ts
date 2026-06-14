@@ -67,7 +67,7 @@ export class OpenAIEmbedder implements Embedder {
     const guarded = texts.map((t, i) => {
       if (t.length > EMBEDDER_INPUT_MAX_CHARS) {
         console.warn(
-          `[brain-memory] OpenAIEmbedder: input[${i}] length ${t.length} chars exceeds ` +
+          `[recense] OpenAIEmbedder: input[${i}] length ${t.length} chars exceeds ` +
             `EMBEDDER_INPUT_MAX_CHARS (${EMBEDDER_INPUT_MAX_CHARS}) — truncating`,
         );
         return t.slice(0, EMBEDDER_INPUT_MAX_CHARS);

@@ -7,9 +7,9 @@
  *   2. Prompt: DB path
  *   3. Prompt: ANTHROPIC_API_KEY + live validate if changed (D-90/D-91)
  *   4. Prompt: OPENAI_API_KEY + live validate if changed (D-90/D-91)
- *   5. Capture BRAIN_MEMORY_NODE_BIN = process.execPath (INSTALL-03)
+ *   5. Capture RECENSE_NODE_BIN = process.execPath (INSTALL-03)
  *   6. Write env file chmod-600 (atomic tmp→rename, T-09-17)
- *   7. Register scheduler (brain scheduler install)
+ *   7. Register scheduler (recense scheduler install)
  *   8. Wire settings.json hooks (surgical merge, D-88/T-09-18)
  *   9. Offer cold-start seed [y/N] default No (D-81 guard via seed-cli)
  *
@@ -50,7 +50,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { defaultDbPath } from './runtime-config';
 
-const LOG_PATH = '/tmp/brain-memory-init.log';
+const LOG_PATH = '/tmp/recense-init.log';
 
 /** Append a timestamped line to the log file (never stdout). */
 const log = (msg: string): void =>
@@ -343,7 +343,7 @@ async function promptAndValidateKey(
       const next = await askSecret(rl, `  Re-enter ${label} (or 's' to skip validation): `);
       if (next.toLowerCase() === 's') {
         console.log(
-          `  Skipping validation — key written as-is. Verify later with 'brain doctor'.`,
+          `  Skipping validation — key written as-is. Verify later with 'recense doctor'.`,
         );
         return currentKey;
       }
@@ -372,26 +372,26 @@ async function main(): Promise<void> {
   // Explicit exit 1 replaces that silent failure mode (12-VERIFICATION Gap 1).
   if (!process.stdin.isTTY) {
     process.stderr.write(
-      'brain init requires an interactive terminal (stdin is not a TTY)' +
+      'recense init requires an interactive terminal (stdin is not a TTY)' +
       ' — run it directly in a terminal, not piped or scripted\n',
     );
     process.exit(1);
   }
 
   const envPath =
-    process.env['BRAIN_MEMORY_SLEEP_ENV'] ??
-    join(homedir(), '.config', 'brain-memory', 'sleep.env');
+    process.env['RECENSE_SLEEP_ENV'] ??
+    join(homedir(), '.config', 'recense', 'sleep.env');
 
   const existing = resolveExistingEnv(envPath);
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
-  console.log('\nbrain init — guided bootstrap\n');
+  console.log('\nrecense init — guided bootstrap\n');
   console.log('Press Enter to keep the current value shown in brackets.\n');
 
   // ── D-89 Step 1: DB path ──────────────────────────────────────────────────
   // CR-01: single source of truth for the default — must match what the hooks resolve.
-  const defaultDb = existing.get('BRAIN_MEMORY_DB') ?? defaultDbPath();
+  const defaultDb = existing.get('RECENSE_DB') ?? defaultDbPath();
   const dbPath = await ask(rl, 'DB path', defaultDb);
 
   // ── D-89 Steps 2-3: API keys with live validation ─────────────────────────
@@ -417,8 +417,8 @@ async function main(): Promise<void> {
   // Start with existing vars; overwrite only the known keys
   const vars: Record<string, string> = {};
   for (const [k, v] of existing) vars[k] = v;
-  vars['BRAIN_MEMORY_NODE_BIN'] = nodeBin;
-  vars['BRAIN_MEMORY_DB'] = dbPath;
+  vars['RECENSE_NODE_BIN'] = nodeBin;
+  vars['RECENSE_DB'] = dbPath;
   if (anthropicKey) vars['ANTHROPIC_API_KEY'] = anthropicKey;
   if (openaiKey) vars['OPENAI_API_KEY'] = openaiKey;
 
@@ -457,7 +457,7 @@ async function main(): Promise<void> {
   rl.close();
 
   if (seedAnswer.trim().toLowerCase() === 'y') {
-    console.log('  Starting seed (logs: /tmp/brain-memory-seed.log)...');
+    console.log('  Starting seed (logs: /tmp/recense-seed.log)...');
     // Spawn seed-cli as a subprocess — it acquires the single-writer lock, honours
     // the D-81 unconfigured guard (no-op + warn, seeded flag NOT burned), and uses
     // the correct lock discipline (db?.close() → releaseLock() in finally).
@@ -466,20 +466,20 @@ async function main(): Promise<void> {
       stdio: 'inherit',
       env: {
         ...process.env,
-        BRAIN_MEMORY_DB: dbPath,
-        BRAIN_MEMORY_NODE_BIN: nodeBin,
+        RECENSE_DB: dbPath,
+        RECENSE_NODE_BIN: nodeBin,
         ...(anthropicKey ? { ANTHROPIC_API_KEY: anthropicKey } : {}),
         ...(openaiKey ? { OPENAI_API_KEY: openaiKey } : {}),
       },
     });
     if ((result.status ?? 1) !== 0) {
       console.error(
-        '  Seed exited non-zero — check /tmp/brain-memory-seed.log for details.',
+        '  Seed exited non-zero — check /tmp/recense-seed.log for details.',
       );
     }
   }
 
-  console.log('\nbrain init complete.\n');
+  console.log('\nrecense init complete.\n');
   log('init complete');
 }
 

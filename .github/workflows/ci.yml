@@ -37,14 +37,14 @@ jobs:
       - name: Test
         run: npm test
 
-      # Smoke: verify brain doctor RUNS without crashing.
+      # Smoke: verify recense doctor RUNS without crashing.
       # Exits 1 (no keys/DB in CI) — that is expected. But the process MUST emit
-      # "brain doctor:" output before exiting; a silent crash would not.
+      # "recense doctor:" output before exiting; a silent crash would not.
       # L-10: assert output contains the expected header, not just `|| true`.
-      - name: Smoke — brain doctor runs without crashing
+      - name: Smoke — recense doctor runs without crashing
         run: |
-          BRAIN_MEMORY_DB=:memory: node dist/src/adapter/brain.js doctor > /tmp/doctor-out.txt 2>&1 || true
-          grep -q "brain doctor:" /tmp/doctor-out.txt
+          RECENSE_DB=:memory: node dist/src/adapter/brain.js doctor > /tmp/doctor-out.txt 2>&1 || true
+          grep -q "recense doctor:" /tmp/doctor-out.txt
 
       # Smoke: eval harness smoke tests — MockModelProvider wiring, zero API calls.
       # These tests run as part of `npm test` (full vitest glob) but are also named

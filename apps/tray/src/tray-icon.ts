@@ -11,7 +11,7 @@
  *   - Reconnect after sleep/wake via powerMonitor.on('resume').
  *   - Expose setDim/setRest so the main process can drive dim from a child-process-down signal.
  *
- * Logging: append-only /tmp/brain-memory-tray.log — never stdout (background-process pattern).
+ * Logging: append-only /tmp/recense-tray.log — never stdout (background-process pattern).
  */
 
 import { Tray, nativeImage, powerMonitor } from 'electron';
@@ -23,7 +23,7 @@ import { appendFileSync } from 'fs';
 // Logging
 // ---------------------------------------------------------------------------
 
-const LOG_PATH = '/tmp/brain-memory-tray.log';
+const LOG_PATH = '/tmp/recense-tray.log';
 
 function log(msg: string): void {
   try {

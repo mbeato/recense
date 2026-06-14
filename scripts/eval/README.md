@@ -1,6 +1,6 @@
 # Judge-model eval harness
 
-Measures how well a candidate judge model performs the brain-memory **judge task**:
+Measures how well a candidate judge model performs the recense **judge task**:
 given a new claim and its top-5 cosine neighbors from the graph, decide which candidate
 (if any) it matches and how they relate (`confirm | extend | contradict | unrelated`,
 plus a contradiction `magnitude`). The judge prompt here is a byte-for-byte copy of the
@@ -13,7 +13,7 @@ it is measured on our own eval.
 
 ## Files
 
-- `judge-eval-extract.cjs` — builds an eval set from a `brain.db` (read-only, no API calls)
+- `judge-eval-extract.cjs` — builds an eval set from a `recense.db` (read-only, no API calls)
 - `judge-eval-set.json` — 48 hand-labeled gold cases (label fields are ground truth)
 - `judge-eval-runner.cjs` — runs candidate models over the set and scores them
 - `judge-eval-results.json` — last run's per-case detail (incl. raw model output)
@@ -21,10 +21,10 @@ it is measured on our own eval.
 
 ## Run
 
-### 1. Build an eval set from a brain.db (optional — a labeled set is committed)
+### 1. Build an eval set from a recense.db (optional — a labeled set is committed)
 
 ```
-node scripts/eval/judge-eval-extract.cjs ./brain.db
+node scripts/eval/judge-eval-extract.cjs ./recense.db
 ```
 
 Writes `scripts/eval/judge-eval-set.json` with **blank** label fields. Each case must be
@@ -91,7 +91,7 @@ set below.
 Contradictions can't be mined from the cosine gray-zone (conflicting values on the same
 subject don't sit in the mid-cosine band — that's why the set above had n=1). They're
 **constructed** instead by `judge-eval-contradiction-build.cjs`: each case takes a real
-`brain.db` node as the stored belief (candidate) and pairs it with a hand-authored claim
+`recense.db` node as the stored belief (candidate) and pairs it with a hand-authored claim
 stating an opposing value on the same subject, plus near-miss `confirm`/`extend` controls.
 Candidates = target + its real top-cosine neighbors; target placed at varied slots.
 
@@ -101,7 +101,7 @@ Candidates = target + its real top-cosine neighbors; target placed at varied slo
 Build + run:
 
 ```bash
-node scripts/eval/judge-eval-contradiction-build.cjs ./brain.db
+node scripts/eval/judge-eval-contradiction-build.cjs ./recense.db
 NODE_PATH=$(pwd)/node_modules node scripts/eval/judge-eval-runner.cjs \
   --eval scripts/eval/judge-eval-contradiction-set.json \
   --out scripts/eval/judge-eval-contradiction-results.json \
@@ -204,7 +204,7 @@ configs both need per-call-type routing (= the Phase 5 ModelProvider split):
 
 ## EVAL-01: LongMemEval-S harness (`longmemeval-harness.cjs`)
 
-End-to-end benchmark measuring how well brain-memory answers questions over a long conversation
+End-to-end benchmark measuring how well recense answers questions over a long conversation
 history. Uses the LongMemEval-S question set (`scripts/eval/fixtures/longmemeval-mini.jsonl` for
 smoke; full `longmemeval-s.jsonl` for the real run). Each question runs the full engine path:
 ingest sessions → sleep pass consolidation → retrieval → answer. GPT-4o scores the final answer
@@ -250,7 +250,7 @@ with **0 error lines and 0 quarantined episodes**.
 To override the SDK retry budget (default 10 for eval runs, 2 for production):
 
 ```sh
-BRAIN_MEMORY_SDK_MAX_RETRIES=15 node scripts/eval/longmemeval-harness.cjs --probe
+RECENSE_SDK_MAX_RETRIES=15 node scripts/eval/longmemeval-harness.cjs --probe
 ```
 
 **Quarantine errors** — if consolidation fails for an episode (e.g. a 429 survives all
@@ -290,7 +290,7 @@ npm run build && node scripts/eval/longmemeval-harness.cjs --dry-run --eval scri
 GPT-4o scores each answer (`exact`, `substring`, `semantic`, `no`). The headline metric is
 **exact + substring recall** on the full question set. The knowledge-update sub-score
 (questions requiring a contradicted fact to be updated) is reported separately — this is the
-dimension where brain-memory's PE-gated reconsolidation is expected to outperform ADD-only systems.
+dimension where recense's PE-gated reconsolidation is expected to outperform ADD-only systems.
 
 **Two caveats (do not drop):**
 
@@ -302,7 +302,7 @@ dimension where brain-memory's PE-gated reconsolidation is expected to outperfor
 ## EVAL-02: Correctness suite (`correctness-harness.cjs`)
 
 Measures belief-correction rate: when a user states a fact, then later contradicts it, does
-brain-memory update the stored belief and suppress the stale one? Runs each fictional-persona
+recense update the stored belief and suppress the stale one? Runs each fictional-persona
 case end-to-end through the real engine on a scratch DB. Compares against an ADD-only baseline
 (no sleep pass — both facts accumulate, stale recall is guaranteed).
 
@@ -347,7 +347,7 @@ npm run build && node scripts/eval/correctness-harness.cjs --dry-run
 **Two caveats (do not drop):**
 
 1. **Fictional cases are clear-cut.** The case set uses unambiguous value changes (numeric drift, categorical reversal) — real-world contradictions are harder. This measures the lower bound of the belief-correction mechanism, not production accuracy on noisy input.
-2. **ADD-only is a weak baseline.** It is the floor, not a competitor. The correctness suite establishes that brain-memory clears the bar of "does anything at all" on belief correction; a stronger comparison requires running mem0 or similar against the same cases.
+2. **ADD-only is a weak baseline.** It is the floor, not a competitor. The correctness suite establishes that recense clears the bar of "does anything at all" on belief correction; a stronger comparison requires running mem0 or similar against the same cases.
 
 ---
 
@@ -369,7 +369,7 @@ No judge, no consolidation, no scratch DB, no API spend. All runs are purely loc
 | `parse-fail` | Episodes where the output had no array syntax at all (model failure or download) |
 | `parsed-but-empty` | Episodes where array syntax was present but all items were invalid/empty |
 | `claims/ep` | Average claims extracted per episode (over-extraction signal; baseline qwen2.5:7b ≈ 1–2 on these short single-fact inputs) |
-| `regreg` | Episodes where any claim value contains a CONVERSATION prompt few-shot example value (`Jane Doe`, `brain-memory project`, `45 minutes each way`, `React Summit`, `dark roast coffee`) — any hit disqualifies the model |
+| `regreg` | Episodes where any claim value contains a CONVERSATION prompt few-shot example value (`Jane Doe`, `recense project`, `45 minutes each way`, `React Summit`, `dark roast coffee`) — any hit disqualifies the model |
 | `think-leak` | `<think>` occurrences in the stripped output — any occurrence flags the model as DISQUALIFIED (think:false should produce none) |
 | `s/ep` | Average wall-clock seconds per episode |
 

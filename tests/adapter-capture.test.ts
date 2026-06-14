@@ -13,7 +13,7 @@
  *      `{}` — recall is skipped before any provider use (ZERO real API calls).
  *
  * Determinism: every turn-capture spawn strips OPENAI_API_KEY and points
- * BRAIN_MEMORY_SLEEP_ENV at a nonexistent path so CI machines with a real key
+ * RECENSE_SLEEP_ENV at a nonexistent path so CI machines with a real key
  * still exercise the no-key guard (never a real embed).
  */
 import { spawnSync } from 'child_process';
@@ -47,8 +47,8 @@ function rmIfExists(p: string): void {
 function noKeyEnv(dbPath: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    BRAIN_MEMORY_DB: dbPath,
-    BRAIN_MEMORY_SLEEP_ENV: '/nonexistent-sleep.env',
+    RECENSE_DB: dbPath,
+    RECENSE_SLEEP_ENV: '/nonexistent-sleep.env',
   };
   delete env['OPENAI_API_KEY'];
   return env;
@@ -160,7 +160,7 @@ describe('turn-capture-cli (UserPromptSubmit → role=user)', () => {
       {
         input: payload,
         encoding: 'utf8',
-        env: { ...process.env, BRAIN_MEMORY_DB: dbPath },
+        env: { ...process.env, RECENSE_DB: dbPath },
         timeout: 5000,
       },
     );
@@ -200,7 +200,7 @@ describe('stop-cli (Stop → role=assistant)', () => {
       {
         input: payload,
         encoding: 'utf8',
-        env: { ...process.env, BRAIN_MEMORY_DB: dbPath },
+        env: { ...process.env, RECENSE_DB: dbPath },
         timeout: 5000,
       },
     );
@@ -242,7 +242,7 @@ describe('stop-cli (Stop → role=assistant)', () => {
       {
         input: payload,
         encoding: 'utf8',
-        env: { ...process.env, BRAIN_MEMORY_DB: dbPath },
+        env: { ...process.env, RECENSE_DB: dbPath },
         timeout: 5000,
       },
     );
@@ -262,7 +262,7 @@ describe('stop-cli (Stop → role=assistant)', () => {
       {
         input: 'not-valid-json',
         encoding: 'utf8',
-        env: { ...process.env, BRAIN_MEMORY_DB: dbPath },
+        env: { ...process.env, RECENSE_DB: dbPath },
         timeout: 5000,
       },
     );

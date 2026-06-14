@@ -1,5 +1,5 @@
 /**
- * EVAL-02 Correctness Harness — belief-correction (brain-memory) vs ADD-only baseline.
+ * EVAL-02 Correctness Harness — belief-correction (recense) vs ADD-only baseline.
  *
  * Run:
  *   npm run build && node scripts/eval/correctness-harness.cjs --dry-run
@@ -150,7 +150,7 @@ function runAddOnlyCase(c) {
 }
 
 /**
- * brain-memory path: ingest initial_fact -> runConsolidation -> ingest contradicting_fact
+ * recense path: ingest initial_fact -> runConsolidation -> ingest contradicting_fact
  * -> runConsolidation -> embed query_probe -> RetrievalEngine.retrieve(queryVec).
  *
  * Scoring:
@@ -222,7 +222,7 @@ async function runBrainMemoryCase(c, env) {
     // Count only fact-type live nodes — entity nodes (named people, places, pets) are
     // separate knowledge-graph citizens and should not inflate the duplicate metric.
     // Baseline comparison: add-only counts episode rows (always 2); fact-node count
-    // is the semantically equivalent measure for the brain-memory path.
+    // is the semantically equivalent measure for the recense path.
     const dupCount = db.prepare("SELECT COUNT(*) AS n FROM node WHERE tombstoned = 0 AND type = 'fact'").get().n;
 
     const topBelief = results.length > 0 ? results[0].value : '[no result returned]';
@@ -230,7 +230,7 @@ async function runBrainMemoryCase(c, env) {
     return {
       case_id: c.case_id,
       expected_relation: c.expected_relation,
-      system: 'brain-memory',
+      system: 'recense',
       corrected,
       stale,
       tombstone_present,
@@ -250,7 +250,7 @@ async function runBrainMemoryCase(c, env) {
 
 function renderRow(r) {
   let result;
-  if (r.system === 'brain-memory') {
+  if (r.system === 'recense') {
     result = r.corrected ? 'CORRECTED   ' : r.stale ? 'STALE       ' : 'UNCHANGED   ';
   } else {
     result = `${r.duplicate_count} dupes     `.slice(0, 12);
@@ -292,7 +292,7 @@ function aggregate(rows) {
   console.log(`Cases: ${total} total (${contraCount} contradiction, ${ctrlCount} control)`);
   console.log(DRY_RUN
     ? 'Mode: --dry-run (ADD-only baseline, zero API calls)\n'
-    : 'Mode: full run (brain-memory + ADD-only, real API keys)\n');
+    : 'Mode: full run (recense + ADD-only, real API keys)\n');
 
   const brainMemoryRows = [];
   const addOnlyRows     = [];
@@ -307,7 +307,7 @@ function aggregate(rows) {
     console.log(renderRow(addResult));
 
     if (!DRY_RUN) {
-      process.stdout.write(`  ... running brain-memory case ${c.case_id}...\r`);
+      process.stdout.write(`  ... running recense case ${c.case_id}...\r`);
       const bmResult = await runBrainMemoryCase(c, process.env);
       brainMemoryRows.push(bmResult);
       console.log(renderRow(bmResult));
@@ -329,7 +329,7 @@ function aggregate(rows) {
   }
 
   printScore('ADD-only baseline (no consolidation)', addOnlyScore);
-  if (brainMemoryScore) printScore('brain-memory (PE-gated reconsolidation)', brainMemoryScore);
+  if (brainMemoryScore) printScore('recense (PE-gated reconsolidation)', brainMemoryScore);
 
   // Build and write results envelope
   const meta = {

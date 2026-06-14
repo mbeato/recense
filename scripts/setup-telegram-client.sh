@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# setup-telegram-client.sh — install brain serve + Telegram reference client as launchd services.
+# setup-telegram-client.sh — install recense serve + Telegram reference client as launchd services.
 #
 # What this script does:
 #   1. Builds the Telegram reference client (npm run build:client) and verifies the dist exists.
-#   2. ADDITIVELY writes client config vars to ~/.config/brain-memory/sleep.env (chmod 600),
+#   2. ADDITIVELY writes client config vars to ~/.config/recense/sleep.env (chmod 600),
 #      preserving all existing lines (API keys, DB path, sleep-pass config, etc.).
 #   3. Renders + validates both launchd plists (serve + client) and bootstraps each agent.
 #   4. Prints required next steps, rollback instructions, and the watcher-retire command (D-07).
@@ -12,7 +12,7 @@
 # The serve plist is also rendered and re-loaded so serve picks up any env-file changes.
 #
 # Prerequisite: run scripts/setup-dogfood.sh first to create the env file with
-#   BRAIN_MEMORY_NODE_BIN and BRAIN_MEMORY_DB. This script is additive on top of that.
+#   RECENSE_NODE_BIN and RECENSE_DB. This script is additive on top of that.
 #
 # DO NOT run as root — this installs user-space LaunchAgents under ~/Library/LaunchAgents/.
 # Secrets are written to the env file ONLY — never echoed to stdout or any log.
@@ -29,7 +29,7 @@ BRAIN_JS="$DIST_ADAPTER/brain.js"
 CLIENT_JS="$PROJECT_ROOT/clients/telegram/dist/index.js"
 
 # Env file — the SAME file used by the sleep pass (additive only; no second file)
-ENV_FILE="${BRAIN_MEMORY_SLEEP_ENV:-$HOME/.config/brain-memory/sleep.env}"
+ENV_FILE="${RECENSE_SLEEP_ENV:-$HOME/.config/recense/sleep.env}"
 
 # Committed wrapper paths
 SERVE_WRAPPER="$SCRIPT_DIR/serve-launchd.sh"
@@ -37,12 +37,12 @@ CLIENT_WRAPPER="$SCRIPT_DIR/telegram-client-launchd.sh"
 
 # launchd plist locations
 LAUNCHAGENTS_DIR="$HOME/Library/LaunchAgents"
-SERVE_PLIST_TEMPLATE="$SCRIPT_DIR/com.brain-memory.serve.plist.template"
-SERVE_PLIST_DST="$LAUNCHAGENTS_DIR/com.brain-memory.serve.plist"
-SERVE_PLIST_LABEL="com.brain-memory.serve"
-CLIENT_PLIST_TEMPLATE="$SCRIPT_DIR/com.brain-memory.telegram-client.plist.template"
-CLIENT_PLIST_DST="$LAUNCHAGENTS_DIR/com.brain-memory.telegram-client.plist"
-CLIENT_PLIST_LABEL="com.brain-memory.telegram-client"
+SERVE_PLIST_TEMPLATE="$SCRIPT_DIR/com.recense.serve.plist.template"
+SERVE_PLIST_DST="$LAUNCHAGENTS_DIR/com.recense.serve.plist"
+SERVE_PLIST_LABEL="com.recense.serve"
+CLIENT_PLIST_TEMPLATE="$SCRIPT_DIR/com.recense.telegram-client.plist.template"
+CLIENT_PLIST_DST="$LAUNCHAGENTS_DIR/com.recense.telegram-client.plist"
+CLIENT_PLIST_LABEL="com.recense.telegram-client"
 
 # ── Step 1: Build Telegram reference client ───────────────────────────────────
 echo ""
@@ -74,15 +74,15 @@ mkdir -p "$(dirname "$ENV_FILE")"
 
 # Build base content: preserve all existing lines, strip the two keys we always replace.
 if [[ -f "$ENV_FILE" ]]; then
-    BASE_CONTENT="$(grep -Ev '^(BRAIN_MEMORY_DIST_BRAIN_JS|BRAIN_MEMORY_TELEGRAM_CLIENT_JS)=' "$ENV_FILE" || true)"
+    BASE_CONTENT="$(grep -Ev '^(RECENSE_DIST_BRAIN_JS|RECENSE_TELEGRAM_CLIENT_JS)=' "$ENV_FILE" || true)"
 else
-    BASE_CONTENT="# brain-memory env — GITIGNORED, chmod 600. Do NOT commit.
+    BASE_CONTENT="# recense env — GITIGNORED, chmod 600. Do NOT commit.
 # Updated by setup-telegram-client.sh; re-run safely to update paths."
 fi
 
 # Always-update keys (paths can change after a rebuild)
-APPEND_CONTENT="BRAIN_MEMORY_DIST_BRAIN_JS=${BRAIN_JS}
-BRAIN_MEMORY_TELEGRAM_CLIENT_JS=${CLIENT_JS}"
+APPEND_CONTENT="RECENSE_DIST_BRAIN_JS=${BRAIN_JS}
+RECENSE_TELEGRAM_CLIENT_JS=${CLIENT_JS}"
 
 # Add client secrets only if not already present (idempotent; preserves real values on re-run)
 if ! grep -q '^TELEGRAM_BOT_TOKEN=' "$ENV_FILE" 2>/dev/null; then
@@ -112,8 +112,8 @@ TMPFILE="$(mktemp "$(dirname "$ENV_FILE")/telegram-client.env.XXXXXX")"
 mv "$TMPFILE" "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 echo "    Env file updated: $ENV_FILE (chmod 600)"
-echo "    BRAIN_MEMORY_DIST_BRAIN_JS=$BRAIN_JS"
-echo "    BRAIN_MEMORY_TELEGRAM_CLIENT_JS=$CLIENT_JS"
+echo "    RECENSE_DIST_BRAIN_JS=$BRAIN_JS"
+echo "    RECENSE_TELEGRAM_CLIENT_JS=$CLIENT_JS"
 echo ""
 
 # ── Step 3: Install launchd agents (serve + client) ───────────────────────────
@@ -166,7 +166,7 @@ echo "    Example: BRAIN_CLIENT_ALLOWLIST=123456789"
 echo ""
 echo "    BRAIN_SERVE_TOKEN — copy from the engine env file:"
 echo "      grep '^BRAIN_SERVE_TOKEN=' $ENV_FILE"
-echo "    If not yet present, generate and set one, then re-run brain serve."
+echo "    If not yet present, generate and set one, then re-run recense serve."
 echo ""
 echo "    BRAIN_SERVE_URL — defaults to http://127.0.0.1:7701; update only if you"
 echo "    changed the serve port via BRAIN_SERVE_PORT."
@@ -174,9 +174,9 @@ echo ""
 echo "    --- Retire the old watcher (D-07) ---"
 echo "    The watcher source is deleted; the script no longer exists."
 echo "    Remove the stale launchd entry so it does not appear as a failed service:"
-echo "      launchctl bootout $LAUNCHD_DOMAIN/com.brain-memory.watcher"
-echo "      rm -f $HOME/Library/LaunchAgents/com.brain-memory.watcher.plist"
-echo "    Do NOT re-bootstrap com.brain-memory.watcher — the wrapper script is gone."
+echo "      launchctl bootout $LAUNCHD_DOMAIN/com.recense.watcher"
+echo "      rm -f $HOME/Library/LaunchAgents/com.recense.watcher.plist"
+echo "    Do NOT re-bootstrap com.recense.watcher — the wrapper script is gone."
 echo ""
 echo "    ROLLBACK:"
 echo "      launchctl bootout $LAUNCHD_DOMAIN/$SERVE_PLIST_LABEL"

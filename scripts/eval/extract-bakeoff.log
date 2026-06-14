@@ -1,4 +1,4 @@
-Bake-off on 5 episodes from ./brain.db (roles: assistant, assistant, user, assistant, user)
+Bake-off on 5 episodes from ./recense.db (roles: assistant, assistant, user, assistant, user)
 
 Running haiku:claude-haiku-4-5(node:86313) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
 (Use `node --trace-deprecation ...` to show where the warning was created)

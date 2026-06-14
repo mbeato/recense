@@ -1,7 +1,7 @@
 /**
  * recall-cli — on-demand latency-tolerant recall adapter (LEARN-02, D-40).
  *
- * Entry point: `brain recall "<text>"` (positional) or `--query <text>` [--db <path>]
+ * Entry point: `recense recall "<text>"` (positional) or `--query <text>` [--db <path>]
  * (not spawned from the hot SessionStart hook path — that stays cue-less, LLM-free).
  *
  * Design invariants:
@@ -34,22 +34,22 @@ import { SQLiteActivationTraceSink, NoopActivationTraceSink } from '../viz/activ
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 
-const LOG_PATH = '/tmp/brain-memory-recall.log';
+const LOG_PATH = '/tmp/recense-recall.log';
 
 /** Append a timestamped line to the log file (never stdout). */
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] recall-cli: ${msg}\n`);
 
 // M-8: delegate to the shared resolveDbPath with fallbackToDefault=false so a missing
-// --db flag / BRAIN_MEMORY_DB env causes the missing-path exit (process.exit(0) below).
+// --db flag / RECENSE_DB env causes the missing-path exit (process.exit(0) below).
 function resolveDbPath(): string | undefined {
   return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
 }
 
 /**
  * Resolve query string from argv. Accepts BOTH forms:
- *   brain recall "some question"     (positional — the natural form)
- *   brain recall --query "some question"   (explicit flag — back-compat)
+ *   recense recall "some question"     (positional — the natural form)
+ *   recense recall --query "some question"   (explicit flag — back-compat)
  * Returns undefined if neither is present.
  * T-04-03-I: returned as-is — treated as data only inside RecallEngine.
  */
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   // doing JSON.parse(stdout) always receive parseable JSON, never an empty string.
   const dbPath = resolveDbPath();
   if (!dbPath) {
-    log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
+    log('No DB path supplied (--db <path> or RECENSE_DB env var) — exiting');
     process.stdout.write(SAFE_NULL_RESULT);
     process.exit(0);
   }
@@ -122,15 +122,15 @@ async function main(): Promise<void> {
     const strength = new StrengthDecayManager(db, realClock, config);
     const retriever = new CandidateRetriever(db);
 
-    // M-7: apply provider overlay so BRAIN_MEMORY_MODEL_PROVIDER / role-specific provider
+    // M-7: apply provider overlay so RECENSE_MODEL_PROVIDER / role-specific provider
     // env vars route generate+judge to the configured provider. embed stays base config.
     // Log resolved provider NAMES only (never keys — T-04-03-K / T-05-02-KEY).
-    const generateConfig = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER') };
-    const judgeConfig    = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_JUDGE_PROVIDER') };
+    const generateConfig = { ...config, ...resolveProviderOverlay(process.env, 'RECENSE_EXTRACTOR_PROVIDER') };
+    const judgeConfig    = { ...config, ...resolveProviderOverlay(process.env, 'RECENSE_JUDGE_PROVIDER') };
     log('providers — generate: ' + generateConfig.modelProvider + ' | judge: ' + judgeConfig.modelProvider);
     const provider = new DefaultModelProvider({ generateConfig, judgeConfig, embedConfig: config });
 
-    // VIZ-01: inject SQLite trace sink iff viz_trace_enabled='1' (set by `brain viz`, Plan 03).
+    // VIZ-01: inject SQLite trace sink iff viz_trace_enabled='1' (set by `recense viz`, Plan 03).
     // Default OFF: when the meta key is absent or '0' the Noop sink is used — zero extra cost.
     const traceFlagRaw = db.prepare(
       "SELECT value FROM meta WHERE key = 'viz_trace_enabled'"

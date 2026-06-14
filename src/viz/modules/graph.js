@@ -1,6 +1,6 @@
 /**
  * @module graph
- * brain-memory viz — data render, in-brain seeding, ForceGraph3D init (shared
+ * recense viz — data render, in-brain seeding, ForceGraph3D init (shared
  * geometry, D-05), force tuning, brain containment via onEngineTick (NOT
  * d3Force setter — Spike 001 landmine), settle-then-pin reveal, and camera
  * framing.

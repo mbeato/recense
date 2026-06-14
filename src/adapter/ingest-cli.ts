@@ -22,9 +22,9 @@
  *  - T-06-27: enabledSources=[] default → no ingestion without explicit opt-in.
  *
  * launchd compatibility:
- *  The existing hourly wrapper (scripts/sleep-pass-launchd.sh) execs BRAIN_MEMORY_SLEEP_JS
- *  with no args; dbPath comes from BRAIN_MEMORY_DB env. With no args this CLI defaults to
- *  --all, so it is a drop-in replacement for sleep-pass-cli.js once BRAIN_MEMORY_SLEEP_JS
+ *  The existing hourly wrapper (scripts/sleep-pass-launchd.sh) execs RECENSE_SLEEP_JS
+ *  with no args; dbPath comes from RECENSE_DB env. With no args this CLI defaults to
+ *  --all, so it is a drop-in replacement for sleep-pass-cli.js once RECENSE_SLEEP_JS
  *  is updated. The activation step is a human-gated checkpoint (Task 3, T-06-27).
  */
 import { appendFileSync } from 'fs';
@@ -44,14 +44,14 @@ import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { acquireLock, releaseLock } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath, resolveDirtySentinelPath } from './runtime-config';
 
-const LOG_PATH = '/tmp/brain-memory-ingest.log';
+const LOG_PATH = '/tmp/recense-ingest.log';
 
 /** Append a timestamped line to the log file (never stdout). */
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] brain-ingest: ${msg}\n`);
 
 // M-8: delegate to the shared resolveDbPath with fallbackToDefault=false so a missing
-// --db flag / BRAIN_MEMORY_DB env causes the missing-path exit (process.exit(0) below).
+// --db flag / RECENSE_DB env causes the missing-path exit (process.exit(0) below).
 // T-03-2-Dpath: argv array element, never shell string.
 function resolveDbPath(): string | undefined {
   return resolveSharedDbPath(process.argv, { fallbackToDefault: false });
@@ -164,7 +164,7 @@ async function main(): Promise<void> {
   // while the lock is held leaks it. Validate here — before acquireLock().
   const dbPath = resolveDbPath();
   if (!dbPath) {
-    log('No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting');
+    log('No DB path supplied (--db <path> or RECENSE_DB env var) — exiting');
     process.exit(0);
   }
 

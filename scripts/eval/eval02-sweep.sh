@@ -14,10 +14,10 @@
 #   LABEL=repro     BATCH=off REPS=3 bash scripts/eval/eval02-sweep.sh
 #   LABEL=judge-27b BATCH=off JUDGE_MODEL=qwen3.6:27b bash scripts/eval/eval02-sweep.sh
 set -uo pipefail
-cd $HOME/brain-memory || exit 1
+cd $HOME/recense || exit 1
 
 source .env 2>/dev/null || true
-source $HOME/.config/brain-memory/sleep.env 2>/dev/null || true
+source $HOME/.config/recense/sleep.env 2>/dev/null || true
 
 LABEL="${LABEL:-run}"
 BATCH="${BATCH:-on}"
@@ -25,13 +25,13 @@ JUDGE_MODEL="${JUDGE_MODEL:-qwen3.6:35b-a3b}"
 EXTRACTOR_MODEL="${EXTRACTOR_MODEL:-granite4.1:8b}"
 REPS="${REPS:-1}"
 
-export BRAIN_MEMORY_JUDGE_PROVIDER=local
-export BRAIN_MEMORY_EXTRACTOR_PROVIDER=local
-export BRAIN_MEMORY_JUDGE_LOCAL_MODEL="$JUDGE_MODEL"
-export BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL="$EXTRACTOR_MODEL"
-unset BRAIN_MEMORY_LOCAL_MODEL
+export RECENSE_JUDGE_PROVIDER=local
+export RECENSE_EXTRACTOR_PROVIDER=local
+export RECENSE_JUDGE_LOCAL_MODEL="$JUDGE_MODEL"
+export RECENSE_EXTRACTOR_LOCAL_MODEL="$EXTRACTOR_MODEL"
+unset RECENSE_LOCAL_MODEL
 # Per-claim is now the engine default; batching is opt-in. BATCH=on enables it.
-if [ "$BATCH" = "on" ]; then export BRAIN_MEMORY_ENABLE_JUDGE_BATCH=1; else unset BRAIN_MEMORY_ENABLE_JUDGE_BATCH; fi
+if [ "$BATCH" = "on" ]; then export RECENSE_ENABLE_JUDGE_BATCH=1; else unset RECENSE_ENABLE_JUDGE_BATCH; fi
 
 [ -n "${OPENAI_API_KEY:-}" ] || { echo "FATAL: OPENAI_API_KEY not set (harness embedder needs it)." >&2; exit 1; }
 
@@ -71,8 +71,8 @@ for rep in $(seq 1 "$REPS"); do
   node scripts/eval/correctness-harness.cjs > "$RUNLOG" 2>&1 || echo "  (harness exited non-zero — parsing whatever completed)"
 
   # Rate from the 13 contradiction rows directly (robust to a crash on a trailing control case).
-  CORR=$(grep -cE "contradict[[:space:]]*\|[[:space:]]*brain-memory[[:space:]]*\|[[:space:]]*CORRECTED" "$RUNLOG")
-  CONTRA=$(grep -cE "contradict[[:space:]]*\|[[:space:]]*brain-memory[[:space:]]*\|[[:space:]]*(CORRECTED|STALE|UNCHANGED)" "$RUNLOG")
+  CORR=$(grep -cE "contradict[[:space:]]*\|[[:space:]]*recense[[:space:]]*\|[[:space:]]*CORRECTED" "$RUNLOG")
+  CONTRA=$(grep -cE "contradict[[:space:]]*\|[[:space:]]*recense[[:space:]]*\|[[:space:]]*(CORRECTED|STALE|UNCHANGED)" "$RUNLOG")
   if [ "${CONTRA:-0}" -ge 1 ]; then RATE=$(awk -v c="$CORR" -v t="$CONTRA" 'BEGIN{printf "%.1f", c*100/t}'); else RATE="ERR"; fi
   FLAG=""; [ "${CONTRA:-0}" -lt 13 ] && FLAG=" ⚠partial(${CONTRA}/13)"
 

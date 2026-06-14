@@ -2,7 +2,7 @@
  * Tests for brain-init helpers (INSTALL-01/02/03 + D-88/D-89/D-90/D-91).
  *
  * Tests exported helpers only — never runs main() (no real readline, no real API
- * calls, no real settings.json, no real brain.db).
+ * calls, no real settings.json, no real recense.db).
  *
  * All API provider calls are mocked. Env files and settings.json use temp paths.
  */
@@ -58,9 +58,9 @@ describe('resolveExistingEnv', () => {
   it('parses KEY=value pairs into the Map', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brain-init-test-'));
     const envPath = join(dir, 'sleep.env');
-    writeFileSync(envPath, 'BRAIN_MEMORY_DB=/path/to/brain.db\nANTHROPIC_API_KEY=sk-ant-test\n');
+    writeFileSync(envPath, 'RECENSE_DB=/path/to/recense.db\nANTHROPIC_API_KEY=sk-ant-test\n');
     const m = resolveExistingEnv(envPath);
-    expect(m.get('BRAIN_MEMORY_DB')).toBe('/path/to/brain.db');
+    expect(m.get('RECENSE_DB')).toBe('/path/to/recense.db');
     expect(m.get('ANTHROPIC_API_KEY')).toBe('sk-ant-test');
   });
 
@@ -163,15 +163,15 @@ describe('writeEnvFile', () => {
     // Simulate a file with guidance comments + a commented placeholder + an extra key
     writeFileSync(
       envPath,
-      '# guidance comment\nBRAIN_MEMORY_DB=/old/path.db\n# GMAIL_CLIENT_ID=\nCUSTOM_EXTRA=keepme\n',
+      '# guidance comment\nRECENSE_DB=/old/path.db\n# GMAIL_CLIENT_ID=\nCUSTOM_EXTRA=keepme\n',
     );
-    // Re-run init only touches BRAIN_MEMORY_DB
-    writeEnvFile(envPath, { BRAIN_MEMORY_DB: '/new/path.db' });
+    // Re-run init only touches RECENSE_DB
+    writeEnvFile(envPath, { RECENSE_DB: '/new/path.db' });
     const content = readFileSync(envPath, 'utf8');
     expect(content).toContain('# guidance comment');       // comment preserved
     expect(content).toContain('# GMAIL_CLIENT_ID=');        // placeholder preserved
     expect(content).toContain('CUSTOM_EXTRA=keepme');       // unrecognized key preserved
-    expect(content).toContain('BRAIN_MEMORY_DB=/new/path.db'); // known key updated
+    expect(content).toContain('RECENSE_DB=/new/path.db'); // known key updated
     expect(content).not.toContain('/old/path.db');
   });
 });
@@ -224,9 +224,9 @@ describe('validateApiKey', () => {
 describe('mergeSettingsHooks', () => {
   const FAKE_NODE = '/usr/bin/node';
   const FAKE_BRAIN = '/path/to/dist/src/adapter/brain.js';
-  const FAKE_DB = '/home/u/.config/brain-memory/brain.db';
+  const FAKE_DB = '/home/u/.config/recense/recense.db';
 
-  it('adds SessionStart, UserPromptSubmit, and Stop brain hook entries to a fresh file', () => {
+  it('adds SessionStart, UserPromptSubmit, and Stop recense hook entries to a fresh file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brain-init-settings-'));
     const settingsPath = join(dir, 'settings.json');
 
@@ -272,7 +272,7 @@ describe('mergeSettingsHooks', () => {
     }
   });
 
-  it('preserves non-brain hook entries (Pitfall 2 / T-09-18)', () => {
+  it('preserves non-recense hook entries (Pitfall 2 / T-09-18)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brain-init-settings-'));
     const settingsPath = join(dir, 'settings.json');
 
@@ -294,11 +294,11 @@ describe('mergeSettingsHooks', () => {
     const allCmds = (s.hooks.SessionStart as Array<{ hooks: Array<{ command: string }> }>)
       .flatMap(g => g.hooks?.map(h => h.command ?? '') ?? []);
 
-    // Non-brain hook preserved
+    // Non-recense hook preserved
     expect(allCmds.some(cmd => cmd === '/other/tool/session-hook.sh')).toBe(true);
-    // Old-style brain hook removed
+    // Old-style recense hook removed
     expect(allCmds.some(cmd => /session-start-cli\.js/.test(cmd))).toBe(false);
-    // New-style brain hook present
+    // New-style recense hook present
     expect(allCmds.some(cmd => /brain.*hook/.test(cmd))).toBe(true);
   });
 
@@ -345,18 +345,18 @@ describe('mergeSettingsHooks', () => {
         .flatMap(g => g.hooks ?? [])
         .map(h => h.command ?? '')
         .find(c => /brain.*hook/.test(c));
-      expect(cmd, `${event} brain hook missing`).toBeTruthy();
+      expect(cmd, `${event} recense hook missing`).toBeTruthy();
       // Command literally carries the configured DB
       expect(cmd).toContain(`--db ${FAKE_DB}`);
       // And the hook (running this exact command) resolves back to the same DB,
       // independent of process.env — proving init and the hooks now agree.
       const argv = (cmd as string).split(/\s+/);
-      const prevEnv = process.env['BRAIN_MEMORY_DB'];
-      delete process.env['BRAIN_MEMORY_DB'];
+      const prevEnv = process.env['RECENSE_DB'];
+      delete process.env['RECENSE_DB'];
       try {
         expect(resolveDbPath(argv)).toBe(FAKE_DB);
       } finally {
-        if (prevEnv !== undefined) process.env['BRAIN_MEMORY_DB'] = prevEnv;
+        if (prevEnv !== undefined) process.env['RECENSE_DB'] = prevEnv;
       }
     }
   });
@@ -365,8 +365,8 @@ describe('mergeSettingsHooks', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brain-init-settings-'));
     const settingsPath = join(dir, 'settings.json');
 
-    // SessionStart with a matcher-scoped group holding BOTH a stale brain hook and a
-    // non-brain hook — the kind of layout that previously double-fired / went stale.
+    // SessionStart with a matcher-scoped group holding BOTH a stale recense hook and a
+    // non-recense hook — the kind of layout that previously double-fired / went stale.
     const initial = {
       hooks: {
         SessionStart: [{
@@ -385,12 +385,12 @@ describe('mergeSettingsHooks', () => {
     const s = JSON.parse(readFileSync(settingsPath, 'utf8'));
     const groups = s.hooks.SessionStart as Array<{ matcher?: string; hooks: Array<{ command: string }> }>;
 
-    // The matcher group keeps its non-brain hook and lost the stale brain entry.
+    // The matcher group keeps its non-recense hook and lost the stale brain entry.
     const matcherGroup = groups.find(g => g.matcher === 'startup')!;
     expect(matcherGroup.hooks.some(h => h.command === '/other/tool/on-start.sh')).toBe(true);
     expect(matcherGroup.hooks.some(h => /session-start-cli\.js/.test(h.command))).toBe(false);
 
-    // The brain hook now lives in an unmatched group, pinned with --db, exactly once.
+    // The recense hook now lives in an unmatched group, pinned with --db, exactly once.
     const brainEntries = groups
       .flatMap(g => g.hooks ?? [])
       .filter(h => /brain.*hook/.test(h.command ?? ''));

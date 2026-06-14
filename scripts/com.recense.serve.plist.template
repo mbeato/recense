@@ -4,13 +4,13 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.brain-memory.serve</string>
+    <string>com.recense.serve</string>
 
     <!--
         ProgramArguments: bash + the committed, secret-free launchd wrapper.
         Placeholder substituted by scripts/setup-telegram-client.sh:
           __WRAPPER__ → absolute path to scripts/serve-launchd.sh
-        The wrapper sources the gitignored env file (path from BRAIN_MEMORY_SLEEP_ENV
+        The wrapper sources the gitignored env file (path from RECENSE_SLEEP_ENV
         below) for keys + per-role config, then execs the ABI-pinned node on the brain
         dispatcher with the 'serve' subcommand.
     -->
@@ -24,12 +24,12 @@
         EnvironmentVariables: only the env-file path. All other config — ABI-pinned node
         binary, brain.js path, DB path, API keys, serve token — lives in the gitignored
         env file (chmod 600), written additively by scripts/setup-telegram-client.sh.
-        __ENV_FILE__ → absolute path to the sleep env file (BRAIN_MEMORY_SLEEP_ENV),
-                       default ~/.config/brain-memory/sleep.env.
+        __ENV_FILE__ → absolute path to the sleep env file (RECENSE_SLEEP_ENV),
+                       default ~/.config/recense/sleep.env.
     -->
     <key>EnvironmentVariables</key>
     <dict>
-        <key>BRAIN_MEMORY_SLEEP_ENV</key>
+        <key>RECENSE_SLEEP_ENV</key>
         <string>__ENV_FILE__</string>
     </dict>
 
@@ -43,8 +43,8 @@
 
     <!-- Redirect stdout/stderr to log files. BRAIN_SERVE_TOKEN never appears here. -->
     <key>StandardOutPath</key>
-    <string>/tmp/brain-memory-serve.log</string>
+    <string>/tmp/recense-serve.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/brain-memory-serve-err.log</string>
+    <string>/tmp/recense-serve-err.log</string>
 </dict>
 </plist>

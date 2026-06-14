@@ -1,5 +1,5 @@
 /**
- * brain-memory public API — Walking Skeleton substrate (Phase 1, Plan 01-01).
+ * recense public API — Walking Skeleton substrate (Phase 1, Plan 01-01).
  *
  * Re-exports the primitives that downstream plans (02/03/04) and Phase 2–5 components
  * write against. Do not add higher-level orchestration here — that belongs in engine.ts.

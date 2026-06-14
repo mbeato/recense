@@ -1,6 +1,6 @@
 /**
  * @module constants
- * brain-memory viz — shared palette, sizing, timing constants and ctx contract.
+ * recense viz — shared palette, sizing, timing constants and ctx contract.
  *
  * Every downstream module (graph/lod/trace/effects/detail/hud/stats/app)
  * imports from here. This file is the source-of-truth for the ctx contract

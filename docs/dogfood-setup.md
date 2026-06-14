@@ -1,6 +1,6 @@
-# brain-memory dogfood setup
+# Recense dogfood setup
 
-> **New installs:** use `brain init` (see [README](../README.md#install)). Run `npm run init`
+> **New installs:** use `recense init` (see [README](../README.md#install)). Run `npm run init`
 > from the project root — the wizard handles DB path, API keys, node-bin capture, env file,
 > scheduler registration, and hook wiring in one pass. Come back to this runbook only if you
 > need to understand what the wizard does under the hood, or if you are doing a manual / partial
@@ -18,8 +18,8 @@ misbehaves, drop the hooks and Claude Code falls back to the file immediately (D
 
 - Node.js active on PATH (nvm recommended — run `nvm use <version>` first)
 - API keys set: `OPENAI_API_KEY` (for embeddings) and `ANTHROPIC_API_KEY` (for consolidation)
-- (Optional) `BRAIN_MEMORY_DB` exported if the cold-start-seeded DB is not at
-  `$PROJECT_ROOT/brain.db`
+- (Optional) `RECENSE_DB` exported if the cold-start-seeded DB is not at
+  `$PROJECT_ROOT/recense.db`
 
 ---
 
@@ -34,8 +34,8 @@ bash scripts/setup-dogfood.sh
 The script (idempotent — safe to re-run):
 
 1. Runs `npm run build` → `dist/`
-2. Renders `scripts/com.brain-memory.sleep-pass.plist.template` into
-   `~/Library/LaunchAgents/com.brain-memory.sleep-pass.plist` (substitutes your absolute
+2. Renders `scripts/com.recense.sleep-pass.plist.template` into
+   `~/Library/LaunchAgents/com.recense.sleep-pass.plist` (substitutes your absolute
    node binary path, sleep-pass-cli.js path, and DB path)
 3. Validates the plist with `plutil -lint` and loads it via `launchctl load`
 4. Prints the three hook JSON entries to copy-merge into `~/.claude/settings.json`
@@ -93,10 +93,10 @@ All paths and `timeout: 5` are printed by the script with your real absolute pat
 ### Step 3 — Confirm launchd loaded
 
 ```
-launchctl list | grep brain-memory
+launchctl list | grep recense
 ```
 
-Expected: one line with `com.brain-memory.sleep-pass` and PID `-` (not running yet, waiting
+Expected: one line with `com.recense.sleep-pass` and PID `-` (not running yet, waiting
 for its next StartCalendarInterval trigger). A `0` in the exit-status column is correct.
 
 ---
@@ -121,7 +121,7 @@ Neutralize the auto-inject **without deleting the file** (you must never delete 
    ```
 2. Replace the content with a single comment line so the auto-inject loads a benign stub:
    ```
-   echo '# [managed by brain-memory engine — see docs/dogfood-setup.md]' > MEMORY.md
+   echo '# [managed by recense engine — see docs/dogfood-setup.md]' > MEMORY.md
    ```
 3. Start another new session. Confirm only the engine block appears.
 4. The original content is in `MEMORY.md.bak` for manual recovery if needed.
@@ -132,8 +132,8 @@ the file is still there and Claude Code's auto-inject resumes loading it immedia
 ### Checking hook logs
 
 ```
-tail -50 /tmp/brain-memory-hook-errors.log
-tail -50 /tmp/brain-memory-sleep.log
+tail -50 /tmp/recense-hook-errors.log
+tail -50 /tmp/recense-sleep.log
 ```
 
 The hook-errors log captures errors from session-start-cli, turn-capture-cli, and stop-cli.
@@ -145,17 +145,17 @@ The sleep log captures output from the hourly launchd pass and detached sleep-pa
 
 To stop using the engine and revert to MEMORY.md at any time:
 
-1. Remove the three brain-memory entries from `~/.claude/settings.json`:
+1. Remove the three recense entries from `~/.claude/settings.json`:
    - `SessionStart` → `session-start-cli.js`
    - `UserPromptSubmit` → `turn-capture-cli.js`
    - `Stop` → `stop-cli.js`
 2. Unload the launchd agent:
    ```
-   launchctl unload ~/Library/LaunchAgents/com.brain-memory.sleep-pass.plist
+   launchctl unload ~/Library/LaunchAgents/com.recense.sleep-pass.plist
    ```
 3. (Optional) Remove the plist file:
    ```
-   rm ~/Library/LaunchAgents/com.brain-memory.sleep-pass.plist
+   rm ~/Library/LaunchAgents/com.recense.sleep-pass.plist
    ```
 
 **MEMORY.md is never deleted by the engine or these rollback steps.** After rollback,
@@ -165,7 +165,7 @@ neutralization (Outcome B above), restore from the backup:
 cp MEMORY.md.bak MEMORY.md
 ```
 
-The brain-memory DB is also unaffected — all stored nodes and episodes are preserved.
+The recense DB is also unaffected — all stored nodes and episodes are preserved.
 Re-register the hooks at any time to resume using the engine.
 
 ---
@@ -175,10 +175,10 @@ Re-register the hooks at any time to resume using the engine.
 To run consolidation immediately without waiting for the hourly launchd tick:
 
 ```
-launchctl start com.brain-memory.sleep-pass
+launchctl start com.recense.sleep-pass
 ```
 
-Or directly via node (requires BRAIN_MEMORY_DB set):
+Or directly via node (requires RECENSE_DB set):
 
 ```
 node dist/src/adapter/sleep-pass-cli.js
@@ -191,26 +191,26 @@ node dist/src/adapter/sleep-pass-cli.js
 ### No engine context at session start
 
 - Confirm the three hook entries are in `~/.claude/settings.json` with absolute paths.
-- Run `tail /tmp/brain-memory-hook-errors.log` for errors.
+- Run `tail /tmp/recense-hook-errors.log` for errors.
 - Confirm `dist/src/adapter/session-start-cli.js` exists (`npm run build` if missing).
-- Confirm `BRAIN_MEMORY_DB` points at the right DB (or `brain.db` exists in the project root).
+- Confirm `RECENSE_DB` points at the right DB (or `recense.db` exists in the project root).
 
 ### Sleep pass not running
 
-- Check `tail /tmp/brain-memory-sleep.log` — look for "complete" or error lines.
-- Verify launchd loaded: `launchctl list | grep brain-memory`
+- Check `tail /tmp/recense-sleep.log` — look for "complete" or error lines.
+- Verify launchd loaded: `launchctl list | grep recense`
 - Re-run setup: `bash scripts/setup-dogfood.sh` (idempotent).
 - Check API keys: `echo $OPENAI_API_KEY $ANTHROPIC_API_KEY` (both must be non-empty).
 
 ### Plist failed to load
 
-- Validate XML: `plutil -lint ~/Library/LaunchAgents/com.brain-memory.sleep-pass.plist`
+- Validate XML: `plutil -lint ~/Library/LaunchAgents/com.recense.sleep-pass.plist`
 - The setup script validates the plist before loading; if it passed there, check permissions:
-  `ls -la ~/Library/LaunchAgents/com.brain-memory.sleep-pass.plist`
+  `ls -la ~/Library/LaunchAgents/com.recense.sleep-pass.plist`
 
 ### Hook takes too long / times out
 
 - Session-start retrieval is pure synchronous SQLite (~100-150ms expected). If it exceeds
-  the 5-second timeout, check `tail /tmp/brain-memory-hook-errors.log`.
+  the 5-second timeout, check `tail /tmp/recense-hook-errors.log`.
 - A timeout logs an error and the engine injects an empty context (`additionalContext: ""`).
   Claude Code falls back to MEMORY.md if that file is non-empty. No data is lost.

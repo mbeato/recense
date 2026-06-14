@@ -54,9 +54,9 @@ describe('scripts/brain-serve.service.template', () => {
     expect(guide).toContain('export HOST=127.0.0.1');
   });
 
-  it('contains Environment=BRAIN_MEMORY_NODE_BIN= (ABI pin)', () => {
+  it('contains Environment=RECENSE_NODE_BIN= (ABI pin)', () => {
     const content = readDoc(TEMPLATE_PATH);
-    expect(content).toContain('Environment=BRAIN_MEMORY_NODE_BIN=');
+    expect(content).toContain('Environment=RECENSE_NODE_BIN=');
   });
 
   it('contains EnvironmentFile= (sleep.env source)', () => {
@@ -90,9 +90,9 @@ describe('scripts/brain-scheduler.service.template', () => {
     expect(content).toContain('scheduler run');
   });
 
-  it('contains Environment=BRAIN_MEMORY_NODE_BIN= (ABI pin)', () => {
+  it('contains Environment=RECENSE_NODE_BIN= (ABI pin)', () => {
     const content = readDoc(SCHEDULER_TEMPLATE_PATH);
-    expect(content).toContain('Environment=BRAIN_MEMORY_NODE_BIN=');
+    expect(content).toContain('Environment=RECENSE_NODE_BIN=');
   });
 
   it('contains EnvironmentFile= (sleep.env source)', () => {
@@ -141,8 +141,8 @@ describe('docs/server-mode.md', () => {
     expect(readDoc(GUIDE_PATH)).toContain('BRAIN_SERVE_TOKEN');
   });
 
-  it('documents BRAIN_MEMORY_NODE_BIN ABI pin', () => {
-    expect(readDoc(GUIDE_PATH)).toContain('BRAIN_MEMORY_NODE_BIN');
+  it('documents RECENSE_NODE_BIN ABI pin', () => {
+    expect(readDoc(GUIDE_PATH)).toContain('RECENSE_NODE_BIN');
   });
 
   it('documents token rotation (## section)', () => {
@@ -169,13 +169,13 @@ describe('docs/server-mode.md', () => {
     // Bare `envsubst <` blanks EVERY ${VAR} in the input — including ones the operator
     // forgot to export — with no error. The explicit variable list pins the safer convention.
     expect(readDoc(GUIDE_PATH)).toContain(
-      "envsubst '${YOUR_USER} ${BRAIN_MEMORY_DIR} ${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} ${HOST} ${PORT} ${HOME}' < scripts/brain-serve.service.template",
+      "envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${BRAIN_JS} ${HOST} ${PORT} ${HOME}' < scripts/brain-serve.service.template",
     );
   });
 
   it('contains whitelist-form envsubst command for brain-scheduler template (IN-07)', () => {
     expect(readDoc(GUIDE_PATH)).toContain(
-      "envsubst '${YOUR_USER} ${BRAIN_MEMORY_DIR} ${BRAIN_MEMORY_NODE_BIN} ${BRAIN_JS} ${HOME}' < scripts/brain-scheduler.service.template",
+      "envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${BRAIN_JS} ${HOME}' < scripts/brain-scheduler.service.template",
     );
   });
 });

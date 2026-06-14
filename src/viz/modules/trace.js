@@ -1,6 +1,6 @@
 /**
  * @module trace
- * brain-memory viz — spreading-activation module.
+ * recense viz — spreading-activation module.
  *
  * initTrace(ctx) sets ctx.activate, ctx.spawnPulse, and ctx.applyTrace.
  *

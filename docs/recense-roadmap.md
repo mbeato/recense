@@ -1,6 +1,6 @@
 # Brain-Memory Engine — Evolution Roadmap
 
-How the engine grows from the simplest working v1 to the full sophisticated system, **one layer at a time, each gated on the previous working + a concrete signal**. Companion to [`brain-memory-spec.md`](./brain-memory-spec.md).
+How the engine grows from the simplest working v1 to the full sophisticated system, **one layer at a time, each gated on the previous working + a concrete signal**. Companion to [`recense-spec.md`](./recense-spec.md).
 
 **Created:** 2026-06-05
 

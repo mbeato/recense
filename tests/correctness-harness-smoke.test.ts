@@ -5,7 +5,7 @@
  *   1. The committed correctness-cases.json has the correct schema (16-20 cases, all 9 fields).
  *   2. The ADD-only baseline structure: appending two contradicting facts with no consolidation
  *      leaves >=2 episode rows and 0 node rows (duplicates, no correction).
- *   3. The brain-memory pipeline via Consolidator + MockModelProvider: a scripted contradiction
+ *   3. The recense pipeline via Consolidator + MockModelProvider: a scripted contradiction
  *      case produces a tombstoned old node and a live new node (belief updated, tombstone present).
  *
  * All tests use an in-memory Database and MockModelProvider — no runConsolidation (which
@@ -166,7 +166,7 @@ describe('EVAL-02 correctness harness smoke tests', () => {
     });
   });
 
-  // ── Test 3: brain-memory pipeline under MockModelProvider ──────────────────
+  // ── Test 3: recense pipeline under MockModelProvider ──────────────────
   describe('Test 3: Consolidator + MockModelProvider belief-update path', () => {
     let h: Harness;
     beforeEach(() => { h = makeHarness(); });

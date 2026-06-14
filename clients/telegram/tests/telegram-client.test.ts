@@ -496,7 +496,7 @@ describe('runClientTick', () => {
   it('(n) origin:"inferred" without marker → "(inferred) " prefix appended', async () => {
     const sp = uniqueStatePath();
     writeStateCursor(sp, '0');
-    // A non-brain-memory server may return inferred answers without the embedded marker.
+    // A non-recense server may return inferred answers without the embedded marker.
     scriptedAskReply = { answer: 'you probably lift on Tuesdays', origin: 'inferred' };
     const t = new MockTelegramTransport([makeUpdate(10, 111, 'when do i lift?')]);
     const cfg = makeConfig({
@@ -517,7 +517,7 @@ describe('runClientTick', () => {
   it('(n) origin:"inferred" already carrying the marker → sent unchanged (no double-mark)', async () => {
     const sp = uniqueStatePath();
     writeStateCursor(sp, '0');
-    // brain serve embeds a trailing " (inferred)" in inferred answers (src/responder).
+    // recense serve embeds a trailing " (inferred)" in inferred answers (src/responder).
     scriptedAskReply = { answer: 'you probably lift on Tuesdays (inferred)', origin: 'inferred' };
     const t = new MockTelegramTransport([makeUpdate(10, 111, 'when do i lift?')]);
     const cfg = makeConfig({

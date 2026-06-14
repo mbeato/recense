@@ -10,9 +10,9 @@ import { join } from 'path';
 export interface ClientConfig {
   /** TELEGRAM_BOT_TOKEN — the bot's API token. */
   telegramToken: string;
-  /** BRAIN_SERVE_URL — URL of the brain serve instance. Default: http://127.0.0.1:7701 */
+  /** BRAIN_SERVE_URL — URL of the recense serve instance. Default: http://127.0.0.1:7701 */
   serveUrl: string;
-  /** BRAIN_SERVE_TOKEN — Bearer token for brain serve (engine's auth token, copied into client env). */
+  /** BRAIN_SERVE_TOKEN — Bearer token for recense serve (engine's auth token, copied into client env). */
   serveToken: string;
   /** BRAIN_CLIENT_ALLOWLIST — comma-separated numeric Telegram user IDs allowed to query. */
   allowlist: string[];
@@ -46,7 +46,7 @@ export function loadClientConfig(): ClientConfig {
   );
   const statePath =
     process.env['BRAIN_CLIENT_STATE_PATH'] ??
-    join(homedir(), '.config', 'brain-memory', 'telegram-client-state.json');
+    join(homedir(), '.config', 'recense', 'telegram-client-state.json');
 
   // Fail-closed: disable when any required field is absent (D-10)
   const enabled = telegramToken !== '' && serveToken !== '' && allowlist.length > 0;

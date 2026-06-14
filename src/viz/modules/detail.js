@@ -1,6 +1,6 @@
 /**
  * @module detail
- * brain-memory viz — node detail panel module (Plan 15-06, Task 1)
+ * recense viz — node detail panel module (Plan 15-06, Task 1)
  *
  * initDetail(ctx) implements:
  *   - ctx.selectNode(node)  — XSS-safe detail panel with slide-in and camera focus (D-15)

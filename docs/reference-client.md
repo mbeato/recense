@@ -1,6 +1,6 @@
-# brain-memory reference client
+# Recense reference client
 
-A **reference client** wires any agent or messaging channel onto the brain-memory REST
+A **reference client** wires any agent or messaging channel onto the recense REST
 interface by following four steps: receive a message → call `/v1/search` or `/v1/ask`
 with a Bearer token → present provenance correctly → fail closed when configuration is
 absent or incomplete.
@@ -16,12 +16,12 @@ Copy its structure; adapt the transport (Telegram, Slack, CLI, webhook) and noth
 
 ## Hello memory client (on-ramp)
 
-Get an answer from a fresh `brain serve` in under two minutes. The token is printed
-once when `brain serve` first starts (TTY mode). For non-TTY (launchd, systemd), read
+Get an answer from a fresh `recense serve` in under two minutes. The token is printed
+once when `recense serve` first starts (TTY mode). For non-TTY (launchd, systemd), read
 it from the env file:
 
 ```sh
-grep '^BRAIN_SERVE_TOKEN=' ~/.config/brain-memory/sleep.env
+grep '^BRAIN_SERVE_TOKEN=' ~/.config/recense/sleep.env
 ```
 
 **Health check — no token required:**
@@ -98,11 +98,11 @@ clients/telegram/
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | yes | — | Bot API token from @BotFather |
-| `BRAIN_SERVE_URL` | no | `http://127.0.0.1:7701` | brain serve base URL |
-| `BRAIN_SERVE_TOKEN` | yes | — | Bearer token for brain serve auth |
+| `BRAIN_SERVE_URL` | no | `http://127.0.0.1:7701` | recense serve base URL |
+| `BRAIN_SERVE_TOKEN` | yes | — | Bearer token for recense serve auth |
 | `BRAIN_CLIENT_ALLOWLIST` | yes | — | Comma-separated numeric Telegram user IDs |
 | `BRAIN_CLIENT_POLL_MS` | no | `2000` (floor: `500`) | Poll interval in ms |
-| `BRAIN_CLIENT_STATE_PATH` | no | `~/.config/brain-memory/telegram-client-state.json` | Cursor state file path |
+| `BRAIN_CLIENT_STATE_PATH` | no | `~/.config/recense/telegram-client-state.json` | Cursor state file path |
 
 **How it works:**
 
@@ -175,7 +175,7 @@ Provenance in every result is deliberate — a consuming client can weigh an
 
 ### `/v1/add` — reference clients do not call this
 
-`/v1/add` exists on `brain serve` but the reference client never calls it (D-03). The
+`/v1/add` exists on `recense serve` but the reference client never calls it (D-03). The
 client is a read-only consumer. Writes to memory are the engine's job.
 
 ---
@@ -196,7 +196,7 @@ reply(prefix + answer);
 ```
 
 The Telegram reference client implements this pattern with an idempotency guard:
-`brain serve` already embeds a trailing ` (inferred)` marker in inferred answers, so
+`recense serve` already embeds a trailing ` (inferred)` marker in inferred answers, so
 the client adds the prefix only when the answer does not already end with the marker —
 answers are never double-marked.
 
@@ -267,20 +267,20 @@ Put the client's secrets in a dedicated chmod-600 env file, separate from
 `sleep.env`. Never commit it.
 
 ```sh
-mkdir -p ~/.config/brain-memory
-cat > ~/.config/brain-memory/telegram-client.env <<'EOF'
+mkdir -p ~/.config/recense
+cat > ~/.config/recense/telegram-client.env <<'EOF'
 TELEGRAM_BOT_TOKEN=123456:ABC-your-bot-token-here
 BRAIN_SERVE_URL=http://127.0.0.1:7701
 BRAIN_SERVE_TOKEN=your-64-char-serve-token
 BRAIN_CLIENT_ALLOWLIST=123456789
 EOF
-chmod 600 ~/.config/brain-memory/telegram-client.env
+chmod 600 ~/.config/recense/telegram-client.env
 ```
 
 **Never log or commit the token.** Read it with grep when you need it:
 
 ```sh
-grep '^BRAIN_SERVE_TOKEN=' ~/.config/brain-memory/telegram-client.env
+grep '^BRAIN_SERVE_TOKEN=' ~/.config/recense/telegram-client.env
 ```
 
 ### launchd KeepAlive plist (macOS)
@@ -297,15 +297,15 @@ if it exits.
 
 **Client vs serve: node binary note.**
 The Telegram client has **no native Node add-ons** (no `better-sqlite3`). Its launchd
-wrapper can use `node` from PATH without a pinned binary. This is unlike `brain serve`,
+wrapper can use `node` from PATH without a pinned binary. This is unlike `recense serve`,
 which opens `better-sqlite3` and must use the exact Node binary that compiled the
-native module (the `BRAIN_MEMORY_NODE_BIN` pin in `sleep.env`). See
+native module (the `RECENSE_NODE_BIN` pin in `sleep.env`). See
 [docs/server-mode.md](docs/server-mode.md) for serve deployment and token rotation.
 
 **Check the client log:**
 
 ```sh
-tail -f /tmp/brain-memory-telegram-client.log
+tail -f /tmp/recense-telegram-client.log
 ```
 
 ### Token rotation
@@ -315,5 +315,5 @@ update the new token in `telegram-client.env` (chmod-600, not re-committed), the
 restart the client job:
 
 ```sh
-launchctl kickstart -k gui/$(id -u)/com.brain-memory.telegram-client
+launchctl kickstart -k gui/$(id -u)/com.recense.telegram-client
 ```

@@ -5,11 +5,11 @@
  * (NODE_MODULE_VERSION). When a user's shell runs a different Node — common with nvm,
  * where the global default rarely matches the build Node — `brain` would crash with a
  * raw NODE_MODULE_VERSION stack trace. The launchd jobs already avoid this by exec'ing
- * under BRAIN_MEMORY_NODE_BIN (from the brain-memory env file); this brings the same pin
+ * under RECENSE_NODE_BIN (from the recense env file); this brings the same pin
  * to the interactive `brain` command, so it works in any terminal regardless of the
  * ambient Node — WITHOUT forcing the user to change their global nvm default.
  *
- * Security: parses ONLY the BRAIN_MEMORY_NODE_BIN line — it never sources the rest of the
+ * Security: parses ONLY the RECENSE_NODE_BIN line — it never sources the rest of the
  * env file (which holds API keys / tokens) into this process, unlike the launchd wrappers.
  *
  * The pure decision helpers (readPinnedNodeBin, shouldReexec) are exported for unit testing;
@@ -21,7 +21,7 @@ import { homedir } from 'os';
 import { join, resolve } from 'path';
 
 /** Env var marking that a re-exec already happened — prevents an infinite loop. */
-export const PIN_GUARD = 'BRAIN_MEMORY_NODE_PINNED';
+export const PIN_GUARD = 'RECENSE_NODE_PINNED';
 
 export interface PinnedBinDeps {
   exists?: (p: string) => boolean;
@@ -29,9 +29,9 @@ export interface PinnedBinDeps {
 }
 
 /**
- * Resolve the pinned Node binary: an explicit BRAIN_MEMORY_NODE_BIN env value wins, else
- * parse it from the brain-memory env file (the same file the launchd wrappers source).
- * Returns undefined when no pin is configured (e.g. a fresh clone before `brain init`).
+ * Resolve the pinned Node binary: an explicit RECENSE_NODE_BIN env value wins, else
+ * parse it from the recense env file (the same file the launchd wrappers source).
+ * Returns undefined when no pin is configured (e.g. a fresh clone before `recense init`).
  */
 export function readPinnedNodeBin(
   envFilePath: string,
@@ -43,7 +43,7 @@ export function readPinnedNodeBin(
   const readFile = deps.readFile ?? ((p: string) => readFileSync(p, 'utf-8'));
   if (!exists(envFilePath)) return undefined;
   for (const line of readFile(envFilePath).split('\n')) {
-    const m = line.match(/^\s*BRAIN_MEMORY_NODE_BIN\s*=\s*(.+?)\s*$/);
+    const m = line.match(/^\s*RECENSE_NODE_BIN\s*=\s*(.+?)\s*$/);
     if (m) return m[1]!.replace(/^['"]|['"]$/g, '').trim() || undefined;
   }
   return undefined;
@@ -79,9 +79,9 @@ export function shouldReexec(
  */
 export function pinNodeRuntime(entryPath: string): void {
   const envFilePath =
-    process.env['BRAIN_MEMORY_SLEEP_ENV'] ??
-    join(homedir(), '.config', 'brain-memory', 'sleep.env');
-  const pinnedBin = readPinnedNodeBin(envFilePath, process.env['BRAIN_MEMORY_NODE_BIN']);
+    process.env['RECENSE_SLEEP_ENV'] ??
+    join(homedir(), '.config', 'recense', 'sleep.env');
+  const pinnedBin = readPinnedNodeBin(envFilePath, process.env['RECENSE_NODE_BIN']);
   const target = shouldReexec(pinnedBin, process.execPath, process.env[PIN_GUARD] === '1');
   if (!target) return;
   const res = spawnSync(target, [entryPath, ...process.argv.slice(2)], {

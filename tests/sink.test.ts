@@ -291,21 +291,21 @@ describe('ConsolidationEventType enum completeness', () => {
 });
 
 // ---------------------------------------------------------------------------
-// reconstructCorpus — runs only when brain.db exists (D-54, CI guard)
+// reconstructCorpus — runs only when recense.db exists (D-54, CI guard)
 // ---------------------------------------------------------------------------
 
-// M-11: path-agnostic — works from any checkout, not just $HOME/brain-memory
-const BRAIN_DB = path.resolve('brain.db');
+// M-11: path-agnostic — works from any checkout, not just $HOME/recense
+const BRAIN_DB = path.resolve('recense.db');
 const COPY_DB = path.join(os.tmpdir(), 'seam02-sink-test.db');
 
-describe('reconstructCorpus (real-data, guarded by brain.db existence)', () => {
+describe('reconstructCorpus (real-data, guarded by recense.db existence)', () => {
   afterAll(() => {
     if (existsSync(COPY_DB)) {
       try { unlinkSync(COPY_DB); } catch { /* ignore */ }
     }
   });
 
-  it.skipIf(!existsSync(BRAIN_DB) || !process.env['BRAIN_MEMORY_RUN_LIVE_TESTS'])(
+  it.skipIf(!existsSync(BRAIN_DB) || !process.env['RECENSE_RUN_LIVE_TESTS'])(
     'returns schema_version-stamped records after events are written',
     () => {
       // Copy the real DB so we do NOT write to production

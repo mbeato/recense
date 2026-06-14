@@ -32,7 +32,7 @@ import { initSchema } from '../db/schema';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { acquireLock, releaseLock } from './lockfile';
 
-const LOG_PATH = '/tmp/brain-memory-sleep.log';
+const LOG_PATH = '/tmp/recense-sleep.log';
 
 /** Append a timestamped line to the log file (never stdout/stderr for background ops). */
 const log = (msg: string): void =>
@@ -50,7 +50,7 @@ const log = (msg: string): void =>
 function resolveScriptPaths(): { plistTemplate: string; wrapperPath: string } {
   const projectRoot = resolve(__dirname, '../../..');
   return {
-    plistTemplate: join(projectRoot, 'scripts', 'com.brain-memory.sleep-pass.plist.template'),
+    plistTemplate: join(projectRoot, 'scripts', 'com.recense.sleep-pass.plist.template'),
     wrapperPath: join(projectRoot, 'scripts', 'sleep-pass-launchd.sh'),
   };
 }
@@ -63,12 +63,12 @@ function installMacOSScheduler(): void {
   const { plistTemplate, wrapperPath } = resolveScriptPaths();
   const uid = execSync('id -u', { encoding: 'utf8' }).trim();
   const domain = `gui/${uid}`;
-  const label = 'com.brain-memory.sleep-pass';
+  const label = 'com.recense.sleep-pass';
   const home = process.env['HOME'] ?? '/tmp';
 
   const envFilePath =
-    process.env['BRAIN_MEMORY_SLEEP_ENV'] ??
-    join(home, '.config', 'brain-memory', 'sleep.env');
+    process.env['RECENSE_SLEEP_ENV'] ??
+    join(home, '.config', 'recense', 'sleep.env');
   const launchAgentsDir = join(home, 'Library', 'LaunchAgents');
   const plistDst = join(launchAgentsDir, `${label}.plist`);
 
@@ -95,7 +95,7 @@ function installMacOSScheduler(): void {
 }
 
 function checkMacOSStatus(): void {
-  const label = 'com.brain-memory.sleep-pass';
+  const label = 'com.recense.sleep-pass';
   try {
     const uid = execSync('id -u', { encoding: 'utf8' }).trim();
     const domain = `gui/${uid}`;
@@ -104,7 +104,7 @@ function checkMacOSStatus(): void {
     console.log(`  Check: launchctl print gui/${uid}/${label} | grep state`);
   } catch {
     console.log(`  ${label}: not registered`);
-    console.log('  Run: brain scheduler install');
+    console.log('  Run: recense scheduler install');
   }
 }
 
@@ -113,33 +113,33 @@ function checkMacOSStatus(): void {
 // ---------------------------------------------------------------------------
 
 function printLinuxGuidance(): void {
-  console.log('  brain scheduler install (Linux):');
-  console.log('    Start the hourly sleep-pass with: brain scheduler run');
+  console.log('  recense scheduler install (Linux):');
+  console.log('    Start the hourly sleep-pass with: recense scheduler run');
   console.log('    The process stops when your terminal session ends.');
   console.log('    Reboot-survival (systemd unit) is planned for v2.1.');
 }
 
 function checkLinuxStatus(): void {
   try {
-    execSync('pgrep -f "brain scheduler run"', { stdio: 'ignore' });
-    console.log('  brain scheduler run: running');
+    execSync('pgrep -f "recense scheduler run"', { stdio: 'ignore' });
+    console.log('  recense scheduler run: running');
   } catch {
     // Not running is informational on Linux — not an error (D-92)
-    console.log('  brain scheduler run: not running');
-    console.log('  Start with: brain scheduler run');
+    console.log('  recense scheduler run: not running');
+    console.log('  Start with: recense scheduler run');
   }
 }
 
 async function startLinuxScheduler(): Promise<void> {
-  const dbPath = process.env['BRAIN_MEMORY_DB'];
+  const dbPath = process.env['RECENSE_DB'];
   if (!dbPath) {
     process.stderr.write(
-      'BRAIN_MEMORY_DB not set — cannot start scheduler (set it in your env file).\n',
+      'RECENSE_DB not set — cannot start scheduler (set it in your env file).\n',
     );
     process.exit(1);
   }
 
-  console.log('brain scheduler run — hourly sleep-pass active (Ctrl+C to stop)');
+  console.log('recense scheduler run — hourly sleep-pass active (Ctrl+C to stop)');
   console.log('Note: stops when this process exits; reboot-survival is v2.1 (systemd)');
   log('Linux scheduler started');
 
@@ -179,7 +179,7 @@ async function startLinuxScheduler(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Route `brain scheduler <sub>` to the correct platform implementation.
+ * Route `recense scheduler <sub>` to the correct platform implementation.
  * Called by brain.ts 'scheduler' case with the sub-argument and remaining argv.
  */
 export function runSchedulerCommand(sub: string | undefined, _args: string[]): void {
@@ -205,7 +205,7 @@ export function runSchedulerCommand(sub: string | undefined, _args: string[]): v
     case 'run':
       if (platform === 'darwin') {
         process.stderr.write(
-          '`brain scheduler run` is for Linux. macOS uses launchd — run `brain scheduler install`.\n',
+          '`recense scheduler run` is for Linux. macOS uses launchd — run `recense scheduler install`.\n',
         );
         process.exit(1);
       }
@@ -218,7 +218,7 @@ export function runSchedulerCommand(sub: string | undefined, _args: string[]): v
       break;
 
     default:
-      process.stderr.write('Usage: brain scheduler install|status|run\n');
+      process.stderr.write('Usage: recense scheduler install|status|run\n');
       process.exit(1);
   }
 }

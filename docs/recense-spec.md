@@ -2,7 +2,7 @@
 
 A faithful brain-inspired agent-memory engine. **Customer-zero = the founder's own Claude Code memory**, replacing the flat `MEMORY.md` index. Built solo, dogfood-first; product-shaped interfaces from day one, but the v1 bar is "useful for my own agents," not "scale to thousands."
 
-**Created:** 2026-06-05 · **Status:** Design-of-record (post adversarial review). Built on [`brain-memory-foundation.md`](./brain-memory-foundation.md).
+**Created:** 2026-06-05 · **Status:** Design-of-record (post adversarial review). Built on [`recense-foundation.md`](./recense-foundation.md).
 **Provenance:** §1–§3 design + a 6-dimension adversarial review (39 findings, 37 adopted after verification against the foundation). `[REVISED]` / `[CUT]` / `[DEFERRED]` / `[NEW]` tags mark what the review changed.
 
 ---
@@ -152,7 +152,7 @@ For each extracted claim during consolidation:
 
 **Two differentiators preserved:** the allocation gate (what's worth storing, before the write) and PE-gated reconsolidation (the three-way update). Everything else is as simple as the foundation allows.
 
-**The staged upgrade path for every cut/deferred item — with build-triggers and the seam each plugs into — is in [`brain-memory-roadmap.md`](./brain-memory-roadmap.md).** Each upgrade is a layer on a v1 seam, never a rewrite.
+**The staged upgrade path for every cut/deferred item — with build-triggers and the seam each plugs into — is in [`recense-roadmap.md`](./recense-roadmap.md).** Each upgrade is a layer on a v1 seam, never a rewrite.
 
 ---
 

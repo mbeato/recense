@@ -118,7 +118,7 @@ describe('ambientRecall', () => {
 
     const text = await ambientRecall(db, PROMPT, provider, config(), clock);
 
-    expect(text.startsWith('Recalled from brain-memory (ambient):')).toBe(true);
+    expect(text.startsWith('Recalled from recense (ambient):')).toBe(true);
     expect(text).toContain(SEEDED_VALUE);
     expect(text).toContain('(observed, score 1.00)');
   });

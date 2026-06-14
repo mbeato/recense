@@ -1,5 +1,5 @@
 /**
- * SQLite DDL + initSchema for brain-memory (STORE-01).
+ * SQLite DDL + initSchema for recense (STORE-01).
  *
  * Four record types: episode, node, edge, meta.
  * All tables use CREATE TABLE IF NOT EXISTS — initSchema is idempotent.
@@ -262,7 +262,7 @@ export function initSchema(db: Database.Database): void {
   if (stored !== null && stored > SCHEMA_VERSION) {
     throw new Error(
       'DB schema_version ' + stored + ' is newer than this binary (' + SCHEMA_VERSION +
-      ') — upgrade brain-memory; refusing to downgrade-stamp'
+      ') — upgrade recense; refusing to downgrade-stamp'
     );
   }
   if (stored === null || stored < SCHEMA_VERSION) {

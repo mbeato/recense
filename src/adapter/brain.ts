@@ -19,13 +19,13 @@
  */
 
 // Pin the Node runtime BEFORE any handler (and thus better-sqlite3) loads. Re-execs under
-// BRAIN_MEMORY_NODE_BIN when the ambient Node's ABI would mismatch the native addon, so
+// RECENSE_NODE_BIN when the ambient Node's ABI would mismatch the native addon, so
 // `brain` works in any terminal regardless of the user's nvm default (DX). One-hop guarded;
 // no-op when already on the right Node or when no pin is configured. pin-node imports only
 // Node built-ins, so this stays off the better-sqlite3 load path.
 (require('./pin-node') as typeof import('./pin-node')).pinNodeRuntime(__filename);
 
-// Hydrate the brain-memory config (DB path, API keys, model) from the env file the launchd
+// Hydrate the recense config (DB path, API keys, model) from the env file the launchd
 // jobs already source, for any key absent from the shell — so interactive `brain <cmd>`
 // resolves the SAME DB/config as the background jobs instead of an empty default DB.
 // Set-only-if-missing: an explicit shell env or `--db <flag>` still wins.
@@ -56,7 +56,7 @@ switch (cmd) {
       case 'turn-capture':  require('./turn-capture-cli');  break;
       case 'stop':          require('./stop-cli');           break;
       default:
-        process.stderr.write(`brain hook: unknown subcommand '${sub ?? '(none)'}'\n`);
+        process.stderr.write(`recense hook: unknown subcommand '${sub ?? '(none)'}'\n`);
         process.exit(1);
     }
     break;
@@ -77,7 +77,7 @@ switch (cmd) {
 
   // ── CLIs with require.main guard — dispatch via subprocess ───────────────────
   // H-1: forward argv[3..] (process.argv.slice(3)) so the child receives all
-  // positional args and flags (e.g. `brain ingest gmail` or `brain seed --db /x`).
+  // positional args and flags (e.g. `recense ingest gmail` or `recense seed --db /x`).
   // The local `rest = slice(4)` is intentionally NOT used here — it drops argv[3].
   // brain-init.ts guards execution with `require.main === module` (interactive wizard)
   // so a bare require() would never invoke main(). Spawn as a subprocess so the guard

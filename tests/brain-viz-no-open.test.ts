@@ -1,5 +1,5 @@
 /**
- * tests/brain-viz-no-open.test.ts — integration test for `brain viz --no-open` (OQ-1).
+ * tests/brain-viz-no-open.test.ts — integration test for `recense viz --no-open` (OQ-1).
  *
  * Verifies:
  *   1. `node dist/src/adapter/brain-viz-cli.js --no-open --db <tempdb>` starts the
@@ -104,14 +104,14 @@ function waitForExit(child: ChildProcess, timeoutMs = 5000): Promise<number | nu
 // Suite
 // ---------------------------------------------------------------------------
 
-describe.skipIf(SKIP_NO_DIST).sequential('brain viz --no-open (OQ-1 / D-96)', () => {
+describe.skipIf(SKIP_NO_DIST).sequential('recense viz --no-open (OQ-1 / D-96)', () => {
   let tmpDir: string;
   let dbPath: string;
   let child: ChildProcess | null = null;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'brain-viz-no-open-'));
-    dbPath = join(tmpDir, 'brain.db');
+    dbPath = join(tmpDir, 'recense.db');
     // Seed the DB file so brain-viz-cli L-10 guard passes
     const db = new Database(dbPath);
     initSchema(db);

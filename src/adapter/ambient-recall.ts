@@ -131,7 +131,7 @@ export async function ambientRecall(
   // Token-lean block: header + one capped line per fact, max AMBIENT_K lines.
   // retrieveRanked rows carry id/value/score only; one indexed getNode per surfaced
   // row is acceptable on this path.
-  const lines = ['Recalled from brain-memory (ambient):'];
+  const lines = ['Recalled from recense (ambient):'];
   for (const r of results.slice(0, AMBIENT_K)) {
     const origin = store.getNode(r.id)?.origin ?? 'observed';
     lines.push(`- ${r.value.slice(0, MAX_VALUE_CHARS)} (${origin}, score ${r.score.toFixed(2)})`);

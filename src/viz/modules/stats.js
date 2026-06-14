@@ -1,6 +1,6 @@
 /**
  * @module stats
- * brain-memory viz — master rAF loop, fps overlay, adaptive quality, idle throttle
+ * recense viz — master rAF loop, fps overlay, adaptive quality, idle throttle
  * (Plan 15-06, Task 3)
  *
  * initStats(ctx) implements:

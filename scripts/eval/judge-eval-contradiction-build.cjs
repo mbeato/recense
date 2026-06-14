@@ -1,5 +1,5 @@
 /**
- * Contradiction-focused judge eval-set builder (read-only on brain.db, no API calls).
+ * Contradiction-focused judge eval-set builder (read-only on recense.db, no API calls).
  *
  * WHY THIS EXISTS: the cosine gray-zone extractor (judge-eval-extract.cjs) surfaces almost
  * no contradictions — conflicting values on the same subject do NOT sit in the mid-cosine
@@ -8,13 +8,13 @@
  * load-bearing dimension (contradiction detection + 0–1 magnitude calibration) was therefore
  * essentially untested.
  *
- * So contradictions are CONSTRUCTED, not mined: each case takes a REAL brain.db node as the
+ * So contradictions are CONSTRUCTED, not mined: each case takes a REAL recense.db node as the
  * stored belief (candidate) and pairs it with a hand-authored claim that states an opposing
  * value on the same subject, hand-labeled relation=contradict with a calibrated magnitude
  * (mild correction ~0.3 → categorical reversal ~0.9). Near-miss controls (same subject but
  * actually confirm/extend) keep the set from being gamed by always answering "contradict".
  *
- * Candidates for each case = the target node + its top real cosine neighbors from brain.db,
+ * Candidates for each case = the target node + its top real cosine neighbors from recense.db,
  * mirroring what the consolidator would co-retrieve when judging a claim about that subject.
  * Target placement varies per case so the right answer is not always candidate[0].
  *
@@ -22,12 +22,12 @@
  *   { case_id, claim, candidates:[{id,value,cosine}], top_cosine, band,
  *     label:{ best_candidate_index, relation, magnitude } }
  *
- * Run:  node scripts/eval/judge-eval-contradiction-build.cjs ./brain.db
+ * Run:  node scripts/eval/judge-eval-contradiction-build.cjs ./recense.db
  */
 const Database = require('better-sqlite3');
 const fs = require('fs');
 
-const DB = process.argv[2] || './brain.db';
+const DB = process.argv[2] || './recense.db';
 const OUT = 'scripts/eval/judge-eval-contradiction-set.json';
 const NEIGHBORS = 3; // real distractor candidates added alongside each target
 
@@ -49,15 +49,15 @@ const CASES = [
     relation: 'contradict', magnitude: 0.85, target_slot: 1 },
 
   { target_value_hint: "Single-developer personal tool with one user; no multi-tenant or production traffic and no near-term scaling plans",
-    claim: "brain-memory runs as a multi-tenant production service handling concurrent traffic from many users.",
+    claim: "recense runs as a multi-tenant production service handling concurrent traffic from many users.",
     relation: 'contradict', magnitude: 0.9, target_slot: 0 },
 
   { target_value_hint: "Stop hook triggers consolidation directly, launchd is belt-and-suspenders fallback for unclean session exits",
     claim: "launchd is what triggers consolidation directly; the Stop hook is only the belt-and-suspenders fallback for unclean exits.",
     relation: 'contradict', magnitude: 0.7, target_slot: 2 },
 
-  { target_value_hint: "Fast mitigation for cross-project bleed: move three hooks from ~/.claude/settings.json to brain-memory/.claude/settings.json",
-    claim: "To fix the cross-project bleed, move the three hooks out of brain-memory/.claude/settings.json and back into the global ~/.claude/settings.json.",
+  { target_value_hint: "Fast mitigation for cross-project bleed: move three hooks from ~/.claude/settings.json to recense/.claude/settings.json",
+    claim: "To fix the cross-project bleed, move the three hooks out of recense/.claude/settings.json and back into the global ~/.claude/settings.json.",
     relation: 'contradict', magnitude: 0.6, target_slot: 1 },
 
   { target_value_hint: "Claude-on-Vertex is billed as Model Garden partner-model inference, a different billing SKU than GenAI App Builder",
@@ -88,8 +88,8 @@ const CASES = [
     claim: "The anthropic-claude-haiku-4-5 requests/min quota should be requested in us-central1.",
     relation: 'contradict', magnitude: 0.45, target_slot: 1 },
 
-  { target_value_hint: "brain.db holds 149 live nodes from sessions with engine ranking and injecting top ~2000 chars",
-    claim: "The engine's brain.db now holds roughly 1,300 live nodes.",
+  { target_value_hint: "recense.db holds 149 live nodes from sessions with engine ranking and injecting top ~2000 chars",
+    claim: "The engine's recense.db now holds roughly 1,300 live nodes.",
     relation: 'contradict', magnitude: 0.3, target_slot: 0 },
 
   // ---- near-miss controls (n=4): same subject, NOT a conflict ----

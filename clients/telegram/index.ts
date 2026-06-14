@@ -10,7 +10,7 @@ import { createMemoryClient, type MemoryClient } from './memory-client';
 // Bearer token and bot token MUST NOT appear in log messages.
 // ---------------------------------------------------------------------------
 
-const LOG_PATH = '/tmp/brain-memory-telegram-client.log';
+const LOG_PATH = '/tmp/recense-telegram-client.log';
 
 /** Append a timestamped line to the log file. */
 const log = (msg: string): void =>
@@ -214,7 +214,7 @@ export async function runClientTick(
       if (answer !== null && origin !== 'none') {
         // Provenance presentation (docs/reference-client.md rule 1): mark inferred
         // answers visibly so the user knows they are reading an inference, not a
-        // record. Idempotent: brain serve already embeds a trailing " (inferred)"
+        // record. Idempotent: recense serve already embeds a trailing " (inferred)"
         // marker in inferred answers (src/responder), so the prefix is only added
         // when no marker is present — answers are never double-marked.
         const text =

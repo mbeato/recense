@@ -1,6 +1,6 @@
 /**
  * @module search
- * brain-memory viz — in-app incremental node search (Plan 19-01 / VIZ-07,
+ * recense viz — in-app incremental node search (Plan 19-01 / VIZ-07,
  * exploration revision: broad → narrow).
  *
  * initSearch(ctx) implements:

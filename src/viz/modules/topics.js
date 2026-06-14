@@ -1,6 +1,6 @@
 /**
  * @module topics
- * brain-memory viz — topic browser (Phase 19 / VIZ-08, exploration revision).
+ * recense viz — topic browser (Phase 19 / VIZ-08, exploration revision).
  *
  * initTopics(ctx) renders a broad-entry list of every schema ("topic") in the
  * graph so a user can start exploring WITHOUT first finding a node: see all

@@ -1,13 +1,13 @@
 /**
  * Judge eval-set extractor (read-only, no API calls).
- * Reconstructs realistic gray-zone judge inputs from a brain.db:
+ * Reconstructs realistic gray-zone judge inputs from a recense.db:
  *   claim = a node's value; candidates = its top-5 cosine neighbors.
  * Mirrors what the consolidator feeds AnthropicJudge.judge(claim, candidates).
  * Output: scripts/eval/judge-eval-set.json (label fields blank for hand-labeling).
  */
 const Database = require('better-sqlite3');
 
-const DB = process.argv[2] || './brain.db';
+const DB = process.argv[2] || './recense.db';
 const OUT = 'scripts/eval/judge-eval-set.json';
 const UNRELATED_THRESHOLD = 0.3; // config.unrelatedSimilarityThreshold — below this = auto-unrelated, no judge
 const TOPK = 5;                   // config.candidateK

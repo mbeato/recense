@@ -2016,7 +2016,7 @@ describe('M1/M2: entity-anchored expansion and multi-candidate contradiction rou
 
 // ---------------------------------------------------------------------------
 // judgeBatch integration: per-claim judging is the DEFAULT (260613 — batching regressed
-// local EVAL-02 84.6%->53.8%); batching is opt-in via BRAIN_MEMORY_ENABLE_JUDGE_BATCH=1
+// local EVAL-02 84.6%->53.8%); batching is opt-in via RECENSE_ENABLE_JUDGE_BATCH=1
 // (perf path from quick task 260612-lc0).
 // ---------------------------------------------------------------------------
 
@@ -2146,7 +2146,7 @@ describe('Consolidator.judgeBatch integration', () => {
     expect(judgeBatchCallCount).toBe(0);
   });
 
-  it('opt-in BRAIN_MEMORY_ENABLE_JUDGE_BATCH=1: multi-claim episode issues exactly ONE batched judgeBatch call', async () => {
+  it('opt-in RECENSE_ENABLE_JUDGE_BATCH=1: multi-claim episode issues exactly ONE batched judgeBatch call', async () => {
     const dims = h.config.embeddingDimensions;
     const alwaysVec = new Float32Array(dims); alwaysVec[0] = 1.0;
     const cA = newId(); const cB = newId(); const cC = newId();
@@ -2188,11 +2188,11 @@ describe('Consolidator.judgeBatch integration', () => {
       role: 'user', session_id: 'sess-batch-optin',
     });
 
-    process.env.BRAIN_MEMORY_ENABLE_JUDGE_BATCH = '1';
+    process.env.RECENSE_ENABLE_JUDGE_BATCH = '1';
     try {
       await consolidator.consolidate();
     } finally {
-      delete process.env.BRAIN_MEMORY_ENABLE_JUDGE_BATCH;
+      delete process.env.RECENSE_ENABLE_JUDGE_BATCH;
     }
 
     // Opt-in batching: exactly one judgeBatch call carrying all 3 claims.

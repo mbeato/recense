@@ -40,7 +40,7 @@ import { AllocationGate, EpisodicStore, IngestionPipeline } from '../ingest/pipe
 import { DefaultModelProvider } from '../model/provider';
 import { ambientRecall, buildHookOutput } from './ambient-recall';
 
-const ERROR_LOG = '/tmp/brain-memory-hook-errors.log';
+const ERROR_LOG = '/tmp/recense-hook-errors.log';
 
 /** Prompts shorter than this skip ambient recall (too little signal to embed). */
 const MIN_RECALL_CHARS = 12;
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   const cwd        = typeof input['cwd'] === 'string' ? input['cwd'] : '';
 
   if (promptText) {
-    // CR-01: --db (pinned by `brain init`) > BRAIN_MEMORY_DB env > shared default.
+    // CR-01: --db (pinned by `recense init`) > RECENSE_DB env > shared default.
     const dbPath = resolveDbPath();
     const config = { ...DEFAULT_CONFIG, dbPath, dirtySentinelPath: resolveDirtySentinelPath() };
     const db = new Database(dbPath);

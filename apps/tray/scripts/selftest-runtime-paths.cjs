@@ -5,10 +5,10 @@
  * Zero-framework self-test for runtime-paths.ts (compiled to dist/runtime-paths.js).
  *
  * Asserts path-resolution precedence rules:
- *   (a) BRAIN_MEMORY_NODE_BIN env wins over sleep.env and fallback
- *   (b) sleep.env BRAIN_MEMORY_NODE_BIN= line is parsed when env is unset
+ *   (a) RECENSE_NODE_BIN env wins over sleep.env and fallback
+ *   (b) sleep.env RECENSE_NODE_BIN= line is parsed when env is unset
  *   (c) 'node' is returned when neither env nor sleep.env has the value
- *   (d) resolveBrainJs() derives dirname(BRAIN_MEMORY_SLEEP_JS)/brain.js
+ *   (d) resolveBrainJs() derives dirname(RECENSE_SLEEP_JS)/brain.js
  *
  * Run: node scripts/selftest-runtime-paths.cjs  (after tsc compiles dist/)
  * Exit non-zero on any failed assertion.
@@ -70,12 +70,12 @@ function withEnv(overrides, fn) {
   }
 }
 
-// ── (a) BRAIN_MEMORY_NODE_BIN env wins ───────────────────────────────────────
+// ── (a) RECENSE_NODE_BIN env wins ───────────────────────────────────────
 test('resolveNodeBin: env var wins', () => {
   withEnv(
     {
-      BRAIN_MEMORY_NODE_BIN: '/env/node',
-      BRAIN_MEMORY_SLEEP_ENV: path.join(tmpdir, `nonexistent-${Date.now()}.env`),
+      RECENSE_NODE_BIN: '/env/node',
+      RECENSE_SLEEP_ENV: path.join(tmpdir, `nonexistent-${Date.now()}.env`),
     },
     () => {
       const result = resolveNodeBin();
@@ -87,10 +87,10 @@ test('resolveNodeBin: env var wins', () => {
 // ── (b) sleep.env parse when env unset ───────────────────────────────────────
 test('resolveNodeBin: sleep.env parse (quoted value)', () => {
   const tmpEnv = path.join(tmpdir, `selftest-sleep-${Date.now()}.env`);
-  fs.writeFileSync(tmpEnv, 'BRAIN_MEMORY_NODE_BIN="/x/node"\n');
+  fs.writeFileSync(tmpEnv, 'RECENSE_NODE_BIN="/x/node"\n');
   try {
     withEnv(
-      { BRAIN_MEMORY_NODE_BIN: undefined, BRAIN_MEMORY_SLEEP_ENV: tmpEnv },
+      { RECENSE_NODE_BIN: undefined, RECENSE_SLEEP_ENV: tmpEnv },
       () => {
         const result = resolveNodeBin();
         assert.strictEqual(result, '/x/node', `Expected '/x/node', got '${result}'`);
@@ -105,8 +105,8 @@ test('resolveNodeBin: sleep.env parse (quoted value)', () => {
 test("resolveNodeBin: falls back to 'node' when nothing set", () => {
   withEnv(
     {
-      BRAIN_MEMORY_NODE_BIN: undefined,
-      BRAIN_MEMORY_SLEEP_ENV: path.join(tmpdir, `nonexistent-${Date.now()}.env`),
+      RECENSE_NODE_BIN: undefined,
+      RECENSE_SLEEP_ENV: path.join(tmpdir, `nonexistent-${Date.now()}.env`),
     },
     () => {
       const result = resolveNodeBin();
@@ -116,15 +116,15 @@ test("resolveNodeBin: falls back to 'node' when nothing set", () => {
 });
 
 // ── (d) resolveBrainJs: sibling derivation ───────────────────────────────────
-test('resolveBrainJs: derives sibling brain.js from BRAIN_MEMORY_SLEEP_JS', () => {
+test('resolveBrainJs: derives sibling brain.js from RECENSE_SLEEP_JS', () => {
   const tmpEnv = path.join(tmpdir, `selftest-brain-${Date.now()}.env`);
   fs.writeFileSync(
     tmpEnv,
-    'BRAIN_MEMORY_SLEEP_JS=/r/dist/src/adapter/sleep-pass-cli.js\n',
+    'RECENSE_SLEEP_JS=/r/dist/src/adapter/sleep-pass-cli.js\n',
   );
   try {
     withEnv(
-      { BRAIN_MEMORY_BRAIN_JS: undefined, BRAIN_MEMORY_SLEEP_ENV: tmpEnv },
+      { RECENSE_BRAIN_JS: undefined, RECENSE_SLEEP_ENV: tmpEnv },
       () => {
         const result = resolveBrainJs();
         const expected = '/r/dist/src/adapter/brain.js';
@@ -138,24 +138,24 @@ test('resolveBrainJs: derives sibling brain.js from BRAIN_MEMORY_SLEEP_JS', () =
 
 // ── resolveDbPath: --db flag wins ─────────────────────────────────────────────
 test('resolveDbPath: --db flag wins', () => {
-  withEnv({ BRAIN_MEMORY_DB: '/env/brain.db' }, () => {
-    const result = resolveDbPath(['node', 'brain.js', '--db', '/flag/brain.db']);
-    assert.strictEqual(result, '/flag/brain.db', `Expected '/flag/brain.db', got '${result}'`);
+  withEnv({ RECENSE_DB: '/env/recense.db' }, () => {
+    const result = resolveDbPath(['node', 'brain.js', '--db', '/flag/recense.db']);
+    assert.strictEqual(result, '/flag/recense.db', `Expected '/flag/recense.db', got '${result}'`);
   });
 });
 
 // ── resolveDbPath: env wins over default ──────────────────────────────────────
-test('resolveDbPath: BRAIN_MEMORY_DB env wins over default', () => {
-  withEnv({ BRAIN_MEMORY_DB: '/env/brain.db' }, () => {
+test('resolveDbPath: RECENSE_DB env wins over default', () => {
+  withEnv({ RECENSE_DB: '/env/recense.db' }, () => {
     const result = resolveDbPath(['node', 'brain.js']);
-    assert.strictEqual(result, '/env/brain.db', `Expected '/env/brain.db', got '${result}'`);
+    assert.strictEqual(result, '/env/recense.db', `Expected '/env/recense.db', got '${result}'`);
   });
 });
 
-// ── defaultDbPath is ~/.config/brain-memory/brain.db ─────────────────────────
+// ── defaultDbPath is ~/.config/recense/recense.db ─────────────────────────
 test('defaultDbPath: correct default path', () => {
   const result = defaultDbPath();
-  const expected = path.join(os.homedir(), '.config', 'brain-memory', 'brain.db');
+  const expected = path.join(os.homedir(), '.config', 'recense', 'recense.db');
   assert.strictEqual(result, expected, `Expected '${expected}', got '${result}'`);
 });
 

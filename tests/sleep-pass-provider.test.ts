@@ -5,7 +5,7 @@
  * sleep-pass-cli's config build. No network, no DB: pure function over an env map.
  *
  * Invariants under test:
- *  - unset BRAIN_MEMORY_MODEL_PROVIDER → DEFAULT_CONFIG.modelProvider (unchanged).
+ *  - unset RECENSE_MODEL_PROVIDER → DEFAULT_CONFIG.modelProvider (unchanged).
  *  - unknown value → falls back to DEFAULT_CONFIG.modelProvider (fail safe).
  *  - explicit valid value ('local'/'vertex') → that provider.
  *  - localModel/localBaseUrl applied ONLY when provider resolves to 'local'.
@@ -24,17 +24,17 @@ describe('resolveProviderOverlay (sleep-pass provider resolution)', () => {
   });
 
   it('unknown provider value → falls back to DEFAULT_CONFIG provider (fail safe)', () => {
-    const overlay = resolveProviderOverlay({ BRAIN_MEMORY_MODEL_PROVIDER: 'gpt5-turbo' });
+    const overlay = resolveProviderOverlay({ RECENSE_MODEL_PROVIDER: 'gpt5-turbo' });
     expect(overlay.modelProvider).toBe(DEFAULT_CONFIG.modelProvider);
   });
 
   it("empty-string provider value → falls back to DEFAULT_CONFIG provider", () => {
-    const overlay = resolveProviderOverlay({ BRAIN_MEMORY_MODEL_PROVIDER: '' });
+    const overlay = resolveProviderOverlay({ RECENSE_MODEL_PROVIDER: '' });
     expect(overlay.modelProvider).toBe(DEFAULT_CONFIG.modelProvider);
   });
 
   it("provider='local' → 'local'; no local env → no overrides (DEFAULT_CONFIG kept)", () => {
-    const overlay = resolveProviderOverlay({ BRAIN_MEMORY_MODEL_PROVIDER: 'local' });
+    const overlay = resolveProviderOverlay({ RECENSE_MODEL_PROVIDER: 'local' });
     expect(overlay.modelProvider).toBe('local');
     expect(overlay.localModel).toBeUndefined();
     expect(overlay.localBaseUrl).toBeUndefined();
@@ -42,9 +42,9 @@ describe('resolveProviderOverlay (sleep-pass provider resolution)', () => {
 
   it("provider='local' with local env → applies localModel/localBaseUrl", () => {
     const overlay = resolveProviderOverlay({
-      BRAIN_MEMORY_MODEL_PROVIDER: 'local',
-      BRAIN_MEMORY_LOCAL_MODEL: 'qwen3:7b',
-      BRAIN_MEMORY_LOCAL_BASE_URL: 'http://localhost:1234/v1',
+      RECENSE_MODEL_PROVIDER: 'local',
+      RECENSE_LOCAL_MODEL: 'qwen3:7b',
+      RECENSE_LOCAL_BASE_URL: 'http://localhost:1234/v1',
     });
     expect(overlay.modelProvider).toBe('local');
     expect(overlay.localModel).toBe('qwen3:7b');
@@ -53,8 +53,8 @@ describe('resolveProviderOverlay (sleep-pass provider resolution)', () => {
 
   it("provider='vertex' → 'vertex'; local env ignored when not local", () => {
     const overlay = resolveProviderOverlay({
-      BRAIN_MEMORY_MODEL_PROVIDER: 'vertex',
-      BRAIN_MEMORY_LOCAL_MODEL: 'qwen3:7b',
+      RECENSE_MODEL_PROVIDER: 'vertex',
+      RECENSE_LOCAL_MODEL: 'qwen3:7b',
     });
     expect(overlay.modelProvider).toBe('vertex');
     expect(overlay.localModel).toBeUndefined();
@@ -62,40 +62,40 @@ describe('resolveProviderOverlay (sleep-pass provider resolution)', () => {
 });
 
 describe('resolveProviderOverlay (per-role provider routing)', () => {
-  it('role key set → wins over base BRAIN_MEMORY_MODEL_PROVIDER', () => {
+  it('role key set → wins over base RECENSE_MODEL_PROVIDER', () => {
     const overlay = resolveProviderOverlay(
-      { BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'local', BRAIN_MEMORY_MODEL_PROVIDER: 'vertex' },
-      'BRAIN_MEMORY_EXTRACTOR_PROVIDER',
+      { RECENSE_EXTRACTOR_PROVIDER: 'local', RECENSE_MODEL_PROVIDER: 'vertex' },
+      'RECENSE_EXTRACTOR_PROVIDER',
     );
     expect(overlay.modelProvider).toBe('local');
   });
 
   it('role key unset but base set → uses base', () => {
     const overlay = resolveProviderOverlay(
-      { BRAIN_MEMORY_MODEL_PROVIDER: 'vertex' },
-      'BRAIN_MEMORY_JUDGE_PROVIDER',
+      { RECENSE_MODEL_PROVIDER: 'vertex' },
+      'RECENSE_JUDGE_PROVIDER',
     );
     expect(overlay.modelProvider).toBe('vertex');
   });
 
   it('neither role nor base set → DEFAULT_CONFIG provider', () => {
-    const overlay = resolveProviderOverlay({}, 'BRAIN_MEMORY_JUDGE_PROVIDER');
+    const overlay = resolveProviderOverlay({}, 'RECENSE_JUDGE_PROVIDER');
     expect(overlay.modelProvider).toBe(DEFAULT_CONFIG.modelProvider);
     expect(overlay.modelProvider).toBe('anthropic');
   });
 
   it('unknown role value → falls back to base', () => {
     const overlay = resolveProviderOverlay(
-      { BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'gpt5-turbo', BRAIN_MEMORY_MODEL_PROVIDER: 'vertex' },
-      'BRAIN_MEMORY_EXTRACTOR_PROVIDER',
+      { RECENSE_EXTRACTOR_PROVIDER: 'gpt5-turbo', RECENSE_MODEL_PROVIDER: 'vertex' },
+      'RECENSE_EXTRACTOR_PROVIDER',
     );
     expect(overlay.modelProvider).toBe('vertex');
   });
 
   it('unknown role value AND no base → falls back to DEFAULT_CONFIG', () => {
     const overlay = resolveProviderOverlay(
-      { BRAIN_MEMORY_JUDGE_PROVIDER: 'gpt5-turbo' },
-      'BRAIN_MEMORY_JUDGE_PROVIDER',
+      { RECENSE_JUDGE_PROVIDER: 'gpt5-turbo' },
+      'RECENSE_JUDGE_PROVIDER',
     );
     expect(overlay.modelProvider).toBe(DEFAULT_CONFIG.modelProvider);
   });
@@ -103,11 +103,11 @@ describe('resolveProviderOverlay (per-role provider routing)', () => {
   it('role resolves to local → local-model overlay applies', () => {
     const overlay = resolveProviderOverlay(
       {
-        BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'local',
-        BRAIN_MEMORY_LOCAL_MODEL: 'qwen2.5:7b-instruct',
-        BRAIN_MEMORY_LOCAL_BASE_URL: 'http://localhost:11434/v1',
+        RECENSE_EXTRACTOR_PROVIDER: 'local',
+        RECENSE_LOCAL_MODEL: 'qwen2.5:7b-instruct',
+        RECENSE_LOCAL_BASE_URL: 'http://localhost:11434/v1',
       },
-      'BRAIN_MEMORY_EXTRACTOR_PROVIDER',
+      'RECENSE_EXTRACTOR_PROVIDER',
     );
     expect(overlay.modelProvider).toBe('local');
     expect(overlay.localModel).toBe('qwen2.5:7b-instruct');
@@ -116,8 +116,8 @@ describe('resolveProviderOverlay (per-role provider routing)', () => {
 
   it('role resolves to non-local → local-model overlay ignored', () => {
     const overlay = resolveProviderOverlay(
-      { BRAIN_MEMORY_JUDGE_PROVIDER: 'anthropic', BRAIN_MEMORY_LOCAL_MODEL: 'qwen2.5:7b-instruct' },
-      'BRAIN_MEMORY_JUDGE_PROVIDER',
+      { RECENSE_JUDGE_PROVIDER: 'anthropic', RECENSE_LOCAL_MODEL: 'qwen2.5:7b-instruct' },
+      'RECENSE_JUDGE_PROVIDER',
     );
     expect(overlay.modelProvider).toBe('anthropic');
     expect(overlay.localModel).toBeUndefined();
@@ -125,51 +125,51 @@ describe('resolveProviderOverlay (per-role provider routing)', () => {
 
   it('split routing: extractor=local, judge=anthropic from one env', () => {
     const env = {
-      BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'local',
-      BRAIN_MEMORY_JUDGE_PROVIDER: 'anthropic',
-      BRAIN_MEMORY_LOCAL_MODEL: 'qwen2.5:7b-instruct',
+      RECENSE_EXTRACTOR_PROVIDER: 'local',
+      RECENSE_JUDGE_PROVIDER: 'anthropic',
+      RECENSE_LOCAL_MODEL: 'qwen2.5:7b-instruct',
     };
-    const extractor = resolveProviderOverlay(env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER');
-    const judge = resolveProviderOverlay(env, 'BRAIN_MEMORY_JUDGE_PROVIDER');
+    const extractor = resolveProviderOverlay(env, 'RECENSE_EXTRACTOR_PROVIDER');
+    const judge = resolveProviderOverlay(env, 'RECENSE_JUDGE_PROVIDER');
     expect(extractor.modelProvider).toBe('local');
     expect(extractor.localModel).toBe('qwen2.5:7b-instruct');
     expect(judge.modelProvider).toBe('anthropic');
     expect(judge.localModel).toBeUndefined();
   });
 
-  it('per-role local model: role-specific key wins over shared BRAIN_MEMORY_LOCAL_MODEL', () => {
+  it('per-role local model: role-specific key wins over shared RECENSE_LOCAL_MODEL', () => {
     const env = {
-      BRAIN_MEMORY_EXTRACTOR_PROVIDER: 'local',
-      BRAIN_MEMORY_JUDGE_PROVIDER: 'local',
-      BRAIN_MEMORY_EXTRACTOR_LOCAL_MODEL: 'qwen2.5:7b-instruct',
-      BRAIN_MEMORY_JUDGE_LOCAL_MODEL: 'qwen3.6:35b-a3b',
-      BRAIN_MEMORY_LOCAL_MODEL: 'shared-fallback',
+      RECENSE_EXTRACTOR_PROVIDER: 'local',
+      RECENSE_JUDGE_PROVIDER: 'local',
+      RECENSE_EXTRACTOR_LOCAL_MODEL: 'qwen2.5:7b-instruct',
+      RECENSE_JUDGE_LOCAL_MODEL: 'qwen3.6:35b-a3b',
+      RECENSE_LOCAL_MODEL: 'shared-fallback',
     };
-    const extractor = resolveProviderOverlay(env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER');
-    const judge = resolveProviderOverlay(env, 'BRAIN_MEMORY_JUDGE_PROVIDER');
+    const extractor = resolveProviderOverlay(env, 'RECENSE_EXTRACTOR_PROVIDER');
+    const judge = resolveProviderOverlay(env, 'RECENSE_JUDGE_PROVIDER');
     expect(extractor.localModel).toBe('qwen2.5:7b-instruct');
     expect(judge.localModel).toBe('qwen3.6:35b-a3b');
   });
 
   it('per-role local model: absent role key falls back to shared, then config default', () => {
     const shared = resolveProviderOverlay(
-      { BRAIN_MEMORY_JUDGE_PROVIDER: 'local', BRAIN_MEMORY_LOCAL_MODEL: 'shared-model' },
-      'BRAIN_MEMORY_JUDGE_PROVIDER',
+      { RECENSE_JUDGE_PROVIDER: 'local', RECENSE_LOCAL_MODEL: 'shared-model' },
+      'RECENSE_JUDGE_PROVIDER',
     );
     expect(shared.localModel).toBe('shared-model');
 
     const none = resolveProviderOverlay(
-      { BRAIN_MEMORY_JUDGE_PROVIDER: 'local' },
-      'BRAIN_MEMORY_JUDGE_PROVIDER',
+      { RECENSE_JUDGE_PROVIDER: 'local' },
+      'RECENSE_JUDGE_PROVIDER',
     );
     expect(none.localModel).toBeUndefined(); // DEFAULT_CONFIG.localModel kept downstream
   });
 
   it('per-role local model: no roleEnvKey → shared key only (bc2 backward-compat)', () => {
     const overlay = resolveProviderOverlay({
-      BRAIN_MEMORY_MODEL_PROVIDER: 'local',
-      BRAIN_MEMORY_JUDGE_LOCAL_MODEL: 'must-not-apply',
-      BRAIN_MEMORY_LOCAL_MODEL: 'shared-model',
+      RECENSE_MODEL_PROVIDER: 'local',
+      RECENSE_JUDGE_LOCAL_MODEL: 'must-not-apply',
+      RECENSE_LOCAL_MODEL: 'shared-model',
     });
     expect(overlay.localModel).toBe('shared-model');
   });

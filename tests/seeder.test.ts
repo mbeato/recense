@@ -73,7 +73,7 @@ describe('INGEST-03: ColdStartSeeder', () => {
 
   /** Two scripted claims: first links to second — exercises wikilink edge creation. */
   const SCRIPTED_CLAIMS: ExtractedClaim[] = [
-    { type: 'entity', value: 'brain-memory is a project', links: ['TypeScript'] },
+    { type: 'entity', value: 'recense is a project', links: ['TypeScript'] },
     { type: 'fact', value: 'TypeScript', links: [] },
   ];
 
@@ -149,14 +149,14 @@ describe('INGEST-03: ColdStartSeeder', () => {
     expect(edge.rel).toBe('links_to');
     expect(edge.kind).toBe('relation');
 
-    // Verify src = 'brain-memory is a project' and dst = 'TypeScript'
+    // Verify src = 'recense is a project' and dst = 'TypeScript'
     const srcNode = db
       .prepare('SELECT value FROM node WHERE id = ?')
       .get(edge.src) as { value: string } | undefined;
     const dstNode = db
       .prepare('SELECT value FROM node WHERE id = ?')
       .get(edge.dst) as { value: string } | undefined;
-    expect(srcNode?.value).toBe('brain-memory is a project');
+    expect(srcNode?.value).toBe('recense is a project');
     expect(dstNode?.value).toBe('TypeScript');
   });
 

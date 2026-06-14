@@ -4,7 +4,7 @@
  *
  * `tsc` only compiles .ts → .js; it does NOT copy the static frontend (index.html) or the
  * vendored libraries (three.js, 3d-force-graph) into dist. But the compiled server resolves
- * its asset root from __dirname (dist/src/viz/), so without this step `brain viz` serves a
+ * its asset root from __dirname (dist/src/viz/), so without this step `recense viz` serves a
  * 503 "frontend not yet built" and the vendor files 404. Run from postbuild after tsc.
  *
  * Cross-platform (fs.cpSync, Node >=16.7) for the Windows CI matrix.

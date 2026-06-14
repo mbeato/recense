@@ -21,7 +21,7 @@
  *        external_id) in EpisodicStore is the correctness backstop for any cursor gap.
  *  D-68: OAuth credentials (GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN)
  *        are read from process.env ON FIRST fetchMessages CALL — never at construction
- *        (T-05-KEY/T-06-12). Credentials must live in ~/.config/brain-memory/sleep.env
+ *        (T-05-KEY/T-06-12). Credentials must live in ~/.config/recense/sleep.env
  *        (chmod 600, gitignored). NEVER log the refresh token or client secret.
  *
  * Package legitimacy (T-06-SC): `googleapis` is the official Google-maintained client
@@ -136,7 +136,7 @@ class RealGmailFetcher implements GmailFetcher {
     if (!clientId || !clientSecret || !refreshToken) {
       throw new Error(
         'Gmail OAuth credentials missing — set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and ' +
-        'GMAIL_REFRESH_TOKEN in ~/.config/brain-memory/sleep.env (D-68)'
+        'GMAIL_REFRESH_TOKEN in ~/.config/recense/sleep.env (D-68)'
       );
     }
 

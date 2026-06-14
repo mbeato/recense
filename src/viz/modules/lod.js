@@ -1,6 +1,6 @@
 /**
  * @module lod
- * brain-memory viz — schema-cluster LOD (Level of Detail) classification and
+ * recense viz — schema-cluster LOD (Level of Detail) classification and
  * graph visibility callbacks.
  *
  * Preserves the exact observable semantics of the reference implementation

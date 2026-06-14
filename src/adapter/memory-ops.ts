@@ -42,7 +42,7 @@ import { newId } from '../lib/hash';
 import { acquireLockWithRetry, releaseLock } from './lockfile';
 import { resolveDirtySentinelPath } from './runtime-config';
 
-const LOG_PATH = '/tmp/brain-memory-ops.log';
+const LOG_PATH = '/tmp/recense-ops.log';
 
 /** Append a timestamped line to the log file (never stdout). */
 const log = (msg: string): void =>
@@ -210,14 +210,14 @@ export function wireMemoryEngine(
 
   // M-7 overlay: generate+judge follow provider env overrides; embed stays base.
   // Only constructed when no provider is injected (tests inject MockModelProvider).
-  const generateConfig = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_EXTRACTOR_PROVIDER') };
-  const judgeConfig    = { ...config, ...resolveProviderOverlay(process.env, 'BRAIN_MEMORY_JUDGE_PROVIDER') };
+  const generateConfig = { ...config, ...resolveProviderOverlay(process.env, 'RECENSE_EXTRACTOR_PROVIDER') };
+  const judgeConfig    = { ...config, ...resolveProviderOverlay(process.env, 'RECENSE_JUDGE_PROVIDER') };
   const provider = opts.provider
     ?? new DefaultModelProvider({ generateConfig, judgeConfig, embedConfig: config });
 
   // Viz trace sink for the long-running surfaces (MCP/HTTP/Telegram via this factory):
   // flag-gated SwitchableActivationTraceSink, refreshed once per retrieval-serving request
-  // (search/ask) so `brain viz` flag flips take effect without a restart. D-97's
+  // (search/ask) so `recense viz` flag flips take effect without a restart. D-97's
   // load-bearing scope is the SessionStart hook hot path (session-start-cli) — that stays
   // hard-wired Noop and never reads the flag; it does NOT go through this factory.
   // Construction must stay after initSchema(writeDb): the sink's constructor prepares a
@@ -245,7 +245,7 @@ export function wireMemoryEngine(
   // ── 4. Plain-data operation functions ────────────────────────────────────
 
   async function search(query: string): Promise<SearchRow[]> {
-    // Per-request flag re-read: lets a long-running process pick up `brain viz`
+    // Per-request flag re-read: lets a long-running process pick up `recense viz`
     // flag flips without restart (one indexed meta read).
     traceSink.refresh();
     // T-11-02/T-12-02: query is data only — bounded, embedded, never interpolated.

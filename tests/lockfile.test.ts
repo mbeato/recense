@@ -22,18 +22,18 @@ import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import { acquireLock, releaseLock, heartbeatLock, LOCK_STALE_MS } from '../src/adapter/lockfile';
 
 /** Per-pid hermetic lock path — never collides with the production lock or sibling forks. */
-const TEST_LOCK_PATH = join(tmpdir(), `brain-memory-test-lock-${process.pid}.lock`);
+const TEST_LOCK_PATH = join(tmpdir(), `recense-test-lock-${process.pid}.lock`);
 
 describe('acquireLock / releaseLock', () => {
   beforeAll(() => {
     // DEBT-02: set hermetic path before any acquireLock/releaseLock calls.
     // Functions read the env var at call time (getLockPath()), so this is safe
     // even though it runs after the module has already been imported.
-    process.env['BRAIN_MEMORY_LOCK_PATH'] = TEST_LOCK_PATH;
+    process.env['RECENSE_LOCK_PATH'] = TEST_LOCK_PATH;
   });
 
   afterAll(() => {
-    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    delete process.env['RECENSE_LOCK_PATH'];
   });
 
   afterEach(() => {
@@ -85,14 +85,14 @@ describe('acquireLock / releaseLock', () => {
 // ---------------------------------------------------------------------------
 
 describe('acquireLock — H-4b: PID-liveness check on fresh locks', () => {
-  const FRESH_LOCK_PATH = join(tmpdir(), `brain-memory-fresh-lock-${process.pid}.lock`);
+  const FRESH_LOCK_PATH = join(tmpdir(), `recense-fresh-lock-${process.pid}.lock`);
 
   beforeAll(() => {
-    process.env['BRAIN_MEMORY_LOCK_PATH'] = FRESH_LOCK_PATH;
+    process.env['RECENSE_LOCK_PATH'] = FRESH_LOCK_PATH;
   });
 
   afterAll(() => {
-    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    delete process.env['RECENSE_LOCK_PATH'];
   });
 
   afterEach(() => {
@@ -138,14 +138,14 @@ describe('acquireLock — H-4b: PID-liveness check on fresh locks', () => {
 // ---------------------------------------------------------------------------
 
 describe('acquireLock — H-4a: atomic stale-takeover (single-winner)', () => {
-  const TOCTOU_LOCK_PATH = join(tmpdir(), `brain-memory-toctou-lock-${process.pid}.lock`);
+  const TOCTOU_LOCK_PATH = join(tmpdir(), `recense-toctou-lock-${process.pid}.lock`);
 
   beforeAll(() => {
-    process.env['BRAIN_MEMORY_LOCK_PATH'] = TOCTOU_LOCK_PATH;
+    process.env['RECENSE_LOCK_PATH'] = TOCTOU_LOCK_PATH;
   });
 
   afterAll(() => {
-    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    delete process.env['RECENSE_LOCK_PATH'];
   });
 
   afterEach(() => {
@@ -178,14 +178,14 @@ describe('acquireLock — H-4a: atomic stale-takeover (single-winner)', () => {
 // ---------------------------------------------------------------------------
 
 describe('releaseLock — L-3: empty-but-fresh lock left intact', () => {
-  const L3_LOCK_PATH = join(tmpdir(), `brain-memory-l3-lock-${process.pid}.lock`);
+  const L3_LOCK_PATH = join(tmpdir(), `recense-l3-lock-${process.pid}.lock`);
 
   beforeAll(() => {
-    process.env['BRAIN_MEMORY_LOCK_PATH'] = L3_LOCK_PATH;
+    process.env['RECENSE_LOCK_PATH'] = L3_LOCK_PATH;
   });
 
   afterAll(() => {
-    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    delete process.env['RECENSE_LOCK_PATH'];
   });
 
   afterEach(() => {
@@ -222,14 +222,14 @@ describe('releaseLock — L-3: empty-but-fresh lock left intact', () => {
 // ---------------------------------------------------------------------------
 
 describe('heartbeatLock — L-11: mtime heartbeat', () => {
-  const HEARTBEAT_LOCK_PATH = join(tmpdir(), `brain-memory-heartbeat-lock-${process.pid}.lock`);
+  const HEARTBEAT_LOCK_PATH = join(tmpdir(), `recense-heartbeat-lock-${process.pid}.lock`);
 
   beforeAll(() => {
-    process.env['BRAIN_MEMORY_LOCK_PATH'] = HEARTBEAT_LOCK_PATH;
+    process.env['RECENSE_LOCK_PATH'] = HEARTBEAT_LOCK_PATH;
   });
 
   afterAll(() => {
-    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    delete process.env['RECENSE_LOCK_PATH'];
   });
 
   afterEach(() => {

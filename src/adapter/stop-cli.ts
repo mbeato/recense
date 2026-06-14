@@ -31,7 +31,7 @@ import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
 import { AllocationGate, EpisodicStore, IngestionPipeline } from '../ingest/pipeline';
 
-const ERROR_LOG = '/tmp/brain-memory-hook-errors.log';
+const ERROR_LOG = '/tmp/recense-hook-errors.log';
 
 /** Drain stdin — harness blocks on write if not drained (confirmed: lib.ts pattern). */
 async function consumeStdin(): Promise<Record<string, unknown>> {
@@ -54,7 +54,7 @@ async function consumeStdin(): Promise<Record<string, unknown>> {
 function spawnSleepPass(dbPath: string): void {
   const sleepPassScript = resolve(__dirname, 'sleep-pass-cli.js');
   // WR-04: the per-turn sleep pass makes Haiku + embedding calls, so it needs the
-  // API keys. On a `brain init` install those live in the configured env file, not
+  // API keys. On a `recense init` install those live in the configured env file, not
   // the hook's ambient env. Merge them in; explicitly-exported process.env wins.
   const child = spawn(
     process.execPath,                    // same node binary — avoids PATH issues in hook context
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
     ? input['session_id'] : 'unknown';
   const cwd       = typeof input['cwd'] === 'string' ? input['cwd'] : '';
 
-  // CR-01: --db (pinned by `brain init`) > BRAIN_MEMORY_DB env > shared default.
+  // CR-01: --db (pinned by `recense init`) > RECENSE_DB env > shared default.
   const dbPath = resolveDbPath();
 
   if (assistantText) {

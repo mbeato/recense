@@ -330,7 +330,7 @@ export interface EngineConfig {
    * Min distinct non-inferred supporting instances for a candidate cluster to become
    * a named schema (D-36). N=3 balances noise (too few → spurious schemas) vs.
    * latency (too high → schemas never form on sparse MEMORY.md cadence).
-   * Tune against real brain.db — start conservative.
+   * Tune against real recense.db — start conservative.
    */
   schemaMinSupport: number;
 
@@ -388,14 +388,14 @@ export interface EngineConfig {
   /**
    * Min member-centroid cosine for a schema_rel edge to form (SREL-01, D-01).
    * High default → few, high-confidence edges only. Calibration placeholder (D-13):
-   * start conservative and loosen against observed graph density on real ~1.5k-node brain.db.
+   * start conservative and loosen against observed graph density on real ~1.5k-node recense.db.
    */
   schemaRelSimilarityThreshold: number;
 
   /**
    * Agglomerative-merge distance cut in (1 − cosine) space (SREL-02, D-03).
    * Schema pairs whose centroid cosine ≳ 0.65 (1−0.35 = 0.65) merge into a super-schema.
-   * Calibration placeholder (D-13): tune against real brain.db — lower = more aggressive merge.
+   * Calibration placeholder (D-13): tune against real recense.db — lower = more aggressive merge.
    * Consumed by plan 18-02 (SREL-02); present here so 18-01/18-02 stay parallel.
    */
   schemaClusterCutHeight: number;
@@ -418,7 +418,7 @@ export interface EngineConfig {
    * query changes that may cause gaps (historyId cursor is query-independent).
    *
    * OAuth note (D-68): Gmail refresh token + client ID/secret live EXCLUSIVELY in
-   * ~/.config/brain-memory/sleep.env (chmod 600, gitignored), sourced by the launchd
+   * ~/.config/recense/sleep.env (chmod 600, gitignored), sourced by the launchd
    * wrapper — same secret-handling pattern as the LLM keys. Never add a token or
    * clientSecret field here. Secrets must not appear in config literals.
    */
@@ -458,8 +458,8 @@ export interface EngineConfig {
   /**
    * Path to the dirty-sentinel file touched on every real new non-inferred episode write.
    * Empty string = disabled (fail-safe default — no filesystem access unless set).
-   * Set to ~/.config/brain-memory/.episodes-dirty in the dogfood/launchd setup via
-   * BRAIN_MEMORY_DIRTY_SENTINEL; launchd WatchPaths watches the same path.
+   * Set to ~/.config/recense/.episodes-dirty in the dogfood/launchd setup via
+   * RECENSE_DIRTY_SENTINEL; launchd WatchPaths watches the same path.
    * The touch is a no-op when this field is empty — unit tests and embedded uses
    * never hit the filesystem (matches the coldStartMemoryDir / transcripts.dir pattern).
    */
@@ -546,8 +546,8 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   trainingConfidenceThreshold: 0.6,
   maxContentBytes: 8_000,
   salience: DEFAULT_SALIENCE_CONFIG,
-  coldStartMemoryDir: '', // empty = disabled; set BRAIN_MEMORY_COLD_START_MEMORY_DIR or configure (D-79)
-  coldStartClaudeFile: '', // empty = disabled; set BRAIN_MEMORY_COLD_START_CLAUDE_FILE or configure (D-79)
+  coldStartMemoryDir: '', // empty = disabled; set RECENSE_COLD_START_MEMORY_DIR or configure (D-79)
+  coldStartClaudeFile: '', // empty = disabled; set RECENSE_COLD_START_CLAUDE_FILE or configure (D-79)
   modelProvider: 'anthropic',
   anthropicModel: 'claude-haiku-4-5-20251001',
   vertexProjectId: '',
@@ -582,7 +582,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   snapshotMatchThreshold: 0.85, // default; recalibrate via scripts/eval/calibrate-snapshot-threshold.cjs (2026-06-09) once eval_snapshot rows exist — must stay above deletedSimilarityThreshold (0.7)
 
   // Phase 18: schema-relations-engine (SREL-01/02/03) — calibration placeholders (D-13)
-  schemaRelSimilarityThreshold: 0.8,  // start conservative; tune against real brain.db (D-01)
+  schemaRelSimilarityThreshold: 0.8,  // start conservative; tune against real recense.db (D-01)
   schemaClusterCutHeight: 0.35,       // 1−0.35 = 0.65 cosine floor for super-schema merge (D-03); plan 18-02 consumer
   recallSidewaysHopBudget: 3,         // max related-schema fan-out per sideways hop (D-05); plan 18-03 consumer
 
@@ -609,6 +609,6 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   },
 
   // On-write sleep-pass trigger (L8N-01)
-  dirtySentinelPath: '', // empty = disabled; set BRAIN_MEMORY_DIRTY_SENTINEL or configure
+  dirtySentinelPath: '', // empty = disabled; set RECENSE_DIRTY_SENTINEL or configure
 
 };

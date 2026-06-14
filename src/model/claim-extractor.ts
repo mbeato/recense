@@ -56,9 +56,9 @@ Return ONLY a valid JSON array — no preamble, no explanation, no markdown fenc
 
 Example:
 [
-  {"type":"entity","value":"Jane Doe is the founder","links":["brain-memory project"]},
+  {"type":"entity","value":"Jane Doe is the founder","links":["recense project"]},
   {"type":"fact","value":"Never inflate metrics","links":[]},
-  {"type":"entity","value":"brain-memory project"}
+  {"type":"entity","value":"recense project"}
 ]
 
 Document type: `;
@@ -228,7 +228,7 @@ export function parseClaims(text: string): ExtractedClaim[] {
           const salvaged = parseClaimsFromArray(partialRaw);
           if (salvaged.length > 0) {
             console.warn(
-              `[brain-memory] parseClaims: no closing ']' — salvaged ${salvaged.length} claim(s) from truncated array`,
+              `[recense] parseClaims: no closing ']' — salvaged ${salvaged.length} claim(s) from truncated array`,
             );
             return salvaged;
           }
@@ -261,7 +261,7 @@ export function parseClaims(text: string): ExtractedClaim[] {
           const salvaged = parseClaimsFromArray(partialRaw);
           if (salvaged.length > 0) {
             console.warn(
-              `[brain-memory] parseClaims: malformed JSON array — salvaged ${salvaged.length} claim(s)`,
+              `[recense] parseClaims: malformed JSON array — salvaged ${salvaged.length} claim(s)`,
             );
             return salvaged;
           }
@@ -282,7 +282,7 @@ export function parseClaims(text: string): ExtractedClaim[] {
           const salvaged = parseClaimsFromArray(partialRaw);
           if (salvaged.length > 0) {
             console.warn(
-              `[brain-memory] parseClaims: malformed span (] in value?) — salvaged ${salvaged.length} claim(s)`,
+              `[recense] parseClaims: malformed span (] in value?) — salvaged ${salvaged.length} claim(s)`,
             );
             return salvaged;
           }
@@ -352,7 +352,7 @@ export async function extractClaimsWithChunking(
   }
 
   console.warn(
-    `[brain-memory] extractClaimsWithChunking: content ${content.length} chars exceeds ` +
+    `[recense] extractClaimsWithChunking: content ${content.length} chars exceeds ` +
       `EXTRACTION_CHUNK_CHARS (${EXTRACTION_CHUNK_CHARS}) — splitting into chunks`,
   );
   const chunks = splitIntoChunks(content, EXTRACTION_CHUNK_CHARS);

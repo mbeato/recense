@@ -18,7 +18,7 @@
  *
  * Write/compose tests use a temp-file DB (':memory:' is per-connection — a second
  * verification handle could not see the server's writes) and override
- * BRAIN_MEMORY_LOCK_PATH so lock acquisition is hermetic per test dir.
+ * RECENSE_LOCK_PATH so lock acquisition is hermetic per test dir.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -343,7 +343,7 @@ describe('mcp-server memory_add (episodic-only write)', () => {
     dbPath = join(tmpDir, 'test.db');
     lockPath = join(tmpDir, 'test.lock');
     // Hermetic lock: never touch the real /tmp sleep-pass lock (DEBT-02 call-time read).
-    process.env['BRAIN_MEMORY_LOCK_PATH'] = lockPath;
+    process.env['RECENSE_LOCK_PATH'] = lockPath;
     const mock = new MockModelProvider({
       embedFn: () => new Float32Array([0.1, 0.2, 0.3]),
     });
@@ -352,7 +352,7 @@ describe('mcp-server memory_add (episodic-only write)', () => {
 
   afterEach(async () => {
     await client.close();
-    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    delete process.env['RECENSE_LOCK_PATH'];
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -452,13 +452,13 @@ describe('mcp-server memory_ask (responder mapping)', () => {
     dbPath = join(tmpDir, 'test.db');
     // Hermetic lock: memory_ask acquires the single-writer lock (the responder's
     // facts-first branch appends one inferred/salience-0 episode — a write).
-    process.env['BRAIN_MEMORY_LOCK_PATH'] = join(tmpDir, 'test.lock');
+    process.env['RECENSE_LOCK_PATH'] = join(tmpDir, 'test.lock');
   });
 
   afterEach(async () => {
     await client?.close();
     client = undefined;
-    delete process.env['BRAIN_MEMORY_LOCK_PATH'];
+    delete process.env['RECENSE_LOCK_PATH'];
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -543,7 +543,7 @@ describe('mcp-server memory_ask (responder mapping)', () => {
       embedFn: () => new Float32Array([0.1, 0.2, 0.3]),
     });
     client = await connectClient({ dbPath, provider: mock });
-    writeFileSync(process.env['BRAIN_MEMORY_LOCK_PATH']!, String(process.pid));
+    writeFileSync(process.env['RECENSE_LOCK_PATH']!, String(process.pid));
     const result = await client.callTool({
       name: 'memory_ask',
       arguments: { query: 'blocked?' },

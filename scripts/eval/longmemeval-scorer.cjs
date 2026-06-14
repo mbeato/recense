@@ -19,7 +19,7 @@
  *     --out /tmp/lme-score.json
  *
  * The KU (knowledge-update) sub-score is always surfaced in scores.by_category —
- * this is brain-memory's highest-positioning number (PE-gated reconsolidation structural edge).
+ * this is recense's highest-positioning number (PE-gated reconsolidation structural edge).
  *
  * Output envelope:
  *   { meta: { eval, date, commit, engine_version, questions_total, judge_model },

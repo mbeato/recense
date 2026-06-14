@@ -66,7 +66,7 @@ for (const c of cases) {
 
 // ── Few-shot regurgitation check (CONVERSATION prompt examples, lower-cased) ─
 const REGREG_FRAGMENTS = [
-  'jane doe', 'brain-memory project', '45 minutes each way',
+  'jane doe', 'recense project', '45 minutes each way',
   'react summit', 'dark roast coffee',
 ];
 /**

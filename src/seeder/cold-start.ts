@@ -55,8 +55,8 @@ export class ColdStartSeeder {
     // preserving the one-shot guard for a later correctly-configured run.
     if (sources.length === 0) {
       throw new Error(
-        'brain-seed: no source files resolved — set BRAIN_MEMORY_COLD_START_MEMORY_DIR / ' +
-          'BRAIN_MEMORY_COLD_START_CLAUDE_FILE (or configure coldStartMemoryDir/coldStartClaudeFile) ' +
+        'brain-seed: no source files resolved — set RECENSE_COLD_START_MEMORY_DIR / ' +
+          'RECENSE_COLD_START_CLAUDE_FILE (or configure coldStartMemoryDir/coldStartClaudeFile) ' +
           'and re-run. The one-shot seeded flag has NOT been set.',
       );
     }

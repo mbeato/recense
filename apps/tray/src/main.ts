@@ -11,7 +11,7 @@
  *   D-96: stopServer() SIGTERMs the child on every quit path; the child's own exit
  *         handler restores viz_trace_enabled OFF — the tray never opens a second
  *         DB write handle for the flag.
- *   L-10: a missing brain.db shows a dialog and quits; no silent empty-DB spawn.
+ *   L-10: a missing recense.db shows a dialog and quits; no silent empty-DB spawn.
  *   D-12: macOS-only APIs (setActivationPolicy, getLoginItemSettings) are guarded
  *         by process.platform === 'darwin' so the type-check passes on Linux CI.
  *   T-16-12: 'requires-approval' login-item status opens System Settings immediately
@@ -36,7 +36,7 @@ import { openMainWindow, setCollapseHandler } from './main-window';
 // Logging (append-only — never stdout for a background app)
 // ---------------------------------------------------------------------------
 
-const LOG_PATH = '/tmp/brain-memory-tray.log';
+const LOG_PATH = '/tmp/recense-tray.log';
 
 function log(msg: string): void {
   try {
@@ -168,7 +168,7 @@ app
     initLoginItem();
 
     // L-10: ensure viz server is running or can be spawned before creating
-    // the popover/tray — a missing brain.db shows a dialog and quits cleanly.
+    // the popover/tray — a missing recense.db shows a dialog and quits cleanly.
     let handle: ServerHandle = { attached: false, child: null };
 
     // Temporary icon/popover references; assigned after ensureServer resolves.
@@ -190,7 +190,7 @@ app
       if (err instanceof MissingDbError) {
         dialog.showErrorBox(
           'Recense',
-          `DB not found at ${err.dbPath}\n\nRun \`brain init\` first to set up brain-memory.`,
+          `DB not found at ${err.dbPath}\n\nRun \`recense init\` first to set up recense.`,
         );
       } else if (err instanceof MissingBrainJsError) {
         dialog.showErrorBox('Recense', (err as Error).message);

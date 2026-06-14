@@ -3,9 +3,9 @@
  *
  * Task 1 (unit): recordSnapshot inserts correctly; replaySnapshots distinguishes
  *   match (cosine ≥ τ) from regression (cosine < τ) on the deterministic LLM-free path.
- * Task 2 (round-trip): engine-level round-trip against a COPY of brain.db —
+ * Task 2 (round-trip): engine-level round-trip against a COPY of recense.db —
  *   record one snapshot from a real top-ranked node, replay, assert matched=1 regressions=0.
- *   Guarded by fs.existsSync('brain.db') AND process.env.OPENAI_API_KEY — skipped when absent.
+ *   Guarded by fs.existsSync('recense.db') AND process.env.OPENAI_API_KEY — skipped when absent.
  */
 import Database from 'better-sqlite3';
 import fs from 'fs';
@@ -195,24 +195,24 @@ describe('eval-snapshot', () => {
     });
   });
 
-  // ─── Task 2: round-trip on real brain.db copy ──────────────────────────────
-  // Guarded: skipped when brain.db absent or OPENAI_API_KEY not set
+  // ─── Task 2: round-trip on real recense.db copy ──────────────────────────────
+  // Guarded: skipped when recense.db absent or OPENAI_API_KEY not set
 
-  describe('round-trip on real brain.db copy', () => {
-    const BRAIN_DB = path.resolve('brain.db');
+  describe('round-trip on real recense.db copy', () => {
+    const BRAIN_DB = path.resolve('recense.db');
     const hasDb = fs.existsSync(BRAIN_DB);
     const hasApiKey = !!process.env['OPENAI_API_KEY'];
-    const hasLiveFlag = !!process.env['BRAIN_MEMORY_RUN_LIVE_TESTS'];
+    const hasLiveFlag = !!process.env['RECENSE_RUN_LIVE_TESTS'];
     const skipReason = !hasDb
-      ? 'brain.db not found (CI guard)'
+      ? 'recense.db not found (CI guard)'
       : !hasApiKey
         ? 'OPENAI_API_KEY not set (CI guard)'
         : !hasLiveFlag
-          ? 'BRAIN_MEMORY_RUN_LIVE_TESTS not set — skipped to prevent accidental token burn'
+          ? 'RECENSE_RUN_LIVE_TESTS not set — skipped to prevent accidental token burn'
           : null;
 
     it.skipIf(!!skipReason)(`record→replay matched=1 regressions=0 (ROADMAP SC3 / D-54)`, async () => {
-      // Copy brain.db to a tmp path so we never touch the real store
+      // Copy recense.db to a tmp path so we never touch the real store
       const tmpDb = path.join(require('os').tmpdir(), `seam03-snap-test-${Date.now()}.db`);
       fs.copyFileSync(BRAIN_DB, tmpDb);
       const copyDb = new Database(tmpDb);

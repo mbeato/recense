@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# setup-dogfood.sh — one-time dogfood cutover for brain-memory (ADAPT-01/02, D-88).
+# setup-dogfood.sh — one-time dogfood cutover for recense (ADAPT-01/02, D-88).
 #
 # D-88 migration (OSS floor): hook entries now reference the `brain` dispatcher
-# (`brain hook session-start`, `brain hook turn-capture`, `brain hook stop`) instead
-# of the old standalone *-cli.js paths. `brain init` is the preferred new-install path;
+# (`recense hook session-start`, `recense hook turn-capture`, `recense hook stop`) instead
+# of the old standalone *-cli.js paths. `recense init` is the preferred new-install path;
 # this script remains for manual/CI wiring and legacy reference.
 #
 # What this script does:
@@ -41,57 +41,57 @@ NODE_BIN="$(cd "$(dirname "$NODE_BIN")" && pwd)/$(basename "$NODE_BIN")"
 DIST_ADAPTER="$PROJECT_ROOT/dist/src/adapter"
 # D-88: brain dispatcher — single entry point for all subcommands
 BRAIN_JS="$DIST_ADAPTER/brain.js"
-# Hook CLIs invoked via the brain dispatcher (brain hook session-start, etc.)
+# Hook CLIs invoked via the brain dispatcher (recense hook session-start, etc.)
 SESSION_START_CLI="$DIST_ADAPTER/session-start-cli.js"
 TURN_CAPTURE_CLI="$DIST_ADAPTER/turn-capture-cli.js"
 STOP_CLI="$DIST_ADAPTER/stop-cli.js"
-# Sleep-pass and ingest CLIs (invoked via the launchd wrapper using BRAIN_MEMORY_SLEEP_JS)
-# Dispatcher forms: brain sleep-pass (hourly consolidation), brain ingest (pull + consolidate)
+# Sleep-pass and ingest CLIs (invoked via the launchd wrapper using RECENSE_SLEEP_JS)
+# Dispatcher forms: recense sleep-pass (hourly consolidation), recense ingest (pull + consolidate)
 SLEEP_PASS_CLI="$DIST_ADAPTER/sleep-pass-cli.js"
-# brain ingest CLI — multi-source pull-then-consolidate (D-66); dispatcher form: brain ingest
-# Swap BRAIN_MEMORY_SLEEP_JS to this path in sleep.env to enable multi-channel ingestion.
+# recense ingest CLI — multi-source pull-then-consolidate (D-66); dispatcher form: recense ingest
+# Swap RECENSE_SLEEP_JS to this path in sleep.env to enable multi-channel ingestion.
 # enabledSources defaults to [] so it is a safe drop-in before any source is activated.
 INGEST_CLI="$DIST_ADAPTER/ingest-cli.js"
-# brain-seed CLI — one-shot cold-start bootstrap (D-77/D-82); dispatcher form: brain seed
+# brain-seed CLI — one-shot cold-start bootstrap (D-77/D-82); dispatcher form: recense seed
 # Documented in step 6 below; not auto-run (operator-driven, one-shot + lock-guarded).
 SEED_CLI="$DIST_ADAPTER/seed-cli.js"
 
 # DB path: env var takes precedence; fall back to project default
-DB_PATH="${BRAIN_MEMORY_DB:-$PROJECT_ROOT/brain.db}"
+DB_PATH="${RECENSE_DB:-$PROJECT_ROOT/recense.db}"
 
 # Per-role split config for the detached sleep pass (validated config defaults).
 # Extraction → local model; judge → anthropic. Env vars override.
 # IN-04: this LOCAL_MODEL is the dogfood *extractor* default (lighter/faster) and is
 # intentionally distinct from the engine's `localModel` default in src/lib/config.ts
 # (qwen3.6:35b-a3b — the empirically-validated judge-grade model). They serve different
-# roles; override either via BRAIN_MEMORY_LOCAL_MODEL. Not a divergence bug.
-EXTRACTOR_PROVIDER="${BRAIN_MEMORY_EXTRACTOR_PROVIDER:-local}"
-LOCAL_MODEL="${BRAIN_MEMORY_LOCAL_MODEL:-qwen2.5:7b-instruct}"
-JUDGE_PROVIDER="${BRAIN_MEMORY_JUDGE_PROVIDER:-anthropic}"
+# roles; override either via RECENSE_LOCAL_MODEL. Not a divergence bug.
+EXTRACTOR_PROVIDER="${RECENSE_EXTRACTOR_PROVIDER:-local}"
+LOCAL_MODEL="${RECENSE_LOCAL_MODEL:-qwen2.5:7b-instruct}"
+JUDGE_PROVIDER="${RECENSE_JUDGE_PROVIDER:-anthropic}"
 
 # Committed, secret-free launchd wrapper (sources the env file, then execs node).
 WRAPPER="$SCRIPT_DIR/sleep-pass-launchd.sh"
 
 # Gitignored env file the wrapper sources at runtime (keys + per-role config).
-# Env var overrides; default ~/.config/brain-memory/sleep.env. NEVER committed.
-ENV_FILE="${BRAIN_MEMORY_SLEEP_ENV:-$HOME/.config/brain-memory/sleep.env}"
+# Env var overrides; default ~/.config/recense/sleep.env. NEVER committed.
+ENV_FILE="${RECENSE_SLEEP_ENV:-$HOME/.config/recense/sleep.env}"
 
 # Dirty-sentinel path for the on-write sleep-pass trigger (L8N-01).
 # EpisodicStore.append() touches this file on every real new non-inferred write;
 # launchd WatchPaths watches it and fires the sleep pass within seconds.
-# Both writer (BRAIN_MEMORY_DIRTY_SENTINEL in sleep.env → hook processes via
+# Both writer (RECENSE_DIRTY_SENTINEL in sleep.env → hook processes via
 # hydrateRuntimeEnv) and watcher (plist WatchPaths) use the SAME path.
-DIRTY_SENTINEL="${BRAIN_MEMORY_DIRTY_SENTINEL:-$HOME/.config/brain-memory/.episodes-dirty}"
+DIRTY_SENTINEL="${RECENSE_DIRTY_SENTINEL:-$HOME/.config/recense/.episodes-dirty}"
 
 # launchd plist locations
-PLIST_TEMPLATE="$SCRIPT_DIR/com.brain-memory.sleep-pass.plist.template"
+PLIST_TEMPLATE="$SCRIPT_DIR/com.recense.sleep-pass.plist.template"
 LAUNCHAGENTS_DIR="$HOME/Library/LaunchAgents"
-PLIST_DST="$LAUNCHAGENTS_DIR/com.brain-memory.sleep-pass.plist"
-PLIST_LABEL="com.brain-memory.sleep-pass"
+PLIST_DST="$LAUNCHAGENTS_DIR/com.recense.sleep-pass.plist"
+PLIST_LABEL="com.recense.sleep-pass"
 
 # ── Step 1: Build ──────────────────────────────────────────────────────────────
 echo ""
-echo "==> [1/6] Building brain-memory..."
+echo "==> [1/6] Building recense..."
 cd "$PROJECT_ROOT"
 npm run build
 echo "    Build complete."
@@ -150,26 +150,26 @@ fi
 (
     umask 077
     cat > "$ENV_FILE" <<ENVEOF
-# brain-memory sleep-pass env — GITIGNORED, chmod 600. Do NOT commit.
+# recense sleep-pass env — GITIGNORED, chmod 600. Do NOT commit.
 # Generated by scripts/setup-dogfood.sh; existing key lines preserved on re-run.
-BRAIN_MEMORY_NODE_BIN=$NODE_BIN
-# D-88: BRAIN_MEMORY_SLEEP_JS points to the compiled CLI used by the launchd wrapper.
-# The brain dispatcher form is: brain sleep-pass (run manually: $NODE_BIN $BRAIN_JS sleep-pass)
-BRAIN_MEMORY_SLEEP_JS=$SLEEP_PASS_CLI
-# ── brain ingest rewire (D-66): to point the hourly job at ingest-cli ──────────
-# Dispatcher form: brain ingest (run manually: $NODE_BIN $BRAIN_JS ingest)
-# 1. Uncomment the line below (and comment out the BRAIN_MEMORY_SLEEP_JS line above).
-# 2. Verify the drop-in safety test first: BRAIN_MEMORY_DB=<backup> node $INGEST_CLI --all
+RECENSE_NODE_BIN=$NODE_BIN
+# D-88: RECENSE_SLEEP_JS points to the compiled CLI used by the launchd wrapper.
+# The brain dispatcher form is: recense sleep-pass (run manually: $NODE_BIN $BRAIN_JS sleep-pass)
+RECENSE_SLEEP_JS=$SLEEP_PASS_CLI
+# ── recense ingest rewire (D-66): to point the hourly job at ingest-cli ──────────
+# Dispatcher form: recense ingest (run manually: $NODE_BIN $BRAIN_JS ingest)
+# 1. Uncomment the line below (and comment out the RECENSE_SLEEP_JS line above).
+# 2. Verify the drop-in safety test first: RECENSE_DB=<backup> node $INGEST_CLI --all
 # 3. enabledSources defaults to [] so ingest-cli is a no-op until you add sources + creds.
-# BRAIN_MEMORY_SLEEP_JS=$INGEST_CLI
-BRAIN_MEMORY_DB=$DB_PATH
-BRAIN_MEMORY_EXTRACTOR_PROVIDER=$EXTRACTOR_PROVIDER
-BRAIN_MEMORY_LOCAL_MODEL=$LOCAL_MODEL
-BRAIN_MEMORY_JUDGE_PROVIDER=$JUDGE_PROVIDER
+# RECENSE_SLEEP_JS=$INGEST_CLI
+RECENSE_DB=$DB_PATH
+RECENSE_EXTRACTOR_PROVIDER=$EXTRACTOR_PROVIDER
+RECENSE_LOCAL_MODEL=$LOCAL_MODEL
+RECENSE_JUDGE_PROVIDER=$JUDGE_PROVIDER
 # On-write sleep-pass trigger (L8N-01): touched by EpisodicStore.append() on every
 # real new non-inferred write; also watched by launchd WatchPaths in the plist.
 # Both writer (hooks via hydrateRuntimeEnv) and watcher use this same path.
-BRAIN_MEMORY_DIRTY_SENTINEL=$DIRTY_SENTINEL
+RECENSE_DIRTY_SENTINEL=$DIRTY_SENTINEL
 $ANTHROPIC_LINE
 $OPENAI_LINE
 # ── Optional Gmail ingestion creds (D-68) — uncomment + fill in to enable Gmail ──
@@ -234,7 +234,7 @@ echo "==> [4/6] Merge the following into ~/.claude/settings.json"
 echo "    IMPORTANT: Do NOT replace the entire file — merge only these entries."
 echo "    Append each hook entry to its existing array (or create the array)."
 echo "    Keep all your other existing hooks intact."
-echo "    NOTE: 'brain init' automates this merge — run it on new installs instead."
+echo "    NOTE: 'recense init' automates this merge — run it on new installs instead."
 echo ""
 echo "-------- copy below --------"
 cat <<JSON
@@ -280,19 +280,19 @@ echo "-------- copy above --------"
 echo ""
 echo "    Node binary  : $NODE_BIN"
 echo "    Brain dispatcher: $BRAIN_JS"
-echo "    Hook form    : brain hook session-start / turn-capture / stop (D-88)"
+echo "    Hook form    : recense hook session-start / turn-capture / stop (D-88)"
 echo ""
-echo "    NOTE: BRAIN_MEMORY_DB must be visible to Claude Code's process."
+echo "    NOTE: RECENSE_DB must be visible to Claude Code's process."
 echo "    If not set in your shell profile, hooks fall back to:"
-echo "      $PROJECT_ROOT/brain.db"
+echo "      $PROJECT_ROOT/recense.db"
 echo "    Set it explicitly if the cold-start-seeded DB is elsewhere:"
-echo "      export BRAIN_MEMORY_DB=/absolute/path/to/brain.db"
+echo "      export RECENSE_DB=/absolute/path/to/recense.db"
 
 # ── Step 5: Rollback instructions ────────────────────────────────────────────
 echo ""
 echo "==> [5/6] Rollback (reversible — MEMORY.md is NEVER deleted):"
-echo "    1. Remove the three brain-memory hook entries from ~/.claude/settings.json"
-echo "       (D-88 dispatcher form: brain hook session-start / turn-capture / stop)"
+echo "    1. Remove the three recense hook entries from ~/.claude/settings.json"
+echo "       (D-88 dispatcher form: recense hook session-start / turn-capture / stop)"
 echo "    2. launchctl unload $PLIST_DST"
 echo "    3. (Optional) rm $PLIST_DST"
 echo "    4. (Optional) rm $ENV_FILE"
@@ -305,21 +305,21 @@ if [[ ! -f "$SEED_CLI" ]]; then
     echo "    seed-cli not found — skipping (build may be incomplete)." >&2
 else
     echo "    To seed the graph from your memory files, set env vars and run:"
-    echo "      BRAIN_MEMORY_DB=$DB_PATH \\"
-    echo "      BRAIN_MEMORY_COLD_START_MEMORY_DIR=<path-to-memory-dir> \\"
-    echo "      BRAIN_MEMORY_COLD_START_CLAUDE_FILE=<path-to-CLAUDE.md> \\"
+    echo "      RECENSE_DB=$DB_PATH \\"
+    echo "      RECENSE_COLD_START_MEMORY_DIR=<path-to-memory-dir> \\"
+    echo "      RECENSE_COLD_START_CLAUDE_FILE=<path-to-CLAUDE.md> \\"
     echo "      $NODE_BIN $BRAIN_JS seed"
     echo ""
     echo "    Or using the legacy direct form: $NODE_BIN $SEED_CLI"
     echo ""
     echo "    Optional — route extraction through a different provider (default: anthropic):"
-    echo "      BRAIN_MEMORY_EXTRACTOR_PROVIDER=local  # 'anthropic', 'vertex', or 'local'"
+    echo "      RECENSE_EXTRACTOR_PROVIDER=local  # 'anthropic', 'vertex', or 'local'"
     echo ""
     echo "    One-shot: if the 'seeded' meta flag is already set the command is a no-op."
     echo "    Safe no-op: if no source files resolve (misconfigured paths) the one-shot"
     echo "    flag is NOT burned — fix the paths and re-run."
     echo "    Lock-guarded: safe to run alongside the watcher or sleep-pass."
-    echo "    Logs: /tmp/brain-memory-seed.log"
+    echo "    Logs: /tmp/recense-seed.log"
 fi
 
 echo ""

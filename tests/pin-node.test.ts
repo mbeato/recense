@@ -15,16 +15,16 @@ describe('readPinnedNodeBin', () => {
     readFile: (_p: string) => content,
   });
 
-  it('env override (BRAIN_MEMORY_NODE_BIN) wins over the file', () => {
-    const bin = readPinnedNodeBin(FILE, '/usr/bin/node', fileWith('BRAIN_MEMORY_NODE_BIN=/other/node'));
+  it('env override (RECENSE_NODE_BIN) wins over the file', () => {
+    const bin = readPinnedNodeBin(FILE, '/usr/bin/node', fileWith('RECENSE_NODE_BIN=/other/node'));
     expect(bin).toBe('/usr/bin/node');
   });
 
-  it('parses BRAIN_MEMORY_NODE_BIN from the env file when no override', () => {
+  it('parses RECENSE_NODE_BIN from the env file when no override', () => {
     const content = [
       '# comment',
-      'BRAIN_MEMORY_NODE_BIN=/Users/x/.nvm/versions/node/v25.5.0/bin/node',
-      'BRAIN_MEMORY_DB=/Users/x/brain.db',
+      'RECENSE_NODE_BIN=/Users/x/.nvm/versions/node/v25.5.0/bin/node',
+      'RECENSE_DB=/Users/x/recense.db',
       'ANTHROPIC_API_KEY=secret',
     ].join('\n');
     const bin = readPinnedNodeBin(FILE, undefined, fileWith(content));
@@ -32,7 +32,7 @@ describe('readPinnedNodeBin', () => {
   });
 
   it('strips surrounding quotes from the value', () => {
-    const bin = readPinnedNodeBin(FILE, undefined, fileWith('BRAIN_MEMORY_NODE_BIN="/path/with space/node"'));
+    const bin = readPinnedNodeBin(FILE, undefined, fileWith('RECENSE_NODE_BIN="/path/with space/node"'));
     expect(bin).toBe('/path/with space/node');
   });
 
@@ -42,12 +42,12 @@ describe('readPinnedNodeBin', () => {
   });
 
   it('returns undefined when the key is not present in the file', () => {
-    const bin = readPinnedNodeBin(FILE, undefined, fileWith('BRAIN_MEMORY_DB=/x/brain.db'));
+    const bin = readPinnedNodeBin(FILE, undefined, fileWith('RECENSE_DB=/x/recense.db'));
     expect(bin).toBeUndefined();
   });
 
   it('ignores an empty/whitespace override and falls back to the file', () => {
-    const bin = readPinnedNodeBin(FILE, '   ', fileWith('BRAIN_MEMORY_NODE_BIN=/file/node'));
+    const bin = readPinnedNodeBin(FILE, '   ', fileWith('RECENSE_NODE_BIN=/file/node'));
     expect(bin).toBe('/file/node');
   });
 });

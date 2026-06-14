@@ -1,7 +1,7 @@
 /**
  * mcp-cli — stdio MCP server adapter (Phase 11, MCP-01/MCP-02).
  *
- * Entry point: `brain mcp --db <path>` (dispatched via spawnScript from brain.ts so the
+ * Entry point: `recense mcp --db <path>` (dispatched via spawnScript from brain.ts so the
  * `require.main === module` guard fires in the child — a bare require() would never start
  * the server because require.main would stay brain.js).
  *
@@ -53,7 +53,7 @@ import { wireMemoryEngine, registerMemoryTools } from './memory-ops';
 // without needing to update their import path.
 export { validateOrigin } from './memory-ops';
 
-const LOG_PATH = '/tmp/brain-memory-mcp.log';
+const LOG_PATH = '/tmp/recense-mcp.log';
 
 export interface CreateBrainMcpServerOptions {
   dbPath: string;
@@ -67,7 +67,7 @@ export interface CreateBrainMcpServerOptions {
 }
 
 /**
- * Build the brain-memory MCP server: open ONE DB handle for the server lifetime,
+ * Build the recense MCP server: open ONE DB handle for the server lifetime,
  * wire the existing engine collaborator graph (same wiring as watcher-cli.ts), and
  * register exactly three tools. Importing this module never starts a server —
  * the stdio entry point below is guarded by `require.main === module`.
@@ -88,10 +88,10 @@ export async function createBrainMcpServer(
   });
 
   const server = new McpServer(
-    { name: 'brain-memory', version: '0.1.0' },
+    { name: 'recense', version: '0.1.0' },
     {
       instructions:
-        'brain-memory tools: memory_search (LLM-free semantic retrieval), memory_add ' +
+        'recense tools: memory_search (LLM-free semantic retrieval), memory_add ' +
         '(record a fact/observation), memory_ask (question answering over memory). ' +
         'Writes land as episodes; abstraction/consolidation runs in the hourly sleep pass, not inline.',
     },
@@ -110,7 +110,7 @@ if (require.main === module) {
     const dbPath = resolveDbPath(process.argv, { fallbackToDefault: false });
     if (!dbPath) {
       // Lock-free early exit (no lock is ever held on this path).
-      appendFileSync(LOG_PATH, `[${new Date().toISOString()}] mcp-cli: No DB path supplied (--db <path> or BRAIN_MEMORY_DB env var) — exiting\n`);
+      appendFileSync(LOG_PATH, `[${new Date().toISOString()}] mcp-cli: No DB path supplied (--db <path> or RECENSE_DB env var) — exiting\n`);
       process.exit(0);
     }
 
