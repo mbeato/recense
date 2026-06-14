@@ -25,7 +25,7 @@ import { appendFileSync } from 'fs';
 import { spawn } from 'child_process';
 import { resolve } from 'path';
 import Database from 'better-sqlite3';
-import { resolveDbPath, loadConfiguredEnv } from './runtime-config';
+import { resolveDbPath, loadConfiguredEnv, resolveDirtySentinelPath } from './runtime-config';
 import { initSchema } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   const dbPath = resolveDbPath();
 
   if (assistantText) {
-    const config = { ...DEFAULT_CONFIG, dbPath };
+    const config = { ...DEFAULT_CONFIG, dbPath, dirtySentinelPath: resolveDirtySentinelPath() };
     const db = new Database(dbPath);
     initSchema(db);
 

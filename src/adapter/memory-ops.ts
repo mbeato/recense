@@ -40,6 +40,7 @@ import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 import { newId } from '../lib/hash';
 import { acquireLockWithRetry, releaseLock } from './lockfile';
+import { resolveDirtySentinelPath } from './runtime-config';
 
 const LOG_PATH = '/tmp/brain-memory-ops.log';
 
@@ -199,7 +200,7 @@ export function wireMemoryEngine(
 
   // ── 3. Wire the full collaborator graph against the writable handle ───────
   // Exact wiring as in mcp-cli.ts and watcher-cli.ts (copied verbatim, M-7 overlay).
-  const config = { ...DEFAULT_CONFIG, dbPath: opts.dbPath };
+  const config = { ...DEFAULT_CONFIG, dbPath: opts.dbPath, dirtySentinelPath: resolveDirtySentinelPath() };
 
   const episodes  = new EpisodicStore(writeDb, realClock, config);
   const store     = new SemanticStore(writeDb, realClock, config);
