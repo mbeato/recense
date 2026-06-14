@@ -56,8 +56,10 @@ INGEST_CLI="$DIST_ADAPTER/ingest-cli.js"
 # Documented in step 6 below; not auto-run (operator-driven, one-shot + lock-guarded).
 SEED_CLI="$DIST_ADAPTER/seed-cli.js"
 
-# DB path: env var takes precedence; fall back to project default
-DB_PATH="${RECENSE_DB:-$PROJECT_ROOT/recense.db}"
+# DB path: env var takes precedence; fall back to the ~/.config canonical default
+# (post-unification location; matches src/adapter/runtime-config.ts default — never
+# the repo root, which left agents pointed at an empty DB).
+DB_PATH="${RECENSE_DB:-$HOME/.config/recense/recense.db}"
 
 # Per-role split config for the detached sleep pass (validated config defaults).
 # Extraction → local model; judge → anthropic. Env vars override.
@@ -284,7 +286,7 @@ echo "    Hook form    : recense hook session-start / turn-capture / stop (D-88)
 echo ""
 echo "    NOTE: RECENSE_DB must be visible to Claude Code's process."
 echo "    If not set in your shell profile, hooks fall back to:"
-echo "      $PROJECT_ROOT/recense.db"
+echo "      $HOME/.config/recense/recense.db"
 echo "    Set it explicitly if the cold-start-seeded DB is elsewhere:"
 echo "      export RECENSE_DB=/absolute/path/to/recense.db"
 
