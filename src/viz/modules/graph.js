@@ -46,6 +46,14 @@ const HAZE_COMPACT_OPACITY = 0.12;
 const HAZE_FULL_OPACITY = 0.16;
 const HAZE_OPACITY = COMPACT ? HAZE_COMPACT_OPACITY : HAZE_FULL_OPACITY;
 
+// Adaptive-density haze multiplier (Phase 19 Item 2). lod.js computes
+// ctx.hazeOpacityScale from the overview node count: 1.0 in/below the neutral
+// band, lerping toward HAZE_DENSE_SCALE when dense so haze recedes and the
+// schema constellation reads through it. initGraph sets this from ctx before
+// the first makeNodeObject call (lod.js runs first); module-scoped because
+// makeNodeObject is the nodeThreeObject factory and has no ctx in scope.
+let _hazeOpacityScale = 1;
+
 // Scratch vectors reused in the hot containment tick (avoids per-tick allocation)
 const _q   = new THREE.Vector3();
 const _inv = new THREE.Matrix4();
@@ -94,7 +102,7 @@ function makeNodeObject(node) {
     color: baseColor.clone(),
     transparent: true,
     opacity: node.tombstoned ? 0.35
-      : (node.__cat === 'haze' ? HAZE_OPACITY : 0.88),
+      : (node.__cat === 'haze' ? HAZE_OPACITY * _hazeOpacityScale : 0.88),
     depthWrite: true,
   });
 
@@ -220,6 +228,9 @@ function seedNodePositions(allNodes, brainVol) {
  */
 export function initGraph(ctx) {
   const { allNodes, getVisibleNodes, getVisibleLinks, brainVol } = ctx;
+
+  // Adopt the adaptive-density haze multiplier computed by lod.js (runs first).
+  _hazeOpacityScale = ctx.hazeOpacityScale ?? 1;
 
   // Seed positions so layout starts inside the brain volume
   seedNodePositions(allNodes, brainVol);

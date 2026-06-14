@@ -30,6 +30,14 @@
  * @param {import('./constants.js').Ctx} ctx
  */
 
+import {
+  DENSITY_FILL_BELOW,
+  DENSITY_FILL_TARGET,
+  DENSITY_THIN_START,
+  DENSITY_THIN_FULL,
+  HAZE_DENSE_SCALE,
+} from './constants.js';
+
 export function initLod(ctx) {
   const { allNodes, allLinks, idMap } = ctx;
 
@@ -65,6 +73,48 @@ export function initLod(ctx) {
     }
   }
 
+  // ── Adaptive density (Phase 19 Item 2) ─────────────────────────────────
+  // The overview renders only schema + haze; members are hidden. So screen
+  // fullness tracks overviewCount = #schema + #haze. Adapt AROUND the founder's
+  // calibrated neutral band (see constants.js) without touching absolute sizing.
+  //
+  //   sparse (overview < DENSITY_FILL_BELOW): reveal real hidden members,
+  //     largest schemas first (so they cluster as coherent constellations around
+  //     their hub), up to DENSITY_FILL_TARGET — capped by how many members exist.
+  //     Never fabricates nodes (D-04 honesty); a tiny brain stays a tiny brain.
+  //   dense (overview > DENSITY_THIN_START): lerp a haze-opacity multiplier
+  //     1.0 → HAZE_DENSE_SCALE (consumed by graph.js makeNodeObject) so the
+  //     unclassified noise recedes and the schema constellation reads through it.
+  //
+  // Computed once at init from the static classification — stable thereafter, so
+  // refreshVisibility/revealTrace stay consistent.
+  let overviewCount = 0;
+  for (const n of allNodes) if (n.__cat === 'schema' || n.__cat === 'haze') overviewCount++;
+
+  const densityRevealed = new Set(); // member ids force-shown to fill a sparse overview
+  if (overviewCount < DENSITY_FILL_BELOW) {
+    const budget = DENSITY_FILL_TARGET - overviewCount;
+    // Largest schemas first → most coherent fill.
+    const schemasBySize = [...schemaMembers.entries()]
+      .sort((a, b) => b[1].size - a[1].size);
+    outer:
+    for (const [, members] of schemasBySize) {
+      for (const m of members) {
+        if (densityRevealed.size >= budget) break outer;
+        densityRevealed.add(m);
+      }
+    }
+  }
+
+  // Haze-opacity multiplier: 1.0 in-band and when sparse, lerps to
+  // HAZE_DENSE_SCALE between DENSITY_THIN_START and DENSITY_THIN_FULL.
+  let hazeOpacityScale = 1;
+  if (overviewCount > DENSITY_THIN_START) {
+    const t = Math.min(1, (overviewCount - DENSITY_THIN_START) /
+                          (DENSITY_THIN_FULL - DENSITY_THIN_START));
+    hazeOpacityScale = 1 + t * (HAZE_DENSE_SCALE - 1);
+  }
+
   // ── Visibility state ────────────────────────────────────────────────────
   // All three sets are mutated directly by graph.js (expand/collapse on click)
   // and trace.js (applyTrace / revealTrace cycle).
@@ -93,8 +143,9 @@ export function initLod(ctx) {
     // haze is rendered near-invisible instead of hidden (graph.js dims it) —
     // schema constellation forward, haze as barely-there mist (founder-tuned).
     if (n.__cat !== 'member') return true;
-    // Member nodes: show only if their schema is drilled-in OR the trace reveals them
-    return expanded.has(n.__schemaId) || traceNodes.has(n.id);
+    // Member nodes: show if their schema is drilled-in, the trace reveals them,
+    // OR adaptive density promoted them to fill a sparse overview.
+    return expanded.has(n.__schemaId) || traceNodes.has(n.id) || densityRevealed.has(n.id);
   };
 
   const linkVis = l => {
@@ -104,8 +155,10 @@ export function initLod(ctx) {
     const sid = typeof l.source === 'object' ? l.source.id : l.source;
     const tid = typeof l.target === 'object' ? l.target.id : l.target;
 
-    // 'abstracts' edges: show only while the schema is drilled-in
-    if (l.kind === 'abstracts') return expanded.has(sid);
+    // 'abstracts' edges (source=schema, target=member): show while the schema is
+    // drilled-in OR the member was density-revealed (connects the revealed member
+    // to its hub so a sparse overview reads as a constellation, not loose dots).
+    if (l.kind === 'abstracts') return expanded.has(sid) || densityRevealed.has(tid);
 
     // All other edges: show when both endpoints are visible AND at least one
     // endpoint's schema is expanded (keeps inter-member edges tidy in overview)
@@ -174,4 +227,6 @@ export function initLod(ctx) {
   ctx.traceLinks        = traceLinks;
   ctx.memberSchema      = memberSchema;
   ctx.linkKey           = linkKey;
+  ctx.densityRevealed   = densityRevealed;   // member ids force-shown when sparse
+  ctx.hazeOpacityScale  = hazeOpacityScale;  // graph.js multiplies HAZE_OPACITY by this
 }

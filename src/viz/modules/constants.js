@@ -133,6 +133,41 @@ export const BRAIN_SCALE = 460;
 export const CONTAIN_STRENGTH = 0.35;
 
 // ============================================================================
+// Adaptive density (Phase 19 Item 2)
+// ============================================================================
+// The overview renders only schema super-nodes + haze (members hidden until a
+// schema is drilled-in or a trace reveals them). So screen fullness tracks
+// `overviewCount = #schema + #haze`. Few of those → an empty shell (new user);
+// too many → unreadable mush (power user). lod.js adapts AROUND a calibrated
+// neutral band so the founder's dialed-in look (~2,700 overview nodes at the
+// 2026-06-14 install) is untouched — both regimes are off inside the band.
+//
+// Two regimes act on DIFFERENT levers, never absolute sizing (BRAIN_SCALE and
+// nodeRadius stay locked — "3,500 is the anchor"):
+//   sparse → reveal real hidden members to fill (never fabricates nodes; D-04)
+//   dense  → dim the haze noise so the schema constellation reads through it
+//
+// Verified no-op at the live install: 600 < 2692 < 3200 → neither fires.
+
+/** Below this overview count, reveal hidden members to fill the empty shell. */
+export const DENSITY_FILL_BELOW = 600;
+
+/** Reveal members (largest schemas first) until overview reaches ~this count.
+ *  Capped by how many members actually exist — a genuinely tiny brain stays
+ *  small rather than inventing structure. */
+export const DENSITY_FILL_TARGET = 600;
+
+/** Above this overview count, begin lerping haze opacity downward. */
+export const DENSITY_THIN_START = 3200;
+
+/** Overview count at which haze reaches its minimum opacity scale. */
+export const DENSITY_THIN_FULL = 6000;
+
+/** Haze opacity multiplier at full thinning (lerp 1.0 → this between
+ *  DENSITY_THIN_START and DENSITY_THIN_FULL). 1.0 = no change. */
+export const HAZE_DENSE_SCALE = 0.35;
+
+// ============================================================================
 // Hull rotation (radians)
 // ============================================================================
 // The STL's longest axis is Z (~208 units). -π/2 on X rotates it from
