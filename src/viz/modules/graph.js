@@ -74,55 +74,6 @@ function truncLabel(s, max) {
   return (sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/\s+$/, '') + '…';
 }
 
-// ── Layer 2: lobe labels ────────────────────────────────────────────────────
-// ONLY super-schema cluster nodes (Phase 18 SREL-02) carry a name at rest, so a
-// HANDFUL of region headers split the brain into lobes. (Per-schema labels were
-// hopelessly cluttered — schemas are too numerous.) Super-schemas are the engine's
-// top-level clusters of related schemas: id-prefixed 'super::', type='schema',
-// origin='inferred', and few by construction (only ≥2-member schema clusters).
-const LOBE_LABEL_H   = 26;   // region-header height (world units) — bigger than a node
-const LOBE_MAX_CHARS = 26;
-const LOBE_GAP       = 10;
-
-function isSuperSchema(node) {
-  return typeof node.id === 'string' && node.id.startsWith('super::');
-}
-
-/**
- * Camera-facing lobe/region label as a canvas-texture sprite — uppercase + letter-
- * spaced to read as a section header, dim brand text on a light dark backing for
- * legibility. depthWrite off (never occludes), stays under the bloom threshold.
- */
-function makeLobeLabelSprite(text) {
-  const DPR = 2, fontPx = 30, padX = 14, padY = 8, radius = 7;
-  const label = (text || '').toUpperCase();
-  const fontSpec = `600 ${fontPx}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
-  const measureCtx = document.createElement('canvas').getContext('2d');
-  measureCtx.font = fontSpec; measureCtx.letterSpacing = '1.5px';
-  const textW = Math.ceil(measureCtx.measureText(label).width);
-  const w = textW + padX * 2, h = fontPx + padY * 2;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = w * DPR; canvas.height = h * DPR;
-  const c = canvas.getContext('2d');
-  c.scale(DPR, DPR);
-  c.font = fontSpec; c.letterSpacing = '1.5px'; c.textBaseline = 'middle';
-  c.fillStyle = 'rgba(20, 14, 26, 0.6)';
-  c.beginPath();
-  c.moveTo(radius, 0);
-  c.arcTo(w, 0, w, h, radius); c.arcTo(w, h, 0, h, radius);
-  c.arcTo(0, h, 0, 0, radius); c.arcTo(0, 0, w, 0, radius);
-  c.closePath(); c.fill();
-  c.fillStyle = '#e7dfec';
-  c.fillText(label, padX, h / 2 + 1);
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
-  const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(LOBE_LABEL_H * (w / h), LOBE_LABEL_H, 1);
-  return sprite;
-}
 
 
 /**
@@ -132,9 +83,7 @@ function makeLobeLabelSprite(text) {
  * __actGain so trace.js can drive the activation animation.
  */
 function makeNodeObject(node) {
-  // Cache the rendered object (orb, or a Group of orb+lobe-label for super-schemas)
-  // separately from node.__mesh — which must always remain the ORB for trace/hover.
-  if (node.__obj3d) return node.__obj3d;
+  if (node.__mesh) return node.__mesh;
 
   const radius = nodeRadius(node);
   const baseColor = node.tombstoned
@@ -182,20 +131,6 @@ function makeNodeObject(node) {
   node.__act     = 0;                   // activation level [0,1]
   node.__actGain = node.__cat === 'schema' ? 1.2 : 1.0; // schemas pulse brighter
 
-  // Layer 2: only super-schema cluster nodes carry a lobe label (a handful of region
-  // headers). node.__mesh stays the orb (activation/hover untouched); the Group is the
-  // rendered object, and LOD .visible toggles orb + label together.
-  if (isSuperSchema(node)) {
-    const sprite = makeLobeLabelSprite(truncLabel(node.value || node.id || '', LOBE_MAX_CHARS));
-    sprite.position.set(0, radius + LOBE_GAP, 0);
-    const group = new THREE.Group();
-    group.add(mesh);
-    group.add(sprite);
-    node.__obj3d = group;
-    return group;
-  }
-
-  node.__obj3d = mesh;
   return mesh;
 }
 
