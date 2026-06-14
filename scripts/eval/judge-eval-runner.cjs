@@ -23,6 +23,10 @@ const EVAL = arg('--eval', 'scripts/eval/judge-eval-set.json');
 const HAIKU = arg('--haiku', 'claude-haiku-4-5');          // pass --haiku "" to skip
 const OLLAMA_MODELS = (arg('--ollama', 'qwen3.6:27b,qwen3.6:35b-a3b') || '').split(',').map(s => s.trim()).filter(Boolean);
 const OLLAMA_URL = arg('--ollama-url', 'http://localhost:11434/v1');
+// --gemini <model>: Gemini via its OpenAI-compatible endpoint (reuses the OpenAI client).
+// Needs GEMINI_API_KEY (from a GCP project's Generative Language API key — NOT Vertex).
+const GEMINI = arg('--gemini', '');                        // e.g. gemini-2.5-flash
+const GEMINI_URL = arg('--gemini-url', 'https://generativelanguage.googleapis.com/v1beta/openai/');
 const OUT = arg('--out', 'scripts/eval/judge-eval-results.json');
 // --no-think: disable Qwen's reasoning pass (append the /no_think soft switch + drop max_tokens).
 // Tests whether throughput-friendly no-think judging holds contradiction detection vs the think baseline.
@@ -75,6 +79,16 @@ async function callHaiku(client, prompt) {
     messages: [{ role: 'user', content: prompt }],
   });
   return msg.content.filter(b => b.type === 'text').map(b => b.text).join('');
+}
+async function callGemini(client, model, prompt) {
+  // Gemini via OpenAI-compat. temperature 0, JSON mode; generous max_tokens covers any
+  // 2.5 "thinking" preamble (parseVerdict salvages the JSON regardless).
+  const r = await client.chat.completions.create({
+    model, temperature: 0, max_tokens: 2048,
+    response_format: { type: 'json_object' },
+    messages: [{ role: 'user', content: prompt }],
+  });
+  return r.choices?.[0]?.message?.content ?? '';
 }
 async function callOllama(client, model, prompt) {
   // --no-think: append the /no_think soft switch and drop max_tokens. ALSO drop response_format:
@@ -158,6 +172,10 @@ function score(rows) {
   if (OLLAMA_MODELS.length) {
     const oc = new OpenAI({ baseURL: OLLAMA_URL, apiKey: 'ollama' });
     for (const m of OLLAMA_MODELS) providers.push({ name: `ollama:${m}`, call: (p) => callOllama(oc, m, p) });
+  }
+  if (GEMINI) {
+    if (!process.env.GEMINI_API_KEY) console.log('⚠ GEMINI_API_KEY not set — skipping Gemini');
+    else { const gc = new OpenAI({ baseURL: GEMINI_URL, apiKey: process.env.GEMINI_API_KEY }); providers.push({ name: `gemini:${GEMINI}`, call: (p) => callGemini(gc, GEMINI, p) }); }
   }
   if (!providers.length) { console.log('No providers to test.'); process.exit(1); }
 
