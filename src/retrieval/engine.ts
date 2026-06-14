@@ -390,7 +390,7 @@ export class RetrievalEngine {
     k: number,
     floor: number,
     queryText?: string,
-    opts?: { temporalAnnotate?: boolean },
+    opts?: { temporalAnnotate?: boolean; vizFloor?: number },
   ): Array<{ id: string; value: string; score: number }> {
     // LEVER 1: route through hybridTopk when queryText is supplied; else pure cosine topk.
     // hybridTopk returns results sorted by RRF rank; the cosine score component is preserved
@@ -419,6 +419,27 @@ export class RetrievalEngine {
       (this.stmtStaleEntityIds.all() as Array<{ id: string }>).map(r => r.id),
     );
     const filtered = candidates.filter(r => !staleEntityIds.has(r.id));
+
+    // Phase-19 viz lighting: when a vizFloor BELOW the injection floor is supplied,
+    // the trace lights every node the topk scan GENUINELY retrieved down to vizFloor —
+    // even when none cleared `floor` (a real read that surfaced nothing to the caller
+    // still accessed real nodes; the founder's "thought hard, nothing came back, but I
+    // did access real nodes" framing). The RETURNED/injected results are unchanged (still
+    // gated at `floor`); this reuses the same scan (no extra cost). Honest by construction:
+    // only ids the scan actually returned, minus stale entities; never synthesized, and if
+    // the scan reached nothing ≥ vizFloor the set is empty (no fire).
+    let vizSeedIds: string[] | null = null;
+    if (opts?.vizFloor != null && opts.vizFloor < floor) {
+      const vf = opts.vizFloor;
+      const cap = Math.max(k, 6);
+      vizSeedIds = [];
+      for (const hit of hits) {
+        if (hit.score < vf) { if (!queryText) break; else continue; }
+        if (staleEntityIds.has(hit.id)) continue;
+        vizSeedIds.push(hit.id);
+        if (vizSeedIds.length >= cap) break;
+      }
+    }
 
     // LEVER 2: temporal annotation (driven by opts.temporalAnnotate OR config.temporalAnnotation).
     // Fetch MAX(episode.ts) per candidate via json_each binding (prepared once, T-01-SQL).
@@ -458,9 +479,12 @@ export class RetrievalEngine {
       });
 
       // ── Trace emission (D-97 guarded) ────────────────────────────────────────
-      if (this.traceEnabled && annotated.length > 0) {
+      // vizSeedIds (when set) lights the genuinely-retrieved set down to vizFloor;
+      // otherwise the lit set is the returned set (unchanged behaviour).
+      const emitSeeds = vizSeedIds ?? annotated.map(r => r.id);
+      if (this.traceEnabled && emitSeeds.length > 0) {
         try {
-          this.traceSink.emit({ query_id: newId(), seeds: annotated.map(r => r.id), hops: [] });
+          this.traceSink.emit({ query_id: newId(), seeds: emitSeeds, hops: [] });
         } catch {
           // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
         }
@@ -476,9 +500,10 @@ export class RetrievalEngine {
     // the inference fallback already emits via RecallEngine. Callers wired with the
     // Noop sink (correctness harness, session-start) have traceEnabled === false and
     // skip this entirely.
-    if (this.traceEnabled && filtered.length > 0) {
+    const emitSeeds = vizSeedIds ?? filtered.map(r => r.id);
+    if (this.traceEnabled && emitSeeds.length > 0) {
       try {
-        this.traceSink.emit({ query_id: newId(), seeds: filtered.map(r => r.id), hops: [] });
+        this.traceSink.emit({ query_id: newId(), seeds: emitSeeds, hops: [] });
       } catch {
         // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
       }

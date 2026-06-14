@@ -50,6 +50,16 @@ export const AMBIENT_K = 5;
  */
 export const AMBIENT_FLOOR = 0.45;
 
+/**
+ * Phase-19 viz lighting floor — well BELOW the injection floor. The brain lights
+ * the nodes a turn genuinely retrieved down to this cosine, even when none cleared
+ * AMBIENT_FLOOR (a real read that surfaced nothing still accessed real nodes). This
+ * affects ONLY the activation trace, never what is injected. Aligned roughly with the
+ * memory_search floor (0.3) but a touch lower so ordinary turns still light something;
+ * raise it if the brain lights essentially-unrelated nodes, lower it for more activity.
+ */
+export const AMBIENT_VIZ_FLOOR = 0.25;
+
 /** Per-line value cap — keeps the injected block token-lean. */
 export const MAX_VALUE_CHARS = 200;
 
@@ -109,10 +119,13 @@ export async function ambientRecall(
   ]);
   if (!vec) return '';
 
-  // retrieveRanked emits the viz trace itself when the flag is on and results are
-  // non-empty (seeds = ids, hops = []) — do NOT add a second emit here.
+  // retrieveRanked emits the viz trace itself when the flag is on. With vizFloor it
+  // lights the genuinely-retrieved nodes down to AMBIENT_VIZ_FLOOR even when nothing
+  // clears the injection floor — so the brain lights on essentially every prompt (a
+  // real read happened), while injection still uses AMBIENT_FLOOR. Do NOT add a second
+  // emit here.
   const engine = new RetrievalEngine(db, clock, config, retriever, store, strength, gate, traceSink);
-  const results = engine.retrieveRanked(vec, AMBIENT_K, AMBIENT_FLOOR);
+  const results = engine.retrieveRanked(vec, AMBIENT_K, AMBIENT_FLOOR, undefined, { vizFloor: AMBIENT_VIZ_FLOOR });
   if (results.length === 0) return '';
 
   // Token-lean block: header + one capped line per fact, max AMBIENT_K lines.
