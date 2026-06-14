@@ -63,9 +63,11 @@ const WAVEFRONT_FRAG = `
   }
 `;
 // Asymmetric timing (ms): fast attack, head sweep, long ease-out decay.
+// Sweep slowed (520→850) so the light visibly travels the wire rather than
+// snapping; decay lengthened (900→1150) so each trace lingers longer on screen.
 const WF_ATTACK = 140;
-const WF_SWEEP  = 520;
-const WF_DECAY  = 900;
+const WF_SWEEP  = 850;
+const WF_DECAY  = 1150;
 const WF_LIFE   = WF_SWEEP + WF_DECAY;
 
 /** Clamped smoothstep on [0,1]. */

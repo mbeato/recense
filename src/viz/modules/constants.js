@@ -151,7 +151,7 @@ export const HULL_ROT_Z = 0;
 export const MAX_HOPS = 4;
 
 /** Delay between hop waves (ms) — energy propagates outward at this cadence */
-export const HOP_MS = 620;
+export const HOP_MS = 780;
 
 /** Max edges followed per node per hop (prevents runaway on dense graphs) */
 export const TRACE_FANOUT = 5;
