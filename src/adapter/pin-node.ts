@@ -74,7 +74,7 @@ export function shouldReexec(
 
 /**
  * Re-exec `brain` under the pinned Node if the current runtime differs (one-hop).
- * `entryPath` is the brain.js entry to re-run (pass the dispatcher's __filename).
+ * `entryPath` is the recense.js entry to re-run (pass the dispatcher's __filename).
  * No-op when already correct, when no pin is configured, or when the pinned bin is absent.
  */
 export function pinNodeRuntime(entryPath: string): void {

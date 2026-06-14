@@ -3,7 +3,7 @@
  *
  * Entry point: `recense mcp --db <path>` (dispatched via spawnScript from brain.ts so the
  * `require.main === module` guard fires in the child — a bare require() would never start
- * the server because require.main would stay brain.js).
+ * the server because require.main would stay recense.js).
  *
  * Exposes exactly three snake_case tools (D-01/D-03/D-04):
  *   memory_search — embed query → retriever.topk(cueVec, SEARCH_TOP_K) → drop hits below

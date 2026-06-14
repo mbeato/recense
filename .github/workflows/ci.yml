@@ -43,7 +43,7 @@ jobs:
       # L-10: assert output contains the expected header, not just `|| true`.
       - name: Smoke — recense doctor runs without crashing
         run: |
-          RECENSE_DB=:memory: node dist/src/adapter/brain.js doctor > /tmp/doctor-out.txt 2>&1 || true
+          RECENSE_DB=:memory: node dist/src/adapter/recense.js doctor > /tmp/doctor-out.txt 2>&1 || true
           grep -q "recense doctor:" /tmp/doctor-out.txt
 
       # Smoke: eval harness smoke tests — MockModelProvider wiring, zero API calls.

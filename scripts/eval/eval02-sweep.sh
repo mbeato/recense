@@ -45,7 +45,7 @@ echo $$ > "$LOCK"
 trap 'rm -f "$LOCK"' EXIT
 
 # --- telegram progress ping (token from sleep.env, chat id from allowlist) ---
-NOTIFY_CHAT_ID="${NOTIFY_CHAT_ID:-$(echo "${BRAIN_CLIENT_ALLOWLIST:-}" | cut -d, -f1 | tr -d ' ')}"
+NOTIFY_CHAT_ID="${NOTIFY_CHAT_ID:-$(echo "${RECENSE_CLIENT_ALLOWLIST:-}" | cut -d, -f1 | tr -d ' ')}"
 notify() {
   [ "${NOTIFY:-1}" = "1" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "$NOTIFY_CHAT_ID" ] || return 0
   curl -s --max-time 10 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \

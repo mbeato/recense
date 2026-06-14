@@ -2,7 +2,7 @@
  * tests/brain-viz-no-open.test.ts — integration test for `recense viz --no-open` (OQ-1).
  *
  * Verifies:
- *   1. `node dist/src/adapter/brain-viz-cli.js --no-open --db <tempdb>` starts the
+ *   1. `node dist/src/adapter/recense-viz-cli.js --no-open --db <tempdb>` starts the
  *      HTTP server (GET /graph → HTTP 200 with { nodes, links } arrays) without opening
  *      a browser window.
  *   2. D-96: meta.viz_trace_enabled = '1' while the server is running.
@@ -13,7 +13,7 @@
  *   npx vitest run tests/brain-viz-no-open.test.ts
  *
  * The child is killed in afterEach/finally even on assertion failure (no port leak).
- * Build-gated: spawns dist/src/adapter/brain-viz-cli.js — requires `npm run build` first.
+ * Build-gated: spawns dist/src/adapter/recense-viz-cli.js — requires `npm run build` first.
  */
 
 import { mkdtempSync, rmSync, existsSync } from 'fs';

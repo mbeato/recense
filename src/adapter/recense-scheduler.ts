@@ -44,7 +44,7 @@ const log = (msg: string): void =>
 
 /**
  * Resolve scripts/ paths relative to this compiled module's location.
- * Compiled output: dist/src/adapter/brain-scheduler.js
+ * Compiled output: dist/src/adapter/recense-scheduler.js
  * Project root:    dist/src/adapter/ → ../../.. = project root.
  */
 function resolveScriptPaths(): { plistTemplate: string; wrapperPath: string } {

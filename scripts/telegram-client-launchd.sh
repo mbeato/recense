@@ -10,7 +10,7 @@
 # fallback (:-node) is safe here. This contrasts with serve-launchd.sh, which requires
 # the ABI-pinned RECENSE_NODE_BIN because recense serve opens better-sqlite3.
 #
-# Secrets (TELEGRAM_BOT_TOKEN, BRAIN_SERVE_TOKEN) are sourced from the env file and
+# Secrets (TELEGRAM_BOT_TOKEN, RECENSE_SERVE_TOKEN) are sourced from the env file and
 # passed as process environment variables. They are never echoed to stdout or any log.
 set -euo pipefail
 

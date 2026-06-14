@@ -20,7 +20,7 @@ scheduler use). Do not point it at an arbitrary location.
 ### CLI form
 
 ```sh
-claude mcp add --scope user --transport stdio recense -- node /path/to/recense/dist/src/adapter/brain.js mcp --db /path/to/recense.db
+claude mcp add --scope user --transport stdio recense -- node /path/to/recense/dist/src/adapter/recense.js mcp --db /path/to/recense.db
 ```
 
 ### JSON form (`~/.claude.json`)
@@ -31,7 +31,7 @@ claude mcp add --scope user --transport stdio recense -- node /path/to/recense/d
     "recense": {
       "type": "stdio",
       "command": "node",
-      "args": ["/path/to/recense/dist/src/adapter/brain.js", "mcp", "--db", "/path/to/recense.db"]
+      "args": ["/path/to/recense/dist/src/adapter/recense.js", "mcp", "--db", "/path/to/recense.db"]
     }
   }
 }

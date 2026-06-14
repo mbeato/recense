@@ -1,16 +1,16 @@
-# brain-scheduler.service.template — systemd unit for `recense scheduler run` (SERVE-03 / D-14)
+# recense-scheduler.service.template — systemd unit for `recense scheduler run` (SERVE-03 / D-14)
 #
-# Companion to brain-serve.service.template. Runs the hourly sleep-pass (consolidation)
+# Companion to recense-serve.service.template. Runs the hourly sleep-pass (consolidation)
 # so the semantic graph stays current on a headless Linux host.
 #
-# Same placeholder set as brain-serve.service.template — fill all at once with the
+# Same placeholder set as recense-serve.service.template — fill all at once with the
 # envsubst command in docs/server-mode.md.
 #
 # Placeholders substituted by envsubst from exported shell variables:
 #   YOUR_USER             — the Linux user account that owns the recense install
 #   RECENSE_DIR      — absolute path to the recense repo root
 #   RECENSE_NODE_BIN — absolute path to the pinned Node.js binary
-#   BRAIN_JS              — absolute path to the compiled entry point
+#   RECENSE_JS              — absolute path to the compiled entry point
 #   HOME                  — absolute path to the user's home directory
 #
 # Templates use dollar-brace placeholders (VAR syntax) instantiated by the envsubst command in docs/server-mode.md.
@@ -23,7 +23,7 @@ After=network.target
 Type=simple
 User=${YOUR_USER}
 WorkingDirectory=${RECENSE_DIR}
-ExecStart=${RECENSE_NODE_BIN} ${BRAIN_JS} scheduler run
+ExecStart=${RECENSE_NODE_BIN} ${RECENSE_JS} scheduler run
 Environment=RECENSE_NODE_BIN=${RECENSE_NODE_BIN}
 EnvironmentFile=${HOME}/.config/recense/sleep.env
 Restart=on-failure

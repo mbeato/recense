@@ -68,13 +68,13 @@ export class MissingDbError extends Error {
 }
 
 /**
- * Thrown by ensureServer() when brain.js cannot be resolved.
+ * Thrown by ensureServer() when recense.js cannot be resolved.
  */
 export class MissingBrainJsError extends Error {
   constructor() {
     super(
-      'recense viz: cannot resolve brain.js entry — ' +
-        'set RECENSE_BRAIN_JS or RECENSE_SLEEP_JS in sleep.env',
+      'recense viz: cannot resolve recense.js entry — ' +
+        'set RECENSE_JS or RECENSE_SLEEP_JS in sleep.env',
     );
     this.name = 'MissingBrainJsError';
   }
@@ -164,7 +164,7 @@ export async function isServerRunning(port: number = HEALTH_PORT): Promise<boole
  * Crash backoff is registered on the spawned child's 'exit' event.
  *
  * @throws MissingDbError   if recense.db does not exist (L-10).
- * @throws MissingBrainJsError if brain.js entry cannot be resolved.
+ * @throws MissingBrainJsError if recense.js entry cannot be resolved.
  */
 export async function ensureServer(opts: EnsureServerOpts = {}): Promise<ServerHandle> {
   // D-07: attach path — no second server if one is already running on 7810

@@ -10,7 +10,7 @@
  *
  * Auth (SERVE-02): Bearer token required for every path except /health. Token is
  * born on first `recense serve` run (crypto.randomBytes(32)), stored in chmod-600
- * sleep.env as BRAIN_SERVE_TOKEN, printed once, never again (D-05/D-06/D-07).
+ * sleep.env as RECENSE_SERVE_TOKEN, printed once, never again (D-05/D-06/D-07).
  *
  * Security invariants:
  *   T-12-03: auth gate fires BEFORE any body parse; identical 401 for absent vs wrong token.
@@ -28,7 +28,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { ModelProvider } from '../model/provider';
 import { wireMemoryEngine, registerMemoryTools, MemoryBusyError, type MemoryOps } from './memory-ops';
-import { resolveExistingEnv, writeEnvFile } from './brain-init';
+import { resolveExistingEnv, writeEnvFile } from './recense-init';
 import { resolveDbPath, sleepEnvPath } from './runtime-config';
 
 // ---------------------------------------------------------------------------
@@ -91,21 +91,21 @@ export interface BrainHttpServer {
 // ---------------------------------------------------------------------------
 
 /**
- * Read BRAIN_SERVE_TOKEN from sleep.env (via resolveExistingEnv).
+ * Read RECENSE_SERVE_TOKEN from sleep.env (via resolveExistingEnv).
  * If present: return it silently (never print on subsequent runs — Pitfall 5).
  * If absent: generate randomBytes(32).toString('hex'), persist via writeEnvFile
  * (atomic chmod-600), and print EXACTLY ONCE three lines to stdout.
  */
 export function resolveServeToken(envPath: string = sleepEnvPath()): string {
   const env = resolveExistingEnv(envPath);
-  const existing = env.get('BRAIN_SERVE_TOKEN');
+  const existing = env.get('RECENSE_SERVE_TOKEN');
   if (existing) return existing; // already set — silent (Pitfall 5)
 
   // First run: generate, persist, print once.
   const token = randomBytes(32).toString('hex');
   const vars: Record<string, string> = {};
   for (const [k, v] of env) vars[k] = v;
-  vars['BRAIN_SERVE_TOKEN'] = token;
+  vars['RECENSE_SERVE_TOKEN'] = token;
   writeEnvFile(envPath, vars); // atomic chmod-600 write, preserves existing keys/comments
 
   // T-12-05: print once to stdout for the operator; never to LOG_PATH.
@@ -115,12 +115,12 @@ export function resolveServeToken(envPath: string = sleepEnvPath()): string {
   // Non-TTY runs are pointed at sleep.env, the token's canonical chmod-600 home.
   if (process.stdout.isTTY) {
     process.stdout.write('\nrecense serve: token generated.\n');
-    process.stdout.write(`  BRAIN_SERVE_TOKEN=${token}\n`);
+    process.stdout.write(`  RECENSE_SERVE_TOKEN=${token}\n`);
     process.stdout.write('  Record this token — it will NOT be printed again.\n\n');
   } else {
     process.stdout.write(
       `\nrecense serve: token generated and stored in ${envPath} ` +
-      `(not printed — stdout is not a TTY; read it with: grep '^BRAIN_SERVE_TOKEN=' ${envPath})\n\n`,
+      `(not printed — stdout is not a TTY; read it with: grep '^RECENSE_SERVE_TOKEN=' ${envPath})\n\n`,
     );
   }
   return token;

@@ -2,7 +2,7 @@
  * tests/brain-dispatch.test.ts — H-1 regression: brain dispatcher must forward argv[3..]
  * to spawned child CLIs, not argv[4..] (which drops the first positional/flag).
  *
- * Build-gated: spawns dist/src/adapter/brain.js so the test ONLY runs when dist/ exists.
+ * Build-gated: spawns dist/src/adapter/recense.js so the test ONLY runs when dist/ exists.
  * The pretest build script (M-11) ensures dist/ is always fresh before `npm test`.
  *
  * The key behavior under test:
@@ -18,11 +18,11 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { describe, it, expect } from 'vitest';
 
-const BRAIN_JS = join(__dirname, '..', 'dist', 'src', 'adapter', 'brain.js');
+const RECENSE_JS = join(__dirname, '..', 'dist', 'src', 'adapter', 'recense.js');
 const INGEST_LOG = '/tmp/recense-ingest.log';
 
 // Skip the entire suite when dist/ has not been built (CI guard).
-const SKIP_NO_DIST = !existsSync(BRAIN_JS);
+const SKIP_NO_DIST = !existsSync(RECENSE_JS);
 
 describe.skipIf(SKIP_NO_DIST)('brain dispatcher (12-05): init dispatch regression', () => {
   it('recense init with non-TTY stdin exits 1 and prints interactive terminal error', () => {
@@ -33,7 +33,7 @@ describe.skipIf(SKIP_NO_DIST)('brain dispatcher (12-05): init dispatch regressio
     const tmpDir = mkdtempSync(join(tmpdir(), 'brain-init-test-'));
     const throwawayEnv = join(tmpDir, 'sleep.env');
     try {
-      const r = spawnSync(process.execPath, [BRAIN_JS, 'init'], {
+      const r = spawnSync(process.execPath, [RECENSE_JS, 'init'], {
         stdio: 'pipe',
         timeout: 15_000,
         env: {
@@ -69,7 +69,7 @@ describe.skipIf(SKIP_NO_DIST)('brain dispatcher (H-1): argv[3..] forwarding', ()
       // With the pre-fix slice(4), the child only received `[uniqueSource]` minus `--db <path>`,
       // so it had no --db and would exit before logging. With the fix (slice(3)), the child
       // receives `['ingest', '--db', tmpDb, uniqueSource]` → resolves dbPath + logs unknown source.
-      spawnSync(process.execPath, [BRAIN_JS, 'ingest', '--db', tmpDb, uniqueSource], {
+      spawnSync(process.execPath, [RECENSE_JS, 'ingest', '--db', tmpDb, uniqueSource], {
         stdio: 'pipe',
         timeout: 15_000,
         env: { ...process.env, RECENSE_DB: '' }, // clear env DB so --db flag must work

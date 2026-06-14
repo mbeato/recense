@@ -21,7 +21,7 @@ once when `recense serve` first starts (TTY mode). For non-TTY (launchd, systemd
 it from the env file:
 
 ```sh
-grep '^BRAIN_SERVE_TOKEN=' ~/.config/recense/sleep.env
+grep '^RECENSE_SERVE_TOKEN=' ~/.config/recense/sleep.env
 ```
 
 **Health check — no token required:**
@@ -31,7 +31,7 @@ curl -s http://127.0.0.1:7701/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
-**Authenticated ask — replace `<token>` with your BRAIN_SERVE_TOKEN:**
+**Authenticated ask — replace `<token>` with your RECENSE_SERVE_TOKEN:**
 
 ```sh
 curl -s -X POST http://127.0.0.1:7701/v1/ask \
@@ -48,18 +48,18 @@ Save as `hello-memory.mjs` and run with `node hello-memory.mjs`:
 ```js
 #!/usr/bin/env node
 // hello-memory.mjs — 2-minute on-ramp
-// Set BRAIN_SERVE_URL and BRAIN_SERVE_TOKEN in your shell before running.
+// Set RECENSE_SERVE_URL and RECENSE_SERVE_TOKEN in your shell before running.
 import { createInterface } from 'readline';
 
-const { BRAIN_SERVE_URL = 'http://127.0.0.1:7701', BRAIN_SERVE_TOKEN } = process.env;
-if (!BRAIN_SERVE_TOKEN) { console.error('BRAIN_SERVE_TOKEN not set'); process.exit(1); }
+const { RECENSE_SERVE_URL = 'http://127.0.0.1:7701', RECENSE_SERVE_TOKEN } = process.env;
+if (!RECENSE_SERVE_TOKEN) { console.error('RECENSE_SERVE_TOKEN not set'); process.exit(1); }
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 rl.on('line', async (line) => {
   if (!line.trim()) return;
-  const res = await fetch(`${BRAIN_SERVE_URL}/v1/ask`, {
+  const res = await fetch(`${RECENSE_SERVE_URL}/v1/ask`, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${BRAIN_SERVE_TOKEN}`, 'Content-Type': 'application/json' },
+    headers: { 'Authorization': `Bearer ${RECENSE_SERVE_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query: line.trim() }),
   });
   if (!res.ok) { console.error('HTTP', res.status); return; }
@@ -98,11 +98,11 @@ clients/telegram/
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | yes | — | Bot API token from @BotFather |
-| `BRAIN_SERVE_URL` | no | `http://127.0.0.1:7701` | recense serve base URL |
-| `BRAIN_SERVE_TOKEN` | yes | — | Bearer token for recense serve auth |
-| `BRAIN_CLIENT_ALLOWLIST` | yes | — | Comma-separated numeric Telegram user IDs |
-| `BRAIN_CLIENT_POLL_MS` | no | `2000` (floor: `500`) | Poll interval in ms |
-| `BRAIN_CLIENT_STATE_PATH` | no | `~/.config/recense/telegram-client-state.json` | Cursor state file path |
+| `RECENSE_SERVE_URL` | no | `http://127.0.0.1:7701` | recense serve base URL |
+| `RECENSE_SERVE_TOKEN` | yes | — | Bearer token for recense serve auth |
+| `RECENSE_CLIENT_ALLOWLIST` | yes | — | Comma-separated numeric Telegram user IDs |
+| `RECENSE_CLIENT_POLL_MS` | no | `2000` (floor: `500`) | Poll interval in ms |
+| `RECENSE_CLIENT_STATE_PATH` | no | `~/.config/recense/telegram-client-state.json` | Cursor state file path |
 
 **How it works:**
 
@@ -127,7 +127,7 @@ clients/telegram/
 
 ## API contract
 
-All authenticated endpoints require `Authorization: Bearer <BRAIN_SERVE_TOKEN>`. The
+All authenticated endpoints require `Authorization: Bearer <RECENSE_SERVE_TOKEN>`. The
 health endpoint does not require auth.
 
 ### `GET /health`
@@ -232,8 +232,8 @@ produce a client that answers arbitrary senders.
 
 `loadClientConfig()` sets `enabled = false` when any of these conditions hold:
 - `TELEGRAM_BOT_TOKEN` is missing or empty
-- `BRAIN_SERVE_TOKEN` is missing or empty
-- `BRAIN_CLIENT_ALLOWLIST` is empty (parses to zero entries)
+- `RECENSE_SERVE_TOKEN` is missing or empty
+- `RECENSE_CLIENT_ALLOWLIST` is empty (parses to zero entries)
 
 `main()` checks `config.enabled` before starting `setInterval`. If false, it logs the
 reason and returns — no poll loop is started. **Process-not-running is not the gate.**
@@ -243,11 +243,11 @@ The runtime flag is. A running process with `enabled: false` is deliberately idl
 
 An allowlist of `[]` is not a misconfiguration that allows all senders — it is the
 conservative default. The client answers no one until at least one numeric Telegram
-user ID is added to `BRAIN_CLIENT_ALLOWLIST`.
+user ID is added to `RECENSE_CLIENT_ALLOWLIST`.
 
 **Missing token disables:**
 
-A client started without `BRAIN_SERVE_TOKEN` logs the reason and does not poll.
+A client started without `RECENSE_SERVE_TOKEN` logs the reason and does not poll.
 Without `TELEGRAM_BOT_TOKEN` it cannot fetch updates at all. Both missing-token
 conditions are caught by the `enabled` gate before any network call is made.
 
@@ -270,9 +270,9 @@ Put the client's secrets in a dedicated chmod-600 env file, separate from
 mkdir -p ~/.config/recense
 cat > ~/.config/recense/telegram-client.env <<'EOF'
 TELEGRAM_BOT_TOKEN=123456:ABC-your-bot-token-here
-BRAIN_SERVE_URL=http://127.0.0.1:7701
-BRAIN_SERVE_TOKEN=your-64-char-serve-token
-BRAIN_CLIENT_ALLOWLIST=123456789
+RECENSE_SERVE_URL=http://127.0.0.1:7701
+RECENSE_SERVE_TOKEN=your-64-char-serve-token
+RECENSE_CLIENT_ALLOWLIST=123456789
 EOF
 chmod 600 ~/.config/recense/telegram-client.env
 ```
@@ -280,7 +280,7 @@ chmod 600 ~/.config/recense/telegram-client.env
 **Never log or commit the token.** Read it with grep when you need it:
 
 ```sh
-grep '^BRAIN_SERVE_TOKEN=' ~/.config/recense/telegram-client.env
+grep '^RECENSE_SERVE_TOKEN=' ~/.config/recense/telegram-client.env
 ```
 
 ### launchd KeepAlive plist (macOS)
@@ -310,7 +310,7 @@ tail -f /tmp/recense-telegram-client.log
 
 ### Token rotation
 
-`BRAIN_SERVE_TOKEN` rotation is documented in `docs/server-mode.md`. After rotating,
+`RECENSE_SERVE_TOKEN` rotation is documented in `docs/server-mode.md`. After rotating,
 update the new token in `telegram-client.env` (chmod-600, not re-committed), then
 restart the client job:
 

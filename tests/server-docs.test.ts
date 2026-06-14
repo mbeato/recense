@@ -16,8 +16,8 @@ import { join } from 'path';
 const ROOT = join(__dirname, '..');
 
 const GUIDE_PATH              = join(ROOT, 'docs', 'server-mode.md');
-const TEMPLATE_PATH           = join(ROOT, 'scripts', 'brain-serve.service.template');
-const SCHEDULER_TEMPLATE_PATH = join(ROOT, 'scripts', 'brain-scheduler.service.template');
+const TEMPLATE_PATH           = join(ROOT, 'scripts', 'recense-serve.service.template');
+const SCHEDULER_TEMPLATE_PATH = join(ROOT, 'scripts', 'recense-scheduler.service.template');
 
 function readDoc(p: string): string {
   if (!existsSync(p)) return '';
@@ -30,10 +30,10 @@ function unitBody(content: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// scripts/brain-serve.service.template
+// scripts/recense-serve.service.template
 // ---------------------------------------------------------------------------
 
-describe('scripts/brain-serve.service.template', () => {
+describe('scripts/recense-serve.service.template', () => {
   it('file exists', () => {
     expect(existsSync(TEMPLATE_PATH)).toBe(true);
   });
@@ -76,10 +76,10 @@ describe('scripts/brain-serve.service.template', () => {
 });
 
 // ---------------------------------------------------------------------------
-// scripts/brain-scheduler.service.template
+// scripts/recense-scheduler.service.template
 // ---------------------------------------------------------------------------
 
-describe('scripts/brain-scheduler.service.template', () => {
+describe('scripts/recense-scheduler.service.template', () => {
   it('file exists', () => {
     expect(existsSync(SCHEDULER_TEMPLATE_PATH)).toBe(true);
   });
@@ -137,8 +137,8 @@ describe('docs/server-mode.md', () => {
     expect(readDoc(GUIDE_PATH)).toContain('reverse_proxy');
   });
 
-  it('documents BRAIN_SERVE_TOKEN lifecycle', () => {
-    expect(readDoc(GUIDE_PATH)).toContain('BRAIN_SERVE_TOKEN');
+  it('documents RECENSE_SERVE_TOKEN lifecycle', () => {
+    expect(readDoc(GUIDE_PATH)).toContain('RECENSE_SERVE_TOKEN');
   });
 
   it('documents RECENSE_NODE_BIN ABI pin', () => {
@@ -169,13 +169,13 @@ describe('docs/server-mode.md', () => {
     // Bare `envsubst <` blanks EVERY ${VAR} in the input — including ones the operator
     // forgot to export — with no error. The explicit variable list pins the safer convention.
     expect(readDoc(GUIDE_PATH)).toContain(
-      "envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${BRAIN_JS} ${HOST} ${PORT} ${HOME}' < scripts/brain-serve.service.template",
+      "envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${RECENSE_JS} ${HOST} ${PORT} ${HOME}' < scripts/recense-serve.service.template",
     );
   });
 
   it('contains whitelist-form envsubst command for brain-scheduler template (IN-07)', () => {
     expect(readDoc(GUIDE_PATH)).toContain(
-      "envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${BRAIN_JS} ${HOME}' < scripts/brain-scheduler.service.template",
+      "envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${RECENSE_JS} ${HOME}' < scripts/recense-scheduler.service.template",
     );
   });
 });

@@ -8,7 +8,7 @@
  *   (a) RECENSE_NODE_BIN env wins over sleep.env and fallback
  *   (b) sleep.env RECENSE_NODE_BIN= line is parsed when env is unset
  *   (c) 'node' is returned when neither env nor sleep.env has the value
- *   (d) resolveBrainJs() derives dirname(RECENSE_SLEEP_JS)/brain.js
+ *   (d) resolveBrainJs() derives dirname(RECENSE_SLEEP_JS)/recense.js
  *
  * Run: node scripts/selftest-runtime-paths.cjs  (after tsc compiles dist/)
  * Exit non-zero on any failed assertion.
@@ -116,7 +116,7 @@ test("resolveNodeBin: falls back to 'node' when nothing set", () => {
 });
 
 // ── (d) resolveBrainJs: sibling derivation ───────────────────────────────────
-test('resolveBrainJs: derives sibling brain.js from RECENSE_SLEEP_JS', () => {
+test('resolveBrainJs: derives sibling recense.js from RECENSE_SLEEP_JS', () => {
   const tmpEnv = path.join(tmpdir, `selftest-brain-${Date.now()}.env`);
   fs.writeFileSync(
     tmpEnv,
@@ -124,10 +124,10 @@ test('resolveBrainJs: derives sibling brain.js from RECENSE_SLEEP_JS', () => {
   );
   try {
     withEnv(
-      { RECENSE_BRAIN_JS: undefined, RECENSE_SLEEP_ENV: tmpEnv },
+      { RECENSE_JS: undefined, RECENSE_SLEEP_ENV: tmpEnv },
       () => {
         const result = resolveBrainJs();
-        const expected = '/r/dist/src/adapter/brain.js';
+        const expected = '/r/dist/src/adapter/recense.js';
         assert.strictEqual(result, expected, `Expected '${expected}', got '${result}'`);
       },
     );
@@ -139,7 +139,7 @@ test('resolveBrainJs: derives sibling brain.js from RECENSE_SLEEP_JS', () => {
 // ── resolveDbPath: --db flag wins ─────────────────────────────────────────────
 test('resolveDbPath: --db flag wins', () => {
   withEnv({ RECENSE_DB: '/env/recense.db' }, () => {
-    const result = resolveDbPath(['node', 'brain.js', '--db', '/flag/recense.db']);
+    const result = resolveDbPath(['node', 'recense.js', '--db', '/flag/recense.db']);
     assert.strictEqual(result, '/flag/recense.db', `Expected '/flag/recense.db', got '${result}'`);
   });
 });
@@ -147,7 +147,7 @@ test('resolveDbPath: --db flag wins', () => {
 // ── resolveDbPath: env wins over default ──────────────────────────────────────
 test('resolveDbPath: RECENSE_DB env wins over default', () => {
   withEnv({ RECENSE_DB: '/env/recense.db' }, () => {
-    const result = resolveDbPath(['node', 'brain.js']);
+    const result = resolveDbPath(['node', 'recense.js']);
     assert.strictEqual(result, '/env/recense.db', `Expected '/env/recense.db', got '${result}'`);
   });
 });

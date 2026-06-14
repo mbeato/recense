@@ -44,7 +44,7 @@ import {
   writeEnvFile,
   validateApiKey,
   mergeSettingsHooks,
-} from '../src/adapter/brain-init';
+} from '../src/adapter/recense-init';
 import { resolveDbPath } from '../src/adapter/runtime-config';
 
 // ── resolveExistingEnv ────────────────────────────────────────────────────────
@@ -223,7 +223,7 @@ describe('validateApiKey', () => {
 
 describe('mergeSettingsHooks', () => {
   const FAKE_NODE = '/usr/bin/node';
-  const FAKE_BRAIN = '/path/to/dist/src/adapter/brain.js';
+  const FAKE_BRAIN = '/path/to/dist/src/adapter/recense.js';
   const FAKE_DB = '/home/u/.config/recense/recense.db';
 
   it('adds SessionStart, UserPromptSubmit, and Stop recense hook entries to a fresh file', () => {
@@ -236,7 +236,7 @@ describe('mergeSettingsHooks', () => {
     for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop']) {
       const groups = s.hooks[event] as Array<{ hooks: Array<{ command: string }> }>;
       const hasHook = groups.some(g =>
-        g.hooks?.some(h => /brain.*hook/.test(h.command ?? '')),
+        g.hooks?.some(h => /recense.*hook/.test(h.command ?? '')),
       );
       expect(hasHook, `${event} hook missing`).toBe(true);
     }
@@ -267,7 +267,7 @@ describe('mergeSettingsHooks', () => {
         expect(cmd).not.toMatch(/session-start-cli\.js|turn-capture-cli\.js|stop-cli\.js/);
       }
       // New-style entry must be present
-      const hasNew = allCmds.some(cmd => /brain.*hook/.test(cmd));
+      const hasNew = allCmds.some(cmd => /recense.*hook/.test(cmd));
       expect(hasNew, `new-style hook missing for ${event}`).toBe(true);
     }
   });
@@ -299,7 +299,7 @@ describe('mergeSettingsHooks', () => {
     // Old-style recense hook removed
     expect(allCmds.some(cmd => /session-start-cli\.js/.test(cmd))).toBe(false);
     // New-style recense hook present
-    expect(allCmds.some(cmd => /brain.*hook/.test(cmd))).toBe(true);
+    expect(allCmds.some(cmd => /recense.*hook/.test(cmd))).toBe(true);
   });
 
   it('writes with 2-space JSON formatting', () => {
@@ -324,7 +324,7 @@ describe('mergeSettingsHooks', () => {
       const groups = s.hooks[event] as Array<{ hooks: Array<{ command: string }> }>;
       const brainEntries = groups
         .flatMap(g => g.hooks ?? [])
-        .filter(h => /brain.*hook/.test(h.command ?? ''));
+        .filter(h => /recense.*hook/.test(h.command ?? ''));
       expect(brainEntries.length).toBe(1);
     }
   });
@@ -344,7 +344,7 @@ describe('mergeSettingsHooks', () => {
       const cmd = groups
         .flatMap(g => g.hooks ?? [])
         .map(h => h.command ?? '')
-        .find(c => /brain.*hook/.test(c));
+        .find(c => /recense.*hook/.test(c));
       expect(cmd, `${event} recense hook missing`).toBeTruthy();
       // Command literally carries the configured DB
       expect(cmd).toContain(`--db ${FAKE_DB}`);
@@ -393,10 +393,10 @@ describe('mergeSettingsHooks', () => {
     // The recense hook now lives in an unmatched group, pinned with --db, exactly once.
     const brainEntries = groups
       .flatMap(g => g.hooks ?? [])
-      .filter(h => /brain.*hook/.test(h.command ?? ''));
+      .filter(h => /recense.*hook/.test(h.command ?? ''));
     expect(brainEntries).toHaveLength(1);
     expect(brainEntries[0]!.command).toContain(`--db ${FAKE_DB}`);
     const unmatched = groups.find(g => g.matcher === undefined)!;
-    expect(unmatched.hooks.some(h => /brain.*hook/.test(h.command))).toBe(true);
+    expect(unmatched.hooks.some(h => /recense.*hook/.test(h.command))).toBe(true);
   });
 });

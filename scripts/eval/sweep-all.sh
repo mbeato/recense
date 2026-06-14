@@ -11,7 +11,7 @@
 # they'd only characterize the system further. Decide on resume.
 cd $HOME/brain-memory || exit 1
 source $HOME/.config/brain-memory/sleep.env 2>/dev/null || true
-CHAT=$(echo "${BRAIN_CLIENT_ALLOWLIST:-}" | cut -d, -f1 | tr -d ' ')
+CHAT=$(echo "${RECENSE_CLIENT_ALLOWLIST:-}" | cut -d, -f1 | tr -d ' ')
 ping() { [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "$CHAT" ] && curl -s --max-time 10 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" --data-urlencode "chat_id=${CHAT}" --data-urlencode "text=$1" >/dev/null 2>&1 || true; }
 
 ping "🔬 EVAL-02 variance band started: 3× batch-off then 3× batch-on (~3h). Confirming batch-off≈84.6% / batched≈53.8%. Reply not needed; per-run pings follow. Stop anytime: ssh in + echo stop > /tmp/eval-cmd"

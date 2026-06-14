@@ -23,7 +23,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
-import { checkDb, checkNodeAbi, checkHooks, checkServeToken } from '../src/adapter/brain-doctor';
+import { checkDb, checkNodeAbi, checkHooks, checkServeToken } from '../src/adapter/recense-doctor';
 
 // ---------------------------------------------------------------------------
 // checkDb
@@ -147,9 +147,9 @@ describe('checkHooks', () => {
   it('(f) passes when all three events have a recense hook command (new form)', () => {
     const settings = {
       hooks: {
-        SessionStart:      [{ hooks: [{ type: 'command', command: '/usr/local/bin/node /path/brain.js hook session-start' }] }],
-        UserPromptSubmit:  [{ hooks: [{ type: 'command', command: '/usr/local/bin/node /path/brain.js hook turn-capture' }] }],
-        Stop:              [{ hooks: [{ type: 'command', command: '/usr/local/bin/node /path/brain.js hook stop' }] }],
+        SessionStart:      [{ hooks: [{ type: 'command', command: '/usr/local/bin/node /path/recense.js hook session-start' }] }],
+        UserPromptSubmit:  [{ hooks: [{ type: 'command', command: '/usr/local/bin/node /path/recense.js hook turn-capture' }] }],
+        Stop:              [{ hooks: [{ type: 'command', command: '/usr/local/bin/node /path/recense.js hook stop' }] }],
       },
     };
     const tmpDir  = join(tmpdir(), `brain-doctor-hooks-${process.pid}`);
@@ -168,8 +168,8 @@ describe('checkHooks', () => {
   it('(g) fails when Stop hook is missing', () => {
     const settings = {
       hooks: {
-        SessionStart:     [{ hooks: [{ type: 'command', command: '/usr/bin/node brain.js hook session-start' }] }],
-        UserPromptSubmit: [{ hooks: [{ type: 'command', command: '/usr/bin/node brain.js hook turn-capture' }] }],
+        SessionStart:     [{ hooks: [{ type: 'command', command: '/usr/bin/node recense.js hook session-start' }] }],
+        UserPromptSubmit: [{ hooks: [{ type: 'command', command: '/usr/bin/node recense.js hook turn-capture' }] }],
         // Stop intentionally omitted
       },
     };
@@ -223,15 +223,15 @@ describe('checkServeToken', () => {
     expect(result.detail).toContain('no serve token needed');
   });
 
-  it('(k) passes when env file at 0600 with BRAIN_SERVE_TOKEN set; token value absent from detail', () => {
+  it('(k) passes when env file at 0600 with RECENSE_SERVE_TOKEN set; token value absent from detail', () => {
     const envPath = makeTempEnvPath();
     const SECRET_TOKEN = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
-    writeFileSync(envPath, `BRAIN_SERVE_TOKEN=${SECRET_TOKEN}\n`, 'utf8');
+    writeFileSync(envPath, `RECENSE_SERVE_TOKEN=${SECRET_TOKEN}\n`, 'utf8');
     chmodSync(envPath, 0o600);
 
     const result = checkServeToken(envPath);
     expect(result.ok).toBe(true);
-    expect(result.detail).toContain('BRAIN_SERVE_TOKEN set');
+    expect(result.detail).toContain('RECENSE_SERVE_TOKEN set');
     expect(result.detail).toContain('0600');
     // T-12-10: token value must NEVER appear in the detail string
     expect(result.detail).not.toContain(SECRET_TOKEN);
@@ -241,7 +241,7 @@ describe('checkServeToken', () => {
 
   it('(l) fails when env file exists at non-0600 mode', () => {
     const envPath = makeTempEnvPath();
-    writeFileSync(envPath, 'BRAIN_SERVE_TOKEN=sometoken\n', 'utf8');
+    writeFileSync(envPath, 'RECENSE_SERVE_TOKEN=sometoken\n', 'utf8');
     chmodSync(envPath, 0o644);
 
     const result = checkServeToken(envPath);

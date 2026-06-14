@@ -12,7 +12,7 @@
  *   3. Scheduler registered + running
  *   4. Hooks wired in ~/.claude/settings.json
  *   5. Node ABI match (RECENSE_NODE_BIN vs better-sqlite3 build)
- *   6. Serve token presence + env file mode (BRAIN_SERVE_TOKEN in chmod-600 sleep.env)
+ *   6. Serve token presence + env file mode (RECENSE_SERVE_TOKEN in chmod-600 sleep.env)
  *
  * Design invariants:
  *  - DB opened readonly only — never writes the graph (T-09-10).
@@ -34,7 +34,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { SCHEMA_VERSION } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
-import { resolveExistingEnv } from './brain-init';
+import { resolveExistingEnv } from './recense-init';
 import { resolveDbPath, sleepEnvPath } from './runtime-config';
 
 // ── Check result type ─────────────────────────────────────────────────────────
@@ -166,9 +166,9 @@ export function checkScheduler(): CheckResult {
   }
   // Linux: foreground process only (D-92 honesty principle).
   // WR-04: tolerate the compiled entry point — the systemd unit runs
-  // `node .../brain.js scheduler run`, so the pattern must match both the npm bin
-  // shim (`recense scheduler run`) and the direct invocation (`brain.js scheduler run`).
-  const result = spawnSync('pgrep', ['-f', 'brain(\\.js)? scheduler run'], { stdio: 'pipe' });
+  // `node .../recense.js scheduler run`, so the pattern must match both the npm bin
+  // shim (`recense scheduler run`) and the direct invocation (`recense.js scheduler run`).
+  const result = spawnSync('pgrep', ['-f', '(brain|recense)(\\.js)? scheduler run'], { stdio: 'pipe' });
   if (result.status === 0) {
     return pass('recense scheduler run process detected');
   }
@@ -213,9 +213,9 @@ export function checkHooks(settingsOverridePath?: string): CheckResult {
     const hasBrainHook = groups?.some(group =>
       group.hooks?.some(h => {
         const cmd = h.command ?? '';
-        // New-style: command contains 'brain' AND 'hook'
-        // Pre-migration: command contains the old dist path
-        return (cmd.includes('brain') && cmd.includes('hook')) ||
+        // New-style: command contains 'recense' (or legacy 'brain') AND 'hook'.
+        // Pre-migration: command contains the old dist path.
+        return ((cmd.includes('recense') || cmd.includes('brain')) && cmd.includes('hook')) ||
                cmd.includes('recense/dist/src/adapter/');
       }),
     );
@@ -264,14 +264,14 @@ export function checkNodeAbi(): CheckResult {
 // ── Dimension 6: Serve token presence + env file mode ────────────────────────
 
 /**
- * Check whether BRAIN_SERVE_TOKEN is set in sleep.env and that the env file
+ * Check whether RECENSE_SERVE_TOKEN is set in sleep.env and that the env file
  * is chmod-600.
  *
  * Three outcomes:
  *  - env file absent → pass (token only needed when running `recense serve`)
  *  - env file present, mode != 0600 → fail with the actual mode and hint
- *  - env file present, 0600, no BRAIN_SERVE_TOKEN → pass (will generate on first serve)
- *  - env file present, 0600, BRAIN_SERVE_TOKEN set → pass
+ *  - env file present, 0600, no RECENSE_SERVE_TOKEN → pass (will generate on first serve)
+ *  - env file present, 0600, RECENSE_SERVE_TOKEN set → pass
  *
  * T-12-10: the token VALUE is NEVER written to stdout; detail reports presence only.
  *
@@ -280,7 +280,7 @@ export function checkNodeAbi(): CheckResult {
  */
 export function checkServeToken(envPath: string = sleepEnvPath()): CheckResult {
   if (!existsSync(envPath)) {
-    return pass('BRAIN_SERVE_TOKEN not set (no serve token needed unless running `recense serve`)');
+    return pass('RECENSE_SERVE_TOKEN not set (no serve token needed unless running `recense serve`)');
   }
   try {
     const { mode } = statSync(envPath);
@@ -292,12 +292,12 @@ export function checkServeToken(envPath: string = sleepEnvPath()): CheckResult {
     return fail(`cannot stat env file: ${e}`);
   }
   const env = resolveExistingEnv(envPath);
-  const token = env.get('BRAIN_SERVE_TOKEN');
+  const token = env.get('RECENSE_SERVE_TOKEN');
   if (!token) {
-    return pass('BRAIN_SERVE_TOKEN not set (will generate on first `recense serve` run)');
+    return pass('RECENSE_SERVE_TOKEN not set (will generate on first `recense serve` run)');
   }
   // T-12-10: report presence only — token value is never included in the detail string.
-  return pass('BRAIN_SERVE_TOKEN set, env file mode 0600');
+  return pass('RECENSE_SERVE_TOKEN set, env file mode 0600');
 }
 
 // ── Main run ──────────────────────────────────────────────────────────────────

@@ -30,20 +30,20 @@ describe('resolveDbPath precedence', () => {
 
   it('prefers the --db argv flag above all else', () => {
     process.env['RECENSE_DB'] = '/env/path.db';
-    expect(resolveDbPath(['node', 'brain.js', 'hook', 'stop', '--db', '/flag/path.db'])).toBe('/flag/path.db');
+    expect(resolveDbPath(['node', 'recense.js', 'hook', 'stop', '--db', '/flag/path.db'])).toBe('/flag/path.db');
   });
 
   it('falls back to RECENSE_DB when no --db flag', () => {
     process.env['RECENSE_DB'] = '/env/path.db';
-    expect(resolveDbPath(['node', 'brain.js', 'hook', 'stop'])).toBe('/env/path.db');
+    expect(resolveDbPath(['node', 'recense.js', 'hook', 'stop'])).toBe('/env/path.db');
   });
 
   it('falls back to the shared default when neither flag nor env is present', () => {
-    expect(resolveDbPath(['node', 'brain.js', 'hook', 'stop'])).toBe(defaultDbPath());
+    expect(resolveDbPath(['node', 'recense.js', 'hook', 'stop'])).toBe(defaultDbPath());
   });
 
   it('ignores a dangling --db with no value', () => {
-    expect(resolveDbPath(['node', 'brain.js', 'hook', 'stop', '--db'])).toBe(defaultDbPath());
+    expect(resolveDbPath(['node', 'recense.js', 'hook', 'stop', '--db'])).toBe(defaultDbPath());
   });
 
   // M-8: fallbackToDefault option

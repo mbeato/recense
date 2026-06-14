@@ -89,30 +89,30 @@ export function resolveNodeBin(): string {
 }
 
 // ---------------------------------------------------------------------------
-// brain.js entry resolution
+// recense.js entry resolution
 // ---------------------------------------------------------------------------
 
 /**
- * Derive the brain.js CLI entry point for the viz server child.
+ * Derive the recense.js CLI entry point for the viz server child.
  *
  * Precedence:
- *   1. RECENSE_BRAIN_JS env var — explicit override
- *   2. Sibling brain.js of RECENSE_SLEEP_JS from sleep.env:
- *      dirname(RECENSE_SLEEP_JS) + '/brain.js'
+ *   1. RECENSE_JS env var — explicit override
+ *   2. Sibling recense.js of RECENSE_SLEEP_JS from sleep.env:
+ *      dirname(RECENSE_SLEEP_JS) + '/recense.js'
  *   3. undefined — path unresolvable; caller must error
  *
  * The sleep.env line RECENSE_SLEEP_JS points at e.g.:
  *   /repo/dist/src/adapter/sleep-pass-cli.js
- * brain.js is the sibling dispatcher in the same dist/src/adapter/ directory.
+ * recense.js is the sibling dispatcher in the same dist/src/adapter/ directory.
  *
  * File reads are best-effort (any error returns undefined).
  */
 export function resolveBrainJs(): string | undefined {
   // 1. Explicit env override
-  const fromEnv = process.env['RECENSE_BRAIN_JS'];
+  const fromEnv = process.env['RECENSE_JS'];
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
 
-  // 2. Parse RECENSE_SLEEP_JS from sleep.env, derive sibling brain.js
+  // 2. Parse RECENSE_SLEEP_JS from sleep.env, derive sibling recense.js
   const envFile = sleepEnvPath();
   try {
     if (existsSync(envFile)) {
@@ -120,7 +120,7 @@ export function resolveBrainJs(): string | undefined {
         const m = line.match(/^\s*RECENSE_SLEEP_JS\s*=\s*(.+?)\s*$/);
         if (m) {
           const val = m[1]!.replace(/^['"]|['"]$/g, '').trim();
-          if (val) return join(dirname(val), 'brain.js');
+          if (val) return join(dirname(val), 'recense.js');
         }
       }
     }

@@ -265,8 +265,8 @@ export async function main(): Promise<void> {
       config.telegramToken === ''
         ? 'TELEGRAM_BOT_TOKEN missing'
         : config.serveToken === ''
-          ? 'BRAIN_SERVE_TOKEN missing'
-          : 'BRAIN_CLIENT_ALLOWLIST is empty';
+          ? 'RECENSE_SERVE_TOKEN missing'
+          : 'RECENSE_CLIENT_ALLOWLIST is empty';
     log('client disabled — ' + reason + ' (fail-closed, D-10); idling without polling');
     return;
   }

@@ -62,7 +62,7 @@ function cleanup() {
 // Set BEFORE requiring the lifecycle module so no real config is read/touched.
 
 process.env.RECENSE_NODE_BIN = process.execPath;
-process.env.RECENSE_BRAIN_JS = crashScript;
+process.env.RECENSE_JS = crashScript;
 process.env.RECENSE_DB = fakeDb;
 
 // ── Main ──────────────────────────────────────────────────────────────────────

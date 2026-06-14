@@ -37,7 +37,7 @@ the hourly sleep-pass, and BYO API keys that never touch the repo.
 3. **Run `recense init`**
 
    ```sh
-   RECENSE_NODE_BIN=$(which node) node dist/src/adapter/brain.js init
+   RECENSE_NODE_BIN=$(which node) node dist/src/adapter/recense.js init
    ```
 
    `recense init` writes `RECENSE_NODE_BIN` into sleep.env, initialises the DB
@@ -51,7 +51,7 @@ the hourly sleep-pass, and BYO API keys that never touch the repo.
    (NODE_MODULE_VERSION). `recense doctor` reports it:
 
    ```sh
-   node dist/src/adapter/brain.js doctor | grep "Node ABI"
+   node dist/src/adapter/recense.js doctor | grep "Node ABI"
    # ✓ Node ABI: NMV=127, bin=/home/user/.nvm/versions/node/v22.x.x/bin/node
    ```
 
@@ -74,13 +74,13 @@ the hourly sleep-pass, and BYO API keys that never touch the repo.
 
 ## First run + token
 
-`recense serve` generates `BRAIN_SERVE_TOKEN` on the **first run** and prints it
+`recense serve` generates `RECENSE_SERVE_TOKEN` on the **first run** and prints it
 **exactly once**. Record the token now — it will not be printed again.
 
 ```sh
-node dist/src/adapter/brain.js serve --db ~/.config/recense/recense.db
+node dist/src/adapter/recense.js serve --db ~/.config/recense/recense.db
 # Recense serve: token generated.
-#   BRAIN_SERVE_TOKEN=<64-char hex>
+#   RECENSE_SERVE_TOKEN=<64-char hex>
 #   Record this token — it will NOT be printed again.
 # Recense serve: listening on http://127.0.0.1:7701
 ```
@@ -88,7 +88,7 @@ node dist/src/adapter/brain.js serve --db ~/.config/recense/recense.db
 The token is stored in `~/.config/recense/sleep.env` (chmod 600, never
 committed). On subsequent runs the token is read silently. If stdout is not a TTY
 (e.g. first run happens under systemd), the token is **not** printed — read it from
-sleep.env instead: `grep '^BRAIN_SERVE_TOKEN=' ~/.config/recense/sleep.env`.
+sleep.env instead: `grep '^RECENSE_SERVE_TOKEN=' ~/.config/recense/sleep.env`.
 
 ---
 
@@ -146,7 +146,7 @@ renewal, and HTTPS redirect. The engine ships no cert code.
 recense intentionally ships **no CORS headers**. This is not an omission — it is
 a deliberate security posture:
 
-- A browser consumer would have to embed `BRAIN_SERVE_TOKEN` in client-visible
+- A browser consumer would have to embed `RECENSE_SERVE_TOKEN` in client-visible
   JavaScript, making it extractable by anyone who can open DevTools. That is the exact
   attack this setup is designed to prevent.
 - All intended consumers (Tonos backend, remote agent hooks, curl) are server-to-server
@@ -159,7 +159,7 @@ server-side proxy in front of brain-serve rather than opening CORS.
 
 ## systemd: recense serve unit
 
-Instantiate the template at `scripts/brain-serve.service.template`. Set the variables
+Instantiate the template at `scripts/recense-serve.service.template`. Set the variables
 for your host, then install and start the unit.
 
 Define variables (adapt to your paths):
@@ -168,7 +168,7 @@ Define variables (adapt to your paths):
 export YOUR_USER=max
 export RECENSE_DIR=/home/user/recense
 export RECENSE_NODE_BIN=$(grep '^RECENSE_NODE_BIN=' ~/.config/recense/sleep.env | tail -1 | cut -d= -f2-)
-export BRAIN_JS=/home/user/recense/dist/src/adapter/brain.js
+export RECENSE_JS=/home/user/recense/dist/src/adapter/recense.js
 export PORT=7701
 # Bind address for recense serve. 127.0.0.1 keeps the plain-HTTP port loopback-only —
 # Caddy proxies to it locally and outside requests never reach the engine directly.
@@ -189,7 +189,7 @@ still substitutes to empty, so always inspect the generated unit before installi
 Instantiate and install:
 
 ```sh
-envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${BRAIN_JS} ${HOST} ${PORT} ${HOME}' < scripts/brain-serve.service.template > /tmp/brain-serve.service
+envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${RECENSE_JS} ${HOST} ${PORT} ${HOME}' < scripts/recense-serve.service.template > /tmp/brain-serve.service
 cat /tmp/brain-serve.service   # inspect: an empty value (e.g. `--port` with nothing after it) means a missing export
 sudo cp /tmp/brain-serve.service /etc/systemd/system/brain-serve.service
 sudo systemctl daemon-reload
@@ -214,10 +214,10 @@ better-sqlite3 native addon.
 ## Scheduler: hourly sleep-pass (reboot-survival)
 
 The sleep-pass (consolidation) must survive reboots to keep the semantic graph current.
-Use the companion template at `scripts/brain-scheduler.service.template`:
+Use the companion template at `scripts/recense-scheduler.service.template`:
 
 ```sh
-envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${BRAIN_JS} ${HOME}' < scripts/brain-scheduler.service.template > /tmp/brain-scheduler.service
+envsubst '${YOUR_USER} ${RECENSE_DIR} ${RECENSE_NODE_BIN} ${RECENSE_JS} ${HOME}' < scripts/recense-scheduler.service.template > /tmp/brain-scheduler.service
 cat /tmp/brain-scheduler.service   # inspect before installing
 sudo cp /tmp/brain-scheduler.service /etc/systemd/system/brain-scheduler.service
 sudo systemctl daemon-reload
@@ -242,7 +242,7 @@ tail -f /tmp/recense-sleep.log
 
 ## Token rotation
 
-To rotate `BRAIN_SERVE_TOKEN`, set a **new value directly** in sleep.env — never delete
+To rotate `RECENSE_SERVE_TOKEN`, set a **new value directly** in sleep.env — never delete
 the line under systemd. A deleted line makes `recense serve` regenerate the token at
 startup, and under systemd stdout is journald: a persistent log that would retain the
 token indefinitely, violating the "token never in logs" invariant. (The server also
@@ -252,7 +252,7 @@ anyway — it points you at sleep.env instead.)
 1. Write a fresh token in place:
 
    ```sh
-   sed -i "s/^BRAIN_SERVE_TOKEN=.*/BRAIN_SERVE_TOKEN=$(openssl rand -hex 32)/" ~/.config/recense/sleep.env
+   sed -i "s/^RECENSE_SERVE_TOKEN=.*/RECENSE_SERVE_TOKEN=$(openssl rand -hex 32)/" ~/.config/recense/sleep.env
    ```
 
 2. Restart the serve unit:
@@ -265,14 +265,14 @@ anyway — it points you at sleep.env instead.)
    consumers:
 
    ```sh
-   grep '^BRAIN_SERVE_TOKEN=' ~/.config/recense/sleep.env
+   grep '^RECENSE_SERVE_TOKEN=' ~/.config/recense/sleep.env
    ```
 
 4. Verify the token and env file mode with `recense doctor`:
 
    ```sh
-   node dist/src/adapter/brain.js doctor | grep "Serve token"
-   # ✓ Serve token: BRAIN_SERVE_TOKEN set, env file mode 0600
+   node dist/src/adapter/recense.js doctor | grep "Serve token"
+   # ✓ Serve token: RECENSE_SERVE_TOKEN set, env file mode 0600
    ```
 
 There is no `brain rotate-token` command — editing the env file + restart is the full
@@ -291,7 +291,7 @@ curl -s https://recense.example.com/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
-**Authenticated search (replace `<token>` with your BRAIN_SERVE_TOKEN):**
+**Authenticated search (replace `<token>` with your RECENSE_SERVE_TOKEN):**
 
 ```sh
 curl -s -X POST https://recense.example.com/v1/search \
@@ -319,14 +319,14 @@ curl -s -o /dev/null -w "%{http_code}" \
 From the server:
 
 ```sh
-node dist/src/adapter/brain.js doctor
+node dist/src/adapter/recense.js doctor
 # Recense doctor:
 #   ✓ DB: DB at /home/user/.config/recense/recense.db — schema v5
 #   ✓ API keys: ANTHROPIC valid, OPENAI valid
 #   ✓ Scheduler: recense scheduler run process detected
 #   ✓ Hooks: ...
 #   ✓ Node ABI: NMV=127, bin=/home/user/.nvm/.../node
-#   ✓ Serve token: BRAIN_SERVE_TOKEN set, env file mode 0600
+#   ✓ Serve token: RECENSE_SERVE_TOKEN set, env file mode 0600
 # All checks passed.
 ```
 

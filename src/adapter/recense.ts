@@ -66,11 +66,11 @@ switch (cmd) {
   case 'snapshot': require('./snapshot-cli'); break;
 
   // ── Forward-declared commands (implemented in later plans) ───────────────────
-  case 'viz':    require('./brain-viz-cli'); break;
+  case 'viz':    require('./recense-viz-cli'); break;
 
   // ── Scheduler (exports runSchedulerCommand; not auto-invoking) ───────────────
   case 'scheduler': {
-    const sched = require('./brain-scheduler') as { runSchedulerCommand: (s: string | undefined, r: string[]) => void };
+    const sched = require('./recense-scheduler') as { runSchedulerCommand: (s: string | undefined, r: string[]) => void };
     sched.runSchedulerCommand(sub, rest);
     break;
   }
@@ -79,21 +79,21 @@ switch (cmd) {
   // H-1: forward argv[3..] (process.argv.slice(3)) so the child receives all
   // positional args and flags (e.g. `recense ingest gmail` or `recense seed --db /x`).
   // The local `rest = slice(4)` is intentionally NOT used here — it drops argv[3].
-  // brain-init.ts guards execution with `require.main === module` (interactive wizard)
+  // recense-init.ts guards execution with `require.main === module` (interactive wizard)
   // so a bare require() would never invoke main(). Spawn as a subprocess so the guard
   // fires correctly in the child (consistent with mcp/serve dispatch pattern).
-  case 'init':       spawnScript('brain-init.js',    process.argv.slice(3)); break;
+  case 'init':       spawnScript('recense-init.js',    process.argv.slice(3)); break;
   case 'sleep-pass': spawnScript('sleep-pass-cli.js', process.argv.slice(3)); break;
   case 'seed':       spawnScript('seed-cli.js',       process.argv.slice(3)); break;
   case 'ingest':     spawnScript('ingest-cli.js',     process.argv.slice(3)); break;
   // mcp-cli exports createBrainMcpServer for tests, so its CLI entry is guarded by
   // `require.main === module` — a bare require() here would never fire the guard
-  // (require.main stays brain.js) and the server would never start.
+  // (require.main stays recense.js) and the server would never start.
   case 'mcp':        spawnScript('mcp-cli.js',        process.argv.slice(3)); break;
   case 'serve':      spawnScript('serve-cli.js',      process.argv.slice(3)); break;
-  // brain-doctor exports check helpers for unit tests, so its entry is guarded by
+  // recense-doctor exports check helpers for unit tests, so its entry is guarded by
   // `require.main === module` (WR-01) — spawn so the guard fires in the child.
-  case 'doctor':     spawnScript('brain-doctor.js',   process.argv.slice(3)); break;
+  case 'doctor':     spawnScript('recense-doctor.js',   process.argv.slice(3)); break;
 
   // ── Default: fail closed (T-09-08) ───────────────────────────────────────────
   default:

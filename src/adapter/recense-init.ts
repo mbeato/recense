@@ -212,7 +212,7 @@ export function mergeSettingsHooks(
   // path (idempotent AND correct when the DB path changes).
   const isBrainHook = (c: string): boolean =>
     /(session-start-cli|turn-capture-cli|stop-cli)\.js\b/.test(c) ||
-    /brain(\.js)?\s+hook\s/.test(c);
+    /(brain|recense)(\.js)?\s+hook\s/.test(c);
 
   for (const [event, hookSubcmd] of hookMap) {
     if (!Array.isArray(hooksSection[event])) {
@@ -429,7 +429,7 @@ async function main(): Promise<void> {
   console.log('\n  Registering scheduler...');
   try {
     const { runSchedulerCommand } =
-      require('./brain-scheduler') as {
+      require('./recense-scheduler') as {
         runSchedulerCommand: (sub: string | undefined, args: string[]) => void;
       };
     runSchedulerCommand('install', []);
@@ -441,7 +441,7 @@ async function main(): Promise<void> {
 
   // ── D-89 Step 7: Wire settings.json hooks (D-88) ──────────────────────────
   const settingsPath = join(homedir(), '.claude', 'settings.json');
-  const brainJs = resolve(__dirname, 'brain.js');
+  const brainJs = resolve(__dirname, 'recense.js');
   console.log('\n  Wiring hooks in settings.json...');
   try {
     mergeSettingsHooks(settingsPath, nodeBin, brainJs, dbPath);

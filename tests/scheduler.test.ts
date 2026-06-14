@@ -46,7 +46,7 @@ vi.mock('fs', async (importOriginal) => {
   };
 });
 
-import { runSchedulerCommand } from '../src/adapter/brain-scheduler';
+import { runSchedulerCommand } from '../src/adapter/recense-scheduler';
 import { execSync } from 'child_process';
 
 // ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@
 
     <!--
         EnvironmentVariables: only the env-file path. All other config — ABI-pinned node
-        binary, brain.js path, DB path, API keys, serve token — lives in the gitignored
+        binary, recense.js path, DB path, API keys, serve token — lives in the gitignored
         env file (chmod 600), written additively by scripts/setup-telegram-client.sh.
         __ENV_FILE__ → absolute path to the sleep env file (RECENSE_SLEEP_ENV),
                        default ~/.config/recense/sleep.env.
@@ -41,7 +41,7 @@
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Redirect stdout/stderr to log files. BRAIN_SERVE_TOKEN never appears here. -->
+    <!-- Redirect stdout/stderr to log files. RECENSE_SERVE_TOKEN never appears here. -->
     <key>StandardOutPath</key>
     <string>/tmp/recense-serve.log</string>
     <key>StandardErrorPath</key>
