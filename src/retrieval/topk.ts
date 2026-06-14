@@ -35,11 +35,18 @@ export function cosineSimF32(a: Float32Array, b: Float32Array): number {
  * Returns null when no tokens are found (caller skips BM25 pass).
  * Load-bearing: never pass raw text to MATCH — FTS5 query syntax throws on `"`, `-`, parens, operators.
  * T-17-02-T: this is the sanitization gate; MATCH arg is also bound via `?` in stmtBm25.
+ *
+ * `prefix` (default false) appends `*` to each quoted token so a partial token
+ * matches by prefix (`"gi"*` → "git", "give", …). Opt-in so engine retrieval
+ * (CandidateRetriever BM25) keeps its exact-token semantics; only incremental UI
+ * search (viz /search, VIZ-07) passes prefix:true. The `*` is a literal we append,
+ * never user input — the sanitization/quoting guard is unchanged.
  */
-export function ftsQueryFromText(text: string): string | null {
+export function ftsQueryFromText(text: string, prefix = false): string | null {
   const tokens = text.match(/[\p{L}\p{N}]+/gu) ?? [];
   if (tokens.length === 0) return null;
-  return tokens.map(t => `"${t.replaceAll('"', '""')}"`).join(' OR ');
+  const suffix = prefix ? '*' : '';
+  return tokens.map(t => `"${t.replaceAll('"', '""')}"${suffix}`).join(' OR ');
 }
 
 /**

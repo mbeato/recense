@@ -240,7 +240,8 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     if (url === '/search') {
       const rawQ = new URLSearchParams(req.url?.split('?')[1] ?? '').get('q') ?? '';
       const boundQ = rawQ.slice(0, 200); // T-19-04: length cap before tokenizing
-      const ftsQ = ftsQueryFromText(boundQ);
+      // prefix:true → incremental matching as the user types ("gi" finds "git"), VIZ-07.
+      const ftsQ = ftsQueryFromText(boundQ, true);
       try {
         const ids: string[] = ftsQ
           ? (stmtSearch.all(ftsQ, SEARCH_LIMIT) as Array<{ id: string }>).map(r => r.id)

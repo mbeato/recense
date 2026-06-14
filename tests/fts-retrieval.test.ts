@@ -93,6 +93,35 @@ describe('FTS retrieval', () => {
       const q = ftsQueryFromText('70-200mm zoom lens');
       expect(q).toBe('"70" OR "200mm" OR "zoom" OR "lens"');
     });
+
+    // ── prefix mode (VIZ-07 incremental search) ──────────────────────────────
+    it('default (no prefix arg) is exact-token — unchanged engine behavior', () => {
+      expect(ftsQueryFromText('Kansas City')).toBe('"Kansas" OR "City"');
+    });
+
+    it('prefix=true appends * to each token for incremental matching', () => {
+      expect(ftsQueryFromText('Kansas City', true)).toBe('"Kansas"* OR "City"*');
+    });
+
+    it('prefix=true still returns null for empty / whitespace-only', () => {
+      expect(ftsQueryFromText('', true)).toBeNull();
+      expect(ftsQueryFromText('   ', true)).toBeNull();
+    });
+  });
+
+  // ── 1b. prefix matching against a real FTS5 index (the VIZ-07 bug) ──────────
+  describe('ftsQueryFromText prefix matching (FTS5)', () => {
+    it('prefix mode lets an incomplete token match (gi → git); exact mode does not', () => {
+      store.upsertNode({ id: 'gitnode', type: 'fact', value: 'git commit history', origin: 'observed' });
+      const run = (q: string | null) =>
+        (q ? db.prepare('SELECT node_id FROM node_fts WHERE node_fts MATCH ?').all(q) as Array<{ node_id: string }> : [])
+          .map(r => r.node_id);
+
+      // Exact-token "gi" does not exist as a token in "git commit history".
+      expect(run(ftsQueryFromText('gi'))).not.toContain('gitnode');
+      // Prefix "gi"* matches the "git" token — the incremental-search behavior.
+      expect(run(ftsQueryFromText('gi', true))).toContain('gitnode');
+    });
   });
 
   // ── 2. rrfFuse: rank ordering ─────────────────────────────────────────────
