@@ -102,7 +102,7 @@ function makeNodeObject(node) {
       .replace('#include <common>',
         '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
       .replace('#include <dithering_fragment>',
-        '#include <dithering_fragment>\nfloat _rim = pow(1.0 - abs(dot(normalize(vRimV), normalize(vRimN))), 3.0);\ngl_FragColor.rgb += _rim * 0.22 * gl_FragColor.rgb;');
+        '#include <dithering_fragment>\nfloat _rim = pow(1.0 - abs(dot(normalize(vRimV), normalize(vRimN))), 2.0);\ngl_FragColor.rgb += _rim * 0.6 * mix(gl_FragColor.rgb, vec3(1.0), 0.3);');
   };
 
   const mesh = new THREE.Mesh(_sharedGeo, mat);
