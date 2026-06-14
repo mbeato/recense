@@ -1,4 +1,4 @@
-# Brain-Memory Engine — Evolution Roadmap
+# Recense Engine — Evolution Roadmap
 
 How the engine grows from the simplest working v1 to the full sophisticated system, **one layer at a time, each gated on the previous working + a concrete signal**. Companion to [`recense-spec.md`](./recense-spec.md).
 

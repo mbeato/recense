@@ -95,7 +95,7 @@ describe('INGEST-03: ColdStartSeeder', () => {
     // Fixture: one real memory file + one MEMORY.md index (to be excluded)
     fs.writeFileSync(
       path.join(tmpDir, 'project.md'),
-      '---\ntype: project\n---\n# Brain Memory\n\nA memory engine for AI agents.',
+      '---\ntype: project\n---\n# Recense\n\nA memory engine for AI agents.',
     );
     fs.writeFileSync(
       path.join(tmpDir, 'MEMORY.md'),

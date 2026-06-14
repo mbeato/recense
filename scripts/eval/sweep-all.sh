@@ -9,8 +9,8 @@
 # Steerable from phone (SSH): echo stop > /tmp/eval-cmd
 # Component swaps (judge-27b, extractor) are DEFERRED — the cause is already found;
 # they'd only characterize the system further. Decide on resume.
-cd $HOME/brain-memory || exit 1
-source $HOME/.config/brain-memory/sleep.env 2>/dev/null || true
+cd $HOME/recense || exit 1
+source $HOME/.config/recense/sleep.env 2>/dev/null || true
 CHAT=$(echo "${RECENSE_CLIENT_ALLOWLIST:-}" | cut -d, -f1 | tr -d ' ')
 ping() { [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "$CHAT" ] && curl -s --max-time 10 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" --data-urlencode "chat_id=${CHAT}" --data-urlencode "text=$1" >/dev/null 2>&1 || true; }
 

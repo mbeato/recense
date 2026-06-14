@@ -1,4 +1,4 @@
-# Brain-Memory Engine — v1 Architecture Spec
+# Recense Engine — v1 Architecture Spec
 
 A faithful brain-inspired agent-memory engine. **Customer-zero = the founder's own Claude Code memory**, replacing the flat `MEMORY.md` index. Built solo, dogfood-first; product-shaped interfaces from day one, but the v1 bar is "useful for my own agents," not "scale to thousands."
 
