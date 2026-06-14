@@ -30,7 +30,10 @@ import {
 // A unit sphere shared across ALL nodes; each node gets its own material and
 // scales via mesh.scale.setScalar(radius). Reduces geometry objects from ~1500
 // to exactly 1.
-const _sharedGeo = new THREE.SphereGeometry(1, 8, 8);
+// 16×16 segments: smooth enough to read as a round orb (not a faceted gem) at
+// rest and at HOVER_SCALE. Shared across all nodes, so this only raises vertex
+// count, not draw calls — vertex throughput is not the bottleneck (bloom/fillrate is).
+const _sharedGeo = new THREE.SphereGeometry(1, 16, 16);
 
 // Haze nodes (unclassified — not a schema, not yet a schema member) render as
 // barely-there mist so the schema constellation reads at a glance, in BOTH
