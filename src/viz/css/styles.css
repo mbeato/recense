@@ -65,13 +65,22 @@ html, body {
   z-index: 20;
   display: none;
   pointer-events: none;
-  background: rgba(26, 18, 32, 0.88);
-  border: 1px solid rgba(140, 150, 165, 0.18);
-  border-radius: 8px;
-  padding: 4px 9px;
-  font-size: 11px;
-  color: #98a2ae;
-  backdrop-filter: blur(6px);
+  max-width: 300px;
+  /* No frosted pill (a slop tell) — text + a soft dark halo for legibility over the
+     field. Hierarchy comes from the .tip-tag / .tip-title children below. */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 7px rgba(0, 0, 0, 0.65);
+}
+#tooltip .tip-tag {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6f6678;          /* dim muted mauve-grey — recedes under the title */
+  margin-bottom: 1px;
+}
+#tooltip .tip-title {
+  font-size: 13px;
+  line-height: 1.35;
+  color: #cdc3d4;          /* brand body tone */
 }
 
 /* ── Backdrop: fullscreen tap-to-dismiss layer ───────────────────────────── */

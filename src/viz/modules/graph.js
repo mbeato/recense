@@ -63,6 +63,18 @@ function nodeRadius(node) {
 }
 
 /**
+ * Word-boundary truncation for hover labels: cut at the last space before `max`
+ * (falling back to a hard cut for a single very long token), append an ellipsis.
+ * Keeps the hover label a tight title rather than a raw text dump.
+ */
+function truncLabel(s, max) {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const sp = cut.lastIndexOf(' ');
+  return (sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/\s+$/, '') + '…';
+}
+
+/**
  * Build (or reuse) the THREE.Mesh for a node.
  * Shared geometry + per-node material for independent color / opacity animation.
  * Annotates the node with __mesh, __mat, __base, __baseOp, __baseR, __act,
@@ -244,9 +256,21 @@ export function initGraph(ctx) {
         node.__mesh.scale.setScalar(node.__baseR * HOVER_SCALE);
       }
 
-      // Tooltip text: textContent only — NEVER innerHTML with node data (T-10-12)
-      tooltipEl.textContent    = (node.value || node.id || '').slice(0, 120);
-      tooltipEl.style.display  = 'block';
+      // Tooltip: typographic label — a dim type·origin tag over a word-boundary
+      // truncated title, instead of a raw 120-char text dump. textContent only —
+      // NEVER innerHTML with node data (T-10-12). Full text lives in the detail panel.
+      tooltipEl.textContent = '';  // clear prior children (safe: no user data)
+      const tipTag = document.createElement('div');
+      tipTag.className = 'tip-tag';
+      tipTag.textContent = node.tombstoned
+        ? 'tombstone'
+        : (node.type || 'node') + (node.origin ? ' · ' + node.origin : '');
+      const tipTitle = document.createElement('div');
+      tipTitle.className = 'tip-title';
+      tipTitle.textContent = truncLabel(node.value || node.id || '', 48);
+      tooltipEl.appendChild(tipTag);
+      tooltipEl.appendChild(tipTitle);
+      tooltipEl.style.display = 'block';
     })
     .onNodeClick(node  => {
       if (!node) return;
