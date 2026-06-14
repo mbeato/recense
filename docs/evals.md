@@ -305,7 +305,7 @@ Requires no API keys ($0, LLM-free). Degrades gracefully (`exit 0`, prints "no d
 
 ### Recorded results
 
-Run date: 2026-06-14. Commit: d4b1b46 (engine v0.1.0, db snapshot at 3,591 live nodes).
+Run date: 2026-06-14. Commit: deabfb3 (engine v0.1.0, db snapshot at 3,591 live nodes).
 
 **Point estimate:**
 
@@ -373,7 +373,7 @@ recense does NOT win on every dimension:
 
 - `chars/4` is an approximation, not a real tokenizer. Actual token counts depend on the tokenizer, model, and content composition (code vs. prose). The char proxy is consistent with the session-start-cli's own cap and provides a reproducible relative comparison, not an absolute token guarantee.
 - The flat-file-of-everything projection assumes one line per live node with no deduplication and is a deliberate upper bound. A real flat index (like the `MEMORY.md` this replaced) dedups manually and stays much smaller in practice — see the actual 20-entry / 1,582-token flat baseline in the point-estimate table for a realistic comparison.
-- All numbers are pinned to a db snapshot (d4b1b46) and the flat file at that date. Both will drift as the db grows and the flat index is updated. Re-run `npm run eval:injection` to get current figures.
+- All numbers are pinned to a db snapshot (deabfb3) and the flat file at that date. Both will drift as the db grows and the flat index is updated. Re-run `npm run eval:injection` to get current figures.
 - This eval measures injection cost, not retrieval quality. It does not measure whether the 6 injected nodes are the *right* ones, or what the marginal information value of injecting them is. That is a separate measurement.
 
 ---
@@ -413,6 +413,8 @@ The broader judge eval (48-case mined set) and extraction model bake-off are doc
 5. **Competitor numbers are self-reported with differing methodologies.** The comparison rows in EVAL-01's results table are taken from vendor documentation and academic papers, not from running those systems through the same harness. Methodology differs: agentmemory's 95.2% is retrieval-only R@5, which is not the same measurement as end-to-end question answering. We flag each comparison row's methodology explicitly; no head-to-head rerun is claimed or implied.
 
 6. **Published numbers are pinned to a commit.** The recorded scores in this document and the README are dated and tied to the engine version and commit hash that produced them. Recense's architecture may improve or regress between releases; numbers are re-recorded at significant releases, not guaranteed fresh at any given HEAD.
+
+   **Note — git history was rewritten on 2026-06-14** during the public-release scrub (personal-data removal + brain→recense rename). Commit hashes recorded above that predate the scrub — EVAL-01 (`30b950a`) and the EVAL-02 API/V8/Phase-17 rows (`9293be7`, `7d76166`, `97ec947`, and the `cea0125`/`bedd132` bisection markers) — **no longer resolve in the current history** and are retained only as provenance markers of the original run, not as checkoutable references. EVAL-03 (`deabfb3`) and any row dated 2026-06-14 or later are pinned to post-scrub commits that do resolve. EVAL-01 and the EVAL-02 API row have not been re-run against post-scrub HEAD; the rename is mechanical (identifiers/paths/env vars, with `sleep.env` updated to `RECENSE_*`) so the numbers are expected to hold, but this is an inference until re-recorded.
 
 7. **EVAL-03 injection numbers are a snapshot, not a production SLA.** The injection token count and reduction percentage from EVAL-03 reflect a specific db snapshot and flat-file state. Token reduction will vary based on how many relevant nodes exist, what the current db contains, and how the flat-file baseline evolves. The O(1) budget ceiling (500 tokens) is a config constant; the baseline and db content are user-dependent.
 
