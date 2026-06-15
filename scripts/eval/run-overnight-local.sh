@@ -6,7 +6,10 @@
 # Detached via nohup so it survives the Claude Code session. Results land in
 # scripts/eval/results/correctness-LOCAL-V8.json; log alongside.
 set -uo pipefail
-cd $HOME/recense
+# Derive repo root from this script's location (scripts/eval/ -> ../.. ) so the script
+# is portable regardless of where the repo lives or what it's named (the old hardcoded
+# `cd $HOME/recense` broke after the repo path/name diverged).
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || { echo "FATAL: cannot cd to repo root" >&2; exit 1; }
 
 set -a
 source .env 2>/dev/null || true
