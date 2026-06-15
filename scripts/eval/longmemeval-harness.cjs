@@ -120,6 +120,10 @@ const IS_TEMPORAL = process.argv.includes('--temporal');
 // Composable with --hybrid, --temporal, --topk.
 const IS_REWRITE = process.argv.includes('--rewrite');
 
+// --per-turn: per-turn ingestion (one episode per turn, matching production turn-capture-cli.ts)
+// instead of per-session formatSession. Opt-in; default (flag absent) is byte-identical to today.
+const IS_PER_TURN = process.argv.includes('--per-turn');
+
 // --concurrency N (default 4, min 1). Each question has its own scratch DB and no
 // shared state, so in-process parallelism is safe. Probe token accumulation uses
 // plain += after each await — safe because Node.js is single-threaded.
@@ -421,16 +425,35 @@ async function runBoundedPool(items, concurrency, fn) {
           const session  = haystackSessions[i];
           const dateStr  = haystackDates[i] || null;
           const tsMs     = parseSessionDate(dateStr);
-          scratch.episodes.append({
-            content:    formatSession(session, dateStr),
-            origin:     'observed',
-            salience:   1.0,
-            hard_keep:  1,
-            role:       'user',
-            source:     'conversation',
-            session_id: `${questionId}-s${i}`,
-            ...(tsMs != null ? { ts: tsMs } : {}),
-          });
+          if (IS_PER_TURN) {
+            for (let j = 0; j < session.length; j++) {
+              const turn = session[j];
+              const turnContent = dateStr
+                ? `[Session date: ${dateStr}]\n${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`
+                : `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`;
+              scratch.episodes.append({
+                content:    turnContent,
+                origin:     'observed',
+                salience:   1.0,
+                hard_keep:  1,
+                role:       'user',
+                source:     'conversation',
+                session_id: `${questionId}-s${i}-t${j}`,
+                ...(tsMs != null ? { ts: tsMs } : {}),
+              });
+            }
+          } else {
+            scratch.episodes.append({
+              content:    formatSession(session, dateStr),
+              origin:     'observed',
+              salience:   1.0,
+              hard_keep:  1,
+              role:       'user',
+              source:     'conversation',
+              session_id: `${questionId}-s${i}`,
+              ...(tsMs != null ? { ts: tsMs } : {}),
+            });
+          }
         }
         instrumentHypothesis = DRY_RUN_STUB_ANSWER;
         result = { question_id: questionId, question_type: questionType, hypothesis: DRY_RUN_STUB_ANSWER };
@@ -447,16 +470,35 @@ async function runBoundedPool(items, concurrency, fn) {
           const session = haystackSessions[i];
           const dateStr = haystackDates[i] || null;
           const tsMs    = parseSessionDate(dateStr);
-          scratch.episodes.append({
-            content:    formatSession(session, dateStr),
-            origin:     'observed',
-            salience:   1.0,
-            hard_keep:  1,
-            role:       'user',
-            source:     'conversation',
-            session_id: `${questionId}-s${i}`,
-            ...(tsMs != null ? { ts: tsMs } : {}),
-          });
+          if (IS_PER_TURN) {
+            for (let j = 0; j < session.length; j++) {
+              const turn = session[j];
+              const turnContent = dateStr
+                ? `[Session date: ${dateStr}]\n${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`
+                : `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`;
+              scratch.episodes.append({
+                content:    turnContent,
+                origin:     'observed',
+                salience:   1.0,
+                hard_keep:  1,
+                role:       'user',
+                source:     'conversation',
+                session_id: `${questionId}-s${i}-t${j}`,
+                ...(tsMs != null ? { ts: tsMs } : {}),
+              });
+            }
+          } else {
+            scratch.episodes.append({
+              content:    formatSession(session, dateStr),
+              origin:     'observed',
+              salience:   1.0,
+              hard_keep:  1,
+              role:       'user',
+              source:     'conversation',
+              session_id: `${questionId}-s${i}`,
+              ...(tsMs != null ? { ts: tsMs } : {}),
+            });
+          }
         }
 
         // Step 2: run ONE sleep pass AFTER all appends (Pitfall 4).
