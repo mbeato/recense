@@ -1,4 +1,8 @@
-# Recense
+<p align="center">
+  <img src="docs/assets/recense-logo.png" width="104" alt="recense logo">
+</p>
+
+<h1 align="center">Recense</h1>
 
 <p align="center">
   <img src="docs/assets/recense-demo.webp" alt="recense — real recall pathways firing across the memory graph, rendered as a brain" width="600">
