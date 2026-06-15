@@ -1,14 +1,10 @@
 # Recense
 
 <p align="center">
-  <img src="docs/assets/recense-hero.jpg" alt="recense — real recall pathways firing across the memory graph, rendered as a brain" width="640">
+  <img src="docs/assets/recense-demo.webp" alt="recense — real recall pathways firing across the memory graph, rendered as a brain" width="600">
   <br>
   <em>Real recall pathways firing across the memory graph — <code>recense viz</code></em>
 </p>
-
-<!-- For motion: drag ~/Desktop/recense-demo-1080.mp4 into this README in GitHub's
-     web editor (it uploads + hosts it), then replace the <img> above with the
-     <video src="…githubusercontent…"> tag GitHub generates. -->
 
 Memory that stays correct. When a fact changes, recense updates the belief in place — prediction-error-gated, tombstoned, auditable — instead of storing both versions and hoping retrieval picks the right one.
 
