@@ -110,6 +110,34 @@ export interface MetaRow {
 }
 
 /**
+ * Parameters for SemanticStore.upsertNodeTemporal().
+ * Written exclusively by the sleep-pass consolidator (CONSOL-03, single writer).
+ * action_type must be a valid ActionType string — callers should coerce with toActionType()
+ * before passing (D-02 robustness). Using string literal union here to avoid a circular
+ * import with claim-extractor.ts (ActionType is defined there).
+ */
+export interface UpsertNodeTemporalParams {
+  node_id: string;
+  due_at: string;            // ISO-8601 UTC; next occurrence >= now for recurring
+  action_type: string;       // Must be one of the 7 valid ActionType values (D-02)
+  recurrence_rule?: string | null;   // RRULE string for recurring (null for one-off)
+  source_event_id?: string | null;   // Calendar event id for dedup and cancellation
+  updated_at: number;        // epoch ms; set on every upsert
+}
+
+/**
+ * Row shape returned by SemanticStore.getNodeTemporal().
+ */
+export interface NodeTemporalRow {
+  node_id: string;
+  due_at: string;
+  action_type: string;
+  recurrence_rule: string | null;
+  source_event_id: string | null;
+  updated_at: number;
+}
+
+/**
  * Parameters accepted by SemanticStore.upsertNode().
  * The store fills in value_hash, embedded_hash, prev_value, prev_ts, and training_eligible.
  */

@@ -17,7 +17,14 @@ import Database from 'better-sqlite3';
 import { sha256 } from '../lib/hash';
 import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
-import type { NodeRow, UpsertNodeParams, EdgeKind, PendingContradiction } from '../lib/types';
+import type {
+  NodeRow,
+  UpsertNodeParams,
+  EdgeKind,
+  PendingContradiction,
+  UpsertNodeTemporalParams,
+  NodeTemporalRow,
+} from '../lib/types';
 
 export class SemanticStore {
   private readonly db: Database.Database;
@@ -40,6 +47,10 @@ export class SemanticStore {
   private readonly stmtUpsertEdge: Database.Statement;
   private readonly stmtGetOutEdges: Database.Statement;
   private readonly stmtGetInEdges: Database.Statement;
+  // node_temporal: single idempotent writer + read helper (TEMP-02, Plan 20-01).
+  // Written exclusively by the sleep-pass consolidator (single writer, CONSOL-03).
+  private readonly stmtUpsertNodeTemporal: Database.Statement;
+  private readonly stmtGetNodeTemporal: Database.Statement;
 
   // Transaction-wrapped upsertNode body (defined in constructor, called in upsertNode)
   private readonly txUpsertNode: (params: UpsertNodeParams) => void;
@@ -126,6 +137,22 @@ export class SemanticStore {
     // T-01-SQL: bound ? param, no string interpolation
     this.stmtGetInEdges = db.prepare(
       'SELECT src, w, kind FROM edge WHERE dst = ?'
+    );
+
+    // node_temporal INSERT OR REPLACE — idempotent on re-consolidation (TEMP-02).
+    // Uses INSERT OR REPLACE (not ON CONFLICT DO UPDATE) so the PK row is fully replaced
+    // on every write; this is correct because node_temporal is a complete snapshot of the
+    // temporal state, not an incremental update.
+    // T-01-SQL: all values bound via named parameters; no string interpolation.
+    this.stmtUpsertNodeTemporal = db.prepare(`
+      INSERT OR REPLACE INTO node_temporal
+        (node_id, due_at, action_type, recurrence_rule, source_event_id, updated_at)
+      VALUES
+        (@node_id, @due_at, @action_type, @recurrence_rule, @source_event_id, @updated_at)
+    `);
+
+    this.stmtGetNodeTemporal = db.prepare(
+      'SELECT node_id, due_at, action_type, recurrence_rule, source_event_id, updated_at FROM node_temporal WHERE node_id = ?'
     );
 
     // ── Transaction — defined once, called in upsertNode ─────────────────────
@@ -331,5 +358,38 @@ export class SemanticStore {
   /** Write or overwrite a meta key/value pair. */
   setMeta(key: string, value: string): void {
     this.stmtSetMeta.run(key, value);
+  }
+
+  /**
+   * Idempotent write to the node_temporal sidecar (TEMP-02, Plan 20-01).
+   *
+   * Uses INSERT OR REPLACE so a second call for the same node_id replaces the row
+   * with the latest values — correct for re-consolidation on incremental sync.
+   *
+   * IMPORTANT: this is the ONLY write path for node_temporal. Adapters and
+   * extraction code must never call this — it is invoked exclusively by the
+   * sleep-pass consolidator after upsertNode succeeds (CONSOL-03 discipline).
+   *
+   * T-01-SQL: all parameters are bound; no string interpolation.
+   */
+  upsertNodeTemporal(params: UpsertNodeTemporalParams): void {
+    this.stmtUpsertNodeTemporal.run({
+      node_id: params.node_id,
+      due_at: params.due_at,
+      action_type: params.action_type,
+      recurrence_rule: params.recurrence_rule ?? null,
+      source_event_id: params.source_event_id ?? null,
+      updated_at: params.updated_at,
+    });
+  }
+
+  /**
+   * Read the node_temporal row for a given node_id.
+   * Returns null when no temporal annotation exists for the node.
+   * Used by tests and by the calendar-tombstone path in Phase 20 plan 04.
+   */
+  getNodeTemporal(nodeId: string): NodeTemporalRow | null {
+    const row = this.stmtGetNodeTemporal.get(nodeId) as NodeTemporalRow | undefined;
+    return row ?? null;
   }
 }
