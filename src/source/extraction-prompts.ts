@@ -53,6 +53,84 @@ Example:
 Document type: `;
 
 /**
+ * Gmail episodic-variant extraction prompt (D-06, TEMP-03).
+ *
+ * Activated only when RECENSE_ENABLE_EPISODIC_EMAIL === 'on' (default OFF — D-07 gate).
+ * Strict equality is load-bearing: any other truthy value keeps the baseline prompt
+ * so the live-write gate cannot be bypassed by accident (T-20-02).
+ *
+ * SUPERSET of GMAIL_EXTRACTION_PROMPT (D-06 — one prompt, one LLM call, no second pass):
+ * emits everything the baseline does PLUS due_at/action_type for date-anchored commitments
+ * (flights, deadlines, receipts, appointments, payments, meetings) that the baseline discards.
+ * Fields omitted when no concrete date is present — backward-compat preserved for atemporal facts.
+ *
+ * Output contract: same JSON array; parseClaims + parseClaimsFromArray handle the response.
+ * Out-of-enum action_type values are coerced to 'other' by toActionType() (D-02 robustness).
+ *
+ * Live enable is blocked until the plan-05 offline dry-run A/B gate passes with explicit pass/fail
+ * criteria (gated-live-write-needs-real-offswitch lesson — never activate by plan-ordering alone).
+ */
+const GMAIL_EPISODIC_EXTRACTION_PROMPT = `You are a knowledge extraction assistant. Extract all structured knowledge from the given memory document.
+
+For each item extract:
+- "type": "entity" for named people, projects, tools, technologies, and organizations; "fact" for rules, preferences, capabilities, and factual statements
+- "value": a concise, self-contained string
+- "links": an array of OTHER item values referenced via [[WikiLink]] syntax in the document, provided WITHOUT the double brackets (omit if none)
+- "due_at": ISO-8601 UTC datetime string ONLY for time-sensitive commitments (flights, deadlines, receipts, appointments, payments, meetings). Omit entirely for facts without a concrete date/time.
+- "action_type": one of "deadline" | "flight" | "appointment" | "receipt" | "payment" | "meeting" | "other" — include ONLY when due_at is present.
+
+Extract durable facts about people, commitments, and decisions; IGNORE email signatures, pleasantries, and scheduling logistics.
+For date-anchored commitments (flights, deadlines, receipts, payments, meetings), ALWAYS include due_at and action_type.
+
+Return ONLY a valid JSON array — no preamble, no explanation, no markdown fences.
+
+Example:
+[
+  {"type":"entity","value":"Jane Doe is the founder","links":["recense project"]},
+  {"type":"fact","value":"Never inflate metrics","links":[]},
+  {"type":"fact","value":"Flight AA123 to NYC departs 2026-07-04T08:00:00Z","due_at":"2026-07-04T08:00:00Z","action_type":"flight"},
+  {"type":"fact","value":"Invoice from Acme Corp due 2026-06-30","due_at":"2026-06-30T23:59:00Z","action_type":"deadline"}
+]
+
+Document type: `;
+
+/**
+ * Google Calendar extraction prompt (TEMP-01, TEMP-02).
+ *
+ * Used unconditionally for source='gcal' (not behind the email flag — calendar temporal
+ * is a core TEMP-01 requirement, not an episodic-email extension).
+ *
+ * Emits ONE durable 'fact' claim per event. The explicit next-occurrence ISO datetime
+ * computed deterministically by the CalendarAdapter is already present in the content;
+ * the LLM copies it verbatim into due_at — it NEVER expands or computes a recurrence.
+ * This preserves D-04: recurrence expansion is the adapter's job, not the extractor's.
+ *
+ * "date should live in due_at NOT in the value" — so re-ingested occurrences of the
+ * same recurring event reconcile to the same node (stable value, updated temporal row).
+ *
+ * Output contract: same JSON array; parseClaims handles the response.
+ */
+const GCAL_EXTRACTION_PROMPT = `You are a knowledge extraction assistant. Extract structured knowledge from the given Google Calendar event.
+
+For each event extract ONE item:
+- "type": "fact"
+- "value": a concise, self-contained description of the event (who, what, purpose) WITHOUT the date — e.g. "Weekly standup with the engineering team" not "Weekly standup on 2026-07-07"
+- "links": an array of related entity names referenced in the event (omit if none)
+- "due_at": copy the explicit ISO-8601 UTC datetime for the next occurrence VERBATIM from the content — do NOT compute or expand a recurrence rule yourself
+- "action_type": one of "appointment" | "meeting" | "deadline" | "flight" | "receipt" | "payment" | "other"
+
+The date belongs in due_at, NOT in value. This allows re-ingested occurrences of the same recurring event to reconcile to the same memory node.
+
+Return ONLY a valid JSON array — no preamble, no explanation, no markdown fences.
+
+Example:
+[
+  {"type":"fact","value":"Weekly standup with the engineering team","links":["engineering team"],"due_at":"2026-07-07T14:00:00Z","action_type":"meeting"}
+]
+
+Document type: `;
+
+/**
  * Transcript-source extraction prompt (Granola / Otter / Zoom).
  *
  * Guides the extractor to focus on decisions and action items while attributing
@@ -225,7 +303,20 @@ Document type: `;
  *                 'conversation', 'web', 'document', 'code-diff').
  */
 export function promptForSource(source: string): string {
-  if (source === 'gmail') return GMAIL_EXTRACTION_PROMPT;
+  if (source === 'gmail') {
+    // D-06/TEMP-03: episodic-variant superset is activated by strict env equality (T-20-02).
+    // RECENSE_ENABLE_EPISODIC_EMAIL=on is the ONLY value that enables the episodic path.
+    // Any other value (empty, 'false', 'ON', 'true', etc.) keeps the baseline prompt.
+    // Must NOT be enabled in production until the plan-05 offline dry-run A/B gate passes.
+    if (process.env['RECENSE_ENABLE_EPISODIC_EMAIL'] === 'on') {
+      return GMAIL_EPISODIC_EXTRACTION_PROMPT;
+    }
+    return GMAIL_EXTRACTION_PROMPT;
+  }
+  if (source === 'gcal') {
+    // TEMP-01/TEMP-02: calendar prompt is unconditional — temporal fields are core for gcal.
+    return GCAL_EXTRACTION_PROMPT;
+  }
   if (TRANSCRIPT_SOURCES.has(source)) return TRANSCRIPT_EXTRACTION_PROMPT;
   if (source === 'conversation') return CONVERSATION_EXTRACTION_PROMPT;
   if (source === 'web') return WEB_EXTRACTION_PROMPT;
