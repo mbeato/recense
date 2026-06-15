@@ -79,13 +79,13 @@ function makeStore(): SemanticStore {
 describe('normalizeGmailMessage — field mapping', () => {
   it('builds provenance header From: … · Re: …', () => {
     const raw = makeRaw();
-    const record = normalizeGmailMessage(raw, TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
     expect(record.content).toMatch(/^From: alice@acme.com · Re: Re: pricing discussion/);
   });
 
   it('sets external_id to the message id', () => {
     const raw = makeRaw({ id: 'abc-xyz-123' });
-    const record = normalizeGmailMessage(raw, TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
     expect(record.external_id).toBe('abc-xyz-123');
   });
 
@@ -106,7 +106,7 @@ describe('normalizeGmailMessage — field mapping', () => {
 
   it('concatenates provenance header with body text separated by newline', () => {
     const raw = makeRaw({ bodyText: 'The body content here.' });
-    const record = normalizeGmailMessage(raw, TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
     expect(record.content).toContain('\nThe body content here.');
   });
 });
@@ -119,7 +119,7 @@ describe('normalizeGmailMessage — boundary redaction', () => {
       headers: { from: 'bob@example.com', subject: 'API credentials', date: '' },
       bodyText: 'My key is sk-ABCDEFGHIJKLMNOPQRSTU and you should use it.',
     });
-    const record = normalizeGmailMessage(raw, TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
 
     // Secret stripped
     expect(record.content).toContain('[REDACTED:API_KEY]');
@@ -138,7 +138,7 @@ describe('normalizeGmailMessage — boundary redaction', () => {
       },
       bodyText: 'see subject',
     });
-    const record = normalizeGmailMessage(raw, TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
     expect(record.content).not.toContain('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234');
   });
 });
@@ -161,7 +161,7 @@ describe('GmailAdapter.pull() — basic fetch and cursor write', () => {
       newHistoryId: 'h-999',
     });
 
-    const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
+    const adapter = new GmailAdapter(TEST_CONFIG, store, 'default', fake);
     const { records } = await adapter.pull();
 
     expect(records).toHaveLength(2);
@@ -169,48 +169,48 @@ describe('GmailAdapter.pull() — basic fetch and cursor write', () => {
     expect(records[1]!.external_id).toBe('id-2');
   });
 
-  it('writes newHistoryId to cursor:gmail after a successful pull', async () => {
+  it('writes newHistoryId to cursor:gmail:default after a successful pull (D-10)', async () => {
     const fake = new FakeGmailFetcher({
       messages: [makeRaw()],
       newHistoryId: 'h-42',
     });
 
-    const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
+    const adapter = new GmailAdapter(TEST_CONFIG, store, 'default', fake);
     const { commitCursor } = await adapter.pull();
 
     // M-6: cursor NOT written until commitCursor() is called
-    expect(store.getMeta('cursor:gmail')).toBeNull();
+    expect(store.getMeta('cursor:gmail:default')).toBeNull();
     commitCursor();
-    expect(store.getMeta('cursor:gmail')).toBe('h-42');
+    expect(store.getMeta('cursor:gmail:default')).toBe('h-42');
   });
 
-  it('does NOT write cursor:gmail when newHistoryId is null', async () => {
+  it('does NOT write cursor when newHistoryId is null', async () => {
     const fake = new FakeGmailFetcher({
       messages: [],
       newHistoryId: null,
     });
 
-    const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
+    const adapter = new GmailAdapter(TEST_CONFIG, store, 'default', fake);
     const { commitCursor: commitNull } = await adapter.pull();
     commitNull(); // null newHistoryId → commitCursor is a no-op
-    expect(store.getMeta('cursor:gmail')).toBeNull();
+    expect(store.getMeta('cursor:gmail:default')).toBeNull();
   });
 });
 
 // ── 4. pull() — existing cursor forwarded as startHistoryId ──────────────────
 
 describe('GmailAdapter.pull() — cursor forwarding (incremental)', () => {
-  it('passes existing cursor:gmail as startHistoryId to the fetcher', async () => {
+  it('passes existing cursor:gmail:default as startHistoryId to the fetcher (D-10)', async () => {
     const store = makeStore();
-    // Pre-populate an existing cursor
-    store.setMeta('cursor:gmail', 'h-100');
+    // Pre-populate an existing per-account cursor (D-10 key format)
+    store.setMeta('cursor:gmail:default', 'h-100');
 
     const fake = new FakeGmailFetcher({
       messages: [],
       newHistoryId: 'h-200',
     });
 
-    const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
+    const adapter = new GmailAdapter(TEST_CONFIG, store, 'default', fake);
     await adapter.pull();
 
     expect(fake.capturedHistoryId).toBe('h-100');
@@ -225,7 +225,7 @@ describe('GmailAdapter.pull() — cursor forwarding (incremental)', () => {
       newHistoryId: 'h-001',
     });
 
-    const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
+    const adapter = new GmailAdapter(TEST_CONFIG, store, 'default', fake);
     await adapter.pull();
 
     expect(fake.capturedHistoryId).toBeNull();
@@ -246,7 +246,7 @@ describe('GmailAdapter.pull() — D-61 origin guard', () => {
       newHistoryId: 'h-1',
     });
 
-    const adapter = new GmailAdapter(TEST_CONFIG, store, fake);
+    const adapter = new GmailAdapter(TEST_CONFIG, store, 'default', fake);
     const { records } = await adapter.pull();
 
     for (const record of records) {
@@ -262,7 +262,7 @@ describe('GmailAdapter.pull() — D-61 origin guard', () => {
     ];
 
     for (const raw of raws) {
-      const record = normalizeGmailMessage(raw, TEST_CONFIG);
+      const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
       expect(record.origin).toBe('observed');
     }
   });
