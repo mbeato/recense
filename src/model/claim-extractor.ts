@@ -18,6 +18,42 @@ import type { NodeType, Origin } from '../lib/types';
 import type { ModelProvider } from './provider';
 import { promptForSource } from '../source/extraction-prompts';
 
+// ---------------------------------------------------------------------------
+// ActionType — closed enum with 'other' fallback (D-02, TEMP-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * Closed vocabulary of temporal annotation types (D-02).
+ * Phase 21 LLM-free surfacing uses this as a deterministic filter key.
+ * Model output outside this enum is coerced to 'other' by toActionType() — never crashes,
+ * never stores an invalid value (D-02 robustness guard).
+ */
+export type ActionType =
+  | 'deadline'
+  | 'flight'
+  | 'appointment'
+  | 'receipt'
+  | 'payment'
+  | 'meeting'
+  | 'other';
+
+/** Canonical set of valid ActionType values (used for O(1) membership test in toActionType). */
+export const ACTION_TYPES: ReadonlySet<ActionType> = new Set([
+  'deadline', 'flight', 'appointment', 'receipt', 'payment', 'meeting', 'other',
+]);
+
+/**
+ * Coerce an unknown value to ActionType.
+ * Returns the value unchanged if it is a string member of ACTION_TYPES;
+ * otherwise returns 'other'. Never throws (D-02 robustness — model output is untrusted).
+ */
+export function toActionType(raw: unknown): ActionType {
+  if (typeof raw === 'string' && ACTION_TYPES.has(raw as ActionType)) {
+    return raw as ActionType;
+  }
+  return 'other';
+}
+
 /**
  * A single extracted knowledge unit from a document.
  * links = wikilink target values found in the same claim's context (D-05).
@@ -27,6 +63,9 @@ import { promptForSource } from '../source/extraction-prompts';
  * extraction (Plan 02-02: `claim.origin = episode.origin`) so the
  * confirm→strengthen path can enforce the inferred origin-guard (correctness
  * constraint: self-confirmation loop must be closed at the strengthen call site).
+ *
+ * D-03: due_at/action_type are optional temporal annotations. Claims that omit
+ * them behave exactly as before — no node_temporal row is written (backward-compat).
  */
 export type ExtractedClaim = {
   type: NodeType;
@@ -34,6 +73,10 @@ export type ExtractedClaim = {
   links?: string[];
   /** Stamped by the consolidator from the source episode's origin (optional here). */
   origin?: Origin;
+  /** ISO-8601 UTC datetime; present only for time-sensitive commitments (D-03). */
+  due_at?: string;
+  /** Closed enum for surfacing; present only when due_at is set (D-02/D-03). */
+  action_type?: ActionType;
 };
 
 /** Narrow extraction seam — the only contract the seeder depends on. */
@@ -92,6 +135,13 @@ export const CLAIM_ARRAY_SCHEMA: object = {
       type: { type: 'string', enum: ['entity', 'fact'] },
       value: { type: 'string' },
       links: { type: 'array', items: { type: 'string' } },
+      // D-03 additions: present only when episodic-email/calendar prompt is active.
+      // Optional in required[] — omitted by baseline prompts (backward-compat).
+      due_at: { type: 'string' },
+      action_type: {
+        type: 'string',
+        enum: ['deadline', 'flight', 'appointment', 'receipt', 'payment', 'meeting', 'other'],
+      },
     },
     required: ['type', 'value'],
   },
@@ -161,7 +211,15 @@ function parseClaimsFromArray(raw: unknown[]): ExtractedClaim[] {
       ? (obj['links'] as unknown[]).filter((l): l is string => typeof l === 'string')
       : undefined;
 
-    return [{ type: type as NodeType, value: value.trim(), links }];
+    // D-03: extract temporal fields only when due_at is a non-empty string.
+    // action_type is coerced to 'other' for any out-of-enum model output (D-02).
+    // Both fields are left undefined when due_at is absent — backward-compat preserved.
+    const rawDueAt = obj['due_at'];
+    const due_at =
+      typeof rawDueAt === 'string' && rawDueAt.trim() ? rawDueAt.trim() : undefined;
+    const action_type = due_at !== undefined ? toActionType(obj['action_type']) : undefined;
+
+    return [{ type: type as NodeType, value: value.trim(), links, due_at, action_type }];
   });
 }
 

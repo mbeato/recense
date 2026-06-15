@@ -85,8 +85,9 @@ describe('parseClaims temporal fields', () => {
     ]);
     const claims = parseClaims(json);
     expect(claims).toHaveLength(1);
-    expect(claims[0].due_at).toBe('2026-07-04T08:00:00Z');
-    expect(claims[0].action_type).toBe('flight');
+    const claim = claims[0]!;
+    expect(claim.due_at).toBe('2026-07-04T08:00:00Z');
+    expect(claim.action_type).toBe('flight');
   });
 
   it('coerces out-of-enum action_type to "other" when due_at is present (D-02)', () => {
@@ -100,8 +101,9 @@ describe('parseClaims temporal fields', () => {
     ]);
     const claims = parseClaims(json);
     expect(claims).toHaveLength(1);
-    expect(claims[0].due_at).toBe('2026-08-01T12:00:00Z');
-    expect(claims[0].action_type).toBe('other');
+    const claim = claims[0]!;
+    expect(claim.due_at).toBe('2026-08-01T12:00:00Z');
+    expect(claim.action_type).toBe('other');
   });
 
   it('sets action_type to "other" when due_at is present but action_type is missing', () => {
@@ -115,8 +117,9 @@ describe('parseClaims temporal fields', () => {
     ]);
     const claims = parseClaims(json);
     expect(claims).toHaveLength(1);
-    expect(claims[0].due_at).toBe('2026-06-30T23:59:00Z');
-    expect(claims[0].action_type).toBe('other');
+    const claim = claims[0]!;
+    expect(claim.due_at).toBe('2026-06-30T23:59:00Z');
+    expect(claim.action_type).toBe('other');
   });
 
   it('leaves due_at and action_type undefined when due_at is absent (D-03)', () => {
@@ -129,8 +132,9 @@ describe('parseClaims temporal fields', () => {
     ]);
     const claims = parseClaims(json);
     expect(claims).toHaveLength(1);
-    expect(claims[0].due_at).toBeUndefined();
-    expect(claims[0].action_type).toBeUndefined();
+    const claim = claims[0]!;
+    expect(claim.due_at).toBeUndefined();
+    expect(claim.action_type).toBeUndefined();
   });
 
   it('leaves due_at and action_type undefined for a claim with no temporal fields', () => {
@@ -139,8 +143,9 @@ describe('parseClaims temporal fields', () => {
     ]);
     const claims = parseClaims(json);
     expect(claims).toHaveLength(1);
-    expect(claims[0].due_at).toBeUndefined();
-    expect(claims[0].action_type).toBeUndefined();
+    const claim = claims[0]!;
+    expect(claim.due_at).toBeUndefined();
+    expect(claim.action_type).toBeUndefined();
   });
 
   it('handles mixed temporal and non-temporal claims in a single response', () => {
@@ -157,14 +162,17 @@ describe('parseClaims temporal fields', () => {
     const claims = parseClaims(json);
     expect(claims).toHaveLength(3);
 
-    expect(claims[0].due_at).toBeUndefined();
-    expect(claims[0].action_type).toBeUndefined();
+    const c0 = claims[0]!;
+    expect(c0.due_at).toBeUndefined();
+    expect(c0.action_type).toBeUndefined();
 
-    expect(claims[1].due_at).toBe('2026-07-04T08:00:00Z');
-    expect(claims[1].action_type).toBe('flight');
+    const c1 = claims[1]!;
+    expect(c1.due_at).toBe('2026-07-04T08:00:00Z');
+    expect(c1.action_type).toBe('flight');
 
-    expect(claims[2].due_at).toBeUndefined();
-    expect(claims[2].action_type).toBeUndefined();
+    const c2 = claims[2]!;
+    expect(c2.due_at).toBeUndefined();
+    expect(c2.action_type).toBeUndefined();
   });
 
   it('ignores whitespace-only due_at values (treats as missing)', () => {
@@ -178,8 +186,9 @@ describe('parseClaims temporal fields', () => {
     ]);
     const claims = parseClaims(json);
     expect(claims).toHaveLength(1);
-    expect(claims[0].due_at).toBeUndefined();
-    expect(claims[0].action_type).toBeUndefined();
+    const claim = claims[0]!;
+    expect(claim.due_at).toBeUndefined();
+    expect(claim.action_type).toBeUndefined();
   });
 });
 
@@ -195,11 +204,13 @@ describe('backward-compatibility: existing claim shapes', () => {
     ]);
     const claims = parseClaims(json);
     expect(claims).toHaveLength(2);
-    expect(claims[0]).toMatchObject({ type: 'entity', value: 'recense project' });
-    expect(claims[1]).toMatchObject({ type: 'fact', value: 'Preferred test runner is vitest' });
+    const c0 = claims[0]!;
+    const c1 = claims[1]!;
+    expect(c0).toMatchObject({ type: 'entity', value: 'recense project' });
+    expect(c1).toMatchObject({ type: 'fact', value: 'Preferred test runner is vitest' });
     // Temporal fields must be absent
-    expect(claims[0].due_at).toBeUndefined();
-    expect(claims[1].due_at).toBeUndefined();
+    expect(c0.due_at).toBeUndefined();
+    expect(c1.due_at).toBeUndefined();
   });
 
   it('does not break fenced-JSON parsing (real model output regression)', () => {
@@ -208,6 +219,6 @@ describe('backward-compatibility: existing claim shapes', () => {
       '{"type":"fact","value":"Never inflate metrics","links":[]}]\n```';
     const claims = parseClaims(fenced);
     expect(claims).toHaveLength(2);
-    expect(claims[0].due_at).toBeUndefined();
+    expect(claims[0]!.due_at).toBeUndefined();
   });
 });
