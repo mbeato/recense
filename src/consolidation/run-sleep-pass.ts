@@ -99,7 +99,7 @@ export async function lightConsolidatedNodes(
 // ---------------------------------------------------------------------------
 
 /** Provider values accepted by EngineConfig.modelProvider (the validation union). */
-export const VALID_PROVIDERS = ['anthropic', 'vertex', 'local'] as const;
+export const VALID_PROVIDERS = ['anthropic', 'vertex', 'local', 'deepseek'] as const;
 export type ModelProvider = (typeof VALID_PROVIDERS)[number];
 
 /** Env-derived overlay applied on top of DEFAULT_CONFIG for the sleep pass. */
@@ -107,6 +107,8 @@ export interface ProviderOverlay {
   modelProvider: ModelProvider;
   localModel?: string;
   localBaseUrl?: string;
+  deepseekModel?: string;
+  deepseekBaseUrl?: string;
 }
 
 /**
@@ -152,6 +154,17 @@ export function resolveProviderOverlay(
     const localBaseUrl = env['RECENSE_LOCAL_BASE_URL'];
     if (localModel) overlay.localModel = localModel;
     if (localBaseUrl) overlay.localBaseUrl = localBaseUrl;
+  }
+
+  if (provider === 'deepseek') {
+    // Per-role deepseek model key wins over the shared RECENSE_DEEPSEEK_MODEL key.
+    const roleModelKey = roleEnvKey?.endsWith('_PROVIDER')
+      ? roleEnvKey.replace(/_PROVIDER$/, '_DEEPSEEK_MODEL')
+      : undefined;
+    const deepseekModel = (roleModelKey && env[roleModelKey]) || env['RECENSE_DEEPSEEK_MODEL'];
+    const deepseekBaseUrl = env['RECENSE_DEEPSEEK_BASE_URL'];
+    if (deepseekModel) overlay.deepseekModel = deepseekModel;
+    if (deepseekBaseUrl) overlay.deepseekBaseUrl = deepseekBaseUrl;
   }
 
   return overlay;

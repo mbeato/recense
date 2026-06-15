@@ -131,9 +131,10 @@ export interface EngineConfig {
    * Default 'anthropic' = ZERO behavior change.
    * 'local' routes ALL Anthropic-family calls (judge/extractor/schema-naming/recall-compose)
    * to a local Ollama OpenAI-compatible endpoint (see localBaseUrl/localModel).
+   * 'deepseek' routes judge calls to DeepSeek's OpenAI-compatible endpoint (ECR-01).
    * Faithfulness note: narrow transport seam, NOT the Phase 5 SEAM-01 ModelProvider abstraction.
    */
-  modelProvider: 'anthropic' | 'vertex' | 'local';
+  modelProvider: 'anthropic' | 'vertex' | 'local' | 'deepseek';
 
   /**
    * Anthropic model for cold-start LLM extraction (D-05).
@@ -168,6 +169,20 @@ export interface EngineConfig {
    * modelProvider === 'local'.
    */
   localModel: string;
+
+  /**
+   * OpenAI-compatible base URL for the DeepSeek provider (ECR-01). Used only when
+   * modelProvider === 'deepseek'. Default targets DeepSeek-direct.
+   * Credential discipline: DEEPSEEK_API_KEY is read from process.env by the SDK,
+   * never stored in config (extends T-05-KEY).
+   */
+  deepseekBaseUrl: string;
+
+  /**
+   * DeepSeek model id (e.g. 'deepseek-v4-pro'). Used only when
+   * modelProvider === 'deepseek'.
+   */
+  deepseekModel: string;
 
   /**
    * OpenAI embedding model — Phase 2+ only.
@@ -555,6 +570,8 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   vertexModel: 'claude-haiku-4-5@20251001',
   localBaseUrl: 'http://localhost:11434/v1',
   localModel: 'qwen3.6:35b-a3b',
+  deepseekBaseUrl: 'https://api.deepseek.com',
+  deepseekModel: 'deepseek-v4-pro',
   openaiEmbedModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
   candidateK: 5,
