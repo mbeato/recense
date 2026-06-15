@@ -34,6 +34,12 @@ const EVAL = arg('--eval', 'scripts/eval/judge-eval-contradiction-set.json');
 const HAIKU = arg('--haiku', 'claude-haiku-4-5');          // pass --haiku "" to skip
 const OLLAMA_MODELS = (arg('--ollama', 'qwen3.6:35b-a3b,qwen3.6:27b,qwen2.5:7b-instruct') || '').split(',').map(s => s.trim()).filter(Boolean);
 const OLLAMA_URL = arg('--ollama-url', 'http://localhost:11434/v1');
+// --deepseek <model>: DeepSeek via its OpenAI-compatible endpoint. Needs DEEPSEEK_API_KEY.
+// Default URL is DeepSeek-direct (5M free signup tokens); pass --deepseek-url
+// https://api.deepinfra.com/v1/openai for DeepInfra. Goal: validate DeepSeek as a fast
+// consolidation judge (contradicted_ids + order-swap contract) to replace the ~45h local 35b.
+const DEEPSEEK = arg('--deepseek', '');                    // e.g. deepseek-chat / deepseek-v4-flash
+const DEEPSEEK_URL = arg('--deepseek-url', 'https://api.deepseek.com');
 const OUT = arg('--out', 'scripts/eval/judge-eval-v2-results.json');
 const RELATIONS = ['confirm', 'extend', 'contradict', 'unrelated'];
 // --batch <k>: run in batch mode — groups labeled cases into k-sized batches, issues one
@@ -247,6 +253,24 @@ async function callOllamaBatch(client, model, prompt) {
   });
   return r.choices?.[0]?.message?.content ?? '';
 }
+async function callDeepseek(client, model, prompt) {
+  // DeepSeek via OpenAI-compat. Mirrors the Ollama think-mode settings (json_object, max_tokens 8192
+  // to cover any reasoning preamble; parseVerdict salvages the JSON regardless).
+  const r = await client.chat.completions.create({
+    model, temperature: 0, max_tokens: 8192,
+    response_format: { type: 'json_object' },
+    messages: [{ role: 'user', content: prompt }],
+  });
+  return r.choices?.[0]?.message?.content ?? '';
+}
+async function callDeepseekBatch(client, model, prompt) {
+  // Batch response is a JSON array — text format, not json_object (mirrors callOllamaBatch).
+  const r = await client.chat.completions.create({
+    model, temperature: 0, max_tokens: 8192,
+    messages: [{ role: 'user', content: prompt }],
+  });
+  return r.choices?.[0]?.message?.content ?? '';
+}
 
 // ---- scoring --------------------------------------------------------------
 const DANGER = (label, pred) => {
@@ -436,6 +460,17 @@ async function runBatchMode(prov, labeled, batchSize, rows) {
         name: `ollama:${m}`,
         callSingle: (p) => callOllama(oc, m, p),
         callBatch: (p) => callOllamaBatch(oc, m, p),
+      });
+    }
+  }
+  if (DEEPSEEK) {
+    if (!process.env.DEEPSEEK_API_KEY) console.log('warning: DEEPSEEK_API_KEY not set — skipping DeepSeek');
+    else {
+      const dc = new OpenAI({ baseURL: DEEPSEEK_URL, apiKey: process.env.DEEPSEEK_API_KEY });
+      providers.push({
+        name: `deepseek:${DEEPSEEK}`,
+        callSingle: (p) => callDeepseek(dc, DEEPSEEK, p),
+        callBatch: (p) => callDeepseekBatch(dc, DEEPSEEK, p),
       });
     }
   }
