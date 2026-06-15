@@ -123,20 +123,31 @@ function extractBodyText(part: gmail_v1.Schema$MessagePart | undefined): string 
 class RealGmailFetcher implements GmailFetcher {
   private _gmail: ReturnType<typeof google.gmail> | null = null;
 
+  constructor(private readonly accountId: string) {}
+
   /** Builds the Gmail client on first call from env. Throws a clear non-secret error if creds missing. */
   private getClient(): ReturnType<typeof google.gmail> {
     if (this._gmail) return this._gmail;
 
-    // T-06-12: read from env here (on first fetchMessages call, NOT at construction).
-    // NEVER log clientSecret or refreshToken — not in errors, not in stack traces.
-    const clientId = process.env['GMAIL_CLIENT_ID'];
-    const clientSecret = process.env['GMAIL_CLIENT_SECRET'];
-    const refreshToken = process.env['GMAIL_REFRESH_TOKEN'];
+    // D-08/T-06-12: shared OAuth app, per-account refresh token read on first fetchMessages call.
+    // GOOGLE_CLIENT_ID/SECRET are shared; fall back to legacy GMAIL_* keys (backward-compat).
+    // Per-account token: GOOGLE_<ACCOUNT_ID>_REFRESH_TOKEN; 'default' also falls back to
+    // the legacy GMAIL_REFRESH_TOKEN slot.
+    // NEVER log clientSecret or refreshToken — not in errors, not in stack traces (D-68).
+    const clientId = process.env['GOOGLE_CLIENT_ID'] ?? process.env['GMAIL_CLIENT_ID'];
+    const clientSecret = process.env['GOOGLE_CLIENT_SECRET'] ?? process.env['GMAIL_CLIENT_SECRET'];
+    const tokenEnvKey = `GOOGLE_${this.accountId.toUpperCase()}_REFRESH_TOKEN`;
+    const refreshToken =
+      process.env[tokenEnvKey] ??
+      (this.accountId === 'default' ? process.env['GMAIL_REFRESH_TOKEN'] : undefined);
 
     if (!clientId || !clientSecret || !refreshToken) {
       throw new Error(
-        'Gmail OAuth credentials missing — set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and ' +
-        'GMAIL_REFRESH_TOKEN in ~/.config/recense/sleep.env (D-68)'
+        `Gmail OAuth credentials missing for account '${this.accountId}' — ` +
+        `set GOOGLE_CLIENT_ID (or GMAIL_CLIENT_ID), GOOGLE_CLIENT_SECRET (or GMAIL_CLIENT_SECRET), ` +
+        `and ${tokenEnvKey}` +
+        (this.accountId === 'default' ? ` (or GMAIL_REFRESH_TOKEN)` : '') +
+        ` in ~/.config/recense/sleep.env (D-08/D-68)`
       );
     }
 
@@ -226,16 +237,20 @@ class RealGmailFetcher implements GmailFetcher {
  *
  * Origin is HARD-CODED 'observed' (D-61 — correctness guard; see file-level comment).
  *
- * @param raw    Pre-fetched, decoded Gmail message.
- * @param _config EngineConfig (reserved for future per-source tunables; unused today).
+ * @param raw       Pre-fetched, decoded Gmail message.
+ * @param accountId Google account id (D-09) — embedded in the inline provenance header
+ *                  as `· Acct: <accountId>` so the extractor sees it. Comes from trusted
+ *                  config.googleAccounts; never sourced from external email content (T-20-06).
+ * @param _config   EngineConfig (reserved for future per-source tunables; unused today).
  */
 export function normalizeGmailMessage(
   raw: RawGmailMessage,
+  accountId: string,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _config: Pick<EngineConfig, 'gmail'>
 ): NormalizedRecord {
-  // D-59: provenance header so the LLM extractor sees sender + subject inline
-  const provenanceHeader = `From: ${raw.headers.from} · Re: ${raw.headers.subject}`;
+  // D-59/D-09: provenance header with account id so the LLM extractor sees sender + subject + account
+  const provenanceHeader = `From: ${raw.headers.from} · Re: ${raw.headers.subject} · Acct: ${accountId}`;
   const combined = `${provenanceHeader}\n${raw.bodyText}`;
 
   // D-63: redactSecrets runs over the full combined string (header + body).
@@ -279,23 +294,29 @@ export class GmailAdapter implements SourceAdapter {
   private readonly config: EngineConfig;
   private readonly meta: MetaStore;
   private readonly fetcher: GmailFetcher;
+  private readonly accountId: string;
 
   /**
-   * @param config  EngineConfig — reads config.gmail.query for the Gmail search scope (D-65).
-   * @param meta    Meta cursor store — reads/writes cursor:gmail historyId (D-67).
-   * @param fetcher Optional injected GmailFetcher. Defaults to the real lazily-built
-   *                OAuth client that reads env creds on first fetchMessages call (D-68).
-   *                Inject a fake fetcher in unit tests to avoid credentials/network.
+   * @param config    EngineConfig — reads config.gmail.query for the Gmail search scope (D-65).
+   * @param meta      Meta cursor store — reads/writes cursor:gmail:<accountId> historyId (D-67/D-10).
+   * @param accountId Google account id (D-08). Default 'default' preserves backward-compat:
+   *                  reads GOOGLE_DEFAULT_REFRESH_TOKEN with fallback to GMAIL_REFRESH_TOKEN,
+   *                  and uses cursor key 'cursor:gmail:default'.
+   * @param fetcher   Optional injected GmailFetcher. Defaults to the real lazily-built
+   *                  OAuth client that reads env creds on first fetchMessages call (D-68).
+   *                  Inject a fake fetcher in unit tests to avoid credentials/network.
    */
   constructor(
     config: EngineConfig,
     meta: MetaStore,
+    accountId = 'default',
     fetcher?: GmailFetcher
   ) {
     this.config = config;
     this.meta = meta;
+    this.accountId = accountId;
     // Default to real fetcher (lazy, no env read at construction — D-68/T-06-12)
-    this.fetcher = fetcher ?? new RealGmailFetcher();
+    this.fetcher = fetcher ?? new RealGmailFetcher(accountId);
   }
 
   /**
@@ -310,8 +331,9 @@ export class GmailAdapter implements SourceAdapter {
    * The orchestrator catches per-adapter errors and continues with other adapters (D-66).
    */
   async pull(): Promise<{ records: NormalizedRecord[]; commitCursor: () => void }> {
-    // Read cursor:gmail — null means no prior pull; real fetcher will do query-backfill (D-67)
-    const cursor = this.meta.getMeta('cursor:gmail');
+    // D-10: per-account + per-service cursor key (e.g. 'cursor:gmail:default', 'cursor:gmail:work')
+    const cursorKey = `cursor:gmail:${this.accountId}`;
+    const cursor = this.meta.getMeta(cursorKey);
 
     // T-04-ASYNC: all async I/O (network) completes into an array before sync work below
     const { messages, newHistoryId } = await this.fetcher.fetchMessages(
@@ -320,13 +342,14 @@ export class GmailAdapter implements SourceAdapter {
     );
 
     // Normalise: pure synchronous mapping (no await)
-    const records = messages.map(msg => normalizeGmailMessage(msg, this.config));
+    // D-09: pass accountId so the provenance header carries '· Acct: <accountId>'
+    const records = messages.map(msg => normalizeGmailMessage(msg, this.accountId, this.config));
 
     // M-6: capture newHistoryId for the deferred cursor commit (NOT written here).
     // commitCursor is a thunk — called by the orchestrator after appendBatch succeeds.
     const commitCursor = (): void => {
       if (newHistoryId !== null) {
-        this.meta.setMeta('cursor:gmail', newHistoryId);
+        this.meta.setMeta(cursorKey, newHistoryId);
       }
     };
 
