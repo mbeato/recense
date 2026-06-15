@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { initSchema } from '../src/db/schema';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
+import type { EngineConfig } from '../src/lib/config';
 import { SemanticStore } from '../src/db/semantic-store';
 
 // ---------------------------------------------------------------------------
@@ -24,11 +25,13 @@ interface Harness {
   clock: FakeClock;
 }
 
+const TEST_CONFIG: EngineConfig = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+
 function makeHarness(): Harness {
   const db = new Database(':memory:');
   initSchema(db);
   const clock = new FakeClock(1_000);
-  const store = new SemanticStore(db, clock, DEFAULT_CONFIG);
+  const store = new SemanticStore(db, clock, TEST_CONFIG);
   return { db, store, clock };
 }
 
