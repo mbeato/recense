@@ -168,7 +168,7 @@ fast-no-think config for this model/task. Throughput must be solved another way 
 highest-value path and aligns with the Phase 5 ModelProvider split. Alternatives: accept the
 hourly-launchd grind, or keep the judge on Haiku (reintroduces spend).
 
-## Extraction model bake-off — `extract-bakeoff.cjs` / `extract-bakeoff.log`
+## Extraction model bake-off — `extract-bakeoff.cjs`
 
 Extraction is the high-volume sleep-pass step and is *forgiving* (safe-fallback parsing — bad output
 drops claims, never corrupts the graph), so the goal is the fastest model that clears a "good enough"
