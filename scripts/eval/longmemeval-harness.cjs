@@ -120,9 +120,13 @@ const IS_TEMPORAL = process.argv.includes('--temporal');
 // Composable with --hybrid, --temporal, --topk.
 const IS_REWRITE = process.argv.includes('--rewrite');
 
-// --per-turn: per-turn ingestion (one episode per turn, matching production turn-capture-cli.ts)
-// instead of per-session formatSession. Opt-in; default (flag absent) is byte-identical to today.
-const IS_PER_TURN = process.argv.includes('--per-turn');
+// --chunk-turns N: ingest one episode per N-turn window (finer-grained, matching production capture)
+// instead of per-session formatSession. `--per-turn` is the back-compat alias for N=1. Validated
+// sweet spot N=2 (same-or-better extraction coverage as per-turn at 2x fewer episodes; n=15 + n=30).
+// Default (no flag) → CHUNK_TURNS=0 = per-session, byte-identical to today.
+const CHUNK_TURNS = process.argv.includes('--per-turn')
+  ? 1
+  : (parseInt((process.argv.indexOf('--chunk-turns') !== -1 ? process.argv[process.argv.indexOf('--chunk-turns') + 1] : '0'), 10) || 0);
 
 // --concurrency N (default 4, min 1). Each question has its own scratch DB and no
 // shared state, so in-process parallelism is safe. Probe token accumulation uses
@@ -425,12 +429,11 @@ async function runBoundedPool(items, concurrency, fn) {
           const session  = haystackSessions[i];
           const dateStr  = haystackDates[i] || null;
           const tsMs     = parseSessionDate(dateStr);
-          if (IS_PER_TURN) {
-            for (let j = 0; j < session.length; j++) {
-              const turn = session[j];
-              const turnContent = dateStr
-                ? `[Session date: ${dateStr}]\n${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`
-                : `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`;
+          if (CHUNK_TURNS > 0) {
+            for (let j = 0; j < session.length; j += CHUNK_TURNS) {
+              const window = session.slice(j, j + CHUNK_TURNS);
+              const body = window.map(turn => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`).join('\n');
+              const turnContent = dateStr ? `[Session date: ${dateStr}]\n${body}` : body;
               scratch.episodes.append({
                 content:    turnContent,
                 origin:     'observed',
@@ -438,7 +441,7 @@ async function runBoundedPool(items, concurrency, fn) {
                 hard_keep:  1,
                 role:       'user',
                 source:     'conversation',
-                session_id: `${questionId}-s${i}-t${j}`,
+                session_id: `${questionId}-s${i}-w${j}`,
                 ...(tsMs != null ? { ts: tsMs } : {}),
               });
             }
@@ -470,12 +473,11 @@ async function runBoundedPool(items, concurrency, fn) {
           const session = haystackSessions[i];
           const dateStr = haystackDates[i] || null;
           const tsMs    = parseSessionDate(dateStr);
-          if (IS_PER_TURN) {
-            for (let j = 0; j < session.length; j++) {
-              const turn = session[j];
-              const turnContent = dateStr
-                ? `[Session date: ${dateStr}]\n${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`
-                : `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`;
+          if (CHUNK_TURNS > 0) {
+            for (let j = 0; j < session.length; j += CHUNK_TURNS) {
+              const window = session.slice(j, j + CHUNK_TURNS);
+              const body = window.map(turn => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`).join('\n');
+              const turnContent = dateStr ? `[Session date: ${dateStr}]\n${body}` : body;
               scratch.episodes.append({
                 content:    turnContent,
                 origin:     'observed',
@@ -483,7 +485,7 @@ async function runBoundedPool(items, concurrency, fn) {
                 hard_keep:  1,
                 role:       'user',
                 source:     'conversation',
-                session_id: `${questionId}-s${i}-t${j}`,
+                session_id: `${questionId}-s${i}-w${j}`,
                 ...(tsMs != null ? { ts: tsMs } : {}),
               });
             }
