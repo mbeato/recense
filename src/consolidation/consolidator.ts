@@ -38,7 +38,7 @@ import type { CandidateRetriever } from '../retrieval/topk';
 import { cosineSimF32 } from '../retrieval/topk';
 import type { JudgeRelation } from '../model/judge';
 import type { ModelProvider } from '../model/provider';
-import type { ExtractedClaim } from '../model/claim-extractor';
+import type { ExtractedClaim, ActionType } from '../model/claim-extractor';
 import { extractClaimsWithChunking } from '../model/claim-extractor';
 import { promptForSource } from '../source/extraction-prompts';
 import type { Origin, PendingContradiction, EpisodeRow, EpisodeRole } from '../lib/types';
@@ -120,6 +120,23 @@ interface ClaimDecision {
    * Empty for fast-path, auto-unrelated, and non-contradict verdicts.
    */
   contradictedIds: string[];
+  /**
+   * TEMP-02: temporal annotation from the extracted claim.
+   * undefined when the claim had no due_at (backward-compat — no node_temporal row written).
+   */
+  claimDueAt?: string;
+  /** TEMP-02: action type; undefined when claimDueAt is undefined. */
+  claimActionType?: ActionType;
+  /**
+   * TEMP-02: Calendar source event id parsed from provenance header (gcal episodes only).
+   * null when source !== 'gcal' or the · Event: token is absent.
+   */
+  gcalSourceEventId?: string | null;
+  /**
+   * TEMP-02: RRULE string from provenance header (recurring gcal masters only).
+   * null for one-off gcal events and all non-gcal sources (D-04).
+   */
+  gcalRecurrenceRule?: string | null;
 }
 
 /** Claim that escalated to provider.judge — carries its slot index for ordered reassembly. */
@@ -128,6 +145,9 @@ interface PendingJudge {
   claimValue: string;
   claimType: string;
   candidates: Array<{ id: string; value: string }>;
+  /** TEMP-02: temporal fields carried through to the ClaimDecision after verdict. */
+  claimDueAt?: string;
+  claimActionType?: ActionType;
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +461,12 @@ export class Consolidator {
           ? await this.provider.embed(claimValues)
           : [];
 
+        // TEMP-02: parse gcal provenance header tokens once per episode (pure string parse,
+        // never an LLM call — CONSOL-03 discipline). Both fields are null for non-gcal sources
+        // and for gcal episodes missing the respective token.
+        const { sourceEventId: gcalSourceEventId, recurrenceRule: gcalRecurrenceRule } =
+          this.parseGcalProvenance(episode.source, episode.content);
+
         // ── Concurrent judge calls within one episode ────────────────────
         // Sync work per claim (topk retrieval, D-17 fast-path exact-match, UPDATE-02
         // low-cosine auto-unrelated) reads pre-episode graph state and runs in claim order.
@@ -479,6 +505,10 @@ export class Consolidator {
               episodeSourceInferenceId: episode.source_inference_id,
               episodeRole: episode.role,
               contradictedIds: [],
+              claimDueAt: claim.due_at,        // TEMP-02
+              claimActionType: claim.action_type, // TEMP-02
+              gcalSourceEventId,               // TEMP-02
+              gcalRecurrenceRule,              // TEMP-02
             };
           } else {
             // M1: entity-anchored candidate expansion (Phase A sync reads — T-02-ASYNC preserved).
@@ -540,6 +570,10 @@ export class Consolidator {
                 episodeSourceInferenceId: episode.source_inference_id,
                 episodeRole: episode.role,
                 contradictedIds: [],
+                claimDueAt: claim.due_at,        // TEMP-02
+                claimActionType: claim.action_type, // TEMP-02
+                gcalSourceEventId,               // TEMP-02
+                gcalRecurrenceRule,              // TEMP-02
               };
             } else {
               // Escalate to judge — cosine candidates first (D-17 precedence), anchors appended.
@@ -556,6 +590,8 @@ export class Consolidator {
                 claimValue: claim.value,
                 claimType: claim.type,
                 candidates: judgeCandidates,
+                claimDueAt: claim.due_at,        // TEMP-02
+                claimActionType: claim.action_type, // TEMP-02
               });
             }
           }
@@ -605,6 +641,10 @@ export class Consolidator {
             episodeSourceInferenceId: episode.source_inference_id,
             episodeRole: episode.role,
             contradictedIds,
+            claimDueAt: pendingJudges[i]!.claimDueAt,          // TEMP-02
+            claimActionType: pendingJudges[i]!.claimActionType,  // TEMP-02
+            gcalSourceEventId,                                    // TEMP-02
+            gcalRecurrenceRule,                                   // TEMP-02
           };
         }
 
@@ -651,6 +691,54 @@ export class Consolidator {
     this.strength.runEvictionSweep();
   }
 
+  // ── Private: gcal provenance parse + temporal write helper ──────────────
+
+  /**
+   * Deterministic parse of gcal provenance header tokens (TEMP-02, CONSOL-03).
+   *
+   * Called once per episode in Phase A; both fields are null when source !== 'gcal'.
+   * Tokens emitted by the CalendarAdapter (plan 04):
+   *   · Event: <id>       — always present for gcal episodes
+   *   · RRULE: <rrule>    — present only for recurring masters (null for one-off)
+   *
+   * Pure string regex — never an LLM call (CONSOL-03 sole-writer discipline).
+   */
+  private parseGcalProvenance(
+    source: string,
+    content: string,
+  ): { sourceEventId: string | null; recurrenceRule: string | null } {
+    if (source !== 'gcal') {
+      return { sourceEventId: null, recurrenceRule: null };
+    }
+    const eventMatch = content.match(/·\s*Event:\s*(\S+)/);
+    const rruleMatch = content.match(/·\s*RRULE:\s*([^\n·]+)/);
+    return {
+      sourceEventId: eventMatch ? (eventMatch[1] ?? null) : null,
+      recurrenceRule: rruleMatch ? (rruleMatch[1]?.trim() ?? null) : null,
+    };
+  }
+
+  /**
+   * Write a node_temporal row when the decision carries a temporal claim (TEMP-02).
+   *
+   * Called after every upsertNode that creates or confirms a node for a temporal claim.
+   * No-op when claimDueAt is undefined (non-temporal claims are not annotated).
+   *
+   * CONSOL-03: this is the SOLE writer of node_temporal — adapters never write it.
+   * Belief node.s / node.c are untouched — temporal annotation is a separate sidecar.
+   */
+  private maybeWriteNodeTemporal(nodeId: string, decision: ClaimDecision): void {
+    if (decision.claimDueAt === undefined) return;
+    this.store.upsertNodeTemporal({
+      node_id: nodeId,
+      due_at: decision.claimDueAt,
+      action_type: decision.claimActionType ?? 'other',  // D-02: fallback for undefined
+      recurrence_rule: decision.gcalRecurrenceRule ?? null,
+      source_event_id: decision.gcalSourceEventId ?? null,
+      updated_at: this.clock.nowMs(),
+    });
+  }
+
   // ── Private: apply a single claim decision within a transaction ──────────
 
   private applyDecision(decision: ClaimDecision, episodeId: string): void {
@@ -663,6 +751,9 @@ export class Consolidator {
           if (decision.episodeRole !== 'assistant') {
             this.strength.strengthen(decision.bestCandidateId, decision.claimOrigin);
           }
+          // TEMP-02: refresh node_temporal for the existing node (keeps recurring due_at current
+          // on re-ingest — the CalendarAdapter computes next-occurrence deterministically each pass).
+          this.maybeWriteNodeTemporal(decision.bestCandidateId, decision);
           // Always emit — records the confirm event for audit regardless of role (D-49 compliance).
           this.sink.emit({
             event_type: 'confirm',
@@ -686,6 +777,7 @@ export class Consolidator {
             value: decision.claimValue,
             origin: decision.claimOrigin,
           });
+          this.maybeWriteNodeTemporal(newId_, decision); // TEMP-02
           this.store.upsertEdge({
             src: decision.bestCandidateId,
             dst: newId_,
@@ -712,6 +804,7 @@ export class Consolidator {
             value: decision.claimValue,
             origin: decision.claimOrigin,
           });
+          this.maybeWriteNodeTemporal(standaloneId, decision); // TEMP-02
           // SEAM-02 D-49: defensive standalone counts as extend (no candidate_id)
           this.sink.emit({
             event_type: 'extend',
@@ -734,6 +827,7 @@ export class Consolidator {
           value: decision.claimValue,
           origin: decision.claimOrigin,
         });
+        this.maybeWriteNodeTemporal(unrelatedId, decision); // TEMP-02
         // SEAM-02 D-49: standalone new node
         this.sink.emit({
           event_type: 'unrelated',
@@ -787,6 +881,7 @@ export class Consolidator {
               value: decision.claimValue,
               origin: decision.claimOrigin,
             });
+            this.maybeWriteNodeTemporal(oscId, decision); // TEMP-02
             // SEAM-02 D-49: oscillation escalated from reconcile → 'contradict_oscillation'
             this.sink.emit({
               event_type: 'contradict_oscillation',
@@ -814,6 +909,7 @@ export class Consolidator {
               origin: decision.claimOrigin,
               prev_value: node.value, // explicit carry across tombstone-always boundary (D-20)
             });
+            this.maybeWriteNodeTemporal(reconciledId, decision); // TEMP-02
             // SEAM-02 D-49: tombstone-and-replace → 'contradict_reconcile'
             this.sink.emit({
               event_type: 'contradict_reconcile',
@@ -834,6 +930,7 @@ export class Consolidator {
             value: decision.claimValue,
             origin: decision.claimOrigin,
           });
+          this.maybeWriteNodeTemporal(appendNewId, decision); // TEMP-02
           // SEAM-02 D-49: extreme divergence → 'contradict_append_new'
           this.sink.emit({
             event_type: 'contradict_append_new',
@@ -880,6 +977,7 @@ export class Consolidator {
                     value: decision.claimValue,
                     origin: decision.claimOrigin,
                   });
+                  this.maybeWriteNodeTemporal(fdOscId, decision); // TEMP-02
                   // SEAM-02 D-49: force-destabilize (oscillation variant) → still 'contradict_force_destabilize'
                   this.sink.emit({
                     event_type: 'contradict_force_destabilize',
@@ -901,6 +999,7 @@ export class Consolidator {
                     origin: decision.claimOrigin,
                     prev_value: updatedNode.value, // carry breadcrumb (same as band reconcile)
                   });
+                  this.maybeWriteNodeTemporal(fdId, decision); // TEMP-02
                   // SEAM-02 D-49: N-distinct force-destabilize → 'contradict_force_destabilize'
                   this.sink.emit({
                     event_type: 'contradict_force_destabilize',
