@@ -59,6 +59,35 @@ describe('resolveProviderOverlay (sleep-pass provider resolution)', () => {
     expect(overlay.modelProvider).toBe('vertex');
     expect(overlay.localModel).toBeUndefined();
   });
+
+  it("provider='deepseek' → 'deepseek'; applies deepseekModel/deepseekBaseUrl", () => {
+    const overlay = resolveProviderOverlay({
+      RECENSE_MODEL_PROVIDER: 'deepseek',
+      RECENSE_DEEPSEEK_MODEL: 'deepseek-v4-pro',
+      RECENSE_DEEPSEEK_BASE_URL: 'https://api.deepseek.com',
+    });
+    expect(overlay.modelProvider).toBe('deepseek');
+    expect(overlay.deepseekModel).toBe('deepseek-v4-pro');
+    expect(overlay.deepseekBaseUrl).toBe('https://api.deepseek.com');
+  });
+
+  it("provider='deepseek' without env vars → no deepseek overrides (DEFAULT_CONFIG kept)", () => {
+    const overlay = resolveProviderOverlay({ RECENSE_MODEL_PROVIDER: 'deepseek' });
+    expect(overlay.modelProvider).toBe('deepseek');
+    expect(overlay.deepseekModel).toBeUndefined();
+    expect(overlay.deepseekBaseUrl).toBeUndefined();
+  });
+
+  it("provider='anthropic' → deepseek env vars are IGNORED", () => {
+    const overlay = resolveProviderOverlay({
+      RECENSE_MODEL_PROVIDER: 'anthropic',
+      RECENSE_DEEPSEEK_MODEL: 'deepseek-v4-pro',
+      RECENSE_DEEPSEEK_BASE_URL: 'https://api.deepseek.com',
+    });
+    expect(overlay.modelProvider).toBe('anthropic');
+    expect(overlay.deepseekModel).toBeUndefined();
+    expect(overlay.deepseekBaseUrl).toBeUndefined();
+  });
 });
 
 describe('resolveProviderOverlay (per-role provider routing)', () => {
@@ -172,5 +201,29 @@ describe('resolveProviderOverlay (per-role provider routing)', () => {
       RECENSE_LOCAL_MODEL: 'shared-model',
     });
     expect(overlay.localModel).toBe('shared-model');
+  });
+
+  it('role resolves to deepseek → deepseek model overlay applies (per-role key wins)', () => {
+    const overlay = resolveProviderOverlay(
+      {
+        RECENSE_JUDGE_PROVIDER: 'deepseek',
+        RECENSE_JUDGE_DEEPSEEK_MODEL: 'deepseek-v4-pro',
+        RECENSE_DEEPSEEK_MODEL: 'deepseek-shared',
+        RECENSE_DEEPSEEK_BASE_URL: 'https://api.deepseek.com',
+      },
+      'RECENSE_JUDGE_PROVIDER',
+    );
+    expect(overlay.modelProvider).toBe('deepseek');
+    expect(overlay.deepseekModel).toBe('deepseek-v4-pro'); // per-role key wins
+    expect(overlay.deepseekBaseUrl).toBe('https://api.deepseek.com');
+  });
+
+  it('role resolves to non-deepseek → deepseek env vars ignored', () => {
+    const overlay = resolveProviderOverlay(
+      { RECENSE_JUDGE_PROVIDER: 'anthropic', RECENSE_DEEPSEEK_MODEL: 'deepseek-v4-pro' },
+      'RECENSE_JUDGE_PROVIDER',
+    );
+    expect(overlay.modelProvider).toBe('anthropic');
+    expect(overlay.deepseekModel).toBeUndefined();
   });
 });

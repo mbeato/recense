@@ -18,6 +18,7 @@ import { AnthropicVertex } from '@anthropic-ai/vertex-sdk';
 import OpenAI from 'openai';
 import type { EngineConfig } from '../lib/config';
 import { OllamaClient } from './ollama-client';
+import { OpenAICompatClient } from './openai-compat-client';
 
 /**
  * Minimal structural type satisfied by both Anthropic and AnthropicVertex clients.
@@ -78,6 +79,7 @@ export const SDK_MAX_RETRIES: number = (() => {
 export function resolveModelId(config: EngineConfig): string {
   if (config.modelProvider === 'vertex') return config.vertexModel;
   if (config.modelProvider === 'local') return config.localModel;
+  if (config.modelProvider === 'deepseek') return config.deepseekModel;
   return config.anthropicModel;
 }
 
@@ -128,6 +130,20 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
     // Pass localBaseUrl so OllamaClient can derive the native /api/chat endpoint
     // for constrained-decoding calls (QUICK-260612-clb).
     const client = new OllamaClient(openai, config.localBaseUrl);
+    return { client, model };
+  }
+
+  if (config.modelProvider === 'deepseek') {
+    // DeepSeek path: OpenAI-compatible cloud endpoint (ECR-01).
+    // DEEPSEEK_API_KEY is read from process.env by the SDK — never passed as a literal
+    // (T-ECR-01). Uses cloud SDK_TIMEOUT_MS (60 s) — DeepSeek is a fast cloud endpoint.
+    const openai = new OpenAI({
+      baseURL: config.deepseekBaseUrl,
+      apiKey: process.env['DEEPSEEK_API_KEY'],
+      timeout: SDK_TIMEOUT_MS,
+      maxRetries: SDK_MAX_RETRIES,
+    });
+    const client = new OpenAICompatClient(openai, model);
     return { client, model };
   }
 
