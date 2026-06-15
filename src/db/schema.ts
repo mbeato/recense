@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -111,6 +111,22 @@ export const DDL = `
     query_id  TEXT    NOT NULL,
     seeds     TEXT    NOT NULL,  -- JSON array of node ids
     hops      TEXT    NOT NULL   -- JSON array of {node_id, score, hop}
+  );
+
+  -- TEMP-02: sparse sidecar for temporal annotations (Phase 20).
+  -- 1:1 with the temporal subset of nodes (not all nodes have due_at/action_type).
+  -- Single writer: sleep pass consolidator only (CONSOL-03).
+  -- FK → node(id): tombstoning a node does NOT auto-delete node_temporal; the consolidator
+  -- must update or ignore stale rows (Phase 21 surfacing reads tombstoned=0 filter on node).
+  CREATE TABLE IF NOT EXISTS node_temporal (
+    node_id         TEXT    PRIMARY KEY REFERENCES node(id),
+    due_at          TEXT    NOT NULL,    -- ISO-8601 UTC; next occurrence >= now for recurring
+    action_type     TEXT    NOT NULL CHECK(action_type IN (
+                      'deadline','flight','appointment','receipt','payment','meeting','other'
+                    )),
+    recurrence_rule TEXT,               -- RRULE string for recurring events (NULL for one-off)
+    source_event_id TEXT,               -- Calendar event id for dedup and cancellation linkage
+    updated_at      INTEGER NOT NULL    -- epoch ms; set on every upsert
   );
 `;
 
@@ -252,6 +268,16 @@ export function initSchema(db: Database.Database): void {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_edge_dst ON edge(dst);`);
     db.pragma('foreign_keys = ON');
   }
+
+  // v8 migration: node_temporal sidecar for temporal annotations (Phase 20, TEMP-02).
+  // Table uses CREATE TABLE IF NOT EXISTS in DDL above → idempotent on fresh DBs.
+  // Existing v7 DBs: node_temporal absent → DDL above creates it (IF NOT EXISTS catches it).
+  // No ALTER TABLE needed — the whole table is new (no column additions to existing tables).
+  // Index for Phase 21 surfacing: query by due_at range (LLM-free hot path).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_node_temporal_due_at
+      ON node_temporal(due_at);
+  `);
 
   // Stamp schema version — read first to guard against downgrade (M-9).
   // Throws when stored > SCHEMA_VERSION so a stale launchd binary can't re-stamp a future DB
