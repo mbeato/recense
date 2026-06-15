@@ -1,5 +1,15 @@
 # Recense
 
+<p align="center">
+  <img src="docs/assets/recense-hero.jpg" alt="recense — real recall pathways firing across the memory graph, rendered as a brain" width="640">
+  <br>
+  <em>Real recall pathways firing across the memory graph — <code>recense viz</code></em>
+</p>
+
+<!-- For motion: drag ~/Desktop/recense-demo-1080.mp4 into this README in GitHub's
+     web editor (it uploads + hosts it), then replace the <img> above with the
+     <video src="…githubusercontent…"> tag GitHub generates. -->
+
 Memory that stays correct. When a fact changes, recense updates the belief in place — prediction-error-gated, tombstoned, auditable — instead of storing both versions and hoping retrieval picks the right one.
 
 Open-source, self-hosted, single-user, bring-your-own-keys. You clone it, wire your own API keys, and run it on your own machine. Memory never leaves your machine to a recense service.

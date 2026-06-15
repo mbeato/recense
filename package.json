@@ -1,7 +1,29 @@
 {
   "name": "recense",
   "version": "0.1.0",
-  "description": "Brain-inspired memory engine for AI agents",
+  "description": "Brain-inspired memory engine for AI agents — learns schemas and corrects beliefs in place instead of accumulating stale duplicates",
+  "license": "MIT",
+  "author": "Maximus Beato",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mbeato/recense.git"
+  },
+  "homepage": "https://github.com/mbeato/recense#readme",
+  "bugs": {
+    "url": "https://github.com/mbeato/recense/issues"
+  },
+  "keywords": [
+    "ai",
+    "memory",
+    "ai-agents",
+    "llm",
+    "knowledge-graph",
+    "embeddings",
+    "sqlite",
+    "mcp",
+    "reconsolidation",
+    "retrieval"
+  ],
   "engines": {
     "node": ">=22"
   },
