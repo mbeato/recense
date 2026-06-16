@@ -41,6 +41,8 @@ import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 import { newId } from '../lib/hash';
 import { acquireLockWithRetry, releaseLock } from './lockfile';
 import { resolveDirtySentinelPath } from './runtime-config';
+import { SurfaceStore } from '../db/surface-store';
+import type { SurfaceItem, SurfaceOpts } from '../db/surface-store';
 
 const LOG_PATH = '/tmp/recense-ops.log';
 
@@ -99,6 +101,31 @@ export class MemoryBusyError extends Error {
   }
 }
 
+/**
+ * Thrown by surfaceSeen() when the referenced node_id does not exist in the node
+ * table. Callers map this to 404 not_found. No orphan row is written (T-21-08).
+ */
+export class SurfaceTargetNotFoundError extends Error {
+  constructor(nodeId: string) {
+    super(`node_id '${nodeId}' does not exist in the node table`);
+    this.name = 'SurfaceTargetNotFoundError';
+  }
+}
+
+/**
+ * Parameters for surfaceSeen() — record an outcome against a specific (node, occurrence) pair.
+ * The idempotency key is (node_id, occurrence_due_at); second call with same key overwrites
+ * outcome/snooze_until/updated_at but leaves created_at immutable (D-05).
+ */
+export interface SurfaceSeenParams {
+  node_id: string;
+  /** ISO-8601 UTC; must match the due_at at which the item was surfaced. */
+  occurrence_due_at: string;
+  outcome?: 'surfaced' | 'seen' | 'snoozed' | 'completed' | 'dismissed';
+  /** ISO-8601 UTC or null; required when outcome = 'snoozed'. */
+  snooze_until?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -137,6 +164,19 @@ export interface MemoryOps {
    * try/finally releases. Maps no-answer to { answer: null, origin: 'none' }.
    */
   ask(query: string): Promise<{ answer: string | null; origin: 'fact' | 'inferred' | 'none' }>;
+  /**
+   * LLM-free read path: SurfaceStore.rank() via the read-only-handle-backed SurfaceStore.
+   * NO lock acquisition (mirrors search — read-only path, D-95).
+   */
+  surface(opts?: SurfaceOpts): Promise<SurfaceItem[]>;
+  /**
+   * Write a surfaced_event outcome for a specific (node_id, occurrence_due_at) pair.
+   * Acquires the single-writer lock per call; throws MemoryBusyError on lock failure.
+   * Idempotent upsert: second call with same key overwrites outcome/snooze_until/updated_at
+   * but leaves created_at immutable (T-21-08). Throws SurfaceTargetNotFoundError when
+   * node_id does not exist in the node table. NEVER writes to node.s or node.c (D-43).
+   */
+  surfaceSeen(params: SurfaceSeenParams): Promise<{ status: string }>;
 }
 
 export interface WireMemoryEngineOpts {
@@ -190,12 +230,15 @@ export function wireMemoryEngine(
   let readDb: Database.Database | null = null;
   let searchRetriever: CandidateRetriever;
   let searchStore: SemanticStore;
+  let surfaceStore: SurfaceStore;
 
   if (opts.separateReadHandle) {
     readDb = new Database(opts.dbPath, { readonly: true });
     const readConfig = { ...DEFAULT_CONFIG, dbPath: opts.dbPath };
     searchRetriever = new CandidateRetriever(readDb);
     searchStore = new SemanticStore(readDb, realClock, readConfig);
+    // D-95: surface ranking reads through the same read-only handle as search.
+    surfaceStore = new SurfaceStore(readDb, realClock);
   }
 
   // ── 3. Wire the full collaborator graph against the writable handle ───────
@@ -240,7 +283,24 @@ export function wireMemoryEngine(
   if (!opts.separateReadHandle) {
     searchRetriever = retriever;
     searchStore = store;
+    // rank() is read-only (D-43) — safe to construct against writeDb fallback.
+    surfaceStore = new SurfaceStore(writeDb, realClock);
   }
+
+  // ── Write-side prepared statements for surfaceSeen() ─────────────────────
+  // Prepared once against writeDb (T-01-SQL: bound params, never interpolated).
+  // Note: created_at is set only on INSERT, never on UPDATE → immutable (D-05).
+  const stmtUpsertSurfacedEvent = writeDb.prepare(`
+    INSERT INTO surfaced_event (node_id, occurrence_due_at, outcome, snooze_until, created_at, updated_at)
+    VALUES (@node_id, @occurrence_due_at, @outcome, @snooze_until, @now, @now)
+    ON CONFLICT(node_id, occurrence_due_at) DO UPDATE SET
+      outcome      = excluded.outcome,
+      snooze_until = excluded.snooze_until,
+      updated_at   = excluded.updated_at
+  `);
+  // T-21-08: node existence check before upsert — prevents orphan rows for unknown node_ids.
+  // Uses writeDb (not readDb) so it sees the latest committed node rows.
+  const stmtNodeExists = writeDb.prepare('SELECT 1 FROM node WHERE id = ?');
 
   // ── 4. Plain-data operation functions ────────────────────────────────────
 
@@ -346,6 +406,56 @@ export function wireMemoryEngine(
     }
   }
 
+  // ── 4b. Surface ops ───────────────────────────────────────────────────────
+
+  /**
+   * LLM-free, synchronous-DB read path: SurfaceStore.rank() via the read-only handle
+   * (or writeDb fallback when separateReadHandle is false). NO lock acquisition —
+   * mirrors the search() read-only discipline (D-95).
+   *
+   * D-43: surface() never writes. SurfaceStore.rank() is read-only by construction.
+   */
+  async function surface(opts?: SurfaceOpts): Promise<SurfaceItem[]> {
+    return surfaceStore!.rank({ nowMs: realClock.nowMs(), ...opts });
+  }
+
+  /**
+   * Write a surfaced_event outcome row for a specific (node_id, occurrence_due_at) pair.
+   *
+   * Mirrors add(): acquires the single-writer lock per call; throws MemoryBusyError
+   * when the lock cannot be acquired. try/finally ensures the lock is always released
+   * (T-12-02). The upsert is idempotent: second call with the same key overwrites
+   * outcome/snooze_until/updated_at; created_at stays immutable (T-21-08).
+   *
+   * D-43: NEVER writes to node.s or node.c. Only surfaced_event is touched.
+   */
+  async function surfaceSeen(params: SurfaceSeenParams): Promise<{ status: string }> {
+    const outcome = params.outcome ?? 'seen';
+
+    // T-21-08: fast-fail for unknown node_id — no orphan rows (check BEFORE lock).
+    const exists = stmtNodeExists.get(params.node_id);
+    if (!exists) {
+      throw new SurfaceTargetNotFoundError(params.node_id);
+    }
+
+    // Single-writer lock per call (T-12-02) — coexists with the hourly sleep pass.
+    if (!(await acquireLockWithRetry())) {
+      throw new MemoryBusyError();
+    }
+    try {
+      stmtUpsertSurfacedEvent.run({
+        node_id:           params.node_id,
+        occurrence_due_at: params.occurrence_due_at,
+        outcome,
+        snooze_until:      params.snooze_until ?? null,
+        now:               realClock.nowMs(),
+      });
+      return { status: 'recorded' };
+    } finally {
+      releaseLock();
+    }
+  }
+
   // ── 5. close() ───────────────────────────────────────────────────────────
   function close(): void {
     if (readDb) {
@@ -354,7 +464,7 @@ export function wireMemoryEngine(
     try { writeDb.close(); } catch { /* best-effort */ }
   }
 
-  return Promise.resolve({ ops: { sessionId, search, add, ask }, close });
+  return Promise.resolve({ ops: { sessionId, search, add, ask, surface, surfaceSeen }, close });
 }
 
 // ---------------------------------------------------------------------------
