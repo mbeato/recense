@@ -386,6 +386,42 @@ describe('POST /v1/surface/seen — 400 validation', () => {
     const body = JSON.parse(res.body) as { error: string };
     expect(body.error).toBe('bad_request');
   });
+
+  // WR-01: snooze_until is REQUIRED when outcome='snoozed'. Without it the upsert would
+  // write snooze_until=NULL, isExcluded() would never exclude the item, and the "snooze"
+  // would silently re-surface forever. The route must reject the combination with 400.
+  it("returns 400 when outcome='snoozed' but snooze_until is omitted", async () => {
+    const res = await post(
+      port,
+      '/v1/surface/seen',
+      JSON.stringify({
+        node_id: 'x',
+        occurrence_due_at: new Date().toISOString(),
+        outcome: 'snoozed',
+      }),
+      AUTH_HEADER,
+    );
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { error: string };
+    expect(body.error).toBe('bad_request');
+  });
+
+  it("returns 400 when outcome='snoozed' but snooze_until is explicitly null", async () => {
+    const res = await post(
+      port,
+      '/v1/surface/seen',
+      JSON.stringify({
+        node_id: 'x',
+        occurrence_due_at: new Date().toISOString(),
+        outcome: 'snoozed',
+        snooze_until: null,
+      }),
+      AUTH_HEADER,
+    );
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { error: string };
+    expect(body.error).toBe('bad_request');
+  });
 });
 
 describe('POST /v1/surface/seen — 404 for unknown node', () => {
