@@ -1,0 +1,17 @@
+[
+  {
+    "id": "email-001",
+    "subject": "Your flight confirmation: AA123 JFK-LAX",
+    "body": "Your flight AA123 from JFK to LAX departs 2026-07-10T08:30:00Z. Please check in online 24 hours before departure. Confirmation code: XY4Z9. American Airlines."
+  },
+  {
+    "id": "email-002",
+    "subject": "Invoice #INV-2026-06 due June 30",
+    "body": "Hi Max,\n\nThis is a reminder that Invoice #INV-2026-06 for $450 is due by 2026-06-30T23:59:00Z. Payment via bank transfer to account #9012. Acme Corp Billing."
+  },
+  {
+    "id": "email-003",
+    "subject": "Meeting confirmation: Engineering sync Fri 3pm",
+    "body": "Hi Max,\n\nConfirming our Engineering sync on 2026-06-20T20:00:00Z (3pm EST). Zoom link: https://zoom.us/j/12345. Let me know if you need to reschedule. Sarah."
+  }
+]
