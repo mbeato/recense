@@ -173,20 +173,13 @@ export class RealCalendarFetcher implements CalendarFetcher {
   ): Promise<{ events: RawCalendarEvent[]; newSyncToken: string | null; gone: boolean }> {
     const calendar = this.getClient(accountId);
 
-    // Build params with syncToken ONLY when it is a non-empty string.
-    // CRITICAL: the real Google Calendar API rejects syncToken:'' with HTTP 400.
-    // An empty-or-null token means "omit syncToken entirely → full fetch".
-    // This is the correct recovery path after a 410-GONE cursor wipe (adapter stores '').
-    const params: calendar_v3.Params$Resource$Events$List = {
-      calendarId: 'primary',
-      singleEvents: true,
-      orderBy: 'startTime',
-      timeMin: new Date().toISOString(),
-      maxResults: 250,
-    };
-    if (syncToken) {
-      params.syncToken = syncToken;
-    }
+    // Build params by sync mode (CR-01). The real Calendar API REJECTS
+    // timeMin/timeMax/orderBy/updatedMin/q alongside syncToken (HTTP 400), and rejects
+    // syncToken:'' as well. buildCalendarListParams sets server-side timeMin+orderBy ONLY
+    // on a full fetch (falsy token → 410 recovery / first sync); incremental cycles carry
+    // syncToken alone and apply time-filter+ordering client-side via selectSyncEvents.
+    const params: calendar_v3.Params$Resource$Events$List =
+      buildCalendarListParams(syncToken);
 
     const rawEvents: calendar_v3.Schema$Event[] = [];
     let nextPageToken: string | undefined;
@@ -215,12 +208,17 @@ export class RealCalendarFetcher implements CalendarFetcher {
       throw err;
     }
 
+    // CR-01: in incremental mode the API ignored timeMin/orderBy, so replicate them
+    // client-side (sort by start asc + drop past confirmed events) before the dedup, which
+    // assumes "first instance per series == next occurrence". Full-fetch results pass through.
+    const processed = selectSyncEvents(rawEvents, syncToken);
+
     // Group instances by recurringEventId; keep the first (earliest) instance per series.
     // One-off events (no recurringEventId) are kept as-is.
     const oneOffEvents: calendar_v3.Schema$Event[] = [];
     const seriesFirstInstances = new Map<string, calendar_v3.Schema$Event>();
 
-    for (const ev of rawEvents) {
+    for (const ev of processed) {
       if (ev.recurringEventId) {
         // Instance of a recurring series — keep the earliest (first in orderBy startTime list)
         if (!seriesFirstInstances.has(ev.recurringEventId)) {
@@ -353,6 +351,70 @@ export function normalizeCalendarEvent(
     origin: 'observed',
     role: 'user',
   };
+}
+
+// ---------------------------------------------------------------------------
+// Sync param + incremental selection helpers (CR-01) — pure, exported for testing
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the events.list params for a sync cycle (CR-01).
+ *
+ * The Google Calendar API REJECTS timeMin/timeMax/orderBy/updatedMin/q when syncToken is
+ * present (HTTP 400), and rejects syncToken:'' too. So server-side time-filter + ordering
+ * are applied ONLY on a full fetch (falsy token → first sync or post-410 recovery);
+ * incremental cycles carry syncToken alone and filter/order client-side (selectSyncEvents).
+ */
+export function buildCalendarListParams(
+  syncToken: string | null,
+  nowISO: string = new Date().toISOString(),
+): calendar_v3.Params$Resource$Events$List {
+  const params: calendar_v3.Params$Resource$Events$List = {
+    calendarId: 'primary',
+    singleEvents: true,
+    maxResults: 250,
+  };
+  if (syncToken) {
+    params.syncToken = syncToken;
+  } else {
+    params.timeMin = nowISO;
+    params.orderBy = 'startTime';
+  }
+  return params;
+}
+
+/** Resolve an event's start to epoch ms (dateTime, or all-day date as midnight UTC). */
+function eventStartMs(ev: calendar_v3.Schema$Event): number | null {
+  const dt = ev.start?.dateTime ?? (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
+  if (!dt) return null;
+  const ms = Date.parse(dt);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * Replicate server-side timeMin+orderBy client-side for incremental syncs (CR-01).
+ *
+ * Full fetch (falsy syncToken): the server already filtered (timeMin=now) and sorted
+ * (orderBy=startTime), so return as-is. Incremental (syncToken present): the server ignored
+ * those params, so here we:
+ *  - drop CONFIRMED events already in the past (D-04: due_at must be >= now);
+ *  - KEEP cancellations regardless of date (tombstoning depends on them — D-05);
+ *  - KEEP undated events (all-day with no resolvable start);
+ *  - sort ascending by start so downstream dedup's "first per series" is the next occurrence.
+ */
+export function selectSyncEvents(
+  rawEvents: calendar_v3.Schema$Event[],
+  syncToken: string | null,
+  now: number = Date.now(),
+): calendar_v3.Schema$Event[] {
+  if (!syncToken) return rawEvents;
+  return rawEvents
+    .filter(ev => {
+      if (ev.status === 'cancelled') return true;
+      const ms = eventStartMs(ev);
+      return ms === null ? true : ms >= now;
+    })
+    .sort((a, b) => (eventStartMs(a) ?? Infinity) - (eventStartMs(b) ?? Infinity));
 }
 
 // ---------------------------------------------------------------------------
