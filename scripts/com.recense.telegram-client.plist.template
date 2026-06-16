@@ -40,6 +40,14 @@
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- D-12: ThrottleInterval — launchd will not respawn more than once every 30s.
+         Prevents crash-loop churn under KeepAlive when the client exits unexpectedly.
+         Default without this key is 10s. The installed plist is re-rendered from this
+         template by scripts/setup-telegram-client.sh; re-run setup + launchctl
+         unload/load to deliver this change to a running agent. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
     <!-- Redirect stdout/stderr to log files. Secrets never appear here. -->
     <key>StandardOutPath</key>
     <string>/tmp/recense-telegram-client.log</string>
