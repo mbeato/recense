@@ -70,6 +70,30 @@ function resolveDbPath(): string | undefined {
  *               where adapter cursors (cursor:gmail, cursor:granola, cursor:obsidian) live.
  *               Passing the EpisodicStore silently disables cursors — re-fetches all data hourly.
  */
+/**
+ * One-time legacy cursor migration (D-10 backward-compat, TEMP-04).
+ *
+ * Before multi-account support, the single Gmail cursor lived at key 'cursor:gmail'.
+ * Now each account has its own key 'cursor:gmail:<accountId>'.
+ *
+ * If a legacy 'cursor:gmail' entry exists and 'cursor:gmail:default' does not,
+ * this copies the value to the new key — preventing a full re-fetch on first run
+ * after the upgrade. Running a second time is a no-op (default key already set).
+ *
+ * @param meta Log-capturing meta store (SemanticStore.getMeta/setMeta).
+ * @param log  Logging function (file-backed in CLI, captured array in tests).
+ */
+export function migrateLegacyCursorGmail(
+  meta: Pick<SemanticStore, 'getMeta' | 'setMeta'>,
+  log: (msg: string) => void,
+): void {
+  const legacyCursor = meta.getMeta('cursor:gmail');
+  if (legacyCursor && !meta.getMeta('cursor:gmail:default')) {
+    meta.setMeta('cursor:gmail:default', legacyCursor);
+    log('cursor migration: cursor:gmail → cursor:gmail:default (D-10)');
+  }
+}
+
 export function buildAdapters(
   config: EngineConfig,
   meta: Pick<SemanticStore, 'getMeta' | 'setMeta'>,
@@ -77,9 +101,14 @@ export function buildAdapters(
   const adapters: SourceAdapter[] = [];
   for (const source of config.enabledSources) {
     switch (source) {
-      case 'gmail':
-        adapters.push(new GmailAdapter(config, meta));
+      case 'gmail': {
+        // D-08/TEMP-04: one GmailAdapter instance per configured Google account (per-account cursor).
+        // googleAccounts defaults to [{ id: 'default' }] — backward-compat single-account path.
+        for (const account of config.googleAccounts) {
+          adapters.push(new GmailAdapter(config, meta, account.id));
+        }
         break;
+      }
       case 'granola':
         adapters.push(new TranscriptAdapter(config, meta));
         break;
@@ -219,17 +248,21 @@ async function main(): Promise<void> {
     const semanticStore = new SemanticStore(db, realClock, effectiveConfig);
     const pipeline = new IngestionPipeline(gate, episodes);
 
-    // ── 5. Pull phase — adapters run BEFORE the graph-writer step ────────────
+    // ── 5. Legacy cursor migration (D-10 one-time, backward-compat) ─────────
+    // Must run after semanticStore is open (step 4) and before any adapter pull.
+    migrateLegacyCursorGmail(semanticStore, log);
+
+    // ── 6. Pull phase — adapters run BEFORE the graph-writer step ────────────
     // With enabledSources=[] (default) buildAdapters returns [] and this is a no-op.
     const adapters = buildAdapters(effectiveConfig, semanticStore);
     await runPullPhase(adapters, pipeline, db, log);
 
-    // ── 6. Consolidation phase — under the same lock (CONSOL-03) ────────────
+    // ── 7. Consolidation phase — under the same lock (CONSOL-03) ────────────
     await runConsolidation(db, dbPath, process.env, log);
   } catch (err) {
     log(`brain-ingest error: ${err}`);
   } finally {
-    // ── 7. Always close the DB, then release the lock (DEBT-03/CR-02/WR-03) ──
+    // ── 8. Always close the DB, then release the lock (DEBT-03/CR-02/WR-03) ──
     // Close first: flushes the WAL checkpoint and releases the read lock.
     // Release lock second: O_EXCL unlock after DB handle is gone.
     db?.close();

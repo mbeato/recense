@@ -90,17 +90,17 @@ describe('normalizeGmailMessage — field mapping', () => {
   });
 
   it("sets origin to 'observed' (D-61 HARD-CODED)", () => {
-    const record = normalizeGmailMessage(makeRaw(), TEST_CONFIG);
+    const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG);
     expect(record.origin).toBe('observed');
   });
 
   it("sets source to 'gmail'", () => {
-    const record = normalizeGmailMessage(makeRaw(), TEST_CONFIG);
+    const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG);
     expect(record.source).toBe('gmail');
   });
 
   it("sets role to 'user'", () => {
-    const record = normalizeGmailMessage(makeRaw(), TEST_CONFIG);
+    const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG);
     expect(record.role).toBe('user');
   });
 

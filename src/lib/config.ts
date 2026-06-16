@@ -440,6 +440,27 @@ export interface EngineConfig {
   gmail: { query: string };
 
   /**
+   * Google Calendar ingestion config (TEMP-01, D-08).
+   * calendar.enabled: false (fail-safe default) — no Calendar adapter unless explicitly set.
+   * D-08: OAuth credentials per account in sleep.env (GOOGLE_<ACCOUNT_ID>_REFRESH_TOKEN).
+   * Fail-safe: with enabled=false, no CalendarAdapter is instantiated even if
+   * 'gcal' appears in enabledSources — prevents surprise ingestion without creds.
+   */
+  calendar: {
+    enabled: boolean;
+  };
+
+  /**
+   * Multi-account Google config (TEMP-04, D-08/D-10).
+   * Each entry is one Google account id. 'default' maps to backward-compat env keys
+   * (GMAIL_* with GOOGLE_DEFAULT_* override). Named accounts (e.g. 'work') require
+   * GOOGLE_WORK_REFRESH_TOKEN in sleep.env.
+   * Accounts listed here are instantiated as separate adapter instances per source
+   * in buildAdapters. Example: [{ id: 'default' }, { id: 'work' }]
+   */
+  googleAccounts: Array<{ id: string }>;
+
+  /**
    * Watched export folder for meeting transcripts (D-69).
    * Empty string = disabled (fail-safe default — no directory watched unless set).
    * Set to the directory the founder drops/exports Granola/Otter/Zoom files into;
@@ -533,6 +554,7 @@ const DEFAULT_SALIENCE_CONFIG: SalienceConfig = {
     obsidian: 0.9,      // founder's own vault — near-trusted; still gated + honest
     granola: 0.5,       // meeting transcripts — moderate signal; attributed speaker turns
     gmail: 0.35,        // noisiest channel; must earn confidence through consolidation volume
+    gcal: 0.45,         // D-09: calendar events — more structured than email (0.35), lower than obsidian (0.9)
   },
   // Per-source consolidation skip threshold (D-60, mirrors consolSkipThresholdAssistant).
   // Sources not listed fall back to the per-role default (consolSkipThreshold / consolSkipThresholdAssistant).
@@ -542,6 +564,7 @@ const DEFAULT_SALIENCE_CONFIG: SalienceConfig = {
     obsidian: 0.2,      // curated vault content — same as global default; low skip justified
     conversation: 0.2,  // general conversation: same as global default; episodic detail extraction
                         // is the whole point, so don't skip more aggressively than the base rate
+    gcal: 0.3,          // calendar events are structured but may repeat; moderate skip threshold
   },
 };
 
@@ -609,6 +632,15 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
     // Tighten to 'label:brain' for strict opt-in; see EngineConfig.gmail for OAuth note (D-68).
     query: 'in:inbox -category:promotions -category:social -category:updates newer_than:90d',
   },
+
+  // Phase 20: multi-account + Calendar ingestion config (TEMP-01/TEMP-04, D-08/D-10)
+  calendar: {
+    enabled: false, // fail-safe default; set true once GOOGLE_*_REFRESH_TOKEN is in sleep.env
+  },
+  googleAccounts: [
+    { id: 'default' }, // maps to backward-compat GMAIL_REFRESH_TOKEN / GOOGLE_DEFAULT_REFRESH_TOKEN
+  ],
+
   transcripts: {
     dir: '', // empty = disabled; set to the folder exports land in (D-69)
   },
