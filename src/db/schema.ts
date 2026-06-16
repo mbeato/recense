@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -127,6 +127,22 @@ export const DDL = `
     recurrence_rule TEXT,               -- RRULE string for recurring events (NULL for one-off)
     source_event_id TEXT,               -- Calendar event id for dedup and cancellation linkage
     updated_at      INTEGER NOT NULL    -- epoch ms; set on every upsert
+  );
+
+  -- SURF-02: operational surface-outcome log (append-only, single-writer: serve path only).
+  -- Idempotency key: (node_id, occurrence_due_at) — one row per node per occurrence.
+  -- For recurring items, consolidator recomputes due_at to next occurrence, so distinct
+  -- occurrences each get their own row (D-05). Sleep pass NEVER reads or writes this table (D-08).
+  CREATE TABLE IF NOT EXISTS surfaced_event (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id           TEXT    NOT NULL REFERENCES node(id),
+    occurrence_due_at TEXT    NOT NULL,           -- ISO-8601 UTC; the due_at at surface time
+    outcome           TEXT    NOT NULL DEFAULT 'surfaced'
+                              CHECK(outcome IN ('surfaced','seen','snoozed','completed','dismissed')),
+    snooze_until      TEXT,                       -- ISO-8601 UTC; non-null when outcome='snoozed'
+    created_at        INTEGER NOT NULL,           -- epoch ms; immutable
+    updated_at        INTEGER NOT NULL,           -- epoch ms; updated on every outcome change
+    UNIQUE(node_id, occurrence_due_at)
   );
 `;
 
@@ -277,6 +293,19 @@ export function initSchema(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_node_temporal_due_at
       ON node_temporal(due_at);
+  `);
+
+  // v9 migration: surfaced_event operational table (Phase 21, SURF-02).
+  // Table uses CREATE TABLE IF NOT EXISTS in DDL above → idempotent on fresh DBs.
+  // Existing v8 DBs: surfaced_event absent → DDL above creates it (IF NOT EXISTS catches it).
+  // No ALTER TABLE needed — the whole table is new.
+  // Indexes for Phase 21 exclusion query: (node_id, occurrence_due_at) covered by UNIQUE constraint.
+  // outcome+snooze_until index: exclusion filter WHERE outcome IN (...) OR snooze_until > now.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_surfaced_event_node_occ
+      ON surfaced_event(node_id, occurrence_due_at);
+    CREATE INDEX IF NOT EXISTS idx_surfaced_event_outcome
+      ON surfaced_event(outcome, snooze_until);
   `);
 
   // Stamp schema version — read first to guard against downgrade (M-9).
