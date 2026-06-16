@@ -25,6 +25,22 @@ export interface ClientConfig {
    * or allowlist is empty. Process-not-running is NOT the gate.
    */
   enabled: boolean;
+  /**
+   * RECENSE_PROACTIVE_ENABLED — default false (D-11).
+   * Only the literal string "true" (case-insensitive) enables the push timer and digest.
+   * Orthogonal to `enabled`: reactive Q&A keeps working when proactiveEnabled is false.
+   */
+  proactiveEnabled: boolean;
+  /** RECENSE_PUSH_POLL_MS — push poll interval in ms. Default: 120000 (2 min), floor: 10000. */
+  pushPollMs: number;
+  /** RECENSE_QUIET_HOURS_START — local hour (0–23) when quiet hours begin. Default: 22. */
+  quietHoursStart: number;
+  /** RECENSE_QUIET_HOURS_END — local hour (0–23) when quiet hours end. Default: 7. */
+  quietHoursEnd: number;
+  /** RECENSE_DIGEST_HOUR — local hour at which the P1 daily digest fires. Default: 8. */
+  digestHour: number;
+  /** RECENSE_SNOOZE_DURATION_MS — snooze offset in ms. Default: 86400000 (24h = D-09 fixed +1 day). */
+  snoozeDurationMs: number;
 }
 
 /**
@@ -51,5 +67,19 @@ export function loadClientConfig(): ClientConfig {
   // Fail-closed: disable when any required field is absent (D-10)
   const enabled = telegramToken !== '' && serveToken !== '' && allowlist.length > 0;
 
-  return { telegramToken, serveUrl, serveToken, allowlist, pollIntervalMs, statePath, enabled };
+  // D-11: default-OFF proactive gate — only literal "true" (case-insensitive) enables push
+  const proactiveEnabled = (process.env['RECENSE_PROACTIVE_ENABLED'] ?? '').toLowerCase() === 'true';
+  const pushPollMs = Math.max(
+    parseInt(process.env['RECENSE_PUSH_POLL_MS'] ?? '120000', 10) || 120000,
+    10_000,  // floor: 10s minimum to prevent accidental flooding
+  );
+  const quietHoursStart = parseInt(process.env['RECENSE_QUIET_HOURS_START'] ?? '22', 10);
+  const quietHoursEnd   = parseInt(process.env['RECENSE_QUIET_HOURS_END']   ?? '7',  10);
+  const digestHour      = parseInt(process.env['RECENSE_DIGEST_HOUR']       ?? '8',  10);
+  const snoozeDurationMs = parseInt(process.env['RECENSE_SNOOZE_DURATION_MS'] ?? '86400000', 10) || 86400000;
+
+  return {
+    telegramToken, serveUrl, serveToken, allowlist, pollIntervalMs, statePath, enabled,
+    proactiveEnabled, pushPollMs, quietHoursStart, quietHoursEnd, digestHour, snoozeDurationMs,
+  };
 }
