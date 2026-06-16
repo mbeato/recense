@@ -128,6 +128,14 @@ const CHUNK_TURNS = process.argv.includes('--per-turn')
   ? 1
   : (parseInt((process.argv.indexOf('--chunk-turns') !== -1 ? process.argv[process.argv.indexOf('--chunk-turns') + 1] : '0'), 10) || 0);
 
+// --replay-claims <attribution.jsonl>: reuse cached granite extraction from a prior
+// --instrument attribution.jsonl; valid ONLY when the cache used the same extractor
+// (granite) + same --chunk-turns; never calls granite/Ollama for extraction.
+const REPLAY_CLAIMS = arg('--replay-claims', null);
+
+// Stable content hash for the replay-claims map keys.
+const sha = s => require('crypto').createHash('sha256').update(s).digest('hex');
+
 // --concurrency N (default 4, min 1). Each question has its own scratch DB and no
 // shared state, so in-process parallelism is safe. Probe token accumulation uses
 // plain += after each await — safe because Node.js is single-threaded.
@@ -303,6 +311,24 @@ async function runBoundedPool(items, concurrency, fn) {
     }
   }
 
+  // ---- replay-claims: load + parse attribution cache at startup --------------
+  // Keyed by question_id → the full attribution record (claims[], ...).
+  let replayByQid = null;
+  if (REPLAY_CLAIMS) {
+    if (!fs.existsSync(REPLAY_CLAIMS)) {
+      console.error(`replay-claims: attribution file not found: ${REPLAY_CLAIMS}`);
+      process.exit(1);
+    }
+    const cacheRecords = parseJsonl(REPLAY_CLAIMS);
+    replayByQid = new Map();
+    for (const rec of cacheRecords) {
+      if (rec.question_id && Array.isArray(rec.claims)) {
+        replayByQid.set(rec.question_id, rec);
+      }
+    }
+    console.log(`[replay-claims] Loaded ${replayByQid.size} cached question(s) from ${REPLAY_CLAIMS}`);
+  }
+
   // ---- load dataset ---------------------------------------------------------
   if (!fs.existsSync(EVAL_FILE)) {
     console.error(`Dataset not found: ${EVAL_FILE}`);
@@ -469,6 +495,10 @@ async function runBoundedPool(items, concurrency, fn) {
         // (critical for temporal-reasoning and knowledge-update questions).
         // source='conversation' routes extraction through the conversation prompt (D-62),
         // which captures personal episodic details that the default prompt misses.
+        //
+        // episodeContents: the exact content strings appended, in order — used by
+        // --replay-claims to build the positional content-hash → cached-claim-values map.
+        const episodeContents = [];
         for (let i = 0; i < haystackSessions.length; i++) {
           const session = haystackSessions[i];
           const dateStr = haystackDates[i] || null;
@@ -478,6 +508,7 @@ async function runBoundedPool(items, concurrency, fn) {
               const window = session.slice(j, j + CHUNK_TURNS);
               const body = window.map(turn => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`).join('\n');
               const turnContent = dateStr ? `[Session date: ${dateStr}]\n${body}` : body;
+              episodeContents.push(turnContent);
               scratch.episodes.append({
                 content:    turnContent,
                 origin:     'observed',
@@ -490,8 +521,10 @@ async function runBoundedPool(items, concurrency, fn) {
               });
             }
           } else {
+            const sessionContent = formatSession(session, dateStr);
+            episodeContents.push(sessionContent);
             scratch.episodes.append({
-              content:    formatSession(session, dateStr),
+              content:    sessionContent,
               origin:     'observed',
               salience:   1.0,
               hard_keep:  1,
@@ -501,6 +534,78 @@ async function runBoundedPool(items, concurrency, fn) {
               ...(tsMs != null ? { ts: tsMs } : {}),
             });
           }
+        }
+
+        // --replay-claims: build per-question content-hash → cached-claim-values map.
+        // PREFERRED (content-keyed): caches written by the post-260616-ftj instrument carry
+        //   a `content_hash` per claim → group values DIRECTLY by content_hash, no positional
+        //   zip, no episodes==groups assumption. 0-claim episodes simply have no entry and
+        //   replayExtract returns [] for them — shift-free by construction.
+        // FALLBACK (positional zip): OLD caches lacking content_hash group by episode_id in
+        //   first-appearance order and zip positionally to episodeContents (best-effort; can
+        //   shift when 0-claim episodes are interleaved — the reason content_hash was added).
+        let replayExtract;
+        if (REPLAY_CLAIMS) {
+          const cached = replayByQid.get(questionId);
+          if (!cached) {
+            throw new Error(`replay-claims: no cache entry for question_id ${questionId}`);
+          }
+          const replayMap = new Map();
+          const hasContentHash = cached.claims.length > 0 && cached.claims[0].content_hash != null;
+          if (hasContentHash) {
+            // Content-keyed: group values directly by content_hash (skip null-hash rows,
+            // e.g. schema_emitted events with no episode_id). Shift-free.
+            for (const claim of cached.claims) {
+              if (claim.content_hash == null) continue;
+              if (!replayMap.has(claim.content_hash)) replayMap.set(claim.content_hash, []);
+              replayMap.get(claim.content_hash).push(claim.value);
+            }
+          } else {
+            // Positional fallback for legacy caches (no content_hash field).
+            const seenEpIds = [];
+            const groupMap = new Map();
+            for (const claim of cached.claims) {
+              const epId = claim.episode_id;
+              if (!groupMap.has(epId)) {
+                seenEpIds.push(epId);
+                groupMap.set(epId, []);
+              }
+              groupMap.get(epId).push(claim.value);
+            }
+            const groups = seenEpIds.map(epId => ({ values: groupMap.get(epId) }));
+            if (groups.length > episodeContents.length) {
+              // More cache groups than current episodes: definite --chunk-turns mismatch.
+              throw new Error(
+                `replay-claims: more cache groups than episodes for ${questionId}` +
+                ` (groups=${groups.length} episodes=${episodeContents.length})` +
+                ` — cache was built with a different --chunk-turns; aborting question`
+              );
+            }
+            if (groups.length < episodeContents.length) {
+              // Fewer groups than episodes: some episodes produced 0 claims in the
+              // original run (not recorded in consolidation_event). Best-effort
+              // positional zip for the first groups.length episodes; the rest map to [].
+              process.stderr.write(
+                `[replay-claims] ${questionId}: ${episodeContents.length - groups.length} episode(s)` +
+                ` had 0 claims in original run — treating as empty (legacy positional fallback;` +
+                ` groups=${groups.length} episodes=${episodeContents.length})\n`
+              );
+            }
+            for (let k = 0; k < groups.length; k++) {
+              replayMap.set(sha(episodeContents[k]), groups[k].values);
+            }
+          }
+          replayExtract = (content) => {
+            const v = replayMap.get(sha(content));
+            if (v === undefined) {
+              // Not in map: episode had 0 claims in the original run (content-keyed),
+              // or fell outside the positional range (legacy fallback).
+              return [];
+            }
+            // type defaults to 'fact' — cache carries no entity/fact distinction;
+            // this affects only node typing, never the embedded claim TEXT.
+            return v.map(value => ({ type: 'fact', value }));
+          };
         }
 
         // Step 2: run ONE sleep pass AFTER all appends (Pitfall 4).
@@ -515,7 +620,8 @@ async function runBoundedPool(items, concurrency, fn) {
           process.env,
           (msg) => {
             if (msg.includes('skipped (consolidation error)')) quarantineCount++;
-          }
+          },
+          REPLAY_CLAIMS ? { replayExtract } : undefined
         );
 
         // LEVER 3 (--rewrite): rewrite the question to a declarative statement before embedding.
@@ -693,9 +799,21 @@ async function runBoundedPool(items, concurrency, fn) {
         try {
           // Tap 1: extracted claims — consolidation_event rows (event_type, value, episode_id).
           // In dry-run mode the scratch DB has no consolidation_event rows; array will be empty.
+          // content_hash = sha(episode.content) lets --replay-claims map cached claims by CONTENT
+          // (shift-free) instead of by positional zip — 0-claim episodes simply have no rows here,
+          // so a content-keyed map never mis-aligns. LEFT JOIN: events with no/absent episode_id
+          // (e.g. schema_emitted) get content_hash=null and are ignored by the content-keyed loader.
           const claimRows = IS_DRY_RUN ? [] : scratch.db.prepare(
-            'SELECT event_type, value, episode_id FROM consolidation_event ORDER BY ts'
-          ).all();
+            `SELECT ce.event_type AS event_type, ce.value AS value, ce.episode_id AS episode_id, e.content AS content
+             FROM consolidation_event ce
+             LEFT JOIN episode e ON ce.episode_id = e.id
+             ORDER BY ce.ts`
+          ).all().map(r => ({
+            event_type:   r.event_type,
+            value:        r.value,
+            episode_id:   r.episode_id,
+            content_hash: r.content != null ? sha(r.content) : null,
+          }));
 
           // Tap 2: final graph nodes — all node rows (live and tombstoned) for attribution analysis.
           // In dry-run mode the node table is empty.
