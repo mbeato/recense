@@ -401,10 +401,15 @@ export async function createBrainHttpServer(
         // url has query stripped — read params from req.url directly (serve-cli.ts 276).
         const sp = new URL(req.url ?? '/', 'http://x').searchParams;
         const surfaceOpts: { maxNonP0?: number; gracePeriodMs?: number } = {};
+        // WR-03: `limit` tunes the D-09 non-P0 rolling cap (maxNonP0), NOT a total
+        // response-size limit — P0 items always bypass the cap (surface-store.ts), so the
+        // response is never bounded below the P0 count. Clamp to a sane ceiling so a caller
+        // passing e.g. ?limit=1000000 cannot effectively disable the cap and pull every
+        // lower-tier row.
         const limitRaw = sp.get('limit');
         if (limitRaw !== null) {
           const n = Number(limitRaw);
-          if (Number.isFinite(n) && n > 0) surfaceOpts.maxNonP0 = Math.floor(n);
+          if (Number.isFinite(n) && n > 0) surfaceOpts.maxNonP0 = Math.min(Math.floor(n), 50);
         }
         const graceRaw = sp.get('grace_hours');
         if (graceRaw !== null) {
