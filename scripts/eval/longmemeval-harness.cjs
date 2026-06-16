@@ -128,6 +128,14 @@ const CHUNK_TURNS = process.argv.includes('--per-turn')
   ? 1
   : (parseInt((process.argv.indexOf('--chunk-turns') !== -1 ? process.argv[process.argv.indexOf('--chunk-turns') + 1] : '0'), 10) || 0);
 
+// --replay-claims <attribution.jsonl>: reuse cached granite extraction from a prior
+// --instrument attribution.jsonl; valid ONLY when the cache used the same extractor
+// (granite) + same --chunk-turns; never calls granite/Ollama for extraction.
+const REPLAY_CLAIMS = arg('--replay-claims', null);
+
+// Stable content hash for the replay-claims map keys.
+const sha = s => require('crypto').createHash('sha256').update(s).digest('hex');
+
 // --concurrency N (default 4, min 1). Each question has its own scratch DB and no
 // shared state, so in-process parallelism is safe. Probe token accumulation uses
 // plain += after each await — safe because Node.js is single-threaded.
@@ -303,6 +311,24 @@ async function runBoundedPool(items, concurrency, fn) {
     }
   }
 
+  // ---- replay-claims: load + parse attribution cache at startup --------------
+  // Keyed by question_id → the full attribution record (claims[], ...).
+  let replayByQid = null;
+  if (REPLAY_CLAIMS) {
+    if (!fs.existsSync(REPLAY_CLAIMS)) {
+      console.error(`replay-claims: attribution file not found: ${REPLAY_CLAIMS}`);
+      process.exit(1);
+    }
+    const cacheRecords = parseJsonl(REPLAY_CLAIMS);
+    replayByQid = new Map();
+    for (const rec of cacheRecords) {
+      if (rec.question_id && Array.isArray(rec.claims)) {
+        replayByQid.set(rec.question_id, rec);
+      }
+    }
+    console.log(`[replay-claims] Loaded ${replayByQid.size} cached question(s) from ${REPLAY_CLAIMS}`);
+  }
+
   // ---- load dataset ---------------------------------------------------------
   if (!fs.existsSync(EVAL_FILE)) {
     console.error(`Dataset not found: ${EVAL_FILE}`);
@@ -469,6 +495,10 @@ async function runBoundedPool(items, concurrency, fn) {
         // (critical for temporal-reasoning and knowledge-update questions).
         // source='conversation' routes extraction through the conversation prompt (D-62),
         // which captures personal episodic details that the default prompt misses.
+        //
+        // episodeContents: the exact content strings appended, in order — used by
+        // --replay-claims to build the positional content-hash → cached-claim-values map.
+        const episodeContents = [];
         for (let i = 0; i < haystackSessions.length; i++) {
           const session = haystackSessions[i];
           const dateStr = haystackDates[i] || null;
@@ -478,6 +508,7 @@ async function runBoundedPool(items, concurrency, fn) {
               const window = session.slice(j, j + CHUNK_TURNS);
               const body = window.map(turn => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`).join('\n');
               const turnContent = dateStr ? `[Session date: ${dateStr}]\n${body}` : body;
+              episodeContents.push(turnContent);
               scratch.episodes.append({
                 content:    turnContent,
                 origin:     'observed',
@@ -490,8 +521,10 @@ async function runBoundedPool(items, concurrency, fn) {
               });
             }
           } else {
+            const sessionContent = formatSession(session, dateStr);
+            episodeContents.push(sessionContent);
             scratch.episodes.append({
-              content:    formatSession(session, dateStr),
+              content:    sessionContent,
               origin:     'observed',
               salience:   1.0,
               hard_keep:  1,
@@ -501,6 +534,52 @@ async function runBoundedPool(items, concurrency, fn) {
               ...(tsMs != null ? { ts: tsMs } : {}),
             });
           }
+        }
+
+        // --replay-claims: build per-question content-hash → cached-claim-values map.
+        // Groups cached claims by episode_id (first-appearance order), zips positionally
+        // with episodeContents, and defines replayExtract for the consolidation seam.
+        // Fails loud on any mismatch so a misaligned cache never silently mis-scores.
+        let replayExtract;
+        if (REPLAY_CLAIMS) {
+          const cached = replayByQid.get(questionId);
+          if (!cached) {
+            throw new Error(`replay-claims: no cache entry for question_id ${questionId}`);
+          }
+          // Group by episode_id preserving first-appearance order.
+          const seenEpIds = [];
+          const groupMap = new Map();
+          for (const claim of cached.claims) {
+            const epId = claim.episode_id;
+            if (!groupMap.has(epId)) {
+              seenEpIds.push(epId);
+              groupMap.set(epId, []);
+            }
+            groupMap.get(epId).push(claim.value);
+          }
+          const groups = seenEpIds.map(epId => ({ values: groupMap.get(epId) }));
+          if (groups.length !== episodeContents.length) {
+            throw new Error(
+              `replay-claims: episode/claim-group count mismatch for ${questionId}` +
+              ` (episodes=${episodeContents.length} groups=${groups.length})` +
+              ` — cache likely used a different --chunk-turns or has empty-claim episodes; aborting question`
+            );
+          }
+          // Build content-hash → values map (order-independent at lookup time).
+          const replayMap = new Map();
+          for (let k = 0; k < groups.length; k++) {
+            replayMap.set(sha(episodeContents[k]), groups[k].values);
+          }
+          replayExtract = (content) => {
+            const v = replayMap.get(sha(content));
+            if (!v) throw new Error(
+              `replay-claims: no cached claims for episode content hash` +
+              ` (capContent truncation or content mismatch) in ${questionId}`
+            );
+            // type defaults to 'fact' — cache carries no entity/fact distinction;
+            // this affects only node typing, never the embedded claim TEXT.
+            return v.map(value => ({ type: 'fact', value }));
+          };
         }
 
         // Step 2: run ONE sleep pass AFTER all appends (Pitfall 4).
@@ -515,7 +594,8 @@ async function runBoundedPool(items, concurrency, fn) {
           process.env,
           (msg) => {
             if (msg.includes('skipped (consolidation error)')) quarantineCount++;
-          }
+          },
+          REPLAY_CLAIMS ? { replayExtract } : undefined
         );
 
         // LEVER 3 (--rewrite): rewrite the question to a declarative statement before embedding.
