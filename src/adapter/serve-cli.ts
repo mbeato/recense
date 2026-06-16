@@ -461,6 +461,16 @@ export async function createBrainHttpServer(
         logRequest('POST', url, 400, Date.now() - start);
         return;
       }
+      // WR-01: enforce the documented contract (SurfaceSeenParams.snooze_until: "required
+      // when outcome = 'snoozed'"). Without a future snooze_until, isExcluded() takes the
+      // `null !== null → false` branch and the item is never excluded — a silent no-op snooze
+      // that keeps re-surfacing (repeated unwanted Phase-22 push notifications). Fail fast.
+      if (parsed.outcome === 'snoozed' &&
+          (typeof parsed.snooze_until !== 'string' || Number.isNaN(Date.parse(parsed.snooze_until)))) {
+        jsonError(res, 400, { error: 'bad_request', detail: "snooze_until is required when outcome='snoozed'" });
+        logRequest('POST', url, 400, Date.now() - start);
+        return;
+      }
       const snoozeUntil = parsed.snooze_until === null ? null :
         typeof parsed.snooze_until === 'string' ? parsed.snooze_until :
         undefined;
