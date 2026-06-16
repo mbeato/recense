@@ -44,7 +44,7 @@ import { ObsidianAdapter } from '../source/obsidian-adapter';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { runCalendarCancellations } from '../consolidation/calendar-tombstone';
 import { acquireLock, releaseLock } from './lockfile';
-import { resolveDbPath as resolveSharedDbPath, resolveDirtySentinelPath } from './runtime-config';
+import { resolveDbPath as resolveSharedDbPath, resolveDirtySentinelPath, resolveEnabledSources } from './runtime-config';
 
 const LOG_PATH = '/tmp/recense-ingest.log';
 
@@ -246,7 +246,7 @@ async function main(): Promise<void> {
     initSchema(db);
 
     // ── 4. Build config + stores ─────────────────────────────────────────────
-    const config = { ...DEFAULT_CONFIG, dbPath, dirtySentinelPath: resolveDirtySentinelPath() };
+    const config = { ...DEFAULT_CONFIG, dbPath, dirtySentinelPath: resolveDirtySentinelPath(), enabledSources: resolveEnabledSources() };
 
     // For single-source runs, filter enabledSources to only the requested adapter.
     // This lets manual backfill runs target a single source without editing config.

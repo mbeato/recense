@@ -108,6 +108,24 @@ export function resolveDirtySentinelPath(): string {
 }
 
 /**
+ * Resolve the list of enabled ingest sources from RECENSE_ENABLED_SOURCES.
+ *
+ * Preserves the default-off fail-safe (D-66/D-63): when the env var is absent
+ * or empty, returns [] — no adapters are activated. Sources are only built when
+ * explicitly listed here, keeping ingest a controlled opt-in per environment.
+ *
+ * Accepts an optional `env` param (defaulting to process.env) for testability so
+ * tests need not mutate process.env — mirrors the style of resolveDirtySentinelPath().
+ *
+ * Usage in sleep.env: RECENSE_ENABLED_SOURCES=gmail,gcal
+ */
+export function resolveEnabledSources(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env['RECENSE_ENABLED_SOURCES'];
+  if (raw === undefined) return [];
+  return raw.split(',').map((s) => s.trim()).filter((s) => s !== '');
+}
+
+/**
  * Hydrate process.env from the configured env file (sleep.env) for any key NOT already
  * set in the ambient environment, then return the keys it applied.
  *
