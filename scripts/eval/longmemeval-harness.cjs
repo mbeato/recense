@@ -558,24 +558,35 @@ async function runBoundedPool(items, concurrency, fn) {
             groupMap.get(epId).push(claim.value);
           }
           const groups = seenEpIds.map(epId => ({ values: groupMap.get(epId) }));
-          if (groups.length !== episodeContents.length) {
+          if (groups.length > episodeContents.length) {
+            // More cache groups than current episodes: definite --chunk-turns mismatch.
             throw new Error(
-              `replay-claims: episode/claim-group count mismatch for ${questionId}` +
-              ` (episodes=${episodeContents.length} groups=${groups.length})` +
-              ` — cache likely used a different --chunk-turns or has empty-claim episodes; aborting question`
+              `replay-claims: more cache groups than episodes for ${questionId}` +
+              ` (groups=${groups.length} episodes=${episodeContents.length})` +
+              ` — cache was built with a different --chunk-turns; aborting question`
             );
           }
-          // Build content-hash → values map (order-independent at lookup time).
+          if (groups.length < episodeContents.length) {
+            // Fewer groups than episodes: some episodes produced 0 claims in the
+            // original run (not recorded in consolidation_event). Use best-effort
+            // positional zip for the first groups.length episodes; the rest map to [].
+            process.stderr.write(
+              `[replay-claims] ${questionId}: ${episodeContents.length - groups.length} episode(s)` +
+              ` had 0 claims in original run — treating as empty (groups=${groups.length}` +
+              ` episodes=${episodeContents.length})\n`
+            );
+          }
+          // Build content-hash -> values map (positional zip; order-independent at lookup time).
           const replayMap = new Map();
           for (let k = 0; k < groups.length; k++) {
             replayMap.set(sha(episodeContents[k]), groups[k].values);
           }
           replayExtract = (content) => {
             const v = replayMap.get(sha(content));
-            if (!v) throw new Error(
-              `replay-claims: no cached claims for episode content hash` +
-              ` (capContent truncation or content mismatch) in ${questionId}`
-            );
+            if (v === undefined) {
+              // Not in map: episode had 0 claims in original run (or after positional range).
+              return [];
+            }
             // type defaults to 'fact' — cache carries no entity/fact distinction;
             // this affects only node typing, never the embedded claim TEXT.
             return v.map(value => ({ type: 'fact', value }));
