@@ -2,7 +2,7 @@
  * schema.test.ts — initSchema idempotency, version guard, and index correctness (M-9, M-10, L-7).
  *
  * Covers:
- *  - SCHEMA_VERSION === 8 on a fresh DB (v8: node_temporal sidecar)
+ *  - SCHEMA_VERSION === 9 on a fresh DB (v9: surfaced_event table)
  *  - Four hot-path indexes created; two dead indexes absent (M-10, L-7)
  *  - Downgrade guard: stored > SCHEMA_VERSION → throw (M-9)
  *  - Upgrade path: stored < SCHEMA_VERSION → re-stamps (M-9)
@@ -13,15 +13,15 @@ import { describe, it, expect } from 'vitest';
 import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
 
 describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
-  it('stamps SCHEMA_VERSION = 8 on a fresh in-memory DB', () => {
+  it('stamps SCHEMA_VERSION = 9 on a fresh in-memory DB', () => {
     const db = new Database(':memory:');
     try {
       initSchema(db);
       const row = db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as
         { value: string } | undefined;
       expect(row).toBeDefined();
-      expect(Number(row!.value)).toBe(8);
-      expect(SCHEMA_VERSION).toBe(8);
+      expect(Number(row!.value)).toBe(9);
+      expect(SCHEMA_VERSION).toBe(9);
     } finally {
       db.close();
     }
