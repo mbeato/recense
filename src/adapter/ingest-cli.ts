@@ -38,9 +38,11 @@ import { SemanticStore } from '../db/semantic-store';
 import { AllocationGate, IngestionPipeline } from '../ingest/pipeline';
 import type { SourceAdapter, NormalizedRecord } from '../source/source-adapter';
 import { GmailAdapter } from '../source/gmail-adapter';
+import { CalendarAdapter } from '../source/calendar-adapter';
 import { TranscriptAdapter } from '../source/transcript-adapter';
 import { ObsidianAdapter } from '../source/obsidian-adapter';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
+import { runCalendarCancellations } from '../consolidation/calendar-tombstone';
 import { acquireLock, releaseLock } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath, resolveDirtySentinelPath } from './runtime-config';
 
@@ -106,6 +108,16 @@ export function buildAdapters(
         // googleAccounts defaults to [{ id: 'default' }] — backward-compat single-account path.
         for (const account of config.googleAccounts) {
           adapters.push(new GmailAdapter(config, meta, account.id));
+        }
+        break;
+      }
+      case 'gcal': {
+        // D-08/TEMP-04: one CalendarAdapter per configured Google account.
+        // Fail-safe: only instantiate when calendar.enabled is true (plan 03 sets it false by default).
+        if (config.calendar.enabled) {
+          for (const account of config.googleAccounts) {
+            adapters.push(new CalendarAdapter(config, meta, account.id));
+          }
         }
         break;
       }
@@ -212,9 +224,9 @@ async function main(): Promise<void> {
   const singleSource = !hasAllFlag && positionals.length === 1 ? positionals[0] : undefined;
 
   // Validate single-source arg if supplied
-  const knownSources = new Set(['gmail', 'granola', 'obsidian']);
+  const knownSources = new Set(['gmail', 'granola', 'obsidian', 'gcal']);
   if (singleSource !== undefined && !knownSources.has(singleSource)) {
-    log(`Unknown source '${singleSource}' — expected one of: gmail, granola, obsidian`);
+    log(`Unknown source '${singleSource}' — expected one of: gmail, granola, obsidian, gcal`);
     process.exit(0);
   }
 
@@ -259,6 +271,19 @@ async function main(): Promise<void> {
 
     // ── 7. Consolidation phase — under the same lock (CONSOL-03) ────────────
     await runConsolidation(db, dbPath, process.env, log);
+
+    // ── 7b. Calendar cancellation tombstoning (D-05, CONSOL-03 sleep-pass only) ──
+    // Runs AFTER consolidation: cancelled Calendar events tombstone the nodes
+    // linked via node_temporal.source_event_id. The CalendarAdapter writes the
+    // cancelled-master side-channel (calendar:cancelled:<acct>); this step reads
+    // it and performs the graph mutation. Only runs when gcal is in enabledSources.
+    if (effectiveConfig.enabledSources.includes('gcal')) {
+      const accountIds = effectiveConfig.googleAccounts.map(a => a.id);
+      const tombstoned = runCalendarCancellations(semanticStore, semanticStore, accountIds);
+      if (tombstoned > 0) {
+        log(`calendar-tombstone: tombstoned ${tombstoned} node(s) from cancelled events`);
+      }
+    }
   } catch (err) {
     log(`brain-ingest error: ${err}`);
   } finally {
