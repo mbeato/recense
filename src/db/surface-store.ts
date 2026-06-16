@@ -94,6 +94,11 @@ interface SurfacedEventRow {
   snooze_until: string | null;
 }
 
+interface CapWindowRow {
+  occurrence_due_at: string;
+  created_at:        number;
+}
+
 // ---------------------------------------------------------------------------
 // Pure helpers (no DB I/O)
 // ---------------------------------------------------------------------------
@@ -144,7 +149,7 @@ export class SurfaceStore {
   // Prepared statements — initialized once in constructor (never per-call).
   // T-01-SQL: all filter values are bound parameters, never string-interpolated.
   private readonly stmtEligible: Database.Statement;
-  private readonly stmtCountCapWindow: Database.Statement;
+  private readonly stmtCapWindowRows: Database.Statement;
   private readonly stmtSurfacedEvent: Database.Statement;
 
   constructor(db: Database.Database, clock: Clock) {
@@ -173,13 +178,21 @@ export class SurfaceStore {
         AND (nt.due_at >= @pastCutoff OR nt.recurrence_rule IS NOT NULL)
     `);
 
-    // D-09 cap-window usage count: how many non-terminal items were surfaced in
-    // the rolling window? Excludes terminal outcomes ('completed', 'dismissed')
-    // since those are resolved and should not occupy cap budget.
+    // D-09 cap-window rows: the non-terminal items surfaced in the rolling window.
+    // Excludes terminal outcomes ('completed', 'dismissed') since those are resolved
+    // and should not occupy cap budget.
+    //
+    // WR-02: the D-09 cap is "max NON-P0 items per rolling 24h" — P0 items bypass the
+    // cap and must NOT deplete the non-P0 budget. surfaced_event carries no tier column,
+    // so we fetch (occurrence_due_at, created_at) and reconstruct the tier-at-surface-time
+    // in rank() rather than COUNT(*)-ing every row. We filter in JS (not SQL) because
+    // occurrence_due_at is canonical-ISO text and SQLite's date parser handling of the
+    // 'Z'/fractional-seconds form is brittle (see IN-02); new Date().getTime() matches the
+    // exact parsing rank() already uses for due_at.
     //
     // T-01-SQL: @windowStart is a named bound parameter.
-    this.stmtCountCapWindow = db.prepare(`
-      SELECT COUNT(*) AS n FROM surfaced_event
+    this.stmtCapWindowRows = db.prepare(`
+      SELECT occurrence_due_at, created_at FROM surfaced_event
       WHERE created_at >= @windowStart
         AND outcome NOT IN ('completed', 'dismissed')
     `);
@@ -219,9 +232,16 @@ export class SurfaceStore {
     // 2. Pull all eligible rows in one query
     const rows = this.stmtEligible.all({ pastCutoff }) as EligibleRow[];
 
-    // 3. D-09 cap: count non-terminal surfaced_event rows in the rolling window
-    const capResult = this.stmtCountCapWindow.get({ windowStart: nowMs - capWindow }) as { n: number };
-    const capUsed   = capResult.n;
+    // 3. D-09 cap: count NON-P0 non-terminal surfaced_event rows in the rolling window.
+    //    WR-02: P0 surfacings bypass the cap, so they must not deplete the non-P0 budget.
+    //    A row was P0 at surface time iff (occurrence_due_at − created_at) < P0_THRESHOLD_MS;
+    //    only tier-1 (non-P0) rows count toward capUsed. created_at is epoch ms.
+    const capRows = this.stmtCapWindowRows.all({ windowStart: nowMs - capWindow }) as CapWindowRow[];
+    let capUsed = 0;
+    for (const r of capRows) {
+      const msToDueAtSurface = new Date(r.occurrence_due_at).getTime() - r.created_at;
+      if (msToDueAtSurface >= P0_THRESHOLD_MS) capUsed += 1; // non-P0 only
+    }
 
     // 4. Score each row; partition into P0 (tier=0) and lower (tier=1)
     const p0:    SurfaceItem[] = [];
