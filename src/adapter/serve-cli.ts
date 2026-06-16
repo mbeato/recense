@@ -27,7 +27,7 @@ import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { ModelProvider } from '../model/provider';
-import { wireMemoryEngine, registerMemoryTools, MemoryBusyError, type MemoryOps } from './memory-ops';
+import { wireMemoryEngine, registerMemoryTools, MemoryBusyError, SurfaceTargetNotFoundError, type MemoryOps } from './memory-ops';
 import { resolveExistingEnv, writeEnvFile } from './recense-init';
 import { resolveDbPath, sleepEnvPath } from './runtime-config';
 
@@ -389,6 +389,102 @@ export async function createBrainHttpServer(
           return;
         }
         log(`/v1/ask error: ${err}`);
+        jsonError(res, 500, { error: 'internal_error' });
+        logRequest('POST', url, 500, Date.now() - start);
+      }
+      return;
+    }
+
+    // GET /v1/surface — LLM-free ranked surface items; lock-free read (D-95, T-12-02 N/A)
+    if (url === '/v1/surface' && req.method === 'GET') {
+      try {
+        // url has query stripped — read params from req.url directly (serve-cli.ts 276).
+        const sp = new URL(req.url ?? '/', 'http://x').searchParams;
+        const surfaceOpts: { maxNonP0?: number; gracePeriodMs?: number } = {};
+        const limitRaw = sp.get('limit');
+        if (limitRaw !== null) {
+          const n = Number(limitRaw);
+          if (Number.isFinite(n) && n > 0) surfaceOpts.maxNonP0 = Math.floor(n);
+        }
+        const graceRaw = sp.get('grace_hours');
+        if (graceRaw !== null) {
+          const h = Number(graceRaw);
+          if (Number.isFinite(h) && h >= 0) surfaceOpts.gracePeriodMs = h * 60 * 60 * 1000;
+        }
+        const items = await ops.surface(Object.keys(surfaceOpts).length > 0 ? surfaceOpts : undefined);
+        jsonOk(res, { items });
+        logRequest('GET', url, 200, Date.now() - start);
+      } catch (err) {
+        log(`/v1/surface error: ${err}`);
+        jsonError(res, 500, { error: 'internal_error' });
+        logRequest('GET', url, 500, Date.now() - start);
+      }
+      return;
+    }
+
+    // POST /v1/surface/seen — record outcome; per-call lock (T-12-02)
+    if (url === '/v1/surface/seen' && req.method === 'POST') {
+      const rawBody = await readBody(req);
+      if (rawBody === null) {
+        jsonError(res, 413, { error: 'payload_too_large' });
+        logRequest('POST', url, 413, Date.now() - start);
+        return;
+      }
+      let parsed: { node_id?: unknown; occurrence_due_at?: unknown; outcome?: unknown; snooze_until?: unknown };
+      try { parsed = JSON.parse(rawBody) as typeof parsed; } catch {
+        jsonError(res, 400, { error: 'bad_request', detail: 'invalid json' });
+        logRequest('POST', url, 400, Date.now() - start);
+        return;
+      }
+      // T-21-07: validate all fields before any write
+      if (typeof parsed.node_id !== 'string' || typeof parsed.occurrence_due_at !== 'string') {
+        jsonError(res, 400, { error: 'bad_request', detail: 'node_id and occurrence_due_at must be strings' });
+        logRequest('POST', url, 400, Date.now() - start);
+        return;
+      }
+      if (Number.isNaN(Date.parse(parsed.occurrence_due_at))) {
+        jsonError(res, 400, { error: 'bad_request', detail: 'occurrence_due_at is not a valid date' });
+        logRequest('POST', url, 400, Date.now() - start);
+        return;
+      }
+      const VALID_OUTCOMES = ['surfaced', 'seen', 'snoozed', 'completed', 'dismissed'] as const;
+      type ValidOutcome = typeof VALID_OUTCOMES[number];
+      if (parsed.outcome !== undefined &&
+          (typeof parsed.outcome !== 'string' || !VALID_OUTCOMES.includes(parsed.outcome as ValidOutcome))) {
+        jsonError(res, 400, { error: 'bad_request', detail: 'outcome must be one of: surfaced, seen, snoozed, completed, dismissed' });
+        logRequest('POST', url, 400, Date.now() - start);
+        return;
+      }
+      if (parsed.snooze_until !== undefined && parsed.snooze_until !== null &&
+          (typeof parsed.snooze_until !== 'string' || Number.isNaN(Date.parse(parsed.snooze_until)))) {
+        jsonError(res, 400, { error: 'bad_request', detail: 'snooze_until is not a valid date' });
+        logRequest('POST', url, 400, Date.now() - start);
+        return;
+      }
+      const snoozeUntil = parsed.snooze_until === null ? null :
+        typeof parsed.snooze_until === 'string' ? parsed.snooze_until :
+        undefined;
+      try {
+        const ack = await ops.surfaceSeen({
+          node_id:           parsed.node_id,
+          occurrence_due_at: parsed.occurrence_due_at,
+          outcome:           parsed.outcome as ValidOutcome | undefined,
+          snooze_until:      snoozeUntil,
+        });
+        jsonOk(res, ack);
+        logRequest('POST', url, 200, Date.now() - start);
+      } catch (err) {
+        if (err instanceof MemoryBusyError) {
+          jsonError(res, 503, { error: 'service_unavailable', detail: 'memory busy; retry in a moment' });
+          logRequest('POST', url, 503, Date.now() - start);
+          return;
+        }
+        if (err instanceof SurfaceTargetNotFoundError) {
+          jsonError(res, 404, { error: 'not_found', detail: 'node_id does not exist' });
+          logRequest('POST', url, 404, Date.now() - start);
+          return;
+        }
+        log(`/v1/surface/seen error: ${err}`);
         jsonError(res, 500, { error: 'internal_error' });
         logRequest('POST', url, 500, Date.now() - start);
       }
