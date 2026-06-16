@@ -28,6 +28,7 @@
 import type OpenAI from 'openai';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { AnthropicLike } from './anthropic-client';
+import { withRetry } from './retry';
 
 /**
  * Minimum max_tokens for OpenAI-compat reasoning cloud models (mirrors OllamaClient).
@@ -61,13 +62,16 @@ function flattenSystem(system: Anthropic.MessageCreateParamsNonStreaming['system
  * Minimal AnthropicLike adapter for any OpenAI-compatible cloud endpoint.
  * Construct with an OpenAI client already pointed at the provider base URL.
  *
- * @param openai - OpenAI SDK client pointed at the target endpoint.
- * @param model  - Model id string to pass in every request.
+ * @param openai      - OpenAI SDK client pointed at the target endpoint.
+ * @param model       - Model id string to pass in every request.
+ * @param maxRetries  - Additional attempts after a transient network error (default 2).
+ *                      Mirrors SDK_MAX_RETRIES so throw-level retries are bounded
+ *                      consistently with the SDK's own connection-setup retries (KXE).
  */
 export class OpenAICompatClient implements AnthropicLike {
   readonly messages: AnthropicLike['messages'];
 
-  constructor(openai: OpenAI, model?: string) {
+  constructor(openai: OpenAI, model?: string, maxRetries: number = 2) {
     this.messages = {
       create: async (
         params: Anthropic.MessageCreateParamsNonStreaming,
@@ -91,13 +95,20 @@ export class OpenAICompatClient implements AnthropicLike {
         // Apply MIN_MAX_TOKENS floor: DeepSeek V4-Pro is a reasoning model and can emit
         // 1000+ hidden reasoning tokens before the visible JSON. Without this floor the
         // 256-token judge budget is exhausted by reasoning, returning empty content.
-        const resp = await openai.chat.completions.create({
-          model: model ?? params.model,
-          messages: openaiMessages,
-          max_tokens: Math.max(params.max_tokens ?? 0, MIN_MAX_TOKENS),
-          temperature: params.temperature ?? 0,
-          response_format: extra?.jsonSchema ? { type: 'json_object' } : undefined,
-        });
+        // Wrap in withRetry to catch undici body-read errors (ECONNRESET et al.) that
+        // the OpenAI SDK's native maxRetries does not cover — those are thrown *after*
+        // the SDK accepted the response (KXE). Non-transient errors (4xx status,
+        // AbortError) pass through immediately without retry.
+        const resp = await withRetry(
+          () => openai.chat.completions.create({
+            model: model ?? params.model,
+            messages: openaiMessages,
+            max_tokens: Math.max(params.max_tokens ?? 0, MIN_MAX_TOKENS),
+            temperature: params.temperature ?? 0,
+            response_format: extra?.jsonSchema ? { type: 'json_object' } : undefined,
+          }),
+          maxRetries
+        );
 
         const text = resp.choices[0]?.message?.content ?? '';
 
