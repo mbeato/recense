@@ -15,6 +15,7 @@ import {
   sleepEnvPath,
   loadConfiguredEnv,
   hydrateRuntimeEnv,
+  resolveEnabledSources,
 } from '../src/adapter/runtime-config';
 
 describe('defaultDbPath', () => {
@@ -133,5 +134,27 @@ describe('sleepEnvPath', () => {
       if (prev !== undefined) process.env['RECENSE_SLEEP_ENV'] = prev;
       else delete process.env['RECENSE_SLEEP_ENV'];
     }
+  });
+});
+
+describe('resolveEnabledSources', () => {
+  it('returns [] when RECENSE_ENABLED_SOURCES is unset (default-off, D-66/D-63)', () => {
+    expect(resolveEnabledSources({})).toEqual([]);
+  });
+
+  it('returns ["gmail"] when RECENSE_ENABLED_SOURCES="gmail"', () => {
+    expect(resolveEnabledSources({ RECENSE_ENABLED_SOURCES: 'gmail' })).toEqual(['gmail']);
+  });
+
+  it('splits comma-separated values and trims whitespace', () => {
+    expect(resolveEnabledSources({ RECENSE_ENABLED_SOURCES: 'gmail, gcal' })).toEqual(['gmail', 'gcal']);
+  });
+
+  it('returns [] when RECENSE_ENABLED_SOURCES is empty string (preserves default-off)', () => {
+    expect(resolveEnabledSources({ RECENSE_ENABLED_SOURCES: '' })).toEqual([]);
+  });
+
+  it('drops empty segments from comma-separated values', () => {
+    expect(resolveEnabledSources({ RECENSE_ENABLED_SOURCES: 'gmail,,gcal' })).toEqual(['gmail', 'gcal']);
   });
 });
