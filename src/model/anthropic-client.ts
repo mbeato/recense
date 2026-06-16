@@ -143,7 +143,9 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
       timeout: SDK_TIMEOUT_MS,
       maxRetries: SDK_MAX_RETRIES,
     });
-    const client = new OpenAICompatClient(openai, model);
+    // Pass SDK_MAX_RETRIES so throw-level retries (KXE) are bounded consistently
+    // with the SDK's own connection-setup maxRetries configured on the openai client above.
+    const client = new OpenAICompatClient(openai, model, SDK_MAX_RETRIES);
     return { client, model };
   }
 
