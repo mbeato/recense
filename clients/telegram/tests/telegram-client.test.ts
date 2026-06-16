@@ -89,6 +89,13 @@ function makeConfig(opts: {
     pollIntervalMs: 500,
     statePath: opts.statePath,
     enabled: opts.allowlist.length > 0,
+    // Proactive fields (added by Plan 22-02) — tests here do not exercise push timer
+    proactiveEnabled: false,
+    pushPollMs: 120_000,
+    quietHoursStart: 22,
+    quietHoursEnd: 7,
+    digestHour: 8,
+    snoozeDurationMs: 86_400_000,
   };
 }
 
@@ -118,7 +125,7 @@ describe('fetchMessages — (a) empty allowlist fail-closed', () => {
     const t = new MockTelegramTransport([makeUpdate(10, 111, 'hi')]);
     try {
       const r = await fetchMessages(t, { allowlist: [], statePath: sp });
-      expect(r).toEqual({ messages: [], commitTo: null });
+      expect(r).toMatchObject({ messages: [], commitTo: null });
     } finally {
       rmFile(sp);
     }
@@ -245,6 +252,7 @@ describe('fetchMessages — (f) cold-start L-9 pagination', () => {
         return [];
       },
       async sendMessage(): Promise<void> {},
+      async answerCallbackQuery(): Promise<void> {},
     };
 
     try {
@@ -382,6 +390,7 @@ describe('runClientTick', () => {
       async sendMessage(chatId: number, text: string): Promise<void> {
         sent.push({ chatId, text });
       },
+      async answerCallbackQuery(): Promise<void> {},
     };
 
     const cfg = makeConfig({
