@@ -319,16 +319,18 @@ describe('SurfaceStore.rank()', () => {
   // ---- D-09 rolling-24h cap with P0 bypass ---------------------------------
 
   it('D-09 cap: 5 prior non-P0 surfaced events in window → lower tier capped; P0 bypasses', () => {
-    // Seed 5 cap-filler nodes with surfaced_event rows in the rolling window.
+    // Seed 5 cap-filler nodes with NON-P0 surfaced_event rows in the rolling window.
     // No node_temporal rows → filler nodes never appear in rank() eligible query.
     // They exist only to fill the cap counter (capUsed = 5, maxNonP0 = 5 → allowed = 0).
+    // WR-02: occurrence_due_at must be ≥ 24h after created_at so the row counts as tier-1
+    // (non-P0) at surface time — only non-P0 rows deplete the non-P0 budget.
     for (let i = 0; i < 5; i++) {
       const id = `cap-filler-${i}`;
       seedNode(id, 0.1);
       db.prepare(`
         INSERT INTO surfaced_event (node_id, occurrence_due_at, outcome, snooze_until, created_at, updated_at)
         VALUES (?, ?, 'surfaced', NULL, ?, ?)
-      `).run(id, toISO(NOW_MS - 2 * H), NOW_MS - 1000, NOW_MS - 1000);
+      `).run(id, toISO(NOW_MS + 3 * D), NOW_MS - 1000, NOW_MS - 1000);
     }
 
     // A new eligible lower-tier item (would normally surface, but cap is exhausted)
@@ -345,6 +347,32 @@ describe('SurfaceStore.rank()', () => {
     const ids = items.map(i => i.node_id);
     expect(ids).not.toContain('new-lower'); // lower tier capped out
     expect(ids).toContain('p0-item');       // P0 bypasses cap
+  });
+
+  // ---- D-09 cap: P0 acknowledgements do NOT deplete the non-P0 budget (WR-02) ----
+
+  it('D-09 cap: P0 acks in window do not deplete the non-P0 budget (lower tier still surfaces)', () => {
+    // 5 P0 acknowledgements in the rolling window. Each occurrence_due_at is <24h after
+    // its created_at → tier-0 (P0) at surface time. P0 surfacings bypass the cap, so these
+    // acks must NOT consume the non-P0 budget. (Under the old COUNT(*) cap they would have
+    // set capUsed=5=maxNonP0 → allowed=0 and starved the legitimate lower-tier item.)
+    for (let i = 0; i < 5; i++) {
+      const id = `p0-ack-${i}`;
+      seedNode(id, 0.1);
+      db.prepare(`
+        INSERT INTO surfaced_event (node_id, occurrence_due_at, outcome, snooze_until, created_at, updated_at)
+        VALUES (?, ?, 'seen', NULL, ?, ?)
+      `).run(id, toISO(NOW_MS - 1000 + 2 * H), NOW_MS - 1000, NOW_MS - 1000);
+    }
+
+    // A genuine lower-tier item — must still surface (budget untouched by the P0 acks).
+    seedNode('lower-not-starved', 0.5);
+    seedTemporal('lower-not-starved', NOW_MS + 3 * D); // tier=1
+
+    const store = new SurfaceStore(db, new FakeClock(NOW_MS));
+    const items = store.rank({ ...RANK_OPTS, maxNonP0: 5 }); // capUsed=0 → allowed=5
+
+    expect(items.map(i => i.node_id)).toContain('lower-not-starved');
   });
 
   // ---- Tombstoned exclusion ------------------------------------------------
