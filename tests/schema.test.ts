@@ -2,7 +2,7 @@
  * schema.test.ts — initSchema idempotency, version guard, and index correctness (M-9, M-10, L-7).
  *
  * Covers:
- *  - SCHEMA_VERSION === 7 on a fresh DB (v7: schema_rel edge kind)
+ *  - SCHEMA_VERSION === 8 on a fresh DB (v8: node_temporal sidecar)
  *  - Four hot-path indexes created; two dead indexes absent (M-10, L-7)
  *  - Downgrade guard: stored > SCHEMA_VERSION → throw (M-9)
  *  - Upgrade path: stored < SCHEMA_VERSION → re-stamps (M-9)
@@ -13,15 +13,15 @@ import { describe, it, expect } from 'vitest';
 import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
 
 describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
-  it('stamps SCHEMA_VERSION = 7 on a fresh in-memory DB', () => {
+  it('stamps SCHEMA_VERSION = 8 on a fresh in-memory DB', () => {
     const db = new Database(':memory:');
     try {
       initSchema(db);
       const row = db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as
         { value: string } | undefined;
       expect(row).toBeDefined();
-      expect(Number(row!.value)).toBe(7);
-      expect(SCHEMA_VERSION).toBe(7);
+      expect(Number(row!.value)).toBe(8);
+      expect(SCHEMA_VERSION).toBe(8);
     } finally {
       db.close();
     }
@@ -74,7 +74,7 @@ describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
   it('throws "newer than this binary" when stored schema_version > SCHEMA_VERSION (M-9 downgrade guard)', () => {
     const db = new Database(':memory:');
     try {
-      initSchema(db); // stamps SCHEMA_VERSION (7)
+      initSchema(db); // stamps SCHEMA_VERSION (8)
       // Simulate a future DB by hand-stamping a version one above the binary
       db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(
         String(SCHEMA_VERSION + 1),
@@ -88,7 +88,7 @@ describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
   it('re-stamps to SCHEMA_VERSION when stored version < SCHEMA_VERSION (upgrade path)', () => {
     const db = new Database(':memory:');
     try {
-      initSchema(db); // stamps SCHEMA_VERSION (7)
+      initSchema(db); // stamps SCHEMA_VERSION (8)
       // Simulate a stale v4 DB
       db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4')").run();
       initSchema(db); // should upgrade, not throw
