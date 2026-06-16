@@ -2,7 +2,7 @@
  * Schema v8 — node_temporal sidecar table tests (Plan 20-01, D-01).
  *
  * Behavioral contract:
- *   - SCHEMA_VERSION === 8
+ *   - SCHEMA_VERSION === 9
  *   - node_temporal table exists with correct columns (node_id PK, due_at, action_type,
  *     recurrence_rule, source_event_id, updated_at)
  *   - idx_node_temporal_due_at index exists on node_temporal(due_at)
@@ -22,8 +22,8 @@ function makeDb(): Database.Database {
 }
 
 describe('SCHEMA_VERSION', () => {
-  it('is 8', () => {
-    expect(SCHEMA_VERSION).toBe(8);
+  it('is 9', () => {
+    expect(SCHEMA_VERSION).toBe(9);
   });
 });
 
