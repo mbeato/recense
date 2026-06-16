@@ -6,7 +6,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import type OpenAI from 'openai';
-import { resolveModelId, SDK_TIMEOUT_MS, SDK_MAX_RETRIES } from '../src/model/anthropic-client';
+import {
+  resolveModelId,
+  SDK_TIMEOUT_MS,
+  SDK_MAX_RETRIES,
+  LOCAL_SDK_TIMEOUT_MS,
+  LOCAL_SDK_MAX_RETRIES,
+  parseEnvInt,
+} from '../src/model/anthropic-client';
+import { LOCK_STALE_MS } from '../src/adapter/lockfile';
 import { OllamaClient } from '../src/model/ollama-client';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
@@ -35,6 +43,95 @@ describe('SDK_TIMEOUT_MS / SDK_MAX_RETRIES (M-4)', () => {
     // The timeout must be finite and short enough to release the lock well before
     // the 30-min stale window (H-4). 120 s is a generous upper bound.
     expect(SDK_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
+  });
+});
+
+// ── Local timeout/retry constants and lock-safety invariant (QUICK-260616-nx3) ──
+
+describe('LOCAL_SDK_TIMEOUT_MS / LOCAL_SDK_MAX_RETRIES defaults', () => {
+  it('LOCAL_SDK_TIMEOUT_MS defaults to 600_000 ms (10 min) in a clean env', () => {
+    // This test relies on the module-load-time value; env overrides applied before
+    // module load would shift it. In a clean test env (no RECENSE_LOCAL_SDK_TIMEOUT_MS
+    // set) the constant must equal the 600_000 fallback.
+    expect(LOCAL_SDK_TIMEOUT_MS).toBe(600_000);
+  });
+
+  it('LOCAL_SDK_MAX_RETRIES defaults to 1 in a clean env', () => {
+    expect(LOCAL_SDK_MAX_RETRIES).toBe(1);
+  });
+});
+
+describe('lock-safety invariant (T-nx3-LOCK)', () => {
+  it('LOCAL_SDK_TIMEOUT_MS × (1 + LOCAL_SDK_MAX_RETRIES) is strictly below LOCK_STALE_MS', () => {
+    // Worst-case local lock hold must not reach the 30-min H-4 stale window.
+    // A future bump to either local constant — or a reduction in LOCK_STALE_MS — trips
+    // this test before the change ships.
+    const worstCaseHoldMs = LOCAL_SDK_TIMEOUT_MS * (1 + LOCAL_SDK_MAX_RETRIES);
+    expect(worstCaseHoldMs).toBeLessThan(LOCK_STALE_MS);
+  });
+});
+
+describe('parseEnvInt helper', () => {
+  describe('RECENSE_LOCAL_SDK_TIMEOUT_MS overrides (fallback 600_000, min 1)', () => {
+    it('returns the parsed value for a valid numeric string', () => {
+      process.env['RECENSE_LOCAL_SDK_TIMEOUT_MS'] = '120000';
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_TIMEOUT_MS', 600_000, 1)).toBe(120_000);
+      delete process.env['RECENSE_LOCAL_SDK_TIMEOUT_MS'];
+    });
+
+    it('returns fallback when env var is absent', () => {
+      delete process.env['RECENSE_LOCAL_SDK_TIMEOUT_MS'];
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_TIMEOUT_MS', 600_000, 1)).toBe(600_000);
+    });
+
+    it('returns fallback for a non-numeric string', () => {
+      process.env['RECENSE_LOCAL_SDK_TIMEOUT_MS'] = 'bogus';
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_TIMEOUT_MS', 600_000, 1)).toBe(600_000);
+      delete process.env['RECENSE_LOCAL_SDK_TIMEOUT_MS'];
+    });
+
+    it('returns fallback for "0" (below min=1)', () => {
+      process.env['RECENSE_LOCAL_SDK_TIMEOUT_MS'] = '0';
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_TIMEOUT_MS', 600_000, 1)).toBe(600_000);
+      delete process.env['RECENSE_LOCAL_SDK_TIMEOUT_MS'];
+    });
+
+    it('returns fallback for a negative value', () => {
+      process.env['RECENSE_LOCAL_SDK_TIMEOUT_MS'] = '-1';
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_TIMEOUT_MS', 600_000, 1)).toBe(600_000);
+      delete process.env['RECENSE_LOCAL_SDK_TIMEOUT_MS'];
+    });
+  });
+
+  describe('RECENSE_LOCAL_SDK_MAX_RETRIES overrides (fallback 1, min 0)', () => {
+    it('returns the parsed value for a valid positive integer', () => {
+      process.env['RECENSE_LOCAL_SDK_MAX_RETRIES'] = '3';
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_MAX_RETRIES', 1, 0)).toBe(3);
+      delete process.env['RECENSE_LOCAL_SDK_MAX_RETRIES'];
+    });
+
+    it('returns 0 for "0" (0 is valid: min=0)', () => {
+      process.env['RECENSE_LOCAL_SDK_MAX_RETRIES'] = '0';
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_MAX_RETRIES', 1, 0)).toBe(0);
+      delete process.env['RECENSE_LOCAL_SDK_MAX_RETRIES'];
+    });
+
+    it('returns fallback when env var is absent', () => {
+      delete process.env['RECENSE_LOCAL_SDK_MAX_RETRIES'];
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_MAX_RETRIES', 1, 0)).toBe(1);
+    });
+
+    it('returns fallback for a non-numeric string', () => {
+      process.env['RECENSE_LOCAL_SDK_MAX_RETRIES'] = 'nope';
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_MAX_RETRIES', 1, 0)).toBe(1);
+      delete process.env['RECENSE_LOCAL_SDK_MAX_RETRIES'];
+    });
+
+    it('returns fallback for a negative value (below min=0)', () => {
+      process.env['RECENSE_LOCAL_SDK_MAX_RETRIES'] = '-1';
+      expect(parseEnvInt('RECENSE_LOCAL_SDK_MAX_RETRIES', 1, 0)).toBe(1);
+      delete process.env['RECENSE_LOCAL_SDK_MAX_RETRIES'];
+    });
   });
 });
 

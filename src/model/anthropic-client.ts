@@ -49,13 +49,13 @@ export type AnthropicLike = {
  *
  * Applied to: Anthropic SDK, AnthropicVertex SDK, OpenAI SDK (embedder).
  *
- * LOCAL_SDK_TIMEOUT_MS applies only to the local Ollama path.  Local models can be
- * slow: when the consolidator dispatches 2+ judge calls concurrently, Ollama serialises
- * them internally.  A 35b reasoning model takes ~47 s per judgeOnce pass; the second
- * concurrent request queues ~47 s then processes ~47 s = ~94 s total from when it was
- * sent — exceeding the 60 s cloud limit.  300 s (5 min) gives 3× headroom while still
- * staying well inside the 30-min H-4 lock-reclaim window (worst case: 3 retries ×
- * 300 s = 15 min).
+ * LOCAL_SDK_TIMEOUT_MS applies only to the local Ollama path.  Local (35b) models are
+ * slow: real episodes regularly exceed 5 min; the default is 10 min (600 s), env-overridable
+ * via RECENSE_LOCAL_SDK_TIMEOUT_MS (invalid/absent/<=0 → 600_000).
+ * LOCAL_SDK_MAX_RETRIES caps retries on the local branch; default 1, env-overridable via
+ * RECENSE_LOCAL_SDK_MAX_RETRIES (invalid/absent/<0 → 1). Zero is valid (no retries).
+ * Worst-case local lock hold: 600_000 × (1 + 1) = 1_200_000 ms (20 min) — strictly below
+ * LOCK_STALE_MS (30 min), enforced by the invariant test in tests/anthropic-client.test.ts.
  *
  * SDK_MAX_RETRIES is env-overridable via RECENSE_SDK_MAX_RETRIES.
  * The eval harness sets it to 10 before loading dist modules so that engine-level
@@ -63,8 +63,21 @@ export type AnthropicLike = {
  * rather than failing after the default 2 attempts.
  * Invalid or absent → production default 2.
  */
+
+/**
+ * Pure env-int parser: reads process.env[name]; returns fallback when absent,
+ * non-numeric, or the parsed value is less than min.  Exported for direct testing.
+ */
+export function parseEnvInt(name: string, fallback: number, min: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= min ? n : fallback;
+}
+
 export const SDK_TIMEOUT_MS = 60_000;
-export const LOCAL_SDK_TIMEOUT_MS = 300_000;
+export const LOCAL_SDK_TIMEOUT_MS = parseEnvInt('RECENSE_LOCAL_SDK_TIMEOUT_MS', 600_000, 1);
+export const LOCAL_SDK_MAX_RETRIES = parseEnvInt('RECENSE_LOCAL_SDK_MAX_RETRIES', 1, 0);
 export const SDK_MAX_RETRIES: number = (() => {
   const raw = process.env['RECENSE_SDK_MAX_RETRIES'];
   if (!raw) return 2;
@@ -119,13 +132,14 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
   if (config.modelProvider === 'local') {
     // Local path: OpenAI-compatible Ollama endpoint. Dummy api key 'ollama' (Ollama
     // ignores it); never log the client. Wrapped in OllamaClient to satisfy AnthropicLike.
-    // Uses LOCAL_SDK_TIMEOUT_MS (300 s) instead of the cloud 60 s: concurrent judge calls
-    // queue behind each other in Ollama and the second can take ~94 s to respond.
+    // Uses LOCAL_SDK_TIMEOUT_MS (10 min default, env-overridable) — real 35b episodes
+    // regularly exceed 5 min. LOCAL_SDK_MAX_RETRIES (default 1) bounds worst-case lock
+    // hold to 600_000 × (1 + 1) = 20 min, strictly below the 30-min stale window.
     const openai = new OpenAI({
       baseURL: config.localBaseUrl,
       apiKey: 'ollama',
       timeout: LOCAL_SDK_TIMEOUT_MS,
-      maxRetries: SDK_MAX_RETRIES,
+      maxRetries: LOCAL_SDK_MAX_RETRIES,
     });
     // Pass localBaseUrl so OllamaClient can derive the native /api/chat endpoint
     // for constrained-decoding calls (QUICK-260612-clb).
