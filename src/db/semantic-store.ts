@@ -47,10 +47,12 @@ export class SemanticStore {
   private readonly stmtUpsertEdge: Database.Statement;
   private readonly stmtGetOutEdges: Database.Statement;
   private readonly stmtGetInEdges: Database.Statement;
-  // node_temporal: single idempotent writer + read helper (TEMP-02, Plan 20-01).
+  // node_temporal: single idempotent writer + read helpers (TEMP-02, Plan 20-01).
   // Written exclusively by the sleep-pass consolidator (single writer, CONSOL-03).
   private readonly stmtUpsertNodeTemporal: Database.Statement;
   private readonly stmtGetNodeTemporal: Database.Statement;
+  // node_temporal lookup by source_event_id — used by calendar-tombstone.ts (Plan 20-04).
+  private readonly stmtGetNodeIdsBySourceEventId: Database.Statement;
 
   // Transaction-wrapped upsertNode body (defined in constructor, called in upsertNode)
   private readonly txUpsertNode: (params: UpsertNodeParams) => void;
@@ -153,6 +155,13 @@ export class SemanticStore {
 
     this.stmtGetNodeTemporal = db.prepare(
       'SELECT node_id, due_at, action_type, recurrence_rule, source_event_id, updated_at FROM node_temporal WHERE node_id = ?'
+    );
+
+    // calendar-tombstone.ts (Plan 20-04): find all nodes whose temporal annotation
+    // has a matching source_event_id (i.e. calendar events cancelled by the master).
+    // T-01-SQL: bound ? param, no string interpolation.
+    this.stmtGetNodeIdsBySourceEventId = db.prepare(
+      'SELECT node_id FROM node_temporal WHERE source_event_id = ?'
     );
 
     // ── Transaction — defined once, called in upsertNode ─────────────────────
@@ -391,5 +400,19 @@ export class SemanticStore {
   getNodeTemporal(nodeId: string): NodeTemporalRow | null {
     const row = this.stmtGetNodeTemporal.get(nodeId) as NodeTemporalRow | undefined;
     return row ?? null;
+  }
+
+  /**
+   * Find all node_ids whose node_temporal.source_event_id matches the given calendar event id.
+   *
+   * Used exclusively by the calendar-tombstone sleep-pass step (Plan 20-04, D-05):
+   * when a Calendar event is cancelled, tombstone all nodes linked to that event.
+   *
+   * Returns an empty array when no matching rows exist.
+   * T-01-SQL: bound ? param, no string interpolation.
+   */
+  getNodeIdsBySourceEventId(sourceEventId: string): string[] {
+    const rows = this.stmtGetNodeIdsBySourceEventId.all(sourceEventId) as { node_id: string }[];
+    return rows.map(r => r.node_id);
   }
 }
