@@ -30,6 +30,15 @@ import { SDK_TIMEOUT_MS, SDK_MAX_RETRIES } from './anthropic-client';
 export const EMBEDDER_INPUT_MAX_CHARS = 24_000;
 
 /**
+ * Maximum inputs per OpenAI embeddings request. The API rejects requests with
+ * more than 2048 inputs ("400 Invalid 'input': array length must be 2048 or
+ * less"). A single consolidation pass over a large haystack can produce more
+ * claims than this, so embed() chunks the input array into batches of this size
+ * and concatenates the results in order rather than failing the whole pass.
+ */
+export const EMBEDDER_MAX_BATCH = 2048;
+
+/**
  * Batch text embeddings — index-aligned, awaited fully BEFORE any DB write phase.
  * Output is Float32Array to feed setEmbedding / CandidateRetriever directly.
  */
@@ -75,14 +84,21 @@ export class OpenAIEmbedder implements Embedder {
       return t;
     });
 
-    const response = await this.client.embeddings.create({
-      model: this.model,
-      input: guarded,
-      dimensions: this.dims,
-    });
-
-    // Map response.data[i].embedding (number[]) → Float32Array, preserving input order
-    return response.data.map(item => new Float32Array(item.embedding));
+    // OpenAI's embeddings endpoint accepts at most EMBEDDER_MAX_BATCH inputs per
+    // request. Chunk so a pass that produces >2048 claims embeds across multiple
+    // calls (in order) instead of failing with a 400 and degrading the memory.
+    const out: Float32Array[] = [];
+    for (let start = 0; start < guarded.length; start += EMBEDDER_MAX_BATCH) {
+      const batch = guarded.slice(start, start + EMBEDDER_MAX_BATCH);
+      const response = await this.client.embeddings.create({
+        model: this.model,
+        input: batch,
+        dimensions: this.dims,
+      });
+      // Preserve input order: response.data[i] aligns with batch[i].
+      for (const item of response.data) out.push(new Float32Array(item.embedding));
+    }
+    return out;
   }
 }
 
