@@ -154,8 +154,8 @@ describe('SurfaceStore.rank()', () => {
     expect(p0!.tier).toBe(0);
     expect(lower!.tier).toBe(1);
     // P0 must sort before lower regardless of score
-    expect(items[0].node_id).toBe('p0-node');
-    expect(items[1].node_id).toBe('lower-node');
+    expect(items[0]!.node_id).toBe('p0-node');
+    expect(items[1]!.node_id).toBe('lower-node');
   });
 
   // ---- Blend ordering — salience -------------------------------------------
@@ -172,8 +172,8 @@ describe('SurfaceStore.rank()', () => {
     const items = store.rank(RANK_OPTS);
 
     expect(items.length).toBe(2);
-    expect(items[0].node_id).toBe('high-sal');
-    expect(items[1].node_id).toBe('low-sal');
+    expect(items[0]!.node_id).toBe('high-sal');
+    expect(items[1]!.node_id).toBe('low-sal');
   });
 
   // ---- Blend ordering — proximity ------------------------------------------
@@ -189,8 +189,8 @@ describe('SurfaceStore.rank()', () => {
     const items = store.rank(RANK_OPTS);
 
     expect(items.length).toBe(2);
-    expect(items[0].node_id).toBe('sooner');
-    expect(items[1].node_id).toBe('later');
+    expect(items[0]!.node_id).toBe('sooner');
+    expect(items[1]!.node_id).toBe('later');
   });
 
   // ---- D-10 past-event guard -----------------------------------------------
@@ -376,9 +376,9 @@ describe('SurfaceStore.rank()', () => {
 
     expect(items.length).toBe(1);
     const expected = expectedScore(msToDue, s);
-    expect(items[0].score).toBeCloseTo(expected, 10);
+    expect(items[0]!.score).toBeCloseTo(expected, 10);
     // Tier must be 1 (lower) since 3D > 24H
-    expect(items[0].tier).toBe(1);
+    expect(items[0]!.tier).toBe(1);
   });
 
 });
