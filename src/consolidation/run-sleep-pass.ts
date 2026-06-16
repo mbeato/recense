@@ -24,6 +24,8 @@ import { SemanticStore } from '../db/semantic-store';
 import { StrengthDecayManager } from '../strength/decay';
 import { CandidateRetriever } from '../retrieval/topk';
 import { DefaultModelProvider } from '../model/provider';
+import type { ModelProvider as ModelProviderSeam } from '../model/provider';
+import type { ExtractedClaim } from '../model/claim-extractor';
 import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
 import { SchemaRelationDeriver } from '../consolidation/schema-relations';
@@ -190,12 +192,17 @@ export function resolveProviderOverlay(
  * @param dbPath Filesystem path of the database file — used for config.dbPath.
  * @param env    Process environment — read for model-provider overlay keys.
  * @param log    Timestamped logging function (never stdout, T-03-2-I).
+ * @param opts   Optional replay seam. Valid ONLY when the cache was built with the same
+ *               extractor (granite) + same content chunking. When set, overrides only
+ *               the consolidator provider's `generate` head to return cached claims;
+ *               embed/judge/judgeBatch run for real; granite/Ollama is never called.
  */
 export async function runConsolidation(
   db: Database.Database,
   dbPath: string,
   env: NodeJS.ProcessEnv,
   log: (msg: string) => void,
+  opts?: { replayExtract?: (content: string) => ExtractedClaim[] },
 ): Promise<void> {
   // ── 4. Instantiate the full Consolidator dependency graph ─────────────────
   // Base config (no model-provider overlay — stores/retriever are LLM-free).
@@ -222,6 +229,24 @@ export async function runConsolidation(
     judgeConfig,
     embedConfig: config,
   });
+
+  // Replay wrapper: intercept ONLY `generate`; embed/judge/judgeBatch delegate to the real
+  // consolidatorProvider so the configured embedder/threshold/judge still run for real.
+  // When opts.replayExtract is not set, activeConsolidatorProvider is the original (no-op).
+  const REPLAY_MARKER = '\n\nDocument content:\n';
+  const activeConsolidatorProvider: ModelProviderSeam = opts?.replayExtract
+    ? {
+        generate(prompt: string): Promise<string> {
+          const idx = prompt.lastIndexOf(REPLAY_MARKER);
+          const content = idx >= 0 ? prompt.slice(idx + REPLAY_MARKER.length) : prompt;
+          return Promise.resolve(JSON.stringify(opts.replayExtract!(content)));
+        },
+        embed: (texts) => consolidatorProvider.embed(texts),
+        judge: (claim, candidates) => consolidatorProvider.judge(claim, candidates),
+        judgeBatch: (items) => consolidatorProvider.judgeBatch(items),
+      }
+    : consolidatorProvider;
+
   const inducerProvider = new DefaultModelProvider({
     generateConfig: judgeConfig,
     judgeConfig,
@@ -249,7 +274,7 @@ export async function runConsolidation(
     store,
     strength,
     retriever,
-    consolidatorProvider,
+    activeConsolidatorProvider,
     inducer,
     config,
     realClock,
