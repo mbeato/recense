@@ -112,6 +112,12 @@ export interface StoredProposal {
    * Never re-fetched, re-generated, or overridden at execute-time.
    */
   args: Record<string, unknown>;
+  /**
+   * The surfaced item's node_id — paired with `dueAt` (as occurrence_due_at) to record
+   * a terminal surfaceSeen outcome on execute-success or reject (GAP-02 / ACT-01).
+   * Populated by tryGenerateProposal from item.node_id; carried through by handleEditPatch.
+   */
+  nodeId: string;
   /** P0 item's due_at (ISO 8601 UTC) — expiry anchor checked at execute-time (D-07). */
   dueAt: string;
   /**
