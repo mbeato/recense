@@ -42,6 +42,12 @@ export class StrengthDecayManager {
   private readonly stmtDeleteNode: Database.Statement;
   // M-1 FK-safe eviction: delete edges referencing the node BEFORE deleting the node itself.
   private readonly stmtDeleteEdgesForNode: Database.Statement;
+  // FK-02 child-wipe (mirrors schema-relations.ts FK-02 fix): node_scope.node_id and
+  // node_temporal.node_id both REFERENCES node(id) — must be cleaned before the node row.
+  // Delete order: edges → node_scope → node_temporal → node (matches FK dependency graph).
+  // D-08: surfaced_event is intentionally NOT cleaned here; the sleep pass must not touch it.
+  private readonly stmtDeleteScopeForNode: Database.Statement;
+  private readonly stmtDeleteTemporalForNode: Database.Statement;
 
   constructor(db: Database.Database, clock: Clock, config: EngineConfig) {
     this.db = db;
@@ -69,6 +75,11 @@ export class StrengthDecayManager {
     // FK-safe: remove all edges referencing a node before deleting it (M-1 FK invariant).
     // edge.src and edge.dst both reference node(id); both directions must be cleaned up.
     this.stmtDeleteEdgesForNode = db.prepare('DELETE FROM edge WHERE src = ? OR dst = ?');
+    // FK-02 child-wipe: node_scope and node_temporal both REFERENCES node(id).
+    // Mirrors the FK-02 fix in src/consolidation/schema-relations.ts (node_scope + node_temporal
+    // only — surfaced_event is intentionally excluded per D-08).
+    this.stmtDeleteScopeForNode = db.prepare('DELETE FROM node_scope WHERE node_id = ?');
+    this.stmtDeleteTemporalForNode = db.prepare('DELETE FROM node_temporal WHERE node_id = ?');
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -169,12 +180,18 @@ export class StrengthDecayManager {
         effectiveS < this.config.evictionSThreshold &&
         (nowMs - row.last_access) > EVICTION_TOMBSTONE_AGE_MS
       ) {
-        // FK-safe per-node transaction: delete edges before node to satisfy REFERENCES constraint.
+        // FK-safe per-node transaction: FK-02 child-wipe order matches schema-relations.ts FK-02.
+        // Delete order: edges → node_scope → node_temporal → node.
+        // Both node_scope.node_id and node_temporal.node_id REFERENCES node(id); both must be
+        // cleaned before the node row or the transaction throws SQLITE_CONSTRAINT_FOREIGNKEY.
+        // D-08: surfaced_event is intentionally excluded — the sleep pass must not touch it.
         // .immediate() prevents SQLITE_BUSY_SNAPSHOT in WAL mode (M-5 prerequisite for sweep).
-        // try/catch: one bad node never aborts the sweep (M-1 robustness invariant).
+        // try/catch: one bad node (e.g. live surfaced_event FK) never aborts the sweep (M-1).
         try {
           this.db.transaction(() => {
             this.stmtDeleteEdgesForNode.run(row.id, row.id);
+            this.stmtDeleteScopeForNode.run(row.id);
+            this.stmtDeleteTemporalForNode.run(row.id);
             this.stmtDeleteNode.run(row.id);
           }).immediate();
           evicted.push(row.id);
