@@ -86,6 +86,9 @@ switch (cmd) {
   case 'sleep-pass': spawnScript('sleep-pass-cli.js', process.argv.slice(3)); break;
   case 'seed':       spawnScript('seed-cli.js',       process.argv.slice(3)); break;
   case 'ingest':     spawnScript('ingest-cli.js',     process.argv.slice(3)); break;
+  // import-memory-cli.ts guards execution with `require.main === module` (it exports
+  // planImport/runImport for unit tests), so spawn as a subprocess so the guard fires.
+  case 'import-memory': spawnScript('import-memory-cli.js', process.argv.slice(3)); break;
   // mcp-cli exports createBrainMcpServer for tests, so its CLI entry is guarded by
   // `require.main === module` — a bare require() here would never fire the guard
   // (require.main stays recense.js) and the server would never start.
@@ -99,7 +102,7 @@ switch (cmd) {
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, snapshot, scheduler, mcp, serve\n',
+      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, import-memory, snapshot, scheduler, mcp, serve\n',
     );
     process.exit(1);
 }
