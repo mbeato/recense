@@ -19,6 +19,7 @@ import OpenAI from 'openai';
 import type { EngineConfig } from '../lib/config';
 import { OllamaClient } from './ollama-client';
 import { OpenAICompatClient } from './openai-compat-client';
+import { createClaudeHeadlessClient } from './claude-headless-client';
 
 /**
  * Minimal structural type satisfied by both Anthropic and AnthropicVertex clients.
@@ -93,6 +94,7 @@ export function resolveModelId(config: EngineConfig): string {
   if (config.modelProvider === 'vertex') return config.vertexModel;
   if (config.modelProvider === 'local') return config.localModel;
   if (config.modelProvider === 'deepseek') return config.deepseekModel;
+  if (config.modelProvider === 'claude-headless') return config.claudeHeadlessModel;
   return config.anthropicModel;
 }
 
@@ -161,6 +163,14 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
     // with the SDK's own connection-setup maxRetries configured on the openai client above.
     const client = new OpenAICompatClient(openai, model, SDK_MAX_RETRIES);
     return { client, model };
+  }
+
+  if (config.modelProvider === 'claude-headless') {
+    // Headless `claude -p` transport on the Max subscription (spike 003; QUICK-260617-qat).
+    // The transport strips ANTHROPIC_API_KEY/AUTH_TOKEN from its OWN spawn env so the CLI
+    // uses the subscription login regardless of what's in process.env — keeping the key in
+    // sleep.env (embeddings still need it) does NOT bill the API on these calls.
+    return createClaudeHeadlessClient(config);
   }
 
   // Default: direct Anthropic SDK — reads ANTHROPIC_API_KEY from env automatically.
