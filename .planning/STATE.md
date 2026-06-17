@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v4.0
-milestone_name: Proactive Memory
-status: ready_to_plan
-stopped_at: Phase 23 complete (10/10) — ready to discuss Phase 999.2
-last_updated: 2026-06-17T17:04:20.821Z
-last_activity: 2026-06-17 -- Phase 23 execution started
+milestone: v5.0
+milestone_name: Foundational Memory Store + Reader Layer
+status: planning
+last_updated: "2026-06-17T18:24:58.764Z"
+last_activity: 2026-06-17
 progress:
-  total_phases: 15
-  completed_phases: 3
-  total_plans: 20
-  completed_plans: 24
-  percent: 20
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-15)
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-17
-
-Progress: [██████████] 100%
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-06-17 — Milestone v5.0 started
 
 ## Performance Metrics
 

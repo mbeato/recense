@@ -30,28 +30,25 @@ The memory **learns and stays correct over time** — it forms generalizations t
 
 **v2.0 Open-Source Release shipped 2026-06-10** (phases 9–10): anyone can `brain init` a working install (BYO keys, live-validated, chmod-600 env), audit it with `brain doctor`, schedule the sleep pass cross-platform (launchd/croner), and watch spreading-activation pathways live in the `brain viz` 3D UI. CI matrix green on macOS + Linux. Schema at v5 after the post-ship ARCH-REVIEW hardening pass.
 
-## Current Milestone: v4.0 Proactive Memory
+## Current Milestone: v5.0 Foundational Memory Store + Reader Layer
 
-**Goal:** Turn recense from a passive recall engine into a memory that *surfaces and acts* on what it learned — proactively pushing salient/due items to Telegram and, on explicit per-action approval, firing any user-configured MCP tool — while the engine stays passive, LLM-free on the hot path, and single-tenant.
-
-**Target features:**
-- **Temporal/actionable ingestion** — Gmail episodic-variant capture (flights, deadlines, receipts the current prompt discards) + a new Google Calendar `SourceAdapter`. The prerequisite that makes memory-driven triggers possible.
-- **Engine surfacing surface** — a thin, LLM-free read API for "salient / due / not-yet-surfaced" items, with surfaced/seen state so nothing re-notifies. Notification-fatigue filter rides on existing salience + PE-gating + schemas (the differentiator).
-- **Proactive Telegram client (push)** — extends the Phase-13 reference client from pull to push: surfaces items as alerts/reminders. Near-$0, LLM-free path first.
-- **Approval-gated agentic execution** — the client proposes an action, the user approves via Telegram inline button (HITL — LangGraph-interrupt / MCP-elicitation pattern), and it executes through *any* connected MCP tool. **Invariant: nothing fires without explicit approval.**
-
-**Key context:** Differentiator is *memory deciding what's worth surfacing*, not the trigger/notify/approve plumbing (commodity — Lindy/Khoj/LangGraph/MCP-elicitation already do it). Engine constraints hold: agents live outside the engine, online paths stay LLM-free, single-tenant. Both triggers in scope (calendar + memory-driven). Budget ~$14–15 → roadmap sequences cheap-and-safe-first (ingestion → surfacing → notify-only → approval-gated any-MCP). Parked content-hardening items #1 (transcript per-speaker) and #2 (Obsidian PDF) are out of scope — orthogonal to proactivity.
-
-## Last Milestone: v3.1 Schema Depth & Brain-Window Polish — SHIPPED 2026-06-15
-
-**Goal (achieved):** Deepen the learning layer with evidence-grounded relations *between* schemas, and make the Recense brain window navigable and visually clean — two coupled efforts (topic-region highlighting falls out of schema clustering).
+**Goal:** Make recense the single source of truth for the founder's knowledge — retire the flat MEMORY.md / Obsidian-authoring stores into the brain, clean up the entity layer, fix the retrieval-embedding weakness, and surface it all through a generated human-readable reader layer that links prose claims down to atomic facts.
 
 **Target features:**
-- **Schema-schema relations** — derived overlap/co-activation edges between schemas + hierarchical schema clustering, strictly D-37-safe (the signal never passes through inferred content); the "brain learns over its own abstractions" depth extension of LEARN-01/02
-- **In-app node search + topic-region highlighting** — search the Recense brain window by content and fly-to/highlight matching nodes; topic regions glow by schema membership (reuses the schema clustering above)
-- **Brain-hull view quality** — fix the jagged/noisy hull silhouette from front/top views (depth-attenuated edges / rim shading / decimated display hull)
+- **Foundational store (Phase 24, ex-999.3)** — verify the already-landed `node_scope` single-tenant provenance + `import-memory` CLI, confirm a clean FK-free consolidation pass (re-enable the hourly agent), then run the consolidate→verify→retire migration of `~/.claude/projects/*/memory` facts into recense. Retrieval stays GLOBAL; scope is attribution, not multi-tenancy.
+- **Entity dedup/prune pass (Phase 25, ex-999.5)** — a scheduled consolidation pass that merges near-duplicate entities (8+ "brain-memory" fragments today) into canonical nodes, origin-guarded, rewiring edges and tombstoning duplicates without losing provenance.
+- **Retrieval-embedding fix (Phase 26, ex-999.2)** — fix the sub-0.7 cosine retrieval weakness (query-instruction prefix and/or `text-embedding-3-large`), validated via the cached extraction-replay harness so no re-extraction is needed. ~$3–5 API.
+- **Reader layer (Phase 27, ex-999.4)** — productize the validated reader slice: `type='doc'` nodes (lifecycle-exempt, single-writer), a facts→doc generation pass emitting inline `recense://fact/<id>` citations, staleness/regen, a `/doc` route + Reader/Brain toggle, and a doc→doc corpus graph.
 
-**Key context:** v3.1 is a depth+polish milestone, NOT a new product narrative — email/meeting ingestion stays a separate later milestone (v4.0) with content/extraction hardening as its parked groundwork (`.planning/todos/`). Largely $0 (schema work runs in the local sleep pass; viz is frontend). The schema-schema mechanism is novel engine design — founder-architected. Builds on validated LEARN-01 (schema induction) / LEARN-02 (schema-prior recall). **v3.0 Interface Layer shipped** (stdio MCP, HTTP serve, reference client, viz/tray app, published eval numbers — Phases 11–16 + the Phase 17 LongMemEval gap-closure).
+**Key context:** Whole cluster traces to the `consolidate-knowledge-into-recense` thread — recense replaces the flat per-project MEMORY.md stores while keeping the long-form human vault deep-dives. Reader slice validated 2026-06-17 (19/19 citations resolve, 0 invented, 100% coverage); its prototype lives uncommitted in `src/viz/modules/reader.js` + `scripts/reader-slice/` (promote, don't rebuild). 999.3 code already landed via parallel work (schema v10) → Phase 24 is verify+migrate, not build. The open FK consolidation crash is root-cause-fixed in code (schema-relations DELETE-side child-wipe + eviction child-wipe) but unverified by a clean pass → that verification is a hard Phase 24 gate. Net-zero new deps; ~$3–5 API (Phase 26 re-eval) against ~$14–15 budget; rest local/$0. Engine invariants hold: single-tenant, graph is source of truth, online paths LLM-free, never strengthen a fact from inferred output. Backlog order: 999.3 → 999.5 → 999.2 → 999.4.
+
+## Last Milestone: v4.0 Proactive Memory — SHIPPED 2026-06-17
+
+**Goal (achieved):** Turn recense from passive recall into a memory that *surfaces and acts* — proactively pushing salient/due items to Telegram and, on explicit per-action approval, firing any user-configured MCP tool — engine staying passive, LLM-free on the hot path, single-tenant.
+
+**Delivered (phases 20–23, git tag `v4.0`):** temporal/actionable ingestion (`node_temporal`, Google Calendar adapter, Gmail episodic-variant, multi-account OAuth) → LLM-free `/v1/surface` ranking + D-43 self-confirmation sentinel → notify-only Telegram P0/P1 push (default-OFF, restart-surviving dedup) → approval-gated execution of any user-configured MCP tool (hard approval gate, 4 injection-hardening controls, typed destructive confirm, `source:'hitl'` audit excluded from consolidation). All 13 requirements (TEMP/SURF/PUSH/ACT) satisfied; live-validated end-to-end against a real MCP server.
+
+**Key context:** Differentiator was *memory deciding what's worth surfacing*, not the trigger/notify/approve plumbing (commodity). Engine constraints held: agents outside the engine, online paths LLM-free, single-tenant, net-zero new runtime deps.
 
 ## Requirements
 
@@ -111,9 +108,15 @@ Built + verified in **Phase 12: HTTP Serving Mode** (2026-06-11, 815 tests passi
 - [x] Schema topic-region highlighting via engine-served member edges — VIZ-08 (Phase 19)
 - [x] Clean brain hull silhouette from front/top/side (D-06 display-hull) — VIZ-09 (Phase 19)
 
-### Active (v4.0 Proactive Memory)
+**v4.0 Proactive Memory shipped 2026-06-17** (phases 20–23, git tag `v4.0`):
+- [x] Temporal/actionable ingestion — `node_temporal`, Google Calendar `SourceAdapter`, Gmail episodic-variant, multi-account OAuth — TEMP-01/02/03
+- [x] LLM-free engine surfacing surface (`/v1/surface` + surfaced/seen state) + D-43 self-confirmation sentinel — SURF-01/02/03
+- [x] Notify-only proactive Telegram push (default-OFF, restart-surviving dedup) — PUSH-01/02/03
+- [x] Approval-gated execution against any connected MCP tool (hard approval gate, injection hardening, typed destructive confirm, `source:'hitl'` excluded from consolidation) — ACT-01/02/03
 
-Requirements defined in `.planning/REQUIREMENTS.md` — temporal/actionable ingestion (Gmail episodic-variant + Google Calendar adapter), an LLM-free engine surfacing surface with surfaced/seen state, a push-mode proactive Telegram client, and approval-gated agentic execution against any connected MCP tool (nothing fires without approval). Roadmap sequences cheap-and-safe-first.
+### Active (v5.0 Foundational Memory Store + Reader Layer)
+
+Requirements defined in `.planning/REQUIREMENTS.md` — foundational store (provenance verify + `import-memory` migration + a clean-consolidation gate), entity dedup/prune, retrieval-embedding fix, and the reader layer (doc nodes, facts→doc generation with inline citations, staleness/regen, reader UI, doc→doc graph). Backlog-derived (ex-999.3/999.5/999.2/999.4); roadmap sequences foundation → cleanup → retrieval → reader.
 
 ### Out of Scope
 
@@ -152,6 +155,8 @@ Requirements defined in `.planning/REQUIREMENTS.md` — temporal/actionable inge
 | Pure memory system, agents outside (2026-06-10) | Telegram dogfood showed agent-in-engine doesn't scale to many consumers; layered interface (lib → stdio MCP → HTTP) | ✓ Good — v3.0 shipped all three interfaces (MCP/serve/reference client); Telegram now rides the public HTTP API |
 | Engine stays single-tenant (reaffirmed 2026-06-10) | Per-user hosting = instance-per-user; namespace multi-tenancy is SEED-003 behind a real trigger | — Pending |
 | viz anatomical brain = intentional chrome; VIZ-06 term-ban dropped (2026-06-10) | Faithfulness governs engine mechanisms, not presentation; the ban was overkill | — Pending |
+| recense becomes the single foundational store; retire flat MEMORY.md/Obsidian-authoring (v5.0, 2026-06-17) | Facts-for-retrieval belong in the learning brain, not flat files; scope = single-tenant provenance (NOT multi-tenancy), retrieval stays global; long-form human vault deep-dives stay | — Pending |
+| Reader layer = generated docs over the brain with inline fact-refs (v5.0, 2026-06-17) | Keeps a pleasant reading surface while recense is source of truth; id-based citations never stale by construction (only prose drifts); slice validated 19/19 citations, 0 invented | — Pending |
 
 ## Evolution
 
@@ -171,4 +176,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-17 — v4.0 Proactive Memory SHIPPED (phases 20–23, git tag `v4.0`). recense now surfaces and acts on what it learned, behind a hard human-approval gate. Next: start the next milestone via `/gsd:new-milestone` (fresh requirements). Backlog parked: 999.2 (retrieval-embedding reconsolidation) and 999.3 (scope-aware provenance + import-memory — note: its code already landed on `main` via parallel work; reconcile its roadmap status).*
+*Last updated: 2026-06-17 — v5.0 Foundational Memory Store + Reader Layer opened (phases 24–27, promoted from backlog 999.3/999.5/999.2/999.4). v4.0 Proactive Memory shipped + closed (git tag `v4.0`). 999.3 code already landed on `main` via parallel work (schema v10) → Phase 24 is verify+migrate. Open FK consolidation crash root-cause-fixed in code, pending a clean-pass verification (Phase 24 gate). Next: define `.planning/REQUIREMENTS.md` → roadmap.*
