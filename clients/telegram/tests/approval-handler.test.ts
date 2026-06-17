@@ -37,7 +37,7 @@ import { writeStateCursor } from '../state';
 import { putProposal } from '../proposal-store';
 import { encodeProposalCallbackData } from '../push-codec';
 import type { ClientConfig } from '../config';
-import type { MemoryClient, HitlEpisodeEntry } from '../memory-client';
+import type { MemoryClient, HitlEpisodeEntry, SurfaceSeenParams } from '../memory-client';
 import type { McpConnectionFactory, McpToolResult } from '../mcp-client';
 import type { McpServerConfig, StoredProposal } from '../types';
 
@@ -145,19 +145,21 @@ function makeMockMemoryClient(): {
   client: MemoryClient;
   hitlCalls: HitlEpisodeEntry[];
   sentMessages: Array<{ chatId: number; text: string }>;
+  surfaceSeenCalls: SurfaceSeenParams[];
 } {
   const hitlCalls: HitlEpisodeEntry[] = [];
   const sentMessages: Array<{ chatId: number; text: string }> = [];
+  const surfaceSeenCalls: SurfaceSeenParams[] = [];
 
   const client: MemoryClient = {
     async ask() { return { answer: null, origin: 'none' }; },
     async search() { return []; },
     async surface() { return []; },
-    async surfaceSeen() {},
+    async surfaceSeen(params) { surfaceSeenCalls.push({ ...params }); },
     async hitlEpisode(entry) { hitlCalls.push({ ...entry }); },
   };
 
-  return { client, hitlCalls, sentMessages };
+  return { client, hitlCalls, sentMessages, surfaceSeenCalls };
 }
 
 function makeV2Update(proposalId: string, action: 'a' | 'r' | 's' | 'e', updateId = 10): TelegramUpdate {
@@ -490,5 +492,110 @@ describe('approval-handler integration tests', () => {
 
     expect(callLog.calls).toHaveLength(0);
     expect(hitlCalls.some(h => h.decision === 'allowlist-revoked')).toBe(true);
+  });
+
+  // ── GAP-02 (23-10): terminal surfaceSeen on execute and reject ─────────────
+
+  // 10. Successful execute records surfaceSeen with outcome:'completed' (GAP-02)
+  it('successful execute records surfaceSeen({outcome:"completed"}) with nodeId + dueAt', async () => {
+    const proposal = makeProposal(storePath, { nodeId: 'test-surface-node-1' });
+    writeStateCursor(statePath, '0');
+
+    const callLog: MockCallLog = { calls: [] }; // default: isError=false
+    const { client, surfaceSeenCalls } = makeMockMemoryClient();
+    const t = new MockTelegramTransport([makeV2Update(proposal.id, 'a')]);
+    const cfg = makeConfig(statePath);
+    const hooks: ApprovalTestHooks = {
+      storePath,
+      mcpConfigs: TEST_MCP_CONFIGS_SAFE,
+      connectionFactory: makeMockConnectionFactory(callLog),
+    };
+
+    await runClientTick(cfg, t, client, hooks);
+
+    // Exactly one surfaceSeen call with outcome:'completed'
+    const completedCalls = surfaceSeenCalls.filter(c => c.outcome === 'completed');
+    expect(completedCalls).toHaveLength(1);
+    expect(completedCalls[0]?.node_id).toBe('test-surface-node-1');
+    expect(completedCalls[0]?.occurrence_due_at).toBe(proposal.dueAt);
+  });
+
+  // 11. Reject records surfaceSeen with outcome:'dismissed' (GAP-02)
+  it('reject records surfaceSeen({outcome:"dismissed"}) with nodeId + dueAt', async () => {
+    const proposal = makeProposal(storePath, { nodeId: 'test-surface-node-2' });
+    writeStateCursor(statePath, '0');
+
+    const callLog: MockCallLog = { calls: [] };
+    const { client, surfaceSeenCalls } = makeMockMemoryClient();
+    const t = new MockTelegramTransport([makeV2Update(proposal.id, 'r')]);
+    const cfg = makeConfig(statePath);
+    const hooks: ApprovalTestHooks = {
+      storePath,
+      mcpConfigs: TEST_MCP_CONFIGS_SAFE,
+      connectionFactory: makeMockConnectionFactory(callLog),
+    };
+
+    await runClientTick(cfg, t, client, hooks);
+
+    // Exactly one surfaceSeen call with outcome:'dismissed'
+    const dismissedCalls = surfaceSeenCalls.filter(c => c.outcome === 'dismissed');
+    expect(dismissedCalls).toHaveLength(1);
+    expect(dismissedCalls[0]?.node_id).toBe('test-surface-node-2');
+    expect(dismissedCalls[0]?.occurrence_due_at).toBe(proposal.dueAt);
+    // No callTool was made
+    expect(callLog.calls).toHaveLength(0);
+  });
+
+  // 12. Failed execute (isError=true) does NOT record surfaceSeen('completed') (GAP-02)
+  it('failed execute (isError=true) does NOT record surfaceSeen({outcome:"completed"})', async () => {
+    const proposal = makeProposal(storePath, { nodeId: 'test-surface-node-3' });
+    writeStateCursor(statePath, '0');
+
+    const callLog: MockCallLog = {
+      calls: [],
+      resultOverride: {
+        content: [{ type: 'text', text: 'permission denied' }],
+        isError: true,
+      },
+    };
+    const { client, surfaceSeenCalls } = makeMockMemoryClient();
+    const t = new MockTelegramTransport([makeV2Update(proposal.id, 'a')]);
+    const cfg = makeConfig(statePath);
+    const hooks: ApprovalTestHooks = {
+      storePath,
+      mcpConfigs: TEST_MCP_CONFIGS_SAFE,
+      connectionFactory: makeMockConnectionFactory(callLog),
+    };
+
+    await runClientTick(cfg, t, client, hooks);
+
+    // No 'completed' surfaceSeen — failed execute is a non-terminal retry path
+    const completedCalls = surfaceSeenCalls.filter(c => c.outcome === 'completed');
+    expect(completedCalls).toHaveLength(0);
+  });
+
+  // 13. Reject when proposal already gone (getProposal returns null) — no throw, no surfaceSeen (GAP-02)
+  it('reject for missing proposal (not in store) does not throw and records no surfaceSeen', async () => {
+    // Do NOT put any proposal in the store — simulate already-gone proposal
+    const nonExistentId = 'prop-does-not-exist-9999';
+    writeStateCursor(statePath, '0');
+
+    const callLog: MockCallLog = { calls: [] };
+    const { client, surfaceSeenCalls, hitlCalls } = makeMockMemoryClient();
+    const t = new MockTelegramTransport([makeV2Update(nonExistentId, 'r')]);
+    const cfg = makeConfig(statePath);
+    const hooks: ApprovalTestHooks = {
+      storePath,
+      mcpConfigs: TEST_MCP_CONFIGS_SAFE,
+      connectionFactory: makeMockConnectionFactory(callLog),
+    };
+
+    // Must not throw
+    await expect(runClientTick(cfg, t, client, hooks)).resolves.toBeUndefined();
+
+    // No surfaceSeen at all (getProposal returned null → skip surfaceSeen)
+    expect(surfaceSeenCalls).toHaveLength(0);
+    // hitlEpisode(reject) still written
+    expect(hitlCalls.some(h => h.decision === 'reject')).toBe(true);
   });
 });
