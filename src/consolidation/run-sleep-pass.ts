@@ -33,6 +33,7 @@ import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 import { newId } from '../lib/hash';
+import { cwdToScope, resolveNodeScope } from '../lib/scope';
 
 /**
  * Phase 19 cascade tunables (Item 2 transport (b): the pass spaces emits).
@@ -93,6 +94,60 @@ export async function lightConsolidatedNodes(
     }
   } catch {
     // Never let viz lighting affect the pass.
+  }
+}
+
+/**
+ * Phase 999.3 (SCOPE-01, D-S3): stamp single-tenant PROVENANCE scope on every node this
+ * pass touched, derived from the cwd of its contributing episode(s).
+ *
+ * For each node with a consolidation_event since `sinceTs`, collect the DISTINCT cwd of
+ * ALL its contributing episodes (across passes, via the consolidation_event → episode
+ * provenance join), map each via cwdToScope, and resolve with resolveNodeScope:
+ * single known project → that slug; >1 distinct project or personal/home/empty/unknown →
+ * 'global'. Idempotent — re-running upserts the same row.
+ *
+ * Provenance, NOT tenancy (D-S1): scope is a derived DISPLAY annotation. It NEVER feeds
+ * retrieval ranking/score/filter. Belief consolidation (node values, dedup, tombstoning,
+ * judge) is untouched — this is a purely additive sidecar write AFTER consolidate().
+ *
+ * Best-effort by construction (D-S2): the whole body is wrapped in try/catch so a
+ * scope-write error can NEVER abort or alter the belief write. A pass that touched no
+ * node writes nothing. Synchronous (no I/O beyond the shared DB handle). Exported for
+ * direct verification.
+ */
+export function stampNodeScopes(
+  db: Database.Database,
+  store: SemanticStore,
+  clock: Clock,
+  sinceTs: number,
+): void {
+  try {
+    // Nodes this pass touched (any consolidation_event since the pass high-water mark).
+    const touched = db
+      .prepare(
+        `SELECT DISTINCT node_id FROM consolidation_event
+         WHERE ts >= ? AND node_id IS NOT NULL`,
+      )
+      .all(sinceTs) as Array<{ node_id: string }>;
+    if (touched.length === 0) return;
+
+    // All contributing episodes' cwd for a given node — across ALL passes, not just this
+    // one — so a node confirmed by episodes from two projects resolves to 'global' (D-S3).
+    const cwdStmt = db.prepare(
+      `SELECT DISTINCT e.cwd AS cwd
+       FROM consolidation_event ce
+       JOIN episode e ON e.id = ce.episode_id
+       WHERE ce.node_id = ?`,
+    );
+    const now = clock.nowMs();
+    for (const { node_id } of touched) {
+      const cwds = (cwdStmt.all(node_id) as Array<{ cwd: string | null }>).map(r => r.cwd ?? '');
+      const scope = resolveNodeScope(cwds.map(cwdToScope));
+      store.upsertNodeScope({ node_id, scope, updated_at: now });
+    }
+  } catch {
+    // Never let provenance stamping affect the pass (D-S2 best-effort).
   }
 }
 
@@ -288,6 +343,11 @@ export async function runConsolidation(
   // the nodes THIS pass touches — consolidation_event.ts (ms) bounds the pass.
   const passStartTs = realClock.nowMs();
   await consolidator.consolidate();
+
+  // Phase 999.3 (SCOPE-01, D-S3): stamp single-tenant provenance scope on the nodes this
+  // pass touched, from their contributing-episode cwd. Additive + best-effort — runs after
+  // consolidate() and never affects belief writes or retrieval ranking (D-S1/D-S2).
+  stampNodeScopes(db, store, realClock, passStartTs);
 
   // Phase 19: light the second brain when it does real work on its own.
   // Awaited so the spaced cascade completes inside the caller's lock/DB lifetime.
