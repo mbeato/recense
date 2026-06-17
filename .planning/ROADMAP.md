@@ -6,7 +6,7 @@
 - ✅ **v2.0 Open-Source Release** — Phases 9–10 (shipped 2026-06-10) — full detail: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 - ✅ **v3.0 Interface Layer** — Phases 11–17 (shipped 2026-06-13)
 - ✅ **v3.1 Schema Depth & Brain-Window Polish** — Phases 18–19 (shipped 2026-06-15)
-- 🚧 **v4.0 Proactive Memory** — Phases 20–23 (opened 2026-06-15)
+- ✅ **v4.0 Proactive Memory** — Phases 20–23 (shipped 2026-06-17) — full detail: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 
 > RECOVERY NOTE (2026-06-15): `.planning/ROADMAP.md` was accidentally overwritten during Phase 20 planning. Phases 11–19 detail, the Progress table, and the Backlog were recovered from the 2026-06-14 on-disk snapshot (`~/.brain-memory-planning-restore/ROADMAP.md`) and are authoritative. Phase 20 detail is verbatim from the planning context. **Phases 21–23 Goal/Success-Criteria prose is reconstructed from REQUIREMENTS.md + the v4.0 milestone note — sanity-check it against your intent.** Pre-merge artifact kept at `.planning/ROADMAP.reconstructed-v4.md`.
 
@@ -57,7 +57,7 @@ Full phase details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 
 </details>
 
-### 🚧 v4.0 Proactive Memory (Phases 20–23) — opened 2026-06-15
+### ✅ v4.0 Proactive Memory (Phases 20–23) — shipped 2026-06-17 — full detail archived to [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 
 The pivot from a passive recall engine to a memory that **surfaces and acts** on what it learned. Dependency-strict chain (each phase needs the prior): Phase 20 (temporal facts) → Phase 21 (surfacing API) → Phase 22 (notify-only push) → Phase 23 (approval-gated execution).
 
