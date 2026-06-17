@@ -87,6 +87,7 @@ function makeProposal(
     serverName: 'test-server',
     tool: 'read_file',
     args: { path: '/tmp/notes.txt' },
+    nodeId: 'test-node-abc',
     dueAt: new Date(Date.now() + 3_600_000).toISOString(), // 1h from now
     maxTtlMs: 3_600_000,
     createdAt: new Date().toISOString(),

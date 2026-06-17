@@ -76,6 +76,7 @@ function makeDestructiveProposal(storePath: string): StoredProposal {
     serverName: 'test-server',
     tool: 'delete_file',
     args: { path: '/tmp/test.txt' },
+    nodeId: 'test-node-destructive',
     dueAt: new Date(Date.now() + 3_600_000).toISOString(), // due in 1 hour
     maxTtlMs: 3_600_000,
     createdAt: new Date().toISOString(),
@@ -93,6 +94,7 @@ function makeNonDestructiveProposal(storePath: string): StoredProposal {
     serverName: 'test-server',
     tool: 'list_files',
     args: { dir: '/tmp' },
+    nodeId: 'test-node-safe',
     dueAt: new Date(Date.now() + 3_600_000).toISOString(),
     maxTtlMs: 3_600_000,
     createdAt: new Date().toISOString(),
