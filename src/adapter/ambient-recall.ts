@@ -131,10 +131,20 @@ export async function ambientRecall(
   // Token-lean block: header + one capped line per fact, max AMBIENT_K lines.
   // retrieveRanked rows carry id/value/score only; one indexed getNode per surfaced
   // row is acceptable on this path.
+  const surfaced = results.slice(0, AMBIENT_K);
+
+  // D-S6 provenance surfacing: batch-read scopes AFTER ranking/selection — this read
+  // NEVER influences score, filter, or order (D-S1). A non-global scope renders as a
+  // `[slug]` prefix; 'global' and unscoped nodes render with no marker (keeps the block
+  // lean — only project-specific provenance is flagged). Display-only by construction.
+  const scopes = store.getNodeScopes(surfaced.map(r => r.id));
+
   const lines = ['Recalled from recense (ambient):'];
-  for (const r of results.slice(0, AMBIENT_K)) {
+  for (const r of surfaced) {
     const origin = store.getNode(r.id)?.origin ?? 'observed';
-    lines.push(`- ${r.value.slice(0, MAX_VALUE_CHARS)} (${origin}, score ${r.score.toFixed(2)})`);
+    const scope = scopes.get(r.id);
+    const marker = scope && scope !== 'global' ? `[${scope}] ` : '';
+    lines.push(`- ${marker}${r.value.slice(0, MAX_VALUE_CHARS)} (${origin}, score ${r.score.toFixed(2)})`);
   }
   return lines.join('\n');
 }
