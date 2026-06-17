@@ -330,8 +330,8 @@ export async function createBrainHttpServer(
         logRequest('POST', url, 413, Date.now() - start);
         return;
       }
-      let parsed: { content?: unknown; origin?: unknown };
-      try { parsed = JSON.parse(rawBody) as { content?: unknown; origin?: unknown }; } catch {
+      let parsed: { content?: unknown; origin?: unknown; source?: unknown };
+      try { parsed = JSON.parse(rawBody) as { content?: unknown; origin?: unknown; source?: unknown }; } catch {
         jsonError(res, 400, { error: 'bad_request', detail: 'invalid json' });
         logRequest('POST', url, 400, Date.now() - start);
         return;
@@ -342,8 +342,11 @@ export async function createBrainHttpServer(
         return;
       }
       const origin = typeof parsed.origin === 'string' ? parsed.origin : undefined;
+      // ACT-03 / D-43: pass source through to ops.add for allowlist validation (validateSource).
+      // Only 'hitl' is a permitted override; everything else falls back to the engine default.
+      const source = typeof parsed.source === 'string' ? parsed.source : undefined;
       try {
-        const ack = await ops.add(parsed.content, origin);
+        const ack = await ops.add(parsed.content, origin, source);
         jsonOk(res, ack);
         logRequest('POST', url, 200, Date.now() - start);
       } catch (err) {

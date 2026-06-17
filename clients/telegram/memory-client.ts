@@ -213,7 +213,11 @@ export function createMemoryClient(serveUrl: string, serveToken: string): Memory
       const content = parts.join(' | ');
       const origin = `hitl:${entry.decision}`;
 
-      await postJson('/v1/add', { content, origin });
+      // ACT-03 / H-12: stamp source='hitl' so the serve layer threads it through
+      // validateSource → recordEvent. Audit episodes land with source='hitl' and are
+      // excluded from consolidation extraction (D-43). The token is never serialised
+      // here — only content/origin/source are in the body (H-13).
+      await postJson('/v1/add', { content, origin, source: 'hitl' });
     },
   };
 }
