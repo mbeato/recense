@@ -277,6 +277,40 @@ export async function runClientTick(
 
     // ── 6–7. Respond loop ───────────────────────────────────────────────────
     for (const m of filtered) {
+      // ── Typed-confirm intercept (Pitfall #3 — BEFORE ask()) ──────────────
+      // When a user has an open typed-confirm entry, their next message is the
+      // confirmation, NOT a Q&A query. Checking here prevents the confirmation
+      // value from being routed to memoryClient.ask (which would answer it as a
+      // memory question and never fire the execute path).
+      // Security: expectedValue comes from the STORED payload (H-08, not re-derived).
+      const pendingConfirm = pendingTypedConfirm.get(m.sender);
+      if (pendingConfirm !== undefined) {
+        pendingTypedConfirm.delete(m.sender); // consume entry regardless of outcome
+        if (pendingConfirm.expiresAt > Date.now()) {
+          if (m.text.trim() === pendingConfirm.expectedValue) {
+            // Correct value → execute the stored proposal via shared helper
+            try {
+              await executeStoredProposal(
+                transport, memoryClient,
+                getApprovalMcpConfigs(), getApprovalStorePath(),
+                pendingConfirm.proposalId, Number(m.sender),
+                approvalHooks?.connectionFactory,
+              );
+            } catch (err) {
+              log('executeStoredProposal error (typed-confirm): ' + String(err));
+            }
+          } else {
+            // Wrong value → abort; write failure episode
+            try { await transport.sendMessage(Number(m.sender), 'Confirmation did not match — aborted.'); }
+            catch (e) { log('send error (confirm-failed): ' + String(e)); }
+            try { await memoryClient.hitlEpisode({ decision: 'confirm-failed' }); }
+            catch (e) { log('hitlEpisode error (confirm-failed): ' + String(e)); }
+          }
+        }
+        // Either way: skip Q&A for this message (Pitfall #3 — entry consumed above)
+        continue;
+      }
+
       let answer: string | null = null;
       let origin = 'none';
       try {
