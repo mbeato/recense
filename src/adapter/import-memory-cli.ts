@@ -89,8 +89,10 @@ export interface ImportCounts {
  * MEMORY.md index → 'memory-index'; a policy bundle → 'policy-bundle'; else undefined.
  */
 export function skipReasonFor(filename: string): SkipReason | undefined {
-  if (filename === 'MEMORY.md') return 'memory-index';
-  const stem = filename.replace(/\.md$/i, '');
+  // Case-insensitive: skiplist matching must not depend on filename casing
+  // (POLICY_BUNDLES stems are lowercase; index files are conventionally MEMORY.md).
+  if (filename.toLowerCase() === 'memory.md') return 'memory-index';
+  const stem = filename.replace(/\.md$/i, '').toLowerCase();
   if (POLICY_BUNDLES.has(stem)) return 'policy-bundle';
   return undefined;
 }
