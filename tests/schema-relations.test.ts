@@ -11,6 +11,8 @@
  *   D-03     — super-schema-as-schema exclusion: super-schemas never re-clustered as leaf members
  *   D-04     — deriveSchemaRelations() twice produces identical schema_rel edge set + super-schema set
  *   D-37     — inferred-origin nodes NEVER contribute signal to schema_rel derivation
+ *   FK-01    — deriveSchemaRelations() does NOT throw when a kind='relation' edge (e.g. extends)
+ *              survives from a prior pass with src=super::… (regression for FK crash)
  */
 
 import Database from 'better-sqlite3';
@@ -414,6 +416,54 @@ describe('SchemaRelationDeriver', () => {
     expect(superEdges2).toEqual(superEdges1);
     // Sanity: something actually formed
     expect(superNodes1.length).toBe(1);
+  });
+
+  // ── FK-01 regression: kind='relation' edge on super-schema must not block node DELETE ─
+
+  it('FK-01: deriveSchemaRelations() does not throw when a kind=relation edge has src=super-schema (FK crash regression)', async () => {
+    const embedder = makeSameClusterEmbedder(h.config.embeddingDimensions);
+
+    // Seed two schemas that will cluster into a super-schema.
+    const memberAIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberAIds.push(await seedNodeWithEmbedding(h, embedder, { value: `fk01-a-${i}` }));
+    }
+    const memberBIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberBIds.push(await seedNodeWithEmbedding(h, embedder, { value: `fk01-b-${i}` }));
+    }
+    createSchema(h, memberAIds);
+    createSchema(h, memberBIds);
+
+    // First pass: produce a super-schema node.
+    const deriver = new SchemaRelationDeriver(h.db, h.store, h.config, h.clock);
+    await deriver.deriveSchemaRelations();
+
+    const superNodes = h.db
+      .prepare("SELECT id FROM node WHERE id LIKE 'super::%'")
+      .all() as Array<{ id: string }>;
+    expect(superNodes.length).toBeGreaterThanOrEqual(1);
+
+    const superId = superNodes[0]!.id;
+
+    // Simulate the Phase B 'extend' path: mint a new fact node and wire a kind='relation'
+    // edge from the super-schema as src (this is exactly what applyDecision 'extend' does
+    // when a super-schema is retrieved as a top-k candidate in a subsequent pass).
+    const extendedNodeId = newId();
+    h.store.upsertNode({ id: extendedNodeId, type: 'fact', value: 'extended fact', origin: 'observed' });
+    h.store.upsertEdge({ src: superId, dst: extendedNodeId, rel: 'extends', w: 0.1, kind: 'relation' });
+
+    // Confirm the 'relation' edge exists before the second deriver run.
+    const relEdgeBefore = h.db
+      .prepare("SELECT * FROM edge WHERE src = ? AND kind = 'relation'")
+      .all(superId) as EdgeRow[];
+    expect(relEdgeBefore).toHaveLength(1);
+
+    // Second pass: must NOT throw even though the super-schema has a kind='relation' edge.
+    // Before the FK-01 fix, stmtDeleteSuperSchemaEdges filtered AND kind='abstracts' and
+    // missed this edge, causing stmtDeleteSuperSchemaNodes to fail with
+    // "FOREIGN KEY constraint failed".
+    await expect(deriver.deriveSchemaRelations()).resolves.toBeUndefined();
   });
 
   // ── D-03 critical guard: super-schemas excluded from leaf re-clustering ───
