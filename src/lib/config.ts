@@ -132,9 +132,11 @@ export interface EngineConfig {
    * 'local' routes ALL Anthropic-family calls (judge/extractor/schema-naming/recall-compose)
    * to a local Ollama OpenAI-compatible endpoint (see localBaseUrl/localModel).
    * 'deepseek' routes judge calls to DeepSeek's OpenAI-compatible endpoint (ECR-01).
+   * 'claude-headless' shells out to the first-party `claude -p` binary on the founder's
+   * Max subscription (spike 003; QUICK-260617-qat) — opt-in via env ONLY, default unchanged.
    * Faithfulness note: narrow transport seam, NOT the Phase 5 SEAM-01 ModelProvider abstraction.
    */
-  modelProvider: 'anthropic' | 'vertex' | 'local' | 'deepseek';
+  modelProvider: 'anthropic' | 'vertex' | 'local' | 'deepseek' | 'claude-headless';
 
   /**
    * Anthropic model for cold-start LLM extraction (D-05).
@@ -183,6 +185,26 @@ export interface EngineConfig {
    * modelProvider === 'deepseek'.
    */
   deepseekModel: string;
+
+  /**
+   * Resolved model id for the headless `claude -p` transport (QUICK-260617-qat).
+   * This is the value resolveModelId returns for modelProvider === 'claude-headless'.
+   * The per-role sleep-pass overlay (resolveProviderOverlay) sets this to the judge or
+   * extract model below; the bare default is the judge model (safe higher-stakes default).
+   */
+  claudeHeadlessModel: string;
+
+  /**
+   * Default judge model for the headless transport (spike 003: Sonnet beat the paid
+   * Haiku-API judge). Consumed as the per-role default by resolveProviderOverlay.
+   */
+  claudeHeadlessJudgeModel: string;
+
+  /**
+   * Default extract model for the headless transport (spike 003: Haiku).
+   * Consumed as the per-role default by resolveProviderOverlay.
+   */
+  claudeHeadlessExtractModel: string;
 
   /**
    * OpenAI embedding model — Phase 2+ only.
@@ -595,6 +617,9 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   localModel: 'qwen3.6:35b-a3b',
   deepseekBaseUrl: 'https://api.deepseek.com',
   deepseekModel: 'deepseek-v4-pro',
+  claudeHeadlessModel: 'claude-sonnet-4-6',        // resolved default = judge model (higher-stakes)
+  claudeHeadlessJudgeModel: 'claude-sonnet-4-6',   // spike 003: Sonnet judge on Max
+  claudeHeadlessExtractModel: 'claude-haiku-4-5',  // spike 003: Haiku extract on Max
   openaiEmbedModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
   candidateK: 5,

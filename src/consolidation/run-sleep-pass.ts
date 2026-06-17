@@ -156,7 +156,7 @@ export function stampNodeScopes(
 // ---------------------------------------------------------------------------
 
 /** Provider values accepted by EngineConfig.modelProvider (the validation union). */
-export const VALID_PROVIDERS = ['anthropic', 'vertex', 'local', 'deepseek'] as const;
+export const VALID_PROVIDERS = ['anthropic', 'vertex', 'local', 'deepseek', 'claude-headless'] as const;
 export type ModelProvider = (typeof VALID_PROVIDERS)[number];
 
 /** Env-derived overlay applied on top of DEFAULT_CONFIG for the sleep pass. */
@@ -166,6 +166,7 @@ export interface ProviderOverlay {
   localBaseUrl?: string;
   deepseekModel?: string;
   deepseekBaseUrl?: string;
+  claudeHeadlessModel?: string;
 }
 
 /**
@@ -222,6 +223,22 @@ export function resolveProviderOverlay(
     const deepseekBaseUrl = env['RECENSE_DEEPSEEK_BASE_URL'];
     if (deepseekModel) overlay.deepseekModel = deepseekModel;
     if (deepseekBaseUrl) overlay.deepseekBaseUrl = deepseekBaseUrl;
+  }
+
+  if (provider === 'claude-headless') {
+    // Per-role model resolution (QUICK-260617-qat): judge defaults to Sonnet, extract to
+    // Haiku (spike 003). An explicit per-role env pin
+    // (RECENSE_JUDGE_CLAUDE_HEADLESS_MODEL / RECENSE_EXTRACTOR_CLAUDE_HEADLESS_MODEL) wins,
+    // then the shared RECENSE_CLAUDE_HEADLESS_MODEL, then the per-role DEFAULT_CONFIG default.
+    const roleModelKey = roleEnvKey?.endsWith('_PROVIDER')
+      ? roleEnvKey.replace(/_PROVIDER$/, '_CLAUDE_HEADLESS_MODEL')
+      : undefined;
+    const isExtractor = roleEnvKey?.includes('EXTRACTOR') ?? false;
+    const roleDefault = isExtractor
+      ? DEFAULT_CONFIG.claudeHeadlessExtractModel
+      : DEFAULT_CONFIG.claudeHeadlessJudgeModel;
+    overlay.claudeHeadlessModel =
+      (roleModelKey && env[roleModelKey]) || env['RECENSE_CLAUDE_HEADLESS_MODEL'] || roleDefault;
   }
 
   return overlay;
