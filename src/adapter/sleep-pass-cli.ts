@@ -73,7 +73,8 @@ async function main(): Promise<void> {
     // (wiring, consolidate(), SEAM-02 event summary — shared with ingest-cli)
     await runConsolidation(db, dbPath, process.env, log);
   } catch (err) {
-    log(`Sleep pass error: ${err}`);
+    const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    log(`Sleep pass error: ${detail}`);
   } finally {
     // ── 7. Always close the DB, then release the lock (DEBT-03/CR-02/WR-03) ──
     // Close first: flushes the WAL checkpoint and releases the read lock.
@@ -88,7 +89,8 @@ async function main(): Promise<void> {
 if (require.main === module) {
   main().catch(err => {
     // Fatal: something went wrong before the try/finally could run
-    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] sleep-pass FATAL: ${err}\n`);
+    const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] sleep-pass FATAL: ${detail}\n`);
     releaseLock(); // best-effort cleanup
     process.exit(1);
   });
