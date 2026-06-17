@@ -183,3 +183,34 @@ export async function callServerTool(
     }
   }
 }
+
+/** Outcome of a tool call after data-only extraction (T-SEC-02). */
+export interface ToolOutput {
+  /** Joined text of every `type: 'text'` content item — opaque data, never LLM-fed. */
+  text: string;
+  /**
+   * True when the tool RAN but reported a failure (result.isError === true).
+   * Distinct from a thrown transport error (which rejects callServerTool). The
+   * text is still preserved for the audit episode (Pitfall #2).
+   */
+  isError: boolean;
+}
+
+/**
+ * Extract a tool result as OPAQUE TEXT DATA (T-SEC-02).
+ *
+ * Only `type: 'text'` content items are kept (joined with newlines); image,
+ * audio, resource, and any other content is dropped — never interpreted. The
+ * returned text is for display + the `source:'hitl'` audit episode ONLY; it is
+ * never passed to DeepSeek or any other LLM (enforced structurally — this module
+ * imports no LLM code). The separate `isError` flag carries the tool's own
+ * failure signal without masking a thrown transport error.
+ */
+export function extractToolOutput(result: McpToolResult): ToolOutput {
+  const items = Array.isArray(result.content) ? result.content : [];
+  const text = items
+    .filter((c): c is McpContentItem & { text: string } => c.type === 'text' && typeof c.text === 'string')
+    .map((c) => c.text)
+    .join('\n');
+  return { text, isError: result.isError === true };
+}
