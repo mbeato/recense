@@ -21,6 +21,8 @@
  *   - parsePatch returns null on malformed input
  *   - deriveConfirmValue returns a real payload value (not a fixed word)
  *
+ * GAP-02 (23-10): tryGenerateProposal nodeId carry-through (ACT-01).
+ *
  * No imports from ../../src/ — CLIENT-01 structural guard.
  * All DeepSeek calls use an injectable mock fetch — no live API calls.
  */
@@ -36,8 +38,12 @@ import {
   validateEditedArgs,
   deriveConfirmValue,
 } from '../proposal-engine';
-import type { McpToolDescriptor } from '../mcp-client';
-import type { AllowlistEntry } from '../types';
+import { tryGenerateProposal } from '../index';
+import type { McpToolDescriptor, McpConnection, McpConnectionFactory } from '../mcp-client';
+import type { FetchImpl } from '../proposal-engine';
+import type { AllowlistEntry, McpServerConfig } from '../types';
+import type { MemoryClient, SurfaceItem } from '../memory-client';
+import type { ActionConfig } from '../config';
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -531,5 +537,85 @@ describe('deriveConfirmValue (D-09: real payload value, not a fixed word)', () =
   it('returns the "address" field when present', () => {
     const value = deriveConfirmValue('send_package', { address: '123 Main St', item: 'Widget' });
     expect(value).toBe('123 Main St');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GAP-02 (23-10): tryGenerateProposal nodeId carry-through (ACT-01)
+// ---------------------------------------------------------------------------
+
+describe('tryGenerateProposal: nodeId carry-through (GAP-02 / ACT-01)', () => {
+  const ITEM_NODE_ID = 'node-abc-123';
+
+  /** The P0 surface item fixture — carries node_id and due_at. */
+  const SURFACE_ITEM: SurfaceItem = {
+    node_id: ITEM_NODE_ID,
+    value: 'Send invoice to alice@example.com by Friday',
+    due_at: new Date(Date.now() + 3_600_000).toISOString(),
+    action_type: 'email',
+    tier: 0,
+    score: 0.9,
+  };
+
+  const MOCK_ACTION_CONFIG: ActionConfig = {
+    deepseekApiKey: 'test-key',
+    deepseekModel: 'deepseek-chat',
+    deepseekBaseUrl: 'https://api.deepseek.com/v1',
+    proposalDailyCap: 10,
+    proposalMaxTtlMs: 86_400_000,
+    proposalStorePath: '/tmp/test-proposal-nodeId-store.json',
+  };
+
+  const MCP_CONFIGS: McpServerConfig[] = [{
+    name: 'email-server',
+    transport: 'stdio',
+    command: '/bin/echo',
+    allowedTools: [{ name: 'send_email', destructive: false }],
+  }];
+
+  /** Mock connection factory that lists EMAIL_TOOL without spawning any process. */
+  function makeMockConnectionFactory(): McpConnectionFactory {
+    const conn: McpConnection = {
+      connect: async () => {},
+      listTools: async () => ({ tools: [EMAIL_TOOL] }),
+      callTool: async () => ({ content: [], isError: false }),
+      close: async () => {},
+    };
+    return () => conn;
+  }
+
+  /** Mock fetch that returns a confident send_email proposal from DeepSeek. */
+  function makeDeepSeekFetch(): FetchImpl {
+    return async () => {
+      const content = JSON.stringify({
+        tool: 'send_email',
+        args: { to: 'alice@example.com', subject: 'Invoice', body: 'Please find attached.' },
+      });
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+  }
+
+  const mockMemoryClient: MemoryClient = {
+    ask: async () => ({ answer: null, origin: 'none' }),
+    search: async () => [],
+    surface: async () => [],
+    surfaceSeen: async () => {},
+    hitlEpisode: async () => {},
+  };
+
+  it('returned StoredProposal.nodeId equals item.node_id (GAP-02)', async () => {
+    const proposal = await tryGenerateProposal(
+      mockMemoryClient,
+      SURFACE_ITEM,
+      MOCK_ACTION_CONFIG,
+      MCP_CONFIGS,
+      makeMockConnectionFactory(),
+      makeDeepSeekFetch(),
+    );
+    expect(proposal).not.toBeNull();
+    expect(proposal?.nodeId).toBe(ITEM_NODE_ID);
   });
 });
