@@ -3,10 +3,10 @@ import { randomUUID } from 'crypto';
 import { type ClientConfig, type ActionConfig, loadClientConfig, loadActionConfig, loadMcpConfig } from './config';
 import { readStateCursor, writeStateCursor } from './state';
 import { DefaultTelegramTransport, type TelegramTransport, type InlineKeyboardMarkup } from './transport';
-import { type FetchResult, type InboundMessage, type CollectedCallbackQuery, type McpServerConfig, type StoredProposal } from './types';
+import { type FetchResult, type InboundMessage, type CollectedCallbackQuery, type McpServerConfig, type StoredProposal, type ProposalAction } from './types';
 import { createMemoryClient, type MemoryClient, type SurfaceItem } from './memory-client';
-import { encodeCallbackData, decodeCallbackData, encodeProposalCallbackData } from './push-codec';
-import { putProposal, tryReserveProposalSlot } from './proposal-store';
+import { encodeCallbackData, decodeCallbackData, encodeProposalCallbackData, decodeProposalCallbackData } from './push-codec';
+import { putProposal, tryReserveProposalSlot, loadExecutable, removeProposal } from './proposal-store';
 import {
   filterAllowlisted,
   buildProposalPrompt,
@@ -15,7 +15,7 @@ import {
   deriveConfirmValue,
   type FetchImpl,
 } from './proposal-engine';
-import { listServerTools, type McpConnectionFactory } from './mcp-client';
+import { listServerTools, callServerTool, extractToolOutput, defaultConnectionFactory, type McpConnectionFactory } from './mcp-client';
 
 // ---------------------------------------------------------------------------
 // Log helper — append-only file log; never stdout (background process, T-13-05)
@@ -41,6 +41,33 @@ const log = (msg: string): void =>
 
 let tickInFlight = false;
 let pushInFlight = false;
+
+// ---------------------------------------------------------------------------
+// Typed-confirm state machine — module-level pending map (D-09 / ACT-03)
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory pending typed-confirm entries keyed by Telegram sender id (string).
+ * Process lifetime only — if the client restarts, state is lost and the user must
+ * re-tap Approve (safe: the proposal-store persists across restarts). Risk 2.
+ *
+ * Each entry carries the proposalId (to load the immutable payload at confirm time),
+ * the exact expectedValue from the STORED payload (H-08 — never re-derived from
+ * DeepSeek), and an expiresAt epoch-ms to bound the confirm window (5 minutes).
+ */
+const pendingTypedConfirm = new Map<string, {
+  proposalId: string;
+  expectedValue: string;
+  expiresAt: number;
+}>();
+
+/**
+ * Test helper: drain all pending typed-confirm entries between test cases.
+ * Never called in production code paths.
+ */
+export function _clearPendingTypedConfirm(): void {
+  pendingTypedConfirm.clear();
+}
 
 // ---------------------------------------------------------------------------
 // Inlined Telegram fetch logic
@@ -188,6 +215,7 @@ export async function runClientTick(
   config: ClientConfig,
   transport: TelegramTransport,
   memoryClient: MemoryClient,
+  approvalHooks?: ApprovalTestHooks,
 ): Promise<void> {
   // ── 1. In-process tick guard (must be set BEFORE first await) ────────────
   if (tickInFlight) {
@@ -229,6 +257,24 @@ export async function runClientTick(
     const skipCommit =
       commitTo !== null && cursor !== null && Number(commitTo) <= Number(cursor);
 
+    // ── 5.5. Lazy approval-config getters ──────────────────────────────────
+    // Computed on first use only — no config I/O overhead on idle or Q&A-only ticks.
+    // Used by both the typed-confirm intercept (step 6.5, Task 2) and callback drain (step 8).
+    let _approvalStorePath: string | undefined;
+    let _approvalMcpConfigs: McpServerConfig[] | undefined;
+    const getApprovalStorePath = (): string => {
+      if (_approvalStorePath === undefined) {
+        _approvalStorePath = approvalHooks?.storePath ?? loadActionConfig().proposalStorePath;
+      }
+      return _approvalStorePath;
+    };
+    const getApprovalMcpConfigs = (): McpServerConfig[] => {
+      if (_approvalMcpConfigs === undefined) {
+        _approvalMcpConfigs = approvalHooks?.mcpConfigs ?? loadMcpConfig();
+      }
+      return _approvalMcpConfigs;
+    };
+
     // ── 6–7. Respond loop ───────────────────────────────────────────────────
     for (const m of filtered) {
       let answer: string | null = null;
@@ -267,8 +313,13 @@ export async function runClientTick(
     // Critical distinction from D-04: callback errors do NOT block cursor advance.
     // surfaceSeen is idempotent; a re-tap resends; cursor-hold would cause infinite
     // re-processing of the same callback. answerCallbackQuery is ALWAYS called on
-    // every branch (allowlisted, unlisted, malformed, surfaceSeen-error) to clear
-    // the Telegram client-side spinner (Pitfall 1 — answerCallbackQuery is mandatory).
+    // every branch (allowlisted, unlisted, malformed, surfaceSeen-error, v2 proposal)
+    // to clear the Telegram client-side spinner (Pitfall 1 — mandatory).
+    //
+    // Version-prefix routing (Phase 23):
+    //   '2|...' → decodeProposalCallbackData → handleProposalAction (approval flow)
+    //   '1|...' → decodeCallbackData → surfaceSeen (Phase-22 surface-seen flow, unchanged)
+    //   other   → null → ack only (Pitfall 1 still applies)
     if (callbackQueries.length > 0) {
       const allow = new Set(config.allowlist.map(s => s.trim()));
 
@@ -282,8 +333,35 @@ export async function runClientTick(
           continue;
         }
 
+        const data = cq.data ?? '';
+
+        // ── v2 proposal callback (Phase 23) ───────────────────────────────
+        // Check version prefix before passing to decodeCallbackData, so the v1
+        // decoder is never called on a v2 string (they are mutually exclusive, Risk 5).
+        if (data.startsWith('2|')) {
+          const decodedProposal = decodeProposalCallbackData(data);
+          if (decodedProposal) {
+            try {
+              await handleProposalAction(
+                transport, memoryClient,
+                getApprovalMcpConfigs(), getApprovalStorePath(),
+                cq.fromId, decodedProposal,
+                approvalHooks?.connectionFactory,
+              );
+            } catch (err) {
+              log('handleProposalAction error: ' + String(err));
+            }
+          } else {
+            log('callback_query: v2 malformed proposal data — skipping');
+          }
+          // MUST answer on every v2 branch — unconditional spinner clear (Pitfall 1)
+          try { await transport.answerCallbackQuery(cq.id); } catch (e) { log('answerCallbackQuery error (v2): ' + String(e)); }
+          continue;
+        }
+
+        // ── v1 surface-seen callback (Phase 22, unchanged) ────────────────
         // Decode callback_data — returns null on malformed input (T-22-02)
-        const decoded = decodeCallbackData(cq.data ?? '');
+        const decoded = decodeCallbackData(data);
         if (!decoded) {
           log('callback_query: no callback_data or unrecognized format — skipping surfaceSeen');
           try { await transport.answerCallbackQuery(cq.id); } catch (e) { log('answerCallbackQuery error (malformed): ' + String(e)); }
@@ -458,6 +536,22 @@ export interface ProposalTestHooks {
 }
 
 /**
+ * Test-injectable overrides for the approval handling sub-path of runClientTick.
+ *
+ * Allows unit tests to supply a scripted proposal store path, MCP server configs,
+ * and connection factory without live filesystem writes or network calls.
+ * Production code never passes this; it is only used in unit tests.
+ */
+export interface ApprovalTestHooks {
+  /** Override loadActionConfig().proposalStorePath for deterministic proposal access. */
+  storePath?: string;
+  /** Override loadMcpConfig() to inject scripted server + allowlist configs. */
+  mcpConfigs?: McpServerConfig[];
+  /** Override the MCP connection factory (injectable McpConnection per mcp-client.ts). */
+  connectionFactory?: McpConnectionFactory;
+}
+
+/**
  * Try to generate a confident tool proposal for a P0 surfaced item (D-01 / D-02).
  *
  * Flow:
@@ -570,6 +664,220 @@ export async function tryGenerateProposal(
     // Any uncaught error (network, parse, unexpected) → null → plain notify (D-02 / T-23-05-D)
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared execute helper for approve and typed-confirm paths (ACT-02 / ACT-03)
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute an approved proposal: re-check expiry + allowlist, run the immutable
+ * stored payload via callServerTool, audit the outcome, remove the proposal.
+ *
+ * Used by BOTH the direct non-destructive approve path (Task 1) and the
+ * typed-confirmation confirm path (Task 2). Sharing prevents the two paths
+ * from diverging in security-critical checks.
+ *
+ * Does NOT call answerCallbackQuery — the callback drain always calls it.
+ *
+ * Security invariants:
+ *   H-04: allowlist re-checked at execute time (D-04, not just propose time).
+ *   H-05: expiry re-checked at execute time (D-07).
+ *   H-06: immutable stored payload — args never re-queried (D-07).
+ *   T-SEC-02: callTool result is data-only; never passed to any LLM.
+ *   Pitfall #2: both transport throw and result.isError===true write failure episode.
+ */
+async function executeStoredProposal(
+  transport: TelegramTransport,
+  memoryClient: MemoryClient,
+  mcpConfigs: McpServerConfig[],
+  storePath: string,
+  proposalId: string,
+  chatId: number,
+  connectionFactory?: McpConnectionFactory,
+): Promise<void> {
+  // H-05: re-check expiry at execute time (not just at propose time)
+  const loaded = loadExecutable(proposalId, storePath, Date.now());
+  if (loaded.status !== 'ok') {
+    const reason = loaded.status === 'expired' ? 'expired' : 'missing';
+    try { await transport.sendMessage(chatId, `Proposal ${reason} — re-pull if still needed.`); }
+    catch (e) { log('send error (proposal ' + reason + '): ' + String(e)); }
+    try { await memoryClient.hitlEpisode({ decision: reason }); }
+    catch (e) { log('hitlEpisode error (' + reason + '): ' + String(e)); }
+    return;
+  }
+
+  const proposal = loaded.proposal;
+
+  // H-04: re-check allowlist at execute time — post-propose config changes revoke access
+  const serverCfg = mcpConfigs.find(s => s.name === proposal.serverName);
+  const toolAllowed =
+    serverCfg !== undefined &&
+    serverCfg.allowedTools.some(e => e.name === proposal.tool);
+
+  if (!toolAllowed) {
+    try {
+      await transport.sendMessage(
+        chatId,
+        `Tool '${proposal.tool}' is no longer in the allowlist — execution refused (H-04).`,
+      );
+    } catch (e) { log('send error (allowlist-revoked): ' + String(e)); }
+    try {
+      await memoryClient.hitlEpisode({
+        decision: 'allowlist-revoked',
+        tool: proposal.tool,
+        serverName: proposal.serverName,
+      });
+    } catch (e) { log('hitlEpisode error (allowlist-revoked): ' + String(e)); }
+    return;
+  }
+
+  // H-06: execute the immutable stored payload (D-07 — no re-query, no TOCTOU)
+  // Pitfall #2: transport throw and result.isError===true are distinct error signals.
+  let outputText = '';
+  let isError = false;
+
+  try {
+    // callTool uses `arguments` key (NOT `args`) — RESEARCH Pitfall #1 / mcp-client.ts
+    const result = await callServerTool(
+      serverCfg,
+      proposal.tool,
+      proposal.args,
+      connectionFactory ?? defaultConnectionFactory,
+    );
+    const extracted = extractToolOutput(result);
+    outputText = extracted.text;
+    isError = extracted.isError;
+  } catch (err) {
+    // Transport/protocol error (distinct from result.isError — Pitfall #2)
+    outputText = String(err);
+    isError = true;
+  }
+
+  // H-12: audit every execute outcome — success and failure both recorded
+  try {
+    await memoryClient.hitlEpisode({
+      decision: 'execute',
+      tool: proposal.tool,
+      serverName: proposal.serverName,
+      args: proposal.args,
+      result: outputText,
+      isError,
+    });
+  } catch (e) { log('hitlEpisode error (execute): ' + String(e)); }
+
+  // Remove proposal after execution (at-most-once — success or failure)
+  try { removeProposal(proposalId, storePath); }
+  catch (e) { log('removeProposal error: ' + String(e)); }
+
+  // Surface outcome to user (T-SEC-02: output is opaque data — never LLM-fed)
+  const summary = isError
+    ? `Action failed: ${outputText.slice(0, 200)}`
+    : `Done: ${outputText.slice(0, 200) || '(no output)'}`;
+  try { await transport.sendMessage(chatId, summary); }
+  catch (e) { log('send error (execute summary): ' + String(e)); }
+}
+
+// ---------------------------------------------------------------------------
+// v2 proposal callback handler (ACT-01 / ACT-02 / ACT-03)
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle a v2 proposal callback_query action: approve / reject / snooze / edit.
+ * Edit is handled in Plan 07 (stub here).
+ *
+ * Does NOT call answerCallbackQuery — the outer callback drain calls it
+ * unconditionally on every branch (Pitfall #1).
+ *
+ * Security invariants:
+ *   H-04/H-05/H-06: non-destructive approve delegates to executeStoredProposal.
+ *   D-09 / H-08: destructive approve registers a typed-confirm entry sourced from
+ *     the STORED expectedConfirmValue — never re-derived from DeepSeek at confirm time.
+ *   H-12: every decision writes a hitlEpisode.
+ *
+ * @param transport         Telegram transport for sendMessage.
+ * @param memoryClient      MemoryClient for hitlEpisode audit writes.
+ * @param mcpConfigs        MCP server configs for allowlist re-check (H-04).
+ * @param storePath         Proposal store path (loadActionConfig().proposalStorePath).
+ * @param chatId            Telegram chat ID for responses (=== fromId in private chats).
+ * @param decoded           Parsed v2 callback data: { proposalId, action }.
+ * @param connectionFactory Injectable MCP connection factory (default: real SDK).
+ */
+export async function handleProposalAction(
+  transport: TelegramTransport,
+  memoryClient: MemoryClient,
+  mcpConfigs: McpServerConfig[],
+  storePath: string,
+  chatId: number,
+  decoded: { proposalId: string; action: ProposalAction },
+  connectionFactory?: McpConnectionFactory,
+): Promise<void> {
+  const { proposalId, action } = decoded;
+
+  if (action === 'reject') {
+    try { removeProposal(proposalId, storePath); } catch { /* ignore store errors on reject */ }
+    try { await memoryClient.hitlEpisode({ decision: 'reject' }); }
+    catch (e) { log('hitlEpisode error (reject): ' + String(e)); }
+    return;
+  }
+
+  if (action === 'snooze') {
+    // Re-offer is out of scope here; just audit + ack (CONTEXT.md deferred section)
+    try { await memoryClient.hitlEpisode({ decision: 'snooze' }); }
+    catch (e) { log('hitlEpisode error (snooze): ' + String(e)); }
+    return;
+  }
+
+  if (action === 'edit') {
+    // Edit is handled in Plan 07 — stub: inform user
+    try { await transport.sendMessage(chatId, 'Edit is not yet supported. Tap Approve or Reject.'); }
+    catch (e) { log('send error (edit-stub): ' + String(e)); }
+    return;
+  }
+
+  // action === 'approve': load proposal to check destructive flag (D-08)
+  const loaded = loadExecutable(proposalId, storePath, Date.now());
+  if (loaded.status !== 'ok') {
+    const reason = loaded.status === 'expired' ? 'expired' : 'missing';
+    try { await transport.sendMessage(chatId, `Proposal ${reason} — re-pull if still needed.`); }
+    catch (e) { log('send error (approve-' + reason + '): ' + String(e)); }
+    try { await memoryClient.hitlEpisode({ decision: reason }); }
+    catch (e) { log('hitlEpisode error (' + reason + '): ' + String(e)); }
+    return;
+  }
+
+  const proposal = loaded.proposal;
+
+  if (proposal.destructive) {
+    // D-09 / H-08: destructive tool → typed confirmation required.
+    // expectedConfirmValue is from the STORED payload — never re-derived at confirm time.
+    const TYPED_CONFIRM_TTL_MS = 5 * 60_000; // 5-minute confirm window (RESEARCH Risk 2)
+    pendingTypedConfirm.set(String(chatId), {
+      proposalId,
+      expectedValue: proposal.expectedConfirmValue,
+      expiresAt: Date.now() + TYPED_CONFIRM_TTL_MS,
+    });
+    try {
+      await transport.sendMessage(
+        chatId,
+        `Destructive action — reply with exactly: ${proposal.expectedConfirmValue} to confirm`,
+      );
+    } catch (e) { log('send error (typed-confirm prompt): ' + String(e)); }
+    try {
+      await memoryClient.hitlEpisode({
+        decision: 'confirm-requested',
+        tool: proposal.tool,
+        serverName: proposal.serverName,
+      });
+    } catch (e) { log('hitlEpisode error (confirm-requested): ' + String(e)); }
+    return;
+  }
+
+  // Non-destructive approve: execute directly via shared helper (H-04/H-05/H-06)
+  await executeStoredProposal(
+    transport, memoryClient, mcpConfigs, storePath,
+    proposalId, chatId, connectionFactory,
+  );
 }
 
 // ---------------------------------------------------------------------------
