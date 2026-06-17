@@ -70,6 +70,32 @@ export function _clearPendingTypedConfirm(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Pending-edit state machine — module-level pending map (D-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory pending edit entries keyed by Telegram sender id (string).
+ * Process lifetime only — if the client restarts, state is lost and the user must
+ * re-tap Edit (safe: the proposal-store persists across restarts). Risk 2 (same as
+ * pendingTypedConfirm).
+ *
+ * Each entry carries the proposalId and an expiresAt epoch-ms to bound the edit
+ * window (5 minutes). The patch text arrives as the next message from this sender.
+ */
+const pendingEdit = new Map<string, {
+  proposalId: string;
+  expiresAt: number;
+}>();
+
+/**
+ * Test helper: drain all pending edit entries between test cases.
+ * Never called in production code paths.
+ */
+export function _clearPendingEdit(): void {
+  pendingEdit.clear();
+}
+
+// ---------------------------------------------------------------------------
 // Inlined Telegram fetch logic
 // Ported from src/channel/telegram-channel.ts TelegramChannel.fetch().
 // Cursor source is the client-local state file (readStateCursor), not MetaStore.
@@ -308,6 +334,31 @@ export async function runClientTick(
           }
         }
         // Either way: skip Q&A for this message (Pitfall #3 — entry consumed above)
+        continue;
+      }
+
+      // ── Pending-edit intercept (D-06 — BEFORE ask()) ─────────────────────
+      // Mirror of the typed-confirm intercept: if the sender has a pending-edit
+      // entry, consume the text as the patch, NOT a Q&A query (T-23-07-C).
+      // Checked AFTER typed-confirm — they are mutually exclusive in practice
+      // (a sender cannot simultaneously have both open), but typed-confirm has
+      // semantic priority.
+      const pendingEditEntry = pendingEdit.get(m.sender);
+      if (pendingEditEntry !== undefined) {
+        pendingEdit.delete(m.sender); // consume entry regardless of outcome
+        if (pendingEditEntry.expiresAt > Date.now()) {
+          try {
+            await handleEditPatch(
+              transport, memoryClient,
+              getApprovalMcpConfigs(), getApprovalStorePath(),
+              pendingEditEntry.proposalId, Number(m.sender), m.text,
+              approvalHooks?.connectionFactory,
+            );
+          } catch (err) {
+            log('handleEditPatch error: ' + String(err));
+          }
+        }
+        // Either way: skip Q&A for this message (T-23-07-C — entry consumed above)
         continue;
       }
 
@@ -813,6 +864,31 @@ async function executeStoredProposal(
 }
 
 // ---------------------------------------------------------------------------
+// Edit patch handler (D-06 / T-SEC-04) — implemented in Plan 07 Task 2
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle an incoming edit patch from a user with a pending-edit entry.
+ * Implementation added in Plan 07 Task 2.
+ */
+async function handleEditPatch(
+  transport: TelegramTransport,
+  memoryClient: MemoryClient,
+  _mcpConfigs: McpServerConfig[],
+  _storePath: string,
+  _proposalId: string,
+  chatId: number,
+  _text: string,
+  _connectionFactory?: McpConnectionFactory,
+): Promise<void> {
+  // Plan 07 Task 2: full D-06 implementation (parsePatch → validateEditedArgs → fresh proposal)
+  try { await transport.sendMessage(chatId, 'Edit patch handler not yet implemented.'); }
+  catch (e) { log('send error (edit-patch-stub): ' + String(e)); }
+  try { await memoryClient.hitlEpisode({ decision: 'edit-rejected' }); }
+  catch (e) { log('hitlEpisode error (edit-patch-stub): ' + String(e)); }
+}
+
+// ---------------------------------------------------------------------------
 // v2 proposal callback handler (ACT-01 / ACT-02 / ACT-03)
 // ---------------------------------------------------------------------------
 
@@ -863,9 +939,32 @@ export async function handleProposalAction(
   }
 
   if (action === 'edit') {
-    // Edit is handled in Plan 07 — stub: inform user
-    try { await transport.sendMessage(chatId, 'Edit is not yet supported. Tap Approve or Reject.'); }
-    catch (e) { log('send error (edit-stub): ' + String(e)); }
+    // D-06: check expiry before registering the edit state — no state on expired/missing
+    const editLoaded = loadExecutable(proposalId, storePath, Date.now());
+    if (editLoaded.status !== 'ok') {
+      const editReason = editLoaded.status === 'expired' ? 'expired' : 'missing';
+      try { await transport.sendMessage(chatId, `Proposal ${editReason} — re-pull if still needed.`); }
+      catch (e) { log('send error (edit-' + editReason + '): ' + String(e)); }
+      try { await memoryClient.hitlEpisode({ decision: editReason }); }
+      catch (e) { log('hitlEpisode error (edit-' + editReason + '): ' + String(e)); }
+      return;
+    }
+    // Register pending-edit (5-minute window — mirrors typed-confirm TTL, Risk 2)
+    const EDIT_TTL_MS = 5 * 60_000;
+    pendingEdit.set(String(chatId), { proposalId, expiresAt: Date.now() + EDIT_TTL_MS });
+    try {
+      await transport.sendMessage(
+        chatId,
+        'Reply with a JSON patch of the fields to change (e.g. {"key":"new-value"}).',
+      );
+    } catch (e) { log('send error (edit-prompt): ' + String(e)); }
+    try {
+      await memoryClient.hitlEpisode({
+        decision: 'edit-requested',
+        tool: editLoaded.proposal.tool,
+        serverName: editLoaded.proposal.serverName,
+      });
+    } catch (e) { log('hitlEpisode error (edit-requested): ' + String(e)); }
     return;
   }
 
