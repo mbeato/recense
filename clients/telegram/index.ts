@@ -1,10 +1,21 @@
 import { appendFileSync } from 'fs';
-import { type ClientConfig, loadClientConfig } from './config';
+import { randomUUID } from 'crypto';
+import { type ClientConfig, type ActionConfig, loadClientConfig, loadActionConfig, loadMcpConfig } from './config';
 import { readStateCursor, writeStateCursor } from './state';
 import { DefaultTelegramTransport, type TelegramTransport, type InlineKeyboardMarkup } from './transport';
-import { type FetchResult, type InboundMessage, type CollectedCallbackQuery } from './types';
+import { type FetchResult, type InboundMessage, type CollectedCallbackQuery, type McpServerConfig, type StoredProposal } from './types';
 import { createMemoryClient, type MemoryClient, type SurfaceItem } from './memory-client';
-import { encodeCallbackData, decodeCallbackData } from './push-codec';
+import { encodeCallbackData, decodeCallbackData, encodeProposalCallbackData } from './push-codec';
+import { putProposal, tryReserveProposalSlot } from './proposal-store';
+import {
+  filterAllowlisted,
+  buildProposalPrompt,
+  callDeepSeek,
+  validateProposal,
+  deriveConfirmValue,
+  type FetchImpl,
+} from './proposal-engine';
+import { listServerTools, type McpConnectionFactory } from './mcp-client';
 
 // ---------------------------------------------------------------------------
 // Log helper — append-only file log; never stdout (background process, T-13-05)
@@ -393,6 +404,178 @@ async function sendSurfacedItem(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Proposal card rendering (ACT-01 / T-23-05-A)
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a pending proposal as a plain-text card.
+ *
+ * DATA ONLY — tool name, serialized args, and deadline.
+ * NEVER contains DeepSeek prose or any LLM output (T-23-05-A / ACT-01).
+ * Same no-markup discipline as renderText (plain text, not Telegram markdown).
+ */
+function renderProposalCard(proposal: StoredProposal): string {
+  return `[Proposed Action]\nTool: ${proposal.tool}\nArgs: ${JSON.stringify(proposal.args)}\nDue: ${proposal.dueAt}`;
+}
+
+/**
+ * Build the 4-button approval keyboard for a pending proposal (ACT-01).
+ *
+ * One row: "✅ Approve" | "✏️ Edit" | "❌ Reject" | "💤 Snooze"
+ * Each button's callback_data is a v2 compact encoding (≤ 41 bytes, within 64-byte limit).
+ */
+function proposalKeyboard(proposalId: string): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [[
+      { text: '✅ Approve', callback_data: encodeProposalCallbackData(proposalId, 'a') },
+      { text: '✏️ Edit',   callback_data: encodeProposalCallbackData(proposalId, 'e') },
+      { text: '❌ Reject', callback_data: encodeProposalCallbackData(proposalId, 'r') },
+      { text: '💤 Snooze', callback_data: encodeProposalCallbackData(proposalId, 's') },
+    ]],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Proposal generation (D-01 / D-02 / ACT-03)
+// ---------------------------------------------------------------------------
+
+/**
+ * Test-injectable overrides for the proposal generation sub-path of runPushTick.
+ *
+ * Allows unit tests to pass scripted actionConfig, mcpConfigs, a mock
+ * McpConnectionFactory, and a mock fetchImpl without any live network calls.
+ */
+export interface ProposalTestHooks {
+  /** Override loadActionConfig() for deterministic daily cap / store path / DeepSeek key. */
+  actionConfig?: ActionConfig;
+  /** Override loadMcpConfig() to inject scripted server+allowlist configs. */
+  mcpConfigs?: McpServerConfig[];
+  /** Override the MCP connection factory (injectable McpConnection per mcp-client.ts). */
+  connectionFactory?: McpConnectionFactory;
+  /** Override global fetch for the DeepSeek HTTP call (no live network in tests). */
+  fetchImpl?: FetchImpl;
+}
+
+/**
+ * Try to generate a confident tool proposal for a P0 surfaced item (D-01 / D-02).
+ *
+ * Flow:
+ *   1. search(item.value) — memory context for arg parameterization.
+ *   2. For each configured MCP server: listServerTools → filterAllowlisted.
+ *      Connect + list errors are caught per-server; that server is skipped (Risk 3).
+ *   3. If no allowlisted tools across all servers → null (plain notify fallback).
+ *   4. buildProposalPrompt → callDeepSeek(temperature=0, json_object) → validateProposal.
+ *   5. On confident {tool, args}: build StoredProposal with immutable payload (D-07).
+ *   6. On {tool:null}, any engine error, or MCP timeout → null (D-02 plain notify fallback).
+ *
+ * Security invariants:
+ *   - Tool descriptions are NEVER forwarded to DeepSeek (T-SEC-01 via buildAllowedToolSpec).
+ *   - Memory data is delimiter-fenced as UNTRUSTED (T-SEC-03 via buildProposalPrompt).
+ *   - Only allowlisted, fully-parameterized, validated proposals are returned (D-04).
+ *   - The API key is NEVER logged (H-13 / T-13-05).
+ *
+ * @param memoryClient     Live or mock memory client (search + hitlEpisode).
+ * @param item             The P0 surface item that triggered this proposal.
+ * @param actionConfig     DeepSeek key, daily-cap config, store path, TTL.
+ * @param mcpConfigs       Loaded server configs (already filtered by loadMcpConfig).
+ * @param connectionFactory Injectable MCP connection factory (default: real SDK).
+ * @param fetchImpl        Injectable fetch (default: global fetch for DeepSeek calls).
+ * @returns                StoredProposal on success, null on any failure / unmappable item.
+ */
+export async function tryGenerateProposal(
+  memoryClient: MemoryClient,
+  item: SurfaceItem,
+  actionConfig: ActionConfig,
+  mcpConfigs: McpServerConfig[],
+  connectionFactory?: McpConnectionFactory,
+  fetchImpl?: FetchImpl,
+): Promise<StoredProposal | null> {
+  try {
+    // 1. Memory context for arg parameterization (truncated in buildProposalPrompt, Risk 4)
+    const searchResults = await memoryClient.search(item.value);
+
+    // 2. Collect allowlisted tools across all servers
+    // Track { descriptor, serverName, destructive } for post-validate lookup
+    const toolEntries: Array<{
+      descriptor: { name: string; inputSchema: { type: 'object'; properties?: Record<string, object>; required?: string[] } };
+      serverName: string;
+      destructive: boolean;
+    }> = [];
+
+    for (const serverCfg of mcpConfigs) {
+      if (serverCfg.allowedTools.length === 0) continue;
+      try {
+        // listServerTools already bounds with MCP_REQUEST_TIMEOUT_MS (SDK timeout).
+        // Additional try/catch here: any connect/list/timeout error → skip this server (Risk 3).
+        const serverTools = await listServerTools(serverCfg, connectionFactory);
+        const filtered = filterAllowlisted(serverTools, serverCfg.allowedTools);
+        for (const tool of filtered) {
+          const allowlistEntry = serverCfg.allowedTools.find(e => e.name === tool.name);
+          if (allowlistEntry !== undefined) {
+            toolEntries.push({
+              descriptor: tool,
+              serverName: serverCfg.name,
+              destructive: allowlistEntry.destructive,
+            });
+          }
+        }
+      } catch {
+        // MCP timeout, connect failure, or list failure → skip server, degrade later (D-02)
+      }
+    }
+
+    // No allowlisted tools found across any server → plain notify fallback (D-02)
+    if (toolEntries.length === 0) return null;
+
+    // 3. Build prompt with ALL collected allowlisted tool descriptors
+    const descriptors = toolEntries.map(e => e.descriptor);
+    const { systemPrompt, userPrompt } = buildProposalPrompt(item, searchResults, descriptors);
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      { role: 'user' as const, content: userPrompt },
+    ];
+
+    // 4. Call DeepSeek (injectable fetchImpl for tests — key NEVER logged, H-13)
+    const deepseekCfg = {
+      apiKey: actionConfig.deepseekApiKey,
+      baseUrl: actionConfig.deepseekBaseUrl,
+      model: actionConfig.deepseekModel,
+    };
+    const rawJson = await callDeepSeek(messages, deepseekCfg, fetchImpl);
+
+    // 5. Validate — D-02: only confident, fully-parameterized, allowlisted output passes
+    const validated = validateProposal(rawJson, descriptors);
+    if (validated.tool === null) return null;
+
+    // 6. Find which server owns this tool (to get destructive + serverName)
+    const toolEntry = toolEntries.find(e => e.descriptor.name === validated.tool);
+    if (toolEntry === undefined) return null; // validateProposal already checks allowlist; defensive
+
+    // 7. Build immutable StoredProposal (D-07 — payload never re-queried at execute time)
+    const proposal: StoredProposal = {
+      id: randomUUID(),
+      serverName: toolEntry.serverName,
+      tool: validated.tool,
+      args: validated.args,
+      dueAt: new Date(item.due_at).toISOString(),
+      maxTtlMs: actionConfig.proposalMaxTtlMs,
+      createdAt: new Date().toISOString(),
+      destructive: toolEntry.destructive,
+      expectedConfirmValue: deriveConfirmValue(validated.tool, validated.args),
+    };
+
+    return proposal;
+  } catch {
+    // Any uncaught error (network, parse, unexpected) → null → plain notify (D-02 / T-23-05-D)
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Push tick (Phase 22 + Phase 23 proposal path)
+// ---------------------------------------------------------------------------
+
 /**
  * Proactive push tick: poll GET /v1/surface and push due items to Telegram.
  *
@@ -400,7 +583,13 @@ async function sendSurfacedItem(
  * Never throws (C-1) — errors are caught and logged; the setInterval callback is safe.
  *
  * P0 (tier=0): pushed immediately, bypassing quiet hours (D-05 — urgent deadline).
+ *   Phase 23 addition (D-01): if MCP servers are configured and the daily proposal cap
+ *   has not been reached, tries to generate a confident {tool,args} proposal via
+ *   tryGenerateProposal. On success: stores + sends an approval card (ACT-01, T-23-05-A).
+ *   On any failure or no-match: degrades to the Phase-22 plain notify (D-02, T-23-05-D).
+ *   Both outcomes are audited via hitlEpisode (ACT-03 / H-12).
  * P1 (tier=1): held until the configured digestHour, outside quiet hours (D-06/D-07).
+ *   P1 items remain Phase-22 plain notify ONLY — no auto-proposal (D-01).
  *   If digestHour has zero P1 items, sends nothing (never-empty-digest, D-06).
  *
  * Dedup is server-side (surfaced_event). No in-memory surfaced-set — a restarted client
@@ -408,11 +597,16 @@ async function sendSurfacedItem(
  *
  * Gate: if RECENSE_PROACTIVE_ENABLED is not "true" (D-11), this function returns
  * immediately without doing anything. Reactive Q&A is unaffected.
+ *
+ * @param testHooks  Optional injectable overrides (actionConfig, mcpConfigs,
+ *                   connectionFactory, fetchImpl) for unit tests — never passed
+ *                   from production main().
  */
 export async function runPushTick(
   config: ClientConfig,
   transport: TelegramTransport,
   memoryClient: MemoryClient,
+  testHooks?: ProposalTestHooks,
 ): Promise<void> {
   // D-11: default-OFF gate. Belt-and-suspenders on top of the main() guard.
   if (!config.proactiveEnabled) return;
@@ -432,14 +626,94 @@ export async function runPushTick(
     const p0 = items.filter(i => i.tier === 0);
     const p1 = items.filter(i => i.tier === 1);
 
-    // D-05: P0 always sends — bypasses quiet hours (urgent deadline)
+    // ── Phase 23 — load proposal config once per tick (not per item) ──────────
+    // testHooks override production values — allows unit tests to inject scripted
+    // configs, store paths, connection factories, and fetch implementations.
+    const mcpConfigs = testHooks?.mcpConfigs ?? loadMcpConfig();
+    const actionCfg = testHooks?.actionConfig ?? loadActionConfig();
+    // Proposal path is active when ≥1 MCP server is configured and DeepSeek key is set
+    const hasProposalConfig = mcpConfigs.length > 0 && actionCfg.deepseekApiKey !== '';
+
+    // D-05 / D-01 / D-02 / D-03: P0 always sends — bypasses quiet hours (urgent deadline).
+    // Phase 23: if proposal config is present, try to generate a proposal before plain notify.
     for (const item of p0) {
       for (const chatIdStr of config.allowlist) {
-        await sendSurfacedItem(transport, memoryClient, config, Number(chatIdStr), item);
+        const chatId = Number(chatIdStr);
+        let sentProposal = false;
+
+        if (hasProposalConfig) {
+          // H-15 / T-23-05-B: reserve a cap slot BEFORE calling DeepSeek — counts
+          // proposals generated, not proposals sent, to prevent approval-fatigue DoS.
+          const slotReserved = tryReserveProposalSlot(
+            actionCfg.proposalDailyCap,
+            actionCfg.proposalStorePath,
+            new Date(),
+          );
+
+          if (slotReserved) {
+            // Proposal flow: search → list tools → filter → prompt → DeepSeek → validate.
+            // Bounded: any failure (MCP timeout, DeepSeek error, null tool) returns null.
+            const proposal = await tryGenerateProposal(
+              memoryClient,
+              item,
+              actionCfg,
+              mcpConfigs,
+              testHooks?.connectionFactory,
+              testHooks?.fetchImpl,
+            );
+
+            if (proposal !== null) {
+              // T-23-05-C: store first, then send — so the ID exists in the store before
+              // the approval card reaches the user (no dangling button tap possible).
+              putProposal(proposal, actionCfg.proposalStorePath);
+              // D-02 send-then-mark order preserved: sendMessage → surfaceSeen.
+              // D-03 / ACT-01: card is rendered from the serialized {tool,args} payload —
+              // NEVER from DeepSeek prose (T-23-05-A enforced by renderProposalCard).
+              await transport.sendMessage(chatId, renderProposalCard(proposal), proposalKeyboard(proposal.id));
+              await memoryClient.surfaceSeen({
+                node_id: item.node_id,
+                occurrence_due_at: new Date(item.due_at).toISOString(),
+                outcome: 'surfaced',
+              });
+              // ACT-03 / H-12: audit the propose decision — key never in content (H-13)
+              try {
+                await memoryClient.hitlEpisode({
+                  decision: 'propose',
+                  tool: proposal.tool,
+                  args: proposal.args,
+                  serverName: proposal.serverName,
+                });
+              } catch (auditErr) {
+                // Episode loss is acceptable (H-12 comment) — log and continue
+                log('hitlEpisode error (propose): ' + String(auditErr));
+              }
+              sentProposal = true;
+            }
+
+            if (!sentProposal) {
+              // Slot was reserved but proposal generation returned null (D-02 fallback):
+              // degrade to Phase-22 plain notify — the P0 is never silently dropped (T-23-05-D).
+              await sendSurfacedItem(transport, memoryClient, config, chatId, item);
+              // ACT-03: audit the fallback decision
+              try {
+                await memoryClient.hitlEpisode({ decision: 'notify-fallback' });
+              } catch (auditErr) {
+                log('hitlEpisode error (notify-fallback): ' + String(auditErr));
+              }
+            }
+          } else {
+            // Cap exhausted (H-15): skip proposal path, fall through to plain notify.
+            await sendSurfacedItem(transport, memoryClient, config, chatId, item);
+          }
+        } else {
+          // No proposal config (no MCP servers or missing DeepSeek key): Phase-22 plain notify.
+          await sendSurfacedItem(transport, memoryClient, config, chatId, item);
+        }
       }
     }
 
-    // D-06/D-07: P1 only at digest hour, outside quiet hours, and only if ≥1 item
+    // D-06/D-07: P1 only at digest hour, outside quiet hours, and only if ≥1 item.
+    // P1 items remain Phase-22 plain notify ONLY — no auto-proposal for tier 1 (D-01).
     if (isDigest && !inQuiet && p1.length > 0) {
       for (const item of p1) {
         for (const chatIdStr of config.allowlist) {
