@@ -14,7 +14,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { encodeCallbackData, decodeCallbackData } from '../push-codec';
+import { randomUUID } from 'node:crypto';
+import {
+  encodeCallbackData,
+  decodeCallbackData,
+  encodeProposalCallbackData,
+  decodeProposalCallbackData,
+} from '../push-codec';
 
 // Representative UUID v4 (36 chars) — the max-length node_id format
 const UUID = '550e8400-e29b-41d4-a716-446655440000';
@@ -146,5 +152,82 @@ describe('decodeCallbackData — malformed input returns null', () => {
 
   it('returns null for ISO date in epoch position (non-numeric)', () => {
     expect(decodeCallbackData(`1|${UUID}|${DUE_AT}|c`)).toBeNull();
+  });
+});
+
+// ── v2 proposal codec — round-trip (Phase 23) ─────────────────────────────────
+
+describe('encodeProposalCallbackData / decodeProposalCallbackData — v2 round-trip', () => {
+  const cases: Array<['a' | 'e' | 'r' | 's', 'approve' | 'edit' | 'reject' | 'snooze']> = [
+    ['a', 'approve'],
+    ['e', 'edit'],
+    ['r', 'reject'],
+    ['s', 'snooze'],
+  ];
+
+  for (const [code, action] of cases) {
+    it(`round-trips "${code}" → ${action}`, () => {
+      const encoded = encodeProposalCallbackData(UUID, code);
+      const decoded = decodeProposalCallbackData(encoded);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.proposalId).toBe(UUID);
+      expect(decoded!.action).toBe(action);
+    });
+  }
+
+  it('encoded format is 2|{proposalId}|{code}', () => {
+    const encoded = encodeProposalCallbackData(UUID, 'a');
+    const parts = encoded.split('|');
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toBe('2');
+    expect(parts[1]).toBe(UUID);
+    expect(parts[2]).toBe('a');
+  });
+
+  it('encoded v2 payload for a real UUID is < 64 bytes', () => {
+    const encoded = encodeProposalCallbackData(randomUUID(), 'a');
+    expect(Buffer.byteLength(encoded)).toBeLessThan(64);
+  });
+});
+
+// ── v2 proposal codec — malformed input → null ────────────────────────────────
+
+describe('decodeProposalCallbackData — malformed input returns null', () => {
+  it('returns null for empty string', () => {
+    expect(decodeProposalCallbackData('')).toBeNull();
+  });
+
+  it('returns null for wrong part count (4 parts)', () => {
+    expect(decodeProposalCallbackData(`2|${UUID}|a|extra`)).toBeNull();
+  });
+
+  it('returns null for too few parts (2 parts)', () => {
+    expect(decodeProposalCallbackData(`2|${UUID}`)).toBeNull();
+  });
+
+  it('returns null for unknown action code', () => {
+    expect(decodeProposalCallbackData(`2|${UUID}|x`)).toBeNull();
+  });
+
+  it('returns null for empty proposalId', () => {
+    expect(decodeProposalCallbackData(`2||a`)).toBeNull();
+  });
+
+  it("returns null for a future version '3'", () => {
+    expect(decodeProposalCallbackData(`3|${UUID}|a`)).toBeNull();
+  });
+});
+
+// ── v1 / v2 mutual exclusivity (no cross-version confusion) ───────────────────
+
+describe('v1 / v2 codec isolation', () => {
+  it('decodeProposalCallbackData returns null for a legacy v1 string', () => {
+    const v1 = encodeCallbackData(UUID, DUE_AT, 'c');
+    expect(decodeProposalCallbackData(v1)).toBeNull();
+  });
+
+  it('decodeCallbackData (v1) returns null for a v2 string', () => {
+    const v2 = encodeProposalCallbackData(UUID, 'a');
+    expect(decodeCallbackData(v2)).toBeNull();
   });
 });

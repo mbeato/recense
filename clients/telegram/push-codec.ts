@@ -21,9 +21,19 @@
  * any use. callback_data arrives over Telegram getUpdates and is attacker-influenceable.
  * Any malformed input returns null — the caller skips surfaceSeen on null.
  *
+ * Version-2 proposal format (Phase 23): `2|{proposalId}|{code}`
+ *   - Version prefix `2` distinguishes proposal-approval callbacks from v1 surface-seen
+ *   - proposalId: UUID v4 (36 chars) generated at proposal-store write time
+ *   - code: a=approve, e=edit, r=reject, s=snooze (D-08)
+ *   Total for a UUID: 2 + 36 + 1 + 2 separators = 41 bytes — within the 64-byte limit.
+ *   v1 and v2 are mutually exclusive by version prefix: decodeCallbackData rejects a v2
+ *   string (requires version '1') and decodeProposalCallbackData rejects a v1 string.
+ *
  * Zero src/ imports — CLIENT-01 invariant maintained.
  * Zero new npm dependencies — net-zero runtime deps.
  */
+
+import type { ProposalAction } from './types';
 
 /** The three outcome codes supported in callback_data (D-08). */
 type OutcomeCode = 'c' | 'd' | 's';
@@ -99,4 +109,61 @@ export function decodeCallbackData(data: string): {
   const occurrenceDueAt = new Date(epochSec * 1000).toISOString();
 
   return { nodeId, occurrenceDueAt, outcome };
+}
+
+// ---------------------------------------------------------------------------
+// Version-2 proposal codec (Phase 23 — approval-gated MCP execution)
+// ---------------------------------------------------------------------------
+
+/** Single-character action codes carried in v2 callback_data. */
+type ProposalCode = 'a' | 'e' | 'r' | 's';
+
+const PROPOSAL_DECODE: Record<ProposalCode, ProposalAction> = {
+  a: 'approve',
+  e: 'edit',
+  r: 'reject',
+  s: 'snooze',
+};
+
+/**
+ * Encode (proposalId, action code) into a v2 callback_data string: `2|{proposalId}|{code}`.
+ *
+ * @param proposalId UUID v4 from the proposal store (the immutable payload key, D-07)
+ * @param action     Short action code — 'a'=approve, 'e'=edit, 'r'=reject, 's'=snooze
+ */
+export function encodeProposalCallbackData(proposalId: string, action: ProposalCode): string {
+  return `2|${proposalId}|${action}`;
+}
+
+/**
+ * Decode a v2 proposal callback_data string back into { proposalId, action }.
+ *
+ * Mirrors v1 strictness (T-22-02): returns null on ANY malformed or unrecognized input.
+ * Requires exactly 3 pipe-delimited parts, version === '2', a non-empty proposalId, and a
+ * code in the closed set. A v1 string (`1|...`) returns null here, and a v2 string returns
+ * null from decodeCallbackData — the two versions never cross-decode.
+ *
+ * @param data Raw callback_data from Telegram (attacker-influenceable — never trust)
+ */
+export function decodeProposalCallbackData(
+  data: string,
+): { proposalId: string; action: ProposalAction } | null {
+  if (!data) return null;
+
+  const parts = data.split('|');
+  if (parts.length !== 3) return null;
+
+  const [version, proposalId, code] = parts as [string, string, string];
+
+  // Version check — only v2; a v1 (or any other) string is rejected.
+  if (version !== '2') return null;
+
+  // Field presence
+  if (!proposalId || !code) return null;
+
+  // Action code mapping (closed set — any unknown code → null)
+  const action = PROPOSAL_DECODE[code as ProposalCode] ?? null;
+  if (!action) return null;
+
+  return { proposalId, action };
 }
