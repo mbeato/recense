@@ -47,6 +47,30 @@ export interface SurfaceSeenParams {
   snooze_until?: string;
 }
 
+/**
+ * Parameters for an HITL audit episode write (H-12 / ACT-03).
+ *
+ * Every user decision on a pending proposal (approve/edit/reject/snooze/execute-result)
+ * must be recorded as a source:'hitl' episode via /v1/add.
+ *
+ * Secrets (serve token, DeepSeek key, MCP server credentials) must NEVER appear
+ * in the `content` field — they belong in environment variables, not episode text (H-13).
+ */
+export interface HitlEpisodeEntry {
+  /** The decision type — becomes the origin suffix: hitl:{decision}. */
+  decision: string;
+  /** Tool name from the immutable stored payload (D-07). Optional on reject/snooze. */
+  tool?: string;
+  /** Tool arguments from the immutable stored payload. Optional on reject/snooze. */
+  args?: Record<string, unknown>;
+  /** MCP server name the tool belongs to (McpServerConfig.name). */
+  serverName?: string;
+  /** Truncated text output from callServerTool — opaque data, never LLM-fed (T-SEC-02). */
+  result?: string;
+  /** True when the tool ran and reported isError === true. */
+  isError?: boolean;
+}
+
 export interface MemoryClient {
   ask(query: string): Promise<AskResult>;
   search(query: string): Promise<unknown[]>;
@@ -54,6 +78,17 @@ export interface MemoryClient {
   surface(opts?: { limit?: number }): Promise<SurfaceItem[]>;
   /** POST /v1/surface/seen — records an outcome for a surfaced item. */
   surfaceSeen(params: SurfaceSeenParams): Promise<void>;
+  /**
+   * POST /v1/add — write a source:'hitl' audit episode for every user decision (H-12).
+   *
+   * Builds a plain-text summary of the decision and posts it as episodic input only.
+   * The engine's sleep pass mediates any belief change (D-43: the client has no direct
+   * node-write path; there is no node.s / node.c manipulation here).
+   *
+   * Secrets (serve token, DeepSeek key, MCP server credentials) are NEVER serialized
+   * into the content string (H-13 / T-13-05).
+   */
+  hitlEpisode(entry: HitlEpisodeEntry): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +175,45 @@ export function createMemoryClient(serveUrl: string, serveToken: string): Memory
      */
     async surfaceSeen(params: SurfaceSeenParams): Promise<void> {
       await postJson('/v1/surface/seen', params);
+    },
+
+    /**
+     * Write a source:'hitl' audit episode to /v1/add (H-12 / ACT-03).
+     *
+     * Builds a plain-text `content` summarising the decision and posts it as
+     * episodic input — origin `hitl:{decision}` (e.g. `hitl:approve`). The serve
+     * endpoint queues this for the sleep pass; the engine mediates any belief change
+     * (D-43 — this client has no node-write path whatsoever).
+     *
+     * Content construction rules:
+     *   - Include: decision, tool name, serialized args (if present), serverName,
+     *     truncated result (≤200 chars), isError flag.
+     *   - NEVER include: serve token, DeepSeek API key, or any MCP secret (H-13).
+     *
+     * Throws 'serve HTTP {status}' on non-2xx — caller logs and continues (episode
+     * loss is acceptable; missing audit record is better than a failed decision).
+     */
+    async hitlEpisode(entry: HitlEpisodeEntry): Promise<void> {
+      const parts: string[] = [`[hitl] decision=${entry.decision}`];
+      if (entry.serverName !== undefined) parts.push(`server=${entry.serverName}`);
+      if (entry.tool !== undefined) parts.push(`tool=${entry.tool}`);
+      if (entry.args !== undefined && Object.keys(entry.args).length > 0) {
+        // Serialise args as compact JSON — the token is never in args (D-07 payload only)
+        parts.push(`args=${JSON.stringify(entry.args)}`);
+      }
+      if (entry.isError === true) parts.push('isError=true');
+      if (entry.result !== undefined) {
+        // Truncate to 200 chars to bound episode size
+        const truncated = entry.result.length > 200
+          ? entry.result.slice(0, 200) + '…'
+          : entry.result;
+        parts.push(`result=${truncated}`);
+      }
+
+      const content = parts.join(' | ');
+      const origin = `hitl:${entry.decision}`;
+
+      await postJson('/v1/add', { content, origin });
     },
   };
 }
