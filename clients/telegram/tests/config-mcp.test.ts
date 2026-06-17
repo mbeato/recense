@@ -235,4 +235,23 @@ describe('loadActionConfig — DeepSeek + cap envs', () => {
     expect(cfg.proposalDailyCap).toBe(3);
     expect(cfg.deepseekModel).toBe('deepseek-reasoner');
   });
+
+  it('RECENSE_PROPOSAL_DAILY_CAP=0 → proposalDailyCap is 0, not 10 (IN-02 footgun)', () => {
+    // 0 is a valid "disable proposals" value; the old `|| 10` pattern treated it as falsy.
+    process.env['RECENSE_PROPOSAL_DAILY_CAP'] = '0';
+    const cfg = loadActionConfig();
+    expect(cfg.proposalDailyCap).toBe(0);
+  });
+
+  it('RECENSE_PROPOSAL_DAILY_CAP=negative → falls back to 10', () => {
+    process.env['RECENSE_PROPOSAL_DAILY_CAP'] = '-1';
+    const cfg = loadActionConfig();
+    expect(cfg.proposalDailyCap).toBe(10);
+  });
+
+  it('RECENSE_PROPOSAL_DAILY_CAP=not-a-number → falls back to 10', () => {
+    process.env['RECENSE_PROPOSAL_DAILY_CAP'] = 'banana';
+    const cfg = loadActionConfig();
+    expect(cfg.proposalDailyCap).toBe(10);
+  });
 });
