@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
-status: planning
-last_updated: "2026-06-17T18:24:58.764Z"
+status: ready
+last_updated: "2026-06-17"
 last_activity: 2026-06-17
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,119 +17,175 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-15)
+See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 999.2 — retrieval embeddings reconsolidation engages knowledge updat
+**Current focus:** Phase 24 — Foundational Store (verify FK-free consolidation + run MEMORY.md migration)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-06-17 — Milestone v5.0 started
+```
+Phase:  24 — Foundational Store   [not started]
+Plan:   —
+Status: Roadmap defined — ready for /gsd:plan-phase 24
+
+[████████████████████████░░░░░░░░] v1-4.0 shipped · v5.0 phases 24-27 pending
+```
+
+Phase 24 gate (SCOPE-01): a clean FK-free manual sleep pass must complete and the hourly agent re-enabled before any other v5.0 phase begins.
 
 ## Performance Metrics
 
 **Velocity (historical baseline):**
 
-- Total plans completed: 137 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, quick-tasks: 12)
-- Average duration: —
+- Total plans completed: 147 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
+- Average plan duration: ~20–25 min
 
-**By Phase:**
+**By Milestone:**
 
-| Phase | Plans | Notes |
-|-------|-------|-------|
-| 01–08 (v1.0) | 42 | shipped 2026-06-09 |
-| 09–10 (v2.0) | 14 | shipped 2026-06-10 |
-| 11–17 (v3.0) | 42 | shipped 2026-06-13 |
-| 18–19 (v3.1) | 8 | shipped 2026-06-15 |
-| 20 (v4.0) | TBD | not started |
-| 21 (v4.0) | TBD | not started |
-| 22 (v4.0) | TBD | not started |
-| 23 (v4.0) | TBD | not started |
-| Phase 20 P01 | 15m | 3 tasks | 7 files |
-| Phase 20-temporal-ingestion-foundation P02 | 20m | 2 tasks | 4 files |
-| Phase 20 P03 | 25m | 2 tasks | 6 files |
-| Phase 20 P05 | 25m | 2 tasks | 3 files |
+| Milestone | Phases | Plans | Shipped |
+|-----------|--------|-------|---------|
+| v1.0 | 1–8 | 42 | 2026-06-09 |
+| v2.0 | 9–10 | 14 | 2026-06-10 |
+| v3.0 | 11–17 | 42 | 2026-06-13 |
+| v3.1 | 18–19 | 8 | 2026-06-15 |
+| v4.0 | 20–23 | 22 | 2026-06-17 |
+| v5.0 | 24–27 | TBD | — |
 
 ## Accumulated Context
 
-### Key v4.0 Ordering Constraints
+### v5.0 Dependency Chain
 
-- **Strict dependency chain**: Phase 20 (temporal facts) → Phase 21 (surfacing API) → Phase 22 (push notify) → Phase 23 (execution)
-  - Phase 21 cannot produce useful results without node_temporal rows from Phase 20
-  - Phase 22 must not connect until the D-43 sentinel in Phase 21 passes (hard gate)
-  - Phase 23 builds on the push infrastructure from Phase 22, validated in dogfood first
-- **Live-DB risk isolation**: TEMP-03 Gmail episodic-variant is behind RECENSE_ENABLE_EPISODIC_EMAIL=false (default); an offline dry-run A/B with explicit pass/fail criteria is a required Phase 20 verification criterion before the flag may be enabled; the gated-live-write-needs-real-offswitch lesson applies directly
-- **D-43 self-confirmation sentinel** (SURF-03): surfacing must never strengthen node.s / node.c; the sentinel test is a required gate before Phase 22 connects any push client
-- **Nothing fires without explicit approval**: ACT-01/02/03 all ship in Phase 23 simultaneously; the approval gate is non-negotiable and cannot be a retrofit
-- **Security guards in first version**: injection hardening (delimiter-fenced memory data, serialized payload rendering), per-server allowlist, destructive typed-confirm — all required in Phase 23 v1, not post-ship
-- **Agents outside the engine**: all Phase 22/23 agent logic lives in clients/telegram/; zero src/ imports; the engine/client boundary from v3.0 holds without modification
-- **Online paths stay LLM-free**: GET /v1/surface and POST /v1/surface/seen are LLM-free; the one async LLM call per proposal in Phase 23 is in the client's offline push loop, not on a blocking hot path
+**Strict order: 24 → 25 → 26 → 27**
+
+- Phase 24's clean-consolidation gate (SCOPE-01) unblocks all downstream phases — all phases touch the consolidation path; the FK bug must be verified fixed before any new consolidation work lands
+- Phase 25 requires `node_scope` live (Phase 24) for scope-aware entity merging
+- Phase 26 (extraction replay harness) requires a clean entity graph (Phase 25) for a representative re-eval
+- Phase 27 depends on 24 (scope gather), 25 (entity quality), and 26 (semantic breadth); the validated reader slice already works on lexical+entity gather — Phase 27 promotes, it does not rebuild
+
+### Phase 24 — Critical Context
+
+**Already landed on main (999.3 Plans 01 + 02, Tasks 1-2):**
+- `node_scope` sidecar (schema v10) + `cwdToScope` / `resolveNodeScope` helpers
+- Consolidation stamps scope from contributing episodes' cwd
+- `recense import-memory` CLI (idempotent, skips policy bundles, dry-run safe) — 193 facts to import, 7 policy bundles skipped, 12 indexes skipped (verified 2026-06-16)
+- Recall output surfaces `[scope]` prefix
+- Quick-task 260617-e16 (ab3b6c8): FK-hardened decay eviction (child-wipe for node_scope + node_temporal before DELETE FROM node)
+
+**Remaining work (Task 3 = SCOPE-01 gate + SCOPE-04 migration):**
+1. Verify the FK bug is fully fixed: run a manual sleep pass and confirm it completes (no FK error), clears the dirty sentinel
+2. Re-enable the hourly launchd sleep-pass agent
+3. Run the human-gated `recense import-memory` → `recense sleep-pass` → verify recall → archive sources (per `docs/import-memory.md` runbook D-S7)
+4. Write `999.3-MIGRATION.md` with counts + verification samples
+
+**FK bug status:** root-cause was the schema-relations DELETE-side not wiping child rows before node eviction. Two fixes applied: schema-relations FK-02 fix (Phase 23 range) + eviction child-wipe (260617-e16/ab3b6c8). Unverified by a clean pass — that's the SCOPE-01 gate.
+
+**Hourly agent:** currently DISABLED (`launchctl bootout`ed) to prevent crash loops. Must be re-enabled after SCOPE-01 passes.
+
+**Running the sleep pass:**
+```
+set -a; . ~/.config/recense/sleep.env; set +a
+"$RECENSE_NODE_BIN" "$RECENSE_SLEEP_JS"   # logs to /tmp/recense-sleep.log
+```
+
+**API cost for migration:** ~$1–2 embedding (DeepSeek is the configured judge; confirm against budget before running).
+
+### Phase 25 — Context
+
+Entity fragmentation observed during reader slice (2026-06-17): 8+ near-duplicate "brain-memory" entity nodes, "tonos" / "Tonos daily eval pipeline" split, max edge degree ~15. The dedup pass must:
+- Match by value similarity + embedding cosine above threshold (origin-guarded — never merge facts with conflicting origins if they represent genuinely distinct beliefs)
+- Rewire all edges from duplicates → canonical node
+- Tombstone duplicates (never delete evidence-backed facts)
+- Be repeatable (second run = no-op)
+
+Engine invariants: graph is source of truth; `PRAGMA foreign_key_check` must return empty after the pass.
+
+### Phase 26 — Context
+
+Root cause (from backlog 999.2): contradicting count-claims never cluster as judge candidates because cosine similarity never clears 0.7 with `text-embedding-3-small`. The reconsolidation judge fires zero on-topic contradictions on KU cases, so correct KU answers come from extraction + recency, NOT the differentiating reconsolidation mechanism.
+
+Candidates (verify against live source before building — memory hypotheses drift):
+- Upgrade `openaiEmbedModel` → `text-embedding-3-large` (drop-in, asymmetric not needed)
+- Query-instruction prefix for an asymmetric embedder (Qwen3-Embedding local, $0 — bigger change)
+- Re-tune cosine thresholds in `src/retrieval/engine.ts` / `topk.ts`
+
+The extraction-replay harness path: N=20 extraction output cached at `~/.recense-eval-cache/eval01-n20-2026-06-16/` (39,914 claims). An embedder swap only requires re-embedding stored node texts — no re-extraction. Build the replay path first, then test variants.
+
+API budget: ~$3–5 for the re-eval; ~$14–15 total remaining; explicit approval required for any run ≥$3.
+
+### Phase 27 — Context
+
+Reader slice validated 2026-06-17 (19/19 citations resolve, 0 invented, 100% coverage). Uncommitted prototype lives in:
+- `src/viz/modules/reader.js` — doc renderer + ref interception
+- `scripts/reader-slice/` — generation pass
+
+Key design decisions (from reader-layer-SPEC.md open decisions, must resolve before building):
+1. Doc storage: `type='doc'` node with lifecycle exemptions routed through consolidator (recommended in spec) vs separate store
+2. Graph focus: extend `/graph?nodeIds=` vs client-side filter
+3. `generatedAt`: dedicated doc field vs reuse doc-node `last_access`
+4. Section-level regen is v2 (READER-05 deferred)
+
+The hero interaction is the validation bet: prose ↔ evidence ↔ graph at two altitudes, feeling like one system.
 
 ### Budget Constraints
 
-API budget: ~$14–15 remaining (Phase 17 closed at its $12 cap; Phase 17 closed 2026-06-13)
+API budget: ~$14–15 remaining (Phase 17 closed at ~$12; Phase 23 used ~$0.05).
 
-- Phases 20–22: near-$0 (dry-run ~$0.20, everything else local or Telegram)
-- Phase 23: ~$0.01–$0.05 per proposal (DeepSeek V4-Flash); requires explicit approval for runs ≥$3
+- Phase 24: ~$1–2 (embedding cost for migration consolidation; confirm before running)
+- Phase 25: ~$0 (local similarity + embedding via existing stack)
+- Phase 26: ~$3–5 (extraction-replay re-eval; explicit approval before any paid run)
+- Phase 27: ~$0–1 (doc generation per project; LLM cost is per-doc generation, not ongoing)
 
-### Research Flags (from SUMMARY.md)
+### Engine Invariants (load-bearing, every phase)
 
-- **Phase 20**: nextSyncToken vs nextPageToken, 410 GONE full-resync handler — track as verification criteria during plan-phase
-- **Phase 23**: Read arxiv 2508.12538 (MCP security / adversarial tool metadata) before writing the Phase 23 plan
-- **Phases 21 + 22**: standard patterns; no additional research needed before planning
-
-### Net-Zero Dependency Requirement
-
-All v4.0 runtime deps are already installed: googleapis, @modelcontextprotocol/sdk (client mode), zod, better-sqlite3 (existing). No npm install required before any phase begins.
-
-### Roadmap Evolution
-
-- v4.0 Proactive Memory opened 2026-06-15 (4 phases: 20–23)
-- Previous milestone v3.1 closed 2026-06-15 (phases 18–19, SREL-01/02/03 + VIZ-07/08/09 all verified)
+- Single-tenant; no multi-tenant namespaces
+- Graph is source of truth; vector store is derived cache
+- Never delete an evidence-backed fact via decay
+- Surfacing/inference never strengthens a belief (D-43)
+- Online paths (SessionStart inject, retrieval, /v1/surface) stay LLM-free
+- Agents live outside the engine (clients/, not src/)
+- Net-zero new runtime dependencies
 
 ### Pending Todos
 
-None — starting clean.
+- SCOPE-01 gate: verify FK-free manual sleep pass before planning any other phase
+- Confirm budget before running Phase 24 migration (embedding cost ~$1–2)
+- Confirm budget before any Phase 26 paid eval run (≥$3)
 
-### Blockers/Concerns
+### Blockers / Concerns
 
-None active.
+- **SCOPE-01 gate is a hard prerequisite**: Phase 24 cannot close — and Phase 25 cannot begin — until a clean sleep pass completes and the hourly agent is re-enabled. Do not skip this verification.
+- **Phase 27 open decisions**: the four open design decisions from reader-layer-SPEC.md §8 must be resolved at Phase 27 plan time, not deferred into execution.
 
-### Quick Tasks Completed
+### Quick Tasks Completed (v5.0 — running log)
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 260614-l8n | Debounced on-write sleep-pass trigger — EpisodicStore.append() touches a dirty-sentinel | 2026-06-14 | 345db4d | [260614-l8n](./quick/260614-l8n-debounced-on-write-sleep-pass-trigger) |
-| 260614-n4f | EVAL-03 injection-efficiency eval — 73% context reduction vs flat MEMORY.md | 2026-06-14 | 3df46f3 | [260614-n4f](./quick/260614-n4f-eval03-injection-efficiency) |
-| 260614-tp3 | Add --per-turn opt-in flag to longmemeval-harness (EVAL-01 fidelity fix) | 2026-06-14 | 962056e | [260614-tp3](./quick/260614-tp3-add-per-turn-flag-to-longmemeval-harness) |
-| 260616-fiv | Add RECENSE_ENABLED_SOURCES env override — fixes the enabledSources no-op so `recense ingest <source>` actually builds adapters | 2026-06-16 | 725f186 | [260616-fiv](./quick/260616-fiv-add-recense-enabled-sources-env-override) |
-| 260616-kxe | Retry transient ECONNRESET on the DeepSeek/OpenAI-compat judge path (withRetry + isTransientNetworkError) — undici body-read drops no longer skip episodes | 2026-06-16 | f07e884 | [260616-kxe](./quick/260616-kxe-retry-transient-econnreset-network-error) |
-| 260616-nx3 | Raise local-judge SDK timeout to 600s (env-overridable RECENSE_LOCAL_SDK_TIMEOUT_MS) + cap local retries at 1 (worst-case 20min < 30min lock window) — local 35b judge completes instead of silently skipping slow episodes | 2026-06-16 | 5dd3048 | [260616-nx3](./quick/260616-nx3-raise-local-judge-sdk-timeout-recense-lo) |
-| 260617-e16 | FK-harden decay eviction (clean node_scope + node_temporal child rows before DELETE FROM node — same pattern as the FK-02 super-schema fix; eviction was silently skipping nodes with those children) + log err.stack at both sleep-pass error sites | 2026-06-17 | ab3b6c8 | [260617-e16](./quick/260617-e16-fk-harden-decay-eviction-child-wipe-slee) |
+| 260617-e16 | FK-harden decay eviction (clean node_scope + node_temporal child rows before DELETE FROM node) + log err.stack at both sleep-pass error sites | 2026-06-17 | ab3b6c8 | [260617-e16](./quick/260617-e16-fk-harden-decay-eviction-child-wipe-slee) |
 
 ## Deferred Items
 
-Carried forward from v3.1 close (2026-06-15):
+Carried forward from v4.0 close (2026-06-17):
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| Retrieval scaling | Brute-force cosine → sqlite-vec ANN (trigger: ~100k+ nodes; currently ~1.5k = 1–3ms) | Deferred — trigger not met | 2026-06-07 |
+| Retrieval scaling | Brute-force cosine → sqlite-vec ANN (trigger: ~100k+ nodes; currently ~5k) | Deferred — trigger not met | 2026-06-07 |
 | Scheduler | croner daemon reboot-survival on Linux | Deferred to v2.1 | 2026-06-09 |
 | seed | SEED-003 multi-tenant namespaces | Dormant — intentional | 2026-06-10 |
 | HTTP | True remote VPS + Caddy/TLS exposure (CR-01 template hard-codes --host 0.0.0.0) | Deferred from Phase 12 | 2026-06-11 |
 | HTTP | readBody multibyte UTF-8 chunk-boundary corruption (CR-02) | Deferred from Phase 12 | 2026-06-11 |
-| Viz perf | Phase 19 selection-rotation choppiness (pre-existing Phase-15 shockwave + ripple + bloom) | Won't-fix — founder decision | 2026-06-14 |
-| content | content-hardening-deferred.md (transcript per-speaker, Obsidian PDF) | Deferred — orthogonal to v4.0 | 2026-06-15 |
+| Viz perf | Phase 19 selection-rotation choppiness | Won't-fix — founder decision | 2026-06-14 |
+| content | content-hardening-deferred.md (transcript per-speaker, Obsidian PDF) | Deferred — orthogonal to v5.0 | 2026-06-15 |
+| Lockfile | Lock-heartbeat for long backlog passes (>30min) — LOCK_STALE_MS | Low priority | 2026-06-17 |
+| Lockfile | Pathological episode b924fdfd exceeds 10-min local timeout (DeepSeek handles it) | Low priority | 2026-06-17 |
 
 ## Session Continuity
 
-Last session: 2026-06-16T22:33:20.541Z
-Stopped at: Phase 23 context gathered
-Resume file: .planning/phases/23-approval-gated-any-mcp-execution/23-CONTEXT.md
+Last session: 2026-06-17
+Stopped at: v5.0 roadmap defined
+Resume file: .planning/ROADMAP.md
 
 ## Operator Next Steps
 
-- Run `/gsd:plan-phase 20` to plan Phase 20: Temporal Ingestion Foundation
+- Run `/gsd:plan-phase 24` to plan Phase 24: Foundational Store
+- First task in Phase 24: verify the FK consolidation fix by running a manual sleep pass
