@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -127,6 +127,20 @@ export const DDL = `
     recurrence_rule TEXT,               -- RRULE string for recurring events (NULL for one-off)
     source_event_id TEXT,               -- Calendar event id for dedup and cancellation linkage
     updated_at      INTEGER NOT NULL    -- epoch ms; set on every upsert
+  );
+
+  -- SCOPE-01: sparse sidecar for single-tenant PROVENANCE attribution (Phase 999.3, D-S2).
+  -- 1:1 with the scoped subset of nodes (a node carries a scope only once consolidation
+  -- has stamped it). Mirrors the node_temporal precedent exactly: additive, derived
+  -- operational annotation — the node table stays the pure belief record (faithfulness).
+  -- scope is a PROVENANCE primitive (which project a fact came from), NOT a tenancy
+  -- boundary: retrieval ranking/score/selection never read it (D-S1). Single writer:
+  -- the sleep-pass consolidator only (CONSOL-03). FK → node(id): tombstoning a node does
+  -- NOT auto-delete node_scope; stale rows are harmless (scope is display-only).
+  CREATE TABLE IF NOT EXISTS node_scope (
+    node_id    TEXT    PRIMARY KEY REFERENCES node(id),
+    scope      TEXT    NOT NULL,    -- project slug (e.g. 'vtx') or 'global'
+    updated_at INTEGER NOT NULL     -- epoch ms; set on every upsert
   );
 
   -- SURF-02: operational surface-outcome log (append-only, single-writer: serve path only).
@@ -306,6 +320,17 @@ export function initSchema(db: Database.Database): void {
       ON surfaced_event(node_id, occurrence_due_at);
     CREATE INDEX IF NOT EXISTS idx_surfaced_event_outcome
       ON surfaced_event(outcome, snooze_until);
+  `);
+
+  // v10 migration: node_scope sidecar for single-tenant provenance (Phase 999.3, SCOPE-01).
+  // Table uses CREATE TABLE IF NOT EXISTS in DDL above → idempotent on fresh DBs.
+  // Existing v9 DBs: node_scope absent → DDL above creates it (IF NOT EXISTS catches it).
+  // No ALTER TABLE needed — the whole table is new (no column additions to existing tables).
+  // Index for future scope-grouped queries (importer/migration plan 02); display path
+  // reads by node_id (PK) so the index is forward-looking, not on a current hot path.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_node_scope_scope
+      ON node_scope(scope);
   `);
 
   // Stamp schema version — read first to guard against downgrade (M-9).

@@ -24,6 +24,7 @@ import type {
   PendingContradiction,
   UpsertNodeTemporalParams,
   NodeTemporalRow,
+  UpsertNodeScopeParams,
 } from '../lib/types';
 
 export class SemanticStore {
@@ -53,6 +54,10 @@ export class SemanticStore {
   private readonly stmtGetNodeTemporal: Database.Statement;
   // node_temporal lookup by source_event_id — used by calendar-tombstone.ts (Plan 20-04).
   private readonly stmtGetNodeIdsBySourceEventId: Database.Statement;
+  // node_scope: single idempotent writer + single/batch readers (SCOPE-01, Plan 999.3-01).
+  // Written exclusively by the sleep-pass consolidator (single writer, CONSOL-03).
+  private readonly stmtUpsertNodeScope: Database.Statement;
+  private readonly stmtGetNodeScope: Database.Statement;
 
   // Transaction-wrapped upsertNode body (defined in constructor, called in upsertNode)
   private readonly txUpsertNode: (params: UpsertNodeParams) => void;
@@ -162,6 +167,17 @@ export class SemanticStore {
     // T-01-SQL: bound ? param, no string interpolation.
     this.stmtGetNodeIdsBySourceEventId = db.prepare(
       'SELECT node_id FROM node_temporal WHERE source_event_id = ?'
+    );
+
+    // node_scope INSERT OR REPLACE — idempotent on re-consolidation (SCOPE-01).
+    // node_scope is a complete snapshot of the node's provenance, so full-row replace
+    // (not incremental update) is correct. T-01-SQL: named params, no interpolation.
+    this.stmtUpsertNodeScope = db.prepare(`
+      INSERT OR REPLACE INTO node_scope (node_id, scope, updated_at)
+      VALUES (@node_id, @scope, @updated_at)
+    `);
+    this.stmtGetNodeScope = db.prepare(
+      'SELECT scope FROM node_scope WHERE node_id = ?'
     );
 
     // ── Transaction — defined once, called in upsertNode ─────────────────────
@@ -414,5 +430,52 @@ export class SemanticStore {
   getNodeIdsBySourceEventId(sourceEventId: string): string[] {
     const rows = this.stmtGetNodeIdsBySourceEventId.all(sourceEventId) as { node_id: string }[];
     return rows.map(r => r.node_id);
+  }
+
+  /**
+   * Write a node_scope row — single-tenant PROVENANCE attribution (SCOPE-01, D-S2).
+   *
+   * Uses INSERT OR REPLACE so a second call for the same node_id replaces the row with
+   * the latest scope — correct for re-consolidation on incremental sync.
+   *
+   * IMPORTANT: this is the ONLY write path for node_scope. Adapters and retrieval code
+   * must never call it — it is invoked exclusively by the sleep-pass consolidator after
+   * upsertNode succeeds (CONSOL-03 discipline). scope NEVER feeds retrieval ranking (D-S1).
+   *
+   * T-01-SQL: all parameters are bound; no string interpolation.
+   */
+  upsertNodeScope(params: UpsertNodeScopeParams): void {
+    this.stmtUpsertNodeScope.run({
+      node_id: params.node_id,
+      scope: params.scope,
+      updated_at: params.updated_at,
+    });
+  }
+
+  /**
+   * Read the provenance scope for a single node_id.
+   * Returns undefined when no scope annotation exists for the node.
+   */
+  getNodeScope(nodeId: string): string | undefined {
+    const row = this.stmtGetNodeScope.get(nodeId) as { scope: string } | undefined;
+    return row?.scope;
+  }
+
+  /**
+   * Batch-read scopes for several node ids → Map<node_id, scope> (recall surfacing, D-S6).
+   * Avoids N queries on the recall display path. Nodes without a scope row are simply
+   * absent from the returned Map (caller treats absence as 'global'). Display-only — this
+   * read happens AFTER ranking and never influences selection/order (D-S1).
+   */
+  getNodeScopes(nodeIds: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    if (nodeIds.length === 0) return out;
+    // Bind each id as a separate ? placeholder (T-01-SQL: no interpolation of ids).
+    const placeholders = nodeIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT node_id, scope FROM node_scope WHERE node_id IN (${placeholders})`)
+      .all(...nodeIds) as Array<{ node_id: string; scope: string }>;
+    for (const r of rows) out.set(r.node_id, r.scope);
+    return out;
   }
 }
