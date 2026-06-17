@@ -440,6 +440,43 @@ describe('validateProposal (D-02 confident-or-null)', () => {
     const result = validateProposal(raw, allowedTools);
     expect(result.tool).toBeNull();
   });
+
+  // WR-01: type-mismatch rejection
+  it('returns {tool:null} when a string field receives a nested object (WR-01)', () => {
+    const raw = JSON.stringify({
+      tool: 'send_email',
+      args: { to: { '$ref': 'attacker@evil.com' }, subject: 'Hi', body: 'Test' },
+    });
+    const result = validateProposal(raw, allowedTools);
+    expect(result.tool).toBeNull();
+  });
+
+  it('returns {tool:null} when a string field receives an array (WR-01)', () => {
+    const raw = JSON.stringify({
+      tool: 'send_email',
+      args: { to: ['a@b.com', 'c@d.com'], subject: 'Hi', body: 'Test' },
+    });
+    const result = validateProposal(raw, allowedTools);
+    expect(result.tool).toBeNull();
+  });
+
+  it('returns {tool:null} when a string field receives a number (WR-01)', () => {
+    const raw = JSON.stringify({
+      tool: 'send_email',
+      args: { to: 42, subject: 'Hi', body: 'Test' },
+    });
+    const result = validateProposal(raw, allowedTools);
+    expect(result.tool).toBeNull();
+  });
+
+  it('returns {tool:null} when a string field receives a boolean (WR-01)', () => {
+    const raw = JSON.stringify({
+      tool: 'send_email',
+      args: { to: true, subject: 'Hi', body: 'Test' },
+    });
+    const result = validateProposal(raw, allowedTools);
+    expect(result.tool).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -536,6 +573,35 @@ describe('validateEditedArgs (T-SEC-04 / D-06)', () => {
       allowedDescriptors,
     );
     expect(result.status).toBe('rejected');
+  });
+
+  // WR-01: type-mismatch rejection on edit path
+  it('rejects when a string field receives a number in edited args (WR-01)', () => {
+    const result = validateEditedArgs(
+      'send_email',
+      { to: 42, subject: 'Hi', body: 'Test' },
+      allowedDescriptors,
+    );
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') expect(result.reason).toContain("'to'");
+  });
+
+  it('rejects when a string field receives an object in edited args (WR-01)', () => {
+    const result = validateEditedArgs(
+      'send_email',
+      { to: { nested: 'injection' }, subject: 'Hi', body: 'Test' },
+      allowedDescriptors,
+    );
+    expect(result.status).toBe('rejected');
+  });
+
+  it('accepts args with correct types when all fields match schema (WR-01 positive)', () => {
+    const result = validateEditedArgs(
+      'send_email',
+      { to: 'carol@example.com', subject: 'Hello', body: 'World' },
+      allowedDescriptors,
+    );
+    expect(result.status).toBe('ok');
   });
 });
 
