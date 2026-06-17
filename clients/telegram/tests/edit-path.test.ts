@@ -335,13 +335,13 @@ describe('edit-path D-06 state machine', () => {
     expect(editApplied?.tool).toBe('send_email');
     expect(editApplied?.args?.to).toBe('bob@example.com');
 
-    // Fresh card was sent (sendMessage with keyboard — last message on t2)
+    // Fresh card was sent (sendMessage with replyMarkup — renderProposalCard output)
     // The card message contains '[Proposed Action]' per renderProposalCard
     expect(t2.sent.some(s => s.text.includes('[Proposed Action]'))).toBe(true);
     // The fresh card has inline_keyboard (proposalKeyboard returns 4 buttons)
     const cardMsg = t2.sent.find(s => s.text.includes('[Proposed Action]'));
-    expect(cardMsg?.keyboard).toBeDefined();
-    expect(cardMsg?.keyboard?.inline_keyboard[0]?.length).toBe(4);
+    expect(cardMsg?.replyMarkup).toBeDefined();
+    expect(cardMsg?.replyMarkup?.inline_keyboard[0]?.length).toBe(4);
   });
 
   // ── T4: Malformed patch → rejected, no store, edit-rejected episode ──
@@ -518,10 +518,10 @@ describe('edit-path D-06 state machine', () => {
     const applyEp = hitlCalls.find(h => h.decision === 'edit-applied');
     expect(applyEp).toBeDefined();
 
-    // Assertion: fresh card is on the wire (has keyboard — user must Approve it)
+    // Assertion: fresh card is on the wire (has replyMarkup — user must Approve it)
     const cards = t2.sent.filter(s => s.text.includes('[Proposed Action]'));
     expect(cards).toHaveLength(1);
-    expect(cards[0]?.keyboard).toBeDefined();
+    expect(cards[0]?.replyMarkup).toBeDefined();
 
     // Assertion: no 'execute' episode — user has not yet approved the new card
     expect(hitlCalls.some(h => h.decision === 'execute')).toBe(false);
