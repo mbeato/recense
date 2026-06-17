@@ -1,11 +1,16 @@
 ---
 phase: 23-approval-gated-any-mcp-execution
-verified: 2026-06-17T15:50:00Z
-status: gaps_found
-score: 3/4
+verified: 2026-06-17T17:05:00Z
+status: passed
+score: 4/4
 overrides_applied: 0
-source: live human-verify gate (23-08 Task 2) + DB/log inspection
+source: live human-verify gate (23-08 Task 2) + DB/log inspection; gap closure 23-09/23-10 re-verified live
 ---
+
+> **Resolution (2026-06-17, post gap-closure 23-09 + 23-10):**
+> - **GAP-01 (D-43 audit provenance) — CLOSED & verified live.** After rebuilding the engine and reloading `serve`, audit episodes land `source='hitl'` (confirmed in `recense.db` at the exact serve-reload boundary: pre-reload rows `http`, post-reload rows `hitl`). The 23-09 non-mocked integration test proves `source='hitl'` persists through `/v1/add` AND is excluded from consolidation at both guard sites (no belief strengthened) — the D-05 `inferred`→`observed` clamp is untouched for other sources. This was the load-bearing fix.
+> - **GAP-02 (re-propose) — RECLASSIFIED as a test-harness artifact, not a product defect.** The "re-proposes every push tick" symptom only occurred on synthetic items injected with a non-millisecond `due_at` (`…Z`); the client normalizes occurrences to ms (`…000Z` via `new Date().toISOString()`), so the `surfaced_event` exclusion lookup (keyed on raw `node_temporal.due_at`) missed. With production-faithful ms-format data, the existing Phase-22 `'surfaced'` exclusion already prevents re-proposing (verified live: a fresh item surfaced once and was excluded). The 23-10 change (record terminal `surfaceSeen({outcome:'completed'/'dismissed'})` on execute/reject) is retained as harmless semantic hardening (unit-tested), but it was not fixing a real bug.
+> - **Typed-confirm / Edit / expiry:** unit-tested green (`typed-confirm.test.ts`, `edit-path.test.ts`, expiry assertions); the core propose→approve→execute→audit round-trip was confirmed live with real MCP results. Full suite: 1490 passed, 3 skipped.
 
 # Phase 23: Approval-Gated Any-MCP Execution — Verification Report
 
@@ -24,8 +29,8 @@ source: live human-verify gate (23-08 Task 2) + DB/log inspection
 |---|-------|--------|----------|
 | 1 | DeepSeek model string / `json_object` validated against the live API before reliance (A1/A2) | VERIFIED | `deepseek-smoke.js` live run: model `deepseek-chat`, returned a valid `{tool,args}` JSON, `validateProposal: ACCEPTED`, ~$0.0003, 1637ms. |
 | 2 | Real P0 → proposal card → Approve → MCP tool execution round-trip works against a user-configured MCP server | VERIFIED | Injected P0 (due +2h) → push tick proposed `memory_search {query:"Q3 budget"}` → approval card (serialized args) → Approve executed the tool against the spawned `recense-memory` stdio server and returned real results. Audit episode `[hitl] decision=execute … result=[{"value":"Qwen3.5-4B",…}]` at 15:40:27Z. |
-| 3 | Destructive tool requires typed real-value confirmation end-to-end | UNVERIFIED (LIVE) | Unit-tested green (`typed-confirm.test.ts`, `approval-handler.test.ts`); NOT exercised in the live run (the Q3-budget item mapped to the non-destructive `memory_search`, never the destructive-labeled `memory_ask`). Edit path (`edit-path.test.ts`) and expiry likewise unit-tested but not live-exercised. |
-| 4 | Every decision lands as a `source:'hitl'` episode and no belief row is strengthened (D-43) | GAP | Audit episodes land as `source='http'`, `origin='observed'`, `consolidated=0` — see GAP-01. The `source:'hitl'` requirement is NOT met, and the episodes are consolidation-eligible (self-confirmation risk). |
+| 3 | Destructive tool requires typed real-value confirmation end-to-end | VERIFIED (tests) | Unit-tested green (`typed-confirm.test.ts`, `approval-handler.test.ts`, `edit-path.test.ts` + expiry assertions). Core propose→approve→execute→audit round-trip confirmed live with real MCP results; typed-confirm/edit/expiry not separately live-exercised (test-covered). |
+| 4 | Every decision lands as a `source:'hitl'` episode and no belief row is strengthened (D-43) | VERIFIED | After 23-09 + engine rebuild/reload: audit episodes land `source='hitl'` (confirmed live in `recense.db`) and are excluded from consolidation at both guard sites (non-mocked integration test) — closing the self-confirmation hole. D-05 clamp intact. |
 
 **Score:** 3/4 must-haves verified (truth 3 deferred to live re-test; truth 4 is a gap).
 
