@@ -90,6 +90,25 @@ export function validateOrigin(raw: string | undefined): 'observed' | 'asserted_
 }
 
 /**
+ * ACT-03 / D-43 source allowlist — the source analogue of the D-05 origin clamp.
+ *
+ * Returns the literal 'hitl' ONLY when raw === 'hitl': the Telegram approval-gate
+ * client (hitlEpisode) is the sole path permitted to stamp source='hitl', marking
+ * audit episodes as a first-class, non-consolidatable record.
+ *
+ * For every other value — undefined, 'http', 'mcp', unknown, or any spoof attempt —
+ * returns `fallback` (the engine instance default: 'http' for the HTTP serve surface,
+ * 'mcp' for the stdio MCP surface). This prevents clients from minting arbitrary source
+ * provenance, mirroring the conservative fallback discipline of validateOrigin.
+ *
+ * The allowlist is intentionally minimal: 'hitl' is the only audit-path override needed.
+ * Do NOT add other source values here without a corresponding D-43 threat-model review.
+ */
+export function validateSource(raw: string | undefined, fallback: string): string {
+  return raw === 'hitl' ? 'hitl' : fallback;
+}
+
+/**
  * Thrown by add() and ask() when acquireLockWithRetry returns false — the DB is
  * locked by a live sleep pass or concurrent writer. Callers map this to a
  * surface-appropriate busy response (MCP: isError content; HTTP: 503).
@@ -156,8 +175,13 @@ export interface MemoryOps {
    * Episodic-only write via IngestionPipeline.recordEvent. Acquires the single-
    * writer lock per call; throws MemoryBusyError on lock failure. try/finally
    * releases the lock (T-12-02). Returns deferred ack (D-10, honest).
+   *
+   * rawSource is allowlist-validated by validateSource (ACT-03 / D-43): only 'hitl'
+   * overrides the engine instance default; everything else falls back to opts.source.
+   * The stdio MCP tool (memory_add) does NOT expose rawSource — source override is an
+   * HTTP-serve concern only (the MCP surface keeps its instance default).
    */
-  add(content: string, rawOrigin?: string): Promise<{ status: string; message: string }>;
+  add(content: string, rawOrigin?: string, rawSource?: string): Promise<{ status: string; message: string }>;
   /**
    * HybridResponder.respond → { answer, origin }. Acquires lock (the facts-first
    * branch writes one inferred episode); throws MemoryBusyError on lock failure.
@@ -348,11 +372,14 @@ export function wireMemoryEngine(
     return rows;
   }
 
-  async function add(content: string, rawOrigin?: string): Promise<{ status: string; message: string }> {
+  async function add(content: string, rawOrigin?: string, rawSource?: string): Promise<{ status: string; message: string }> {
     // T-11-03: DoS bound at handler boundary.
     const bounded = content.slice(0, MAX_CONTENT_CHARS);
     // D-05: clamp origin — 'inferred' (or anything unknown) can never reach the engine.
     const origin = validateOrigin(rawOrigin);
+    // ACT-03 / D-43: allowlist-validate source — 'hitl' is the only client override;
+    // everything else falls back to the engine instance default (opts.source).
+    const source = validateSource(rawSource, opts.source);
 
     // Single-writer lock per call (T-12-02): coexists with the hourly sleep pass
     // and the always-on watcher. Lock-fail throws MemoryBusyError — callers surface
@@ -363,13 +390,13 @@ export function wireMemoryEngine(
     try {
       // Episodic path ONLY (MCP-03): recordEvent → gate.score → episode append.
       // No graph node is ever created or mutated here — the sleep pass remains
-      // the sole graph writer. source from opts (D-06), no dedup key (D-07).
+      // the sole graph writer. source is per-call validated (D-06 / ACT-03), no dedup key (D-07).
       pipeline.recordEvent({
         content: bounded,
         role: 'user',
         origin,
         sessionId,
-        source: opts.source,
+        source,
         externalId: null,
       });
       // D-10: honest deferred ack — searchable only after the next sleep pass.
