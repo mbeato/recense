@@ -181,8 +181,15 @@ export class SchemaRelationDeriver {
     // Leaf schemas from induceSchemas() use UUID ids (newId()) — never match 'super::%'.
     // T-18-05: scoped DELETE cannot accidentally remove leaf schemas.
     // Delete edges first (referential order: edge.src refs node.id).
+    //
+    // FK-01 fix: delete ALL edges that reference a super-schema as src OR dst, regardless
+    // of kind. Prior to this fix the statement filtered AND kind='abstracts', which missed
+    // kind='relation' edges created when a super-schema appeared as a top-k candidate in
+    // Phase B applyDecision 'extend' and was wired as the src of an 'extends' relation edge.
+    // stmtDeleteSchemaRelEdges above handles kind='schema_rel'; the OR dst guard below covers
+    // any future edge kinds that could reference a super-schema on either endpoint.
     this.stmtDeleteSuperSchemaEdges = db.prepare(
-      "DELETE FROM edge WHERE src LIKE 'super::%' AND kind = 'abstracts'"
+      "DELETE FROM edge WHERE src LIKE 'super::%' OR dst LIKE 'super::%'"
     );
     this.stmtDeleteSuperSchemaNodes = db.prepare(
       "DELETE FROM node WHERE id LIKE 'super::%' AND type = 'schema' AND origin = 'inferred'"
