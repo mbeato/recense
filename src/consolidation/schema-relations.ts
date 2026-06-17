@@ -134,6 +134,8 @@ export class SchemaRelationDeriver {
   private readonly stmtGetSchemaNodes: Database.Statement;
   private readonly stmtDeleteSchemaRelEdges: Database.Statement;
   private readonly stmtDeleteSuperSchemaEdges: Database.Statement;
+  private readonly stmtDeleteSuperSchemaScopes: Database.Statement;
+  private readonly stmtDeleteSuperSchemaTemporal: Database.Statement;
   private readonly stmtDeleteSuperSchemaNodes: Database.Statement;
 
   constructor(
@@ -191,9 +193,40 @@ export class SchemaRelationDeriver {
     this.stmtDeleteSuperSchemaEdges = db.prepare(
       "DELETE FROM edge WHERE src LIKE 'super::%' OR dst LIKE 'super::%'"
     );
+    // FK-02 fix: super-schema nodes also accrue rows in the node_id-FK sidecar tables that
+    // the sleep pass is permitted to write — node_scope (from stampNodeScopes) and
+    // node_temporal. Both REFERENCES node(id), so they must be wiped BEFORE the node DELETE
+    // or the D-04 wipe-and-rebuild fails with "FOREIGN KEY constraint failed". node_scope is
+    // the live blocker (Phase 999.3 stamps super-schemas, which carry schema_falsified
+    // events); node_temporal is cleaned defensively (a super-schema never gets a temporal row
+    // today, but it is a node_id-FK child). The serve-path-only surface-outcome table is
+    // intentionally NOT touched: a super-schema can never be surfaced, and the D-08 sentinel
+    // forbids any reference to that table in sleep-pass/consolidator source.
+    this.stmtDeleteSuperSchemaScopes = db.prepare(
+      "DELETE FROM node_scope WHERE node_id LIKE 'super::%'"
+    );
+    this.stmtDeleteSuperSchemaTemporal = db.prepare(
+      "DELETE FROM node_temporal WHERE node_id LIKE 'super::%'"
+    );
     this.stmtDeleteSuperSchemaNodes = db.prepare(
       "DELETE FROM node WHERE id LIKE 'super::%' AND type = 'schema' AND origin = 'inferred'"
     );
+  }
+
+  /**
+   * FK-safe super-schema wipe (D-04): delete every node_id-FK child of the super-schema
+   * nodes that the sleep pass may write — edges (src/dst), node_scope, node_temporal —
+   * BEFORE the node rows themselves, in referential order. Centralised so the two wipe sites
+   * (the <2-schema early return and deriveSuperSchemas) can never drift on which children get
+   * cleaned (the drift that caused both the FK-01 and FK-02 crashes). Does NOT delete
+   * schema_rel edges — those are wiped separately by the caller (they are not scoped to
+   * super-schemas) — and never touches the serve-only surface-outcome table (D-08).
+   */
+  private wipeSuperSchemas(): void {
+    this.stmtDeleteSuperSchemaEdges.run();
+    this.stmtDeleteSuperSchemaScopes.run();
+    this.stmtDeleteSuperSchemaTemporal.run();
+    this.stmtDeleteSuperSchemaNodes.run();
   }
 
   // ── Public API ───────────────────────────────────────────────────────────
@@ -228,8 +261,7 @@ export class SchemaRelationDeriver {
       // server holds a concurrent SHARED read lock (WR-02).
       this.db.transaction(() => {
         this.stmtDeleteSchemaRelEdges.run();
-        this.stmtDeleteSuperSchemaEdges.run();
-        this.stmtDeleteSuperSchemaNodes.run();
+        this.wipeSuperSchemas();
       }).immediate();
       return;
     }
@@ -443,9 +475,8 @@ export class SchemaRelationDeriver {
     // Identification rule: id LIKE 'super::%' + type='schema' + origin='inferred'.
     // Leaf schemas from induceSchemas() use UUID ids (newId()) — never match 'super::%'.
     // T-18-05: this scoped DELETE cannot accidentally remove any leaf schema node.
-    // Edges before nodes (referential order: edge.src references node.id).
-    this.stmtDeleteSuperSchemaEdges.run();
-    this.stmtDeleteSuperSchemaNodes.run();
+    // FK-safe child wipe (edges + node_scope + node_temporal) before nodes.
+    this.wipeSuperSchemas();
 
     for (const childIds of clusters) {
       // Deterministic super-schema id: 'super::' prefix + sorted child ids joined by '|'.
