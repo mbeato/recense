@@ -739,6 +739,7 @@ export async function tryGenerateProposal(
       serverName: toolEntry.serverName,
       tool: validated.tool,
       args: validated.args,
+      nodeId: item.node_id,
       dueAt: new Date(item.due_at).toISOString(),
       maxTtlMs: actionConfig.proposalMaxTtlMs,
       createdAt: new Date().toISOString(),
@@ -957,12 +958,13 @@ async function handleEditPatch(
     return;
   }
 
-  // 6. Build fresh StoredProposal (D-06: new id, same dueAt/maxTtlMs, recomputed confirm value)
+  // 6. Build fresh StoredProposal (D-06: new id, same dueAt/maxTtlMs/nodeId, recomputed confirm value)
   const freshProposal: StoredProposal = {
     id: randomUUID(),
     serverName: original.serverName,
     tool: validation.tool,
     args: validation.args,
+    nodeId: original.nodeId, // carry through — occurrence identity unchanged by edit (GAP-02)
     dueAt: original.dueAt,
     maxTtlMs: original.maxTtlMs,
     createdAt: new Date().toISOString(),

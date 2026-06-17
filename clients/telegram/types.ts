@@ -117,7 +117,7 @@ export interface StoredProposal {
    * a terminal surfaceSeen outcome on execute-success or reject (GAP-02 / ACT-01).
    * Populated by tryGenerateProposal from item.node_id; carried through by handleEditPatch.
    */
-  nodeId?: string;
+  nodeId: string;
   /** P0 item's due_at (ISO 8601 UTC) — expiry anchor checked at execute-time (D-07). */
   dueAt: string;
   /**
