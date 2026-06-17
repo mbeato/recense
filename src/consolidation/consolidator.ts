@@ -91,6 +91,12 @@ function isEligibleForExtraction(episode: EpisodeRow, config: EngineConfig): boo
   if (episode.origin === 'inferred') {
     return false;
   }
+  // ACT-03 / D-43: audit episodes (source='hitl') are never belief input.
+  // Excluding them from prefetch prevents generate() from being called on audit content,
+  // closing the self-confirmation hole (never let inferred/retrieved output strengthen a fact).
+  if (episode.source === 'hitl') {
+    return false;
+  }
   return true;
 }
 
@@ -417,7 +423,7 @@ export class Consolidator {
           episode = { ...episode, source_inference_id: echoSourceId };
         }
 
-        // ── WR-01 / CR-01: hard stop — no graph effects for inferred or echo episodes ─────────
+        // ── WR-01 / CR-01 / ACT-03: hard stop — no graph effects for inferred, echo, or hitl episodes ──
         // WR-01: inferred-origin episodes are ephemeral; they must NEVER produce graph effects
         //        (LEARN-02 ephemeral-as-fact guarantee). The salience skip above is a tunable
         //        performance heuristic; this is the hard structural correctness guard.
@@ -425,8 +431,14 @@ export class Consolidator {
         //        evidence — allowing it to strengthen a fact or mint a node is self-confirmation
         //        (LEARN-03, correctness invariant). The contradict→HOLD guard at applyDecision
         //        was the only branch that previously blocked this; confirm/extend/unrelated did not.
-        // Backfill persists above for the audit trail; no claims are extracted for either class.
-        if (episode.origin === 'inferred' || echoSourceId !== null) {
+        // ACT-03 / D-43: source='hitl' episodes are first-class audit records produced by the
+        //        HITL approval gate; they embed retrieved tool RESULTS (the system's own output)
+        //        and must NEVER produce graph effects (self-confirmation hole D-43). markConsolidated
+        //        is still called so rows are not re-scanned on every pass (they remain queryable as
+        //        an audit trail by source='hitl'). Duplicates the isEligibleForExtraction guard so
+        //        both sites cannot drift (per the header comment above isEligibleForExtraction).
+        // Backfill persists above for the audit trail; no claims are extracted for any of these classes.
+        if (episode.origin === 'inferred' || echoSourceId !== null || episode.source === 'hitl') {
           // M-5: .immediate() prevents SQLITE_BUSY_SNAPSHOT in WAL mode on upgrade race.
           // better-sqlite3 API: transaction.immediate() calls the transaction in IMMEDIATE mode.
           this.db.transaction(() => this.episodes.markConsolidated(episode.id)).immediate();
