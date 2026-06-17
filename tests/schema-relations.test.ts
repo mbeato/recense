@@ -466,6 +466,58 @@ describe('SchemaRelationDeriver', () => {
     await expect(deriver.deriveSchemaRelations()).resolves.toBeUndefined();
   });
 
+  // ── FK-02 regression: node_scope row on super-schema must not block node DELETE ─
+
+  it('FK-02: deriveSchemaRelations() does not throw when a node_scope row references a super-schema (FK crash regression)', async () => {
+    const embedder = makeSameClusterEmbedder(h.config.embeddingDimensions);
+
+    // Seed two schemas that will cluster into a super-schema.
+    const memberAIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberAIds.push(await seedNodeWithEmbedding(h, embedder, { value: `fk02-a-${i}` }));
+    }
+    const memberBIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      memberBIds.push(await seedNodeWithEmbedding(h, embedder, { value: `fk02-b-${i}` }));
+    }
+    createSchema(h, memberAIds);
+    createSchema(h, memberBIds);
+
+    // First pass: produce a super-schema node.
+    const deriver = new SchemaRelationDeriver(h.db, h.store, h.config, h.clock);
+    await deriver.deriveSchemaRelations();
+
+    const superNodes = h.db
+      .prepare("SELECT id FROM node WHERE id LIKE 'super::%'")
+      .all() as Array<{ id: string }>;
+    expect(superNodes.length).toBeGreaterThanOrEqual(1);
+
+    const superId = superNodes[0]!.id;
+
+    // Simulate Phase 999.3 stampNodeScopes stamping the super-schema node: a node_scope row
+    // (node_id REFERENCES node(id)) survives into the next pass. This is exactly what happens
+    // in production — stampNodeScopes() writes a scope for every node with a consolidation_event,
+    // and super-schemas accrue schema_falsified events, so they get stamped.
+    h.store.upsertNodeScope({ node_id: superId, scope: 'global', updated_at: h.clock.nowMs() });
+
+    const scopeBefore = h.db
+      .prepare('SELECT * FROM node_scope WHERE node_id = ?')
+      .all(superId);
+    expect(scopeBefore).toHaveLength(1);
+
+    // Second pass: must NOT throw even though the super-schema has a node_scope row.
+    // Before the FK-02 fix the super-schema wipe cleaned only edges, so
+    // stmtDeleteSuperSchemaNodes failed with "FOREIGN KEY constraint failed".
+    await expect(deriver.deriveSchemaRelations()).resolves.toBeUndefined();
+
+    // The stale scope row for the wiped super-schema id must be gone (the deriver itself
+    // never re-stamps scope; only a real pass does).
+    const scopeAfter = h.db
+      .prepare('SELECT * FROM node_scope WHERE node_id = ?')
+      .all(superId);
+    expect(scopeAfter).toHaveLength(0);
+  });
+
   // ── D-03 critical guard: super-schemas excluded from leaf re-clustering ───
 
   it('D-03 exclusion guard: after deriver runs, re-running induceSchemas() never adds super-schema as a leaf member', async () => {
