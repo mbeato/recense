@@ -508,3 +508,55 @@ describe('STR-03 INVARIANT: 30-day simulated month — no evidence-backed node e
     expect(evicted).toContain('stale2');
   });
 });
+
+describe('EV-FK-01: FK-complete eviction — node_scope + node_temporal child wipe', () => {
+  let db: Database.Database;
+  let clock: FakeClock;
+  let config: EngineConfig;
+  let store: SemanticStore;
+  let manager: StrengthDecayManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    clock = new FakeClock(Date.UTC(2026, 0, 1));
+    config = makeTestConfig();
+    store = new SemanticStore(db, clock, config);
+    manager = new StrengthDecayManager(db, clock, config);
+  });
+
+  it('EV-FK-01: tombstoned node with node_scope + node_temporal IS evicted and child rows are wiped', () => {
+    // Regression: before the FK-complete fix, the per-node transaction threw a
+    // SQLITE_CONSTRAINT_FOREIGNKEY on DELETE FROM node because node_scope.node_id and
+    // node_temporal.node_id both REFERENCES node(id). The catch swallowed the error, so
+    // the node was SILENTLY never evicted. After the fix: edges → node_scope → node_temporal
+    // → node deleted in order; eviction completes and child rows are gone.
+
+    const nodeId = 'ev-fk-01-target';
+
+    // Seed node meeting all eviction predicates
+    store.upsertNode({ id: nodeId, type: 'fact', value: 'stale with children', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
+
+    // Attach a node_scope child row (REFERENCES node(id) — FK guard)
+    store.upsertNodeScope({ node_id: nodeId, scope: 'global', updated_at: clock.nowMs() });
+
+    // Attach a node_temporal child row (REFERENCES node(id) — FK guard)
+    store.upsertNodeTemporal({ node_id: nodeId, due_at: new Date(Date.UTC(2026, 5, 20)).toISOString(), action_type: 'deadline', updated_at: clock.nowMs() });
+
+    // Verify seed: both child rows exist before sweep
+    expect(db.prepare('SELECT * FROM node_scope WHERE node_id = ?').all(nodeId)).toHaveLength(1);
+    expect(db.prepare('SELECT * FROM node_temporal WHERE node_id = ?').all(nodeId)).toHaveLength(1);
+
+    // Advance past the 30-day age gate (strict >, so 31d)
+    clock.advanceDays(31);
+
+    const evicted = manager.runEvictionSweep();
+
+    // Node must be evicted
+    expect(evicted).toContain(nodeId);
+    expect(store.getNode(nodeId)).toBeNull();
+
+    // Child rows must be gone (FK-complete wipe)
+    expect(db.prepare('SELECT * FROM node_scope WHERE node_id = ?').all(nodeId)).toHaveLength(0);
+    expect(db.prepare('SELECT * FROM node_temporal WHERE node_id = ?').all(nodeId)).toHaveLength(0);
+  });
+});
