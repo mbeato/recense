@@ -138,6 +138,17 @@ export interface NodeTemporalRow {
 }
 
 /**
+ * Parameters for SemanticStore.upsertNodeScope() (Plan 999.3-01, D-S2).
+ * scope is single-tenant PROVENANCE (which project a fact came from), NOT tenancy (D-S1).
+ * Written exclusively by the sleep-pass consolidator (CONSOL-03, single writer).
+ */
+export interface UpsertNodeScopeParams {
+  node_id: string;
+  scope: string;       // project slug (e.g. 'vtx') or 'global'
+  updated_at: number;  // epoch ms; set on every upsert
+}
+
+/**
  * Parameters accepted by SemanticStore.upsertNode().
  * The store fills in value_hash, embedded_hash, prev_value, prev_ts, and training_eligible.
  */
