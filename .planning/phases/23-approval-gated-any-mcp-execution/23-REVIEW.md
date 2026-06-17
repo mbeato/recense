@@ -21,7 +21,8 @@ findings:
   warning: 1
   info: 4
   total: 6
-status: issues_found
+status: resolved
+resolution: "All actioned findings fixed 2026-06-17 (commits fe095c9 CR-01, ad2d05e WR-01, 902da6e IN-02, 0584090 IN-04; merged 3e8beda). Full suite 1504 passed / 0 failed. Remaining Info items (deriveConfirmValue field list, empty-env stdio spawn) left as documented low-severity nits."
 ---
 
 # Phase 23: Approval-Gated Any-MCP Execution — Code Review Report
