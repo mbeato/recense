@@ -739,6 +739,7 @@ export async function tryGenerateProposal(
       serverName: toolEntry.serverName,
       tool: validated.tool,
       args: validated.args,
+      nodeId: item.node_id,
       dueAt: new Date(item.due_at).toISOString(),
       maxTtlMs: actionConfig.proposalMaxTtlMs,
       createdAt: new Date().toISOString(),
@@ -853,6 +854,20 @@ async function executeStoredProposal(
     });
   } catch (e) { log('hitlEpisode error (execute): ' + String(e)); }
 
+  // GAP-02: mark the occurrence terminal on SUCCESS only.
+  // A FAILED execute is a non-terminal retry path — the proposal is already removed
+  // (at-most-once) so duplicates are prevented, but the item may legitimately re-surface
+  // for a retry, bounded by the daily cap. Only isError===false closes the occurrence.
+  if (!isError) {
+    try {
+      await memoryClient.surfaceSeen({
+        node_id: proposal.nodeId,
+        occurrence_due_at: proposal.dueAt,
+        outcome: 'completed',
+      });
+    } catch (e) { log('surfaceSeen error (execute completed): ' + String(e)); }
+  }
+
   // Remove proposal after execution (at-most-once — success or failure)
   try { removeProposal(proposalId, storePath); }
   catch (e) { log('removeProposal error: ' + String(e)); }
@@ -957,12 +972,13 @@ async function handleEditPatch(
     return;
   }
 
-  // 6. Build fresh StoredProposal (D-06: new id, same dueAt/maxTtlMs, recomputed confirm value)
+  // 6. Build fresh StoredProposal (D-06: new id, same dueAt/maxTtlMs/nodeId, recomputed confirm value)
   const freshProposal: StoredProposal = {
     id: randomUUID(),
     serverName: original.serverName,
     tool: validation.tool,
     args: validation.args,
+    nodeId: original.nodeId, // carry through — occurrence identity unchanged by edit (GAP-02)
     dueAt: original.dueAt,
     maxTtlMs: original.maxTtlMs,
     createdAt: new Date().toISOString(),
@@ -1029,6 +1045,20 @@ export async function handleProposalAction(
   const { proposalId, action } = decoded;
 
   if (action === 'reject') {
+    // GAP-02: load the proposal (regardless of expiry) to get nodeId + dueAt for
+    // a terminal surfaceSeen({outcome:'dismissed'}) — stops re-surfacing the occurrence.
+    // If the proposal is already gone (getProposal returns null), skip surfaceSeen
+    // and keep existing behavior (removeProposal no-ops, hitlEpisode still written).
+    const rejectedProposal = getProposal(proposalId, storePath);
+    if (rejectedProposal !== null) {
+      try {
+        await memoryClient.surfaceSeen({
+          node_id: rejectedProposal.nodeId,
+          occurrence_due_at: rejectedProposal.dueAt,
+          outcome: 'dismissed',
+        });
+      } catch (e) { log('surfaceSeen error (reject dismissed): ' + String(e)); }
+    }
     try { removeProposal(proposalId, storePath); } catch { /* ignore store errors on reject */ }
     try { await memoryClient.hitlEpisode({ decision: 'reject' }); }
     catch (e) { log('hitlEpisode error (reject): ' + String(e)); }

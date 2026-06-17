@@ -57,6 +57,7 @@ function makeProposal(overrides?: Partial<StoredProposal>): StoredProposal {
     serverName: 'test-server',
     tool: 'send_email',
     args: { to: 'alice@example.com', subject: 'Hello', nested: { priority: 1 } },
+    nodeId: 'test-node-store-1',
     dueAt: new Date(BASE_NOW + 3_600_000).toISOString(),     // 1h from BASE_NOW
     maxTtlMs: 86_400_000,                                     // 24h
     createdAt: new Date(BASE_NOW).toISOString(),

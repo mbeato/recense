@@ -167,6 +167,7 @@ function makeSendEmailProposal(
     serverName: 'test-server',
     tool: 'send_email',
     args: { to: 'alice@example.com', subject: 'hello', body: 'world' },
+    nodeId: 'test-node-edit',
     dueAt: new Date(Date.now() + 3_600_000).toISOString(),
     maxTtlMs: 3_600_000,
     createdAt: new Date().toISOString(),
