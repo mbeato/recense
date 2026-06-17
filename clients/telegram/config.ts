@@ -241,7 +241,7 @@ export function loadMcpConfig(): McpServerConfig[] {
 
     const server: McpServerConfig = { name, transport, allowedTools };
 
-    if (typeof s['command'] === 'string') server.command = s['command'];
+    if (typeof s['command'] === 'string') server.command = interpolateEnv(s['command']);
     if (Array.isArray(s['args'])) {
       server.args = (s['args'] as unknown[])
         .filter((a): a is string => typeof a === 'string')
