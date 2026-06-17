@@ -167,6 +167,39 @@ describe('loadMcpConfig — env interpolation (H-14)', () => {
     const servers = loadMcpConfig();
     expect(servers[0]!.env!['TOKEN']).toBe('');
   });
+
+  it('substitutes ${VAR} in command from process.env (IN-04)', () => {
+    // command was previously assigned verbatim; ${VAR} tokens in path were not expanded.
+    process.env['MCP_CMD_PATH'] = '/usr/local/bin/my-mcp-server';
+    writeConfig({
+      mcpServers: {
+        tools: {
+          transport: 'stdio',
+          command: '${MCP_CMD_PATH}',
+          allowedTools: [{ name: 'run' }],
+        },
+      },
+    });
+    process.env['RECENSE_MCP_CONFIG_PATH'] = configPath;
+    const servers = loadMcpConfig();
+    expect(servers[0]!.command).toBe('/usr/local/bin/my-mcp-server');
+  });
+
+  it('unset ${VAR} in command substitutes empty string (fail-closed)', () => {
+    delete process.env['UNSET_CMD_VAR'];
+    writeConfig({
+      mcpServers: {
+        tools: {
+          transport: 'stdio',
+          command: '${UNSET_CMD_VAR}/my-server',
+          allowedTools: [{ name: 'run' }],
+        },
+      },
+    });
+    process.env['RECENSE_MCP_CONFIG_PATH'] = configPath;
+    const servers = loadMcpConfig();
+    expect(servers[0]!.command).toBe('/my-server');
+  });
 });
 
 // ── Permission refusal (H-14) ─────────────────────────────────────────────────
@@ -234,5 +267,24 @@ describe('loadActionConfig — DeepSeek + cap envs', () => {
     const cfg = loadActionConfig();
     expect(cfg.proposalDailyCap).toBe(3);
     expect(cfg.deepseekModel).toBe('deepseek-reasoner');
+  });
+
+  it('RECENSE_PROPOSAL_DAILY_CAP=0 → proposalDailyCap is 0, not 10 (IN-02 footgun)', () => {
+    // 0 is a valid "disable proposals" value; the old `|| 10` pattern treated it as falsy.
+    process.env['RECENSE_PROPOSAL_DAILY_CAP'] = '0';
+    const cfg = loadActionConfig();
+    expect(cfg.proposalDailyCap).toBe(0);
+  });
+
+  it('RECENSE_PROPOSAL_DAILY_CAP=negative → falls back to 10', () => {
+    process.env['RECENSE_PROPOSAL_DAILY_CAP'] = '-1';
+    const cfg = loadActionConfig();
+    expect(cfg.proposalDailyCap).toBe(10);
+  });
+
+  it('RECENSE_PROPOSAL_DAILY_CAP=not-a-number → falls back to 10', () => {
+    process.env['RECENSE_PROPOSAL_DAILY_CAP'] = 'banana';
+    const cfg = loadActionConfig();
+    expect(cfg.proposalDailyCap).toBe(10);
   });
 });

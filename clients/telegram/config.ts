@@ -122,8 +122,10 @@ export function loadActionConfig(): ActionConfig {
   const deepseekApiKey = process.env['DEEPSEEK_API_KEY'] ?? '';
   const deepseekModel = process.env['DEEPSEEK_MODEL'] ?? 'deepseek-chat';
   const deepseekBaseUrl = process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com/v1';
-  const proposalDailyCap =
-    parseInt(process.env['RECENSE_PROPOSAL_DAILY_CAP'] ?? '10', 10) || 10;
+  // Use Number.isFinite + n >= 0 so RECENSE_PROPOSAL_DAILY_CAP=0 (disable proposals) is
+  // honored rather than silently becoming 10 (the || 10 footgun — IN-02).
+  const _capRaw = parseInt(process.env['RECENSE_PROPOSAL_DAILY_CAP'] ?? '', 10);
+  const proposalDailyCap = Number.isFinite(_capRaw) && _capRaw >= 0 ? _capRaw : 10;
   const proposalMaxTtlMs =
     parseInt(process.env['RECENSE_PROPOSAL_MAX_TTL_MS'] ?? '86400000', 10) || 86400000;
   const proposalStorePath =
@@ -239,7 +241,7 @@ export function loadMcpConfig(): McpServerConfig[] {
 
     const server: McpServerConfig = { name, transport, allowedTools };
 
-    if (typeof s['command'] === 'string') server.command = s['command'];
+    if (typeof s['command'] === 'string') server.command = interpolateEnv(s['command']);
     if (Array.isArray(s['args'])) {
       server.args = (s['args'] as unknown[])
         .filter((a): a is string => typeof a === 'string')
