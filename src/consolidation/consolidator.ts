@@ -642,12 +642,18 @@ export class Consolidator {
           // judge call — drops any hallucinated ids the model might emit (defensive).
           const candidateIdSet = new Set(pendingJudges[i]!.candidates.map(c => c.id));
           const contradictedIds = (verdict.contradicted_ids ?? []).filter(id => candidateIdSet.has(id));
+          // T-FK-01: filter best_candidate_id against the same candidate set — same treatment as
+          // contradictedIds above. A hallucinated or out-of-set id would be used as edge.src in the
+          // extend branch (upsertEdge src=bestCandidateId) causing a FK violation if the id is
+          // absent from the node table. Null-coerce so extend falls to the standalone path instead.
+          const rawBestId = verdict.best_candidate_id;
+          const bestCandidateId = rawBestId !== null && candidateIdSet.has(rawBestId) ? rawBestId : null;
           decisionSlots[slotIdx] = {
             claimValue,
             claimType,
             claimOrigin,
             relation: verdict.relation,
-            bestCandidateId: verdict.best_candidate_id,
+            bestCandidateId,
             episodeSessionId: episode.session_id,
             magnitude: verdict.magnitude,
             episodeSourceInferenceId: episode.source_inference_id,

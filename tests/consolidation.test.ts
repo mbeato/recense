@@ -2199,4 +2199,73 @@ describe('Consolidator.judgeBatch integration', () => {
     expect(judgeBatchCallCount).toBe(1);
     expect(capturedBatchArgs[0]).toHaveLength(3);
   });
+
+  // ── T-FK-01: hallucinated best_candidate_id filtered against candidate set ──
+  //
+  // Regression for the FOREIGN KEY constraint failure on episode 49e769b8:
+  // the judge can return a best_candidate_id that was NOT in the candidate list
+  // passed to it (hallucinated / stale / out-of-set). Using that id as edge.src
+  // in the extend branch causes SqliteError: FOREIGN KEY constraint failed because
+  // the id does not exist in the node table.
+  //
+  // Fix (T-FK-01): filter best_candidate_id against candidateIdSet (same treatment
+  // as contradictedIds). Null-coerce causes extend to fall through to the standalone
+  // (no-candidate) path — the claim is minted as an unlinked node.
+
+  it('T-FK-01: judge returning hallucinated best_candidate_id does not cause FK violation', async () => {
+    // Seed a real node so the claim gets a non-empty candidate list (cosine match).
+    const realNodeId = newId();
+    const realValue = 'headless validation was done through direct api';
+    h.store.upsertNode({ id: realNodeId, type: 'fact', value: realValue, origin: 'observed' });
+    const sameEmbedder = makeAlwaysSameEmbedder(h.config.embeddingDimensions);
+    const [vec] = await sameEmbedder.embed([realValue]);
+    h.store.setEmbedding(realNodeId, vec!);
+
+    const claimValue = 'headless haiku needs revalidation';
+    // Judge returns a best_candidate_id that is NOT in the candidate set — a hallucinated UUID.
+    const hallucinatedId = 'ffffffff-dead-beef-0000-000000000000';
+    const hallucinatedExtendVerdict: JudgeVerdict = {
+      best_candidate_id: hallucinatedId,
+      relation: 'extend',
+      magnitude: 0,
+      contradicted_ids: [],
+    };
+
+    const provider = new MockModelProvider({
+      embedFn: sameEmbedder.fn,
+      generateScript: [JSON.stringify([{ type: 'fact', value: claimValue }])],
+      judgeScript: [hallucinatedExtendVerdict],
+    });
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'need to revalidate headless haiku after validation',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-fk01',
+    });
+
+    // Must not throw — FK violation was the bug; after the fix this completes cleanly.
+    await expect(consolidator.consolidate()).resolves.toBeUndefined();
+
+    // The claim is minted as a standalone node (extend-with-no-candidate path).
+    const allNodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    const claimNode = allNodes.find(n => n.value === claimValue);
+    expect(claimNode).toBeDefined();
+    expect(claimNode!.tombstoned).toBe(0);
+
+    // No edge should reference the hallucinated (non-existent) id.
+    const badEdges = h.db.prepare('SELECT * FROM edge WHERE src = ? OR dst = ?')
+      .all(hallucinatedId, hallucinatedId);
+    expect(badEdges).toHaveLength(0);
+
+    // FK sanity: the DB is consistent — no orphaned edges.
+    const fkViolations = h.db.pragma('foreign_key_check') as unknown[];
+    expect(fkViolations).toHaveLength(0);
+  });
 });
