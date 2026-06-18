@@ -33,6 +33,7 @@
   </div>
   <div class="row actions-row">
     <button id="btn-tombstones">Show tombstones</button>
+    <button id="btn-reader" class="btn-sm">Reader</button>
     <button id="btn-log" class="btn-sm">Log</button>
     <!-- Temporary: manual trace trigger for design verification (handler in trace.js) -->
     <button id="btn-test-trace" class="btn-sm">Test trace</button>
@@ -93,6 +94,14 @@
   <div id="detail-conns-head">Connections</div>
   <div id="detail-conns"></div>
   <div id="detail-conns-more"></div>
+</div>
+
+<!-- Reader overlay (slice): generated project deep-dive; inline fact-refs select graph atoms -->
+<div id="reader">
+  <div id="reader-head">
+    <span id="reader-kicker">deep-dive ·</span> <span id="reader-title"></span>
+  </div>
+  <div id="reader-body"></div>
 </div>
 
 <!-- Floating hover tooltip -->
