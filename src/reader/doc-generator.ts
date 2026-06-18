@@ -16,8 +16,15 @@
  *  T-27-05: Self-confirmation (D-43) — generateDoc is read-only; it does NOT call strengthen,
  *            setEmbedding, or markActive on gathered facts. Writing is the CLI's job.
  *
+ * Truncated-id robustness (D-05 live-bug fix, 2026-06-18): production env models (e.g. the
+ * local 35b judge) emit 8-char hex PREFIXES instead of full 36-char UUIDs. The verify loop
+ * accepts both, resolves prefixes via UNIQUE-prefix match (ambiguous → invented), and
+ * CANONICALIZES the prose so node.value / cites edges / the reader's {36} regex all agree on
+ * full UUIDs. Robustness over prompt-nagging — any model may truncate, the prompt cannot prevent it.
+ *
  * generateDoc does NOT write to the DB — it returns the payload for writeDoc.
- * The CLI (generate-doc-cli.ts) composes generateDoc + writeDoc in sequence.
+ * The CLI (generate-doc-cli.ts) composes generateDoc + writeDoc in sequence; the markdown it
+ * returns (and writeDoc persists) is the CANONICALIZED body, not the raw model output.
  */
 import Database from 'better-sqlite3';
 import { newId } from '../lib/hash';
@@ -99,43 +106,83 @@ Output ONLY the markdown deep-dive, no preamble.`;
   // No new docModel/genModel config var.
   const md = await provider.generate(prompt, { maxTokens: 4000 });
 
-  // ── 4. Citation-verify loop ────────────────────────────────────────────────
-  // Verbatim from scripts/reader-slice/generate.ts lines 63–93.
-  // Extract all recense://fact/<uuid> references from the generated markdown.
-  const citedIds = [...md.matchAll(/recense:\/\/fact\/([0-9a-f-]{36})/g)].map(m => m[1]!);
-  const uniqueCited = [...new Set(citedIds)];
+  // ── 4. Citation-verify + canonicalize loop ─────────────────────────────────
+  // Extract all recense://fact/<id> references. The slice's Sonnet emitted full
+  // 36-char UUIDs (19/19), but production env models (e.g. the local 35b judge)
+  // TRUNCATE ids to an 8+-char hex prefix (e.g. recense://fact/e751c852). A strict
+  // {36} regex silently drops every truncated ref → 0 verified, 0 cites edges. So we
+  // accept BOTH a full UUID and an 8+-char prefix, resolve via exact-then-unique-prefix,
+  // and CANONICALIZE the prose so node.value / cites edges / the reader's {36} regex
+  // (27-03) all agree on full UUIDs. Robustness over prompt-nagging — any model may truncate.
+  const FACT_REF = /recense:\/\/fact\/([0-9a-f][0-9a-f-]{6,35})/g;
+  const citedRaw = [...md.matchAll(FACT_REF)].map(m => m[1]!);
+  const uniqueCited = [...new Set(citedRaw)];
 
-  // Prepared statement for node lookup (read-only; same pattern as the slice).
-  const getNode = db.prepare(
-    'SELECT id, tombstoned, last_access, prev_value FROM node WHERE id = ?',
+  // Resolution statements (read-only):
+  //  - exact: direct id match (full UUID case)
+  //  - prefix: id LIKE '<prefix>%' — must return EXACTLY one live row to be unambiguous.
+  //    LIMIT 2 lets us detect ambiguity (>1 prefix match) cheaply.
+  const getNodeExact = db.prepare(
+    'SELECT id, tombstoned FROM node WHERE id = ?',
+  );
+  const getNodeByPrefix = db.prepare(
+    'SELECT id, tombstoned FROM node WHERE id LIKE ? LIMIT 2',
   );
 
   let inventedCount = 0;
   let tombstonedCount = 0;
   const verifiedFactIds: string[] = [];
+  // raw-cited-id → canonical full id, for prose rewrite (only for resolved refs).
+  const canonical = new Map<string, string>();
 
-  for (const id of uniqueCited) {
-    const row = getNode.get(id) as
-      | { id: string; tombstoned: number; last_access: number; prev_value: string | null }
-      | undefined;
+  for (const raw of uniqueCited) {
+    // 1. Exact match first (full UUID, or an id that happens to equal the raw string).
+    let row = getNodeExact.get(raw) as { id: string; tombstoned: number } | undefined;
+
+    // 2. Else unique-prefix match. Escape LIKE metacharacters in the prefix so a literal
+    //    match is used (ids are hex+dashes, but guard against '%'/'_' defensively).
     if (!row) {
-      // No live node with this id — invented citation (T-27-04)
+      const likePattern = raw.replace(/[%_]/g, '') + '%';
+      const matches = getNodeByPrefix.all(likePattern) as Array<{ id: string; tombstoned: number }>;
+      if (matches.length === 1) {
+        row = matches[0];
+      }
+      // matches.length === 0 → invented; matches.length > 1 → ambiguous → invented.
+    }
+
+    if (!row) {
+      // No live node, or ambiguous prefix → invented citation (T-27-04).
       inventedCount++;
       continue;
     }
+
     if (row.tombstoned === 1) {
       tombstonedCount++;
     }
-    // Include tombstoned citations in verifiedFactIds — they resolve to a real node,
-    // just a deprecated one. The CLI reports tombstoned count for transparency.
-    verifiedFactIds.push(id);
+    // Resolved (incl. tombstoned) → record canonical full id + verify.
+    canonical.set(raw, row.id);
+    verifiedFactIds.push(row.id);
   }
 
+  // ── 5. Canonicalize the prose ──────────────────────────────────────────────
+  // Rewrite each resolved recense://fact/<raw> link to its full canonical UUID so the
+  // persisted node.value, the cites edges, and the reader's {36} regex all agree.
+  // Replace the COMPLETE recense://fact/<id> token (not a bare substring) to avoid
+  // mangling a prefix that is a substring of another id elsewhere in the prose.
+  const canonicalMarkdown = md.replace(FACT_REF, (whole, rawId: string) => {
+    const full = canonical.get(rawId);
+    return full ? `recense://fact/${full}` : whole; // leave invented refs untouched
+  });
+
+  // verifiedFactIds may contain duplicates if two different truncations resolved to the
+  // same canonical node — dedup so citationCount and cites edges count unique facts.
+  const uniqueVerified = [...new Set(verifiedFactIds)];
+
   return {
-    markdown: md,
+    markdown: canonicalMarkdown,
     docId: newId(),
-    citedFactIds: verifiedFactIds,
-    citationCount: verifiedFactIds.length,
+    citedFactIds: uniqueVerified,
+    citationCount: uniqueVerified.length,
     invented: inventedCount,
     tombstoned: tombstonedCount,
   };
