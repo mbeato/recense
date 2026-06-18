@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
-status: ready
-last_updated: "2026-06-17"
-last_activity: 2026-06-17
+status: executing
+stopped_at: Phase 26 context gathered
+last_updated: "2026-06-18T12:39:21.370Z"
 progress:
   total_phases: 4
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 10
+  completed_plans: 4
+  percent: 25
 ---
 
 # Project State
@@ -20,19 +20,28 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 24 — Foundational Store (verify FK-free consolidation + run MEMORY.md migration)
+**Current focus:** Phase 26 — retrieval-embedding-fix
 
 ## Current Position
 
 ```
-Phase:  24 — Foundational Store   [not started]
-Plan:   —
-Status: Roadmap defined — ready for /gsd:plan-phase 24
+Phase: 26 (retrieval-embedding-fix) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
 
-[████████████████████████░░░░░░░░] v1-4.0 shipped · v5.0 phases 24-27 pending
+[██████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24 CLOSED · Phase 25 next
 ```
 
-Phase 24 gate (SCOPE-01): a clean FK-free manual sleep pass must complete and the hourly agent re-enabled before any other v5.0 phase begins.
+Phase 24 status (verified 2026-06-18):
+
+- **SCOPE-01** ✅ — FK root cause FIXED + live-verified (commit `67eee74`, debug `resolved/fk-consolidation-residual.md`); prior child-wipe (ab3b6c8) was only containment. Backlog plateau (~143) was a 2nd bug — salience-skip without `markConsolidated` — fixed `5326550`. Consolidation drains fully, clean passes, `foreign_key_check` empty. NOTE: the old "dirty sentinel clears" sub-criterion is UNMEETABLE — the sentinel is a permanent launchd TRIGGER, not clearable state; real signal = backlog≈0 + clean pass.
+- **SCOPE-02** ✅ — `[scope]` recall verified live (read-only harness): `[vtx]`/`[tonos]`/`[putyouon]` render; global/unscoped render no marker (D-S6). (Plan's "[global] renders" criterion was wrong — global = blank.)
+- **SCOPE-03** ✅ — `import-memory --dry-run` gate: 199 import / 7 policy skipped / 12 index skipped / 0 leaks (`24-02-DRYRUN-EVIDENCE.md`).
+- **SCOPE-04** ✅ DONE — real import (idempotent, +6 new → 199/199 memory-import consolidated, 0 source files touched, clean FK pass) + verified retrievable with correct `[scope]` across tonos/vtx/putyouon/global. Report: `999.3-MIGRATION.md`. Cost: cents (judge on CC subscription; ~14 episodes embedded via OpenAI). **RETIREMENT EXECUTED 2026-06-18** (quick-260617-w0u): MOVED (never deleted) **197** fact files → `~/.claude/projects-memory-archive-2026-06-18/` mirroring source layout (reversible); KEPT 12 MEMORY.md indexes + 7 policy bundles + **2 live trackers** (`interview_readiness_tracker`, `leetcode_practice_tracker` — skills read/write them every session, so excluded from the 199→197 move). Nav-layer verified safe first: only readers of moved files are the kept policy bundles + the 12 indexes (whose `[file.md]` links now dangle — cosmetic; recense recall supersedes them). DB untouched by the move; 199/199 still consolidated + scoped. Minor follow-up: the 2 trackers were imported as stale fact-snapshots — tombstone + add to importer skip-set (non-blocking).
+
+SECURITY: `OPENAI_API_KEY` was exposed in a session transcript 2026-06-18 (printed by a grep) → ROTATE it (revoke at platform.openai.com, update `~/.config/recense/sleep.env`; ~9 `.bak-*` copies hold the old key — dead once revoked).
+
+Next: decide retirement (run move OR formally defer + close Phase 24), then Phase 25 (Entity Dedup — node_scope live + FK fix already satisfy its only hard prereqs).
 
 ## Performance Metrics
 
@@ -66,33 +75,44 @@ Phase 24 gate (SCOPE-01): a clean FK-free manual sleep pass must complete and th
 ### Phase 24 — Critical Context
 
 **Already landed on main (999.3 Plans 01 + 02, Tasks 1-2):**
+
 - `node_scope` sidecar (schema v10) + `cwdToScope` / `resolveNodeScope` helpers
 - Consolidation stamps scope from contributing episodes' cwd
 - `recense import-memory` CLI (idempotent, skips policy bundles, dry-run safe) — 193 facts to import, 7 policy bundles skipped, 12 indexes skipped (verified 2026-06-16)
 - Recall output surfaces `[scope]` prefix
 - Quick-task 260617-e16 (ab3b6c8): FK-hardened decay eviction (child-wipe for node_scope + node_temporal before DELETE FROM node)
 
-**Remaining work (Task 3 = SCOPE-01 gate + SCOPE-04 migration):**
-1. Verify the FK bug is fully fixed: run a manual sleep pass and confirm it completes (no FK error), clears the dirty sentinel
-2. Re-enable the hourly launchd sleep-pass agent
-3. Run the human-gated `recense import-memory` → `recense sleep-pass` → verify recall → archive sources (per `docs/import-memory.md` runbook D-S7)
-4. Write `999.3-MIGRATION.md` with counts + verification samples
+**Plans (planned 2026-06-17, canonical names):** `24-01` SCOPE-01/02 gate · `24-02` SCOPE-03 dry-run gate · `24-03` SCOPE-04 human-gated migration (`autonomous: false`).
+NOTE: plans were initially written as `24.1/.2/.3` (dot form) which broke wave/dependency resolution (all collapsed to wave 1 → would have run the paid migration in parallel with the gate). Renamed to `24-0N` hyphen form so `depends_on` resolves the strict chain 24-01 → 24-02 → 24-03.
 
-**FK bug status:** root-cause was the schema-relations DELETE-side not wiping child rows before node eviction. Two fixes applied: schema-relations FK-02 fix (Phase 23 range) + eviction child-wipe (260617-e16/ab3b6c8). Unverified by a clean pass — that's the SCOPE-01 gate.
+**FK bug status — RESOLVED + verified 2026-06-17 (commit `67eee74`):**
 
-**Hourly agent:** currently DISABLED (`launchctl bootout`ed) to prevent crash loops. Must be re-enabled after SCOPE-01 passes.
+- The prior "fix" (schema-relations FK-02 + eviction child-wipe ab3b6c8) was only **containment** — per-episode isolation quarantined the failing episode and let the pass continue, but episode `49e769b8-368d-41f3-95b4-f8cf2f8eb661` still threw `FOREIGN KEY constraint failed` and was **dropped every pass** (silent data loss).
+- Real root cause (debug `resolved/fk-consolidation-residual.md`): in `consolidator.ts`, the judge's `best_candidate_id` was used directly as `edge.src` in the `extend` branch WITHOUT filtering against `candidateIdSet` (unlike `contradicted_ids`, which already was). A non-deterministic headless judge returning an out-of-set / hallucinated id → `edge.src` references a non-existent node → FK violation.
+- Fix: null-coerce `best_candidate_id` against `candidateIdSet` (out-of-set → standalone no-edge path). Regression test `T-FK-01` added; build clean; vitest green.
+- Live verification: episode `49e769b8` now `consolidated=1`; no FK error; `PRAGMA foreign_key_check` empty.
 
-**Running the sleep pass:**
+**Consolidation stack (transitioned in a separate session, 2026-06-17):** `RECENSE_EXTRACTOR_PROVIDER=claude-headless` + `RECENSE_JUDGE_PROVIDER=claude-headless` (sleep.env) — headless `claude -p` on the **CC subscription**, replacing the local/deepseek stack. Billing-leak closed: no `ANTHROPIC_API_KEY` in `~/.claude/settings.json`; commit `7c4b117` isolates headless from global hooks (`--setting-sources project`). The headless judge's non-determinism is exactly what surfaced the FK bug above — the T-FK-01 fix hardens against it.
+
+**Hourly agent (`com.recense.sleep-pass`):** RE-ENABLED and stable (no crash loop post-fix). The backlog had PLATEAUED at ~143–154 (270 → 238 → 143 → then stuck) — this was a BUG, not throughput: the salience-skip path in `consolidator.ts` did `continue` without `markConsolidated`, so 142 sub-threshold episodes were re-scanned and re-skipped every pass forever (LLM-free gate → stuck across all 3 model stacks). Fixed in quick-260617-ulp (`5326550`): mark-and-skip via a shared `markSkipped` helper. Verified on a live-DB copy: backlog 144 → 2 (the 2 are at/above-threshold needing a working model), no graph effects from skips, fk_check clean. The next live pass (dist rebuilt) marks the ~142 → backlog falls to the at/above set → sentinel clears.
+
+**SCOPE-01 backlog: DRAINED TO 0 — done 2026-06-18T02:16Z** via a manual pass on the new dist (145 → 0, "Sleep pass complete", fk_check clean, no graph effects from the salience-skips). SCOPE-01 consolidation gate is functionally met: backlog=0 + clean pass.
+
+CORRECTION (load-bearing): the gate's old "dirty sentinel clears" sub-criterion is UNMEETABLE — **nothing in the codebase removes the sentinel** (confirmed via grep, src + scripts). It is a TRIGGER signal: `EpisodicStore.append()` bumps its mtime so launchd WatchPaths fires; launchd triggers on modification, not existence. So the file persists permanently regardless of backlog. The real success signal is **backlog=0 + a clean launchd-triggered cycle** (a no-op "Sleep pass complete" in `/tmp/recense-sleep.log`), NOT a sentinel that disappears. Backlog=0 is momentary — active claude-code sessions + ongoing migration ingest will re-touch the sentinel and re-grow it; the agent now drains it fully each pass instead of plateauing. Remaining for SCOPE-01: run the SCOPE-02 `[scope]` recall check (24-01 Task 2). Then 24-02 → 24-03 unblock.
+
+**Running a manual sleep pass (if forcing the drain):**
+
 ```
 set -a; . ~/.config/recense/sleep.env; set +a
 "$RECENSE_NODE_BIN" "$RECENSE_SLEEP_JS"   # logs to /tmp/recense-sleep.log
 ```
 
-**API cost for migration:** ~$1–2 embedding (DeepSeek is the configured judge; confirm against budget before running).
+**API cost for 24-03 migration:** ~$1–2 (confirm against budget before the real run, D-13). Judge is now headless Sonnet on the subscription, not API — embedding remains the cost driver.
 
 ### Phase 25 — Context
 
 Entity fragmentation observed during reader slice (2026-06-17): 8+ near-duplicate "brain-memory" entity nodes, "tonos" / "Tonos daily eval pipeline" split, max edge degree ~15. The dedup pass must:
+
 - Match by value similarity + embedding cosine above threshold (origin-guarded — never merge facts with conflicting origins if they represent genuinely distinct beliefs)
 - Rewire all edges from duplicates → canonical node
 - Tombstone duplicates (never delete evidence-backed facts)
@@ -105,6 +125,7 @@ Engine invariants: graph is source of truth; `PRAGMA foreign_key_check` must ret
 Root cause (from backlog 999.2): contradicting count-claims never cluster as judge candidates because cosine similarity never clears 0.7 with `text-embedding-3-small`. The reconsolidation judge fires zero on-topic contradictions on KU cases, so correct KU answers come from extraction + recency, NOT the differentiating reconsolidation mechanism.
 
 Candidates (verify against live source before building — memory hypotheses drift):
+
 - Upgrade `openaiEmbedModel` → `text-embedding-3-large` (drop-in, asymmetric not needed)
 - Query-instruction prefix for an asymmetric embedder (Qwen3-Embedding local, $0 — bigger change)
 - Re-tune cosine thresholds in `src/retrieval/engine.ts` / `topk.ts`
@@ -116,10 +137,12 @@ API budget: ~$3–5 for the re-eval; ~$14–15 total remaining; explicit approva
 ### Phase 27 — Context
 
 Reader slice validated 2026-06-17 (19/19 citations resolve, 0 invented, 100% coverage). Uncommitted prototype lives in:
+
 - `src/viz/modules/reader.js` — doc renderer + ref interception
 - `scripts/reader-slice/` — generation pass
 
 Key design decisions (from reader-layer-SPEC.md open decisions, must resolve before building):
+
 1. Doc storage: `type='doc'` node with lifecycle exemptions routed through consolidator (recommended in spec) vs separate store
 2. Graph focus: extend `/graph?nodeIds=` vs client-side filter
 3. `generatedAt`: dedicated doc field vs reuse doc-node `last_access`
@@ -162,6 +185,9 @@ API budget: ~$14–15 remaining (Phase 17 closed at ~$12; Phase 23 used ~$0.05).
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260617-e16 | FK-harden decay eviction (clean node_scope + node_temporal child rows before DELETE FROM node) + log err.stack at both sleep-pass error sites | 2026-06-17 | ab3b6c8 | [260617-e16](./quick/260617-e16-fk-harden-decay-eviction-child-wipe-slee) |
+| 260617-qat | Gated headless `claude -p` transport (spike 003) behind the AnthropicLike seam — extract→Haiku/judge→Sonnet on Max, env-strip billing safeguard, default provider unchanged. Tasks 1–3 shipped; Task 4 (live sleep.env activation) founder-gated. | 2026-06-17 | 1a58624 | [260617-qat](./quick/260617-qat-integrate-spike-validated-headless-claud) |
+| 260617-ulp | Fix salience-skip consolidation leak — the salience-skip `continue` in consolidator.ts never called markConsolidated, so 142 sub-threshold episodes were re-scanned every pass forever (sentinel never cleared, blocked SCOPE-01). Mark-and-skip via shared `markSkipped` helper (routes both skip sites). Verified on a live-DB copy: backlog 144→2, no graph effects, fk_check clean. | 2026-06-18 | 5326550 | [260617-ulp](./quick/260617-ulp-fix-salience-skip-consolidation-leak-mar) |
+| 260617-w0u | Phase 24 SCOPE-04 source retirement (24-03 T4, founder-gated) — nav-layer safety verified, then MOVED 197 migrated fact files → `~/.claude/projects-memory-archive-2026-06-18/` (reversible). Kept 12 indexes + 7 policy bundles + 2 live trackers (excluded from 199→197 after finding skills read/write them). DB untouched; 199/199 still consolidated+scoped. Closes Phase 24. No git commit (move is under ~/.claude; .planning gitignored). | 2026-06-18 | — | [260617-w0u](./quick/260617-w0u-phase-24-scope-04-source-retirement) |
 
 ## Deferred Items
 
@@ -181,9 +207,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-17
-Stopped at: v5.0 roadmap defined
-Resume file: .planning/ROADMAP.md
+Last session: 2026-06-18T12:39:21.364Z
+Stopped at: Phase 26 context gathered
+Resume file: None
 
 ## Operator Next Steps
 

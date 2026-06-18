@@ -75,7 +75,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 **Engine invariants across all phases:** single-tenant; graph is source of truth, vector is derived cache; never delete an evidence-backed fact via decay; surfacing/inference never strengthens a belief (D-43); online paths stay LLM-free; agents live outside the engine.
 
 - [ ] **Phase 24: Foundational Store** — verify the already-landed engine layer + import-memory CLI: confirm FK-free consolidation, re-enable the hourly agent, then run the human-gated consolidate→verify→retire migration
-- [ ] **Phase 25: Entity Dedup / Prune** — repeatable consolidation pass merges near-duplicate entities into canonical nodes, rewiring edges and tombstoning duplicates without losing provenance
+- [x] **Phase 25: Entity Dedup / Prune** — repeatable consolidation pass merges near-duplicate entities into canonical nodes, rewiring edges and tombstoning duplicates without losing provenance (completed 2026-06-18)
 - [ ] **Phase 26: Retrieval-Embedding Fix** — fix the sub-0.7 cosine weakness (query-instruction prefix and/or text-embedding-3-large), validated via cached extraction replay (~$3–5 API)
 - [ ] **Phase 27: Reader Layer** — productize the validated reader slice: doc-as-node generation with inline citations, /doc route + Reader/Brain toggle, staleness/regen, doc→doc corpus graph
 
@@ -91,7 +91,10 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
   2. Consolidated facts carry `[scope]` attribution in recall output reflecting the project they originated from; facts from multi-project or personal cwd appear as `[global]` — SCOPE-02 verified live
   3. `recense import-memory --dry-run` shows ≥193 facts to import and 0 policy-bundle leaks; a real run lands all importable facts as episodes without touching source files — SCOPE-03 verified
   4. After running `recense sleep-pass`, at least 3 imported facts per project across at least 3 projects are retrievable via `recense recall` with the correct `[scope]` prefix; a written verification report exists; source files are archived only after the founder sign-off — SCOPE-04 (D-S7 migration complete)
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 24-01-PLAN.md — verify FK-free clean sleep pass + live [scope] attribution, re-enable hourly agent (SCOPE-01/02 gate)
+- [ ] 24-02-PLAN.md — import-memory --dry-run gate check: ≥193 facts, 0 policy-bundle leaks (SCOPE-03)
+- [ ] 24-03-PLAN.md — human-gated real import + sleep pass, recall verification, migration report, founder-gated source retirement (SCOPE-04)
 
 ### Phase 25: Entity Dedup / Prune
 
@@ -102,7 +105,10 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
   1. Running the dedup pass against the live DB produces a canonical entity node for each near-duplicate cluster (matched by value similarity + embedding cosine above threshold); the pass is repeatable and produces the same result on a second run — DEDUP-01
   2. After the pass, the canonical node carries all edges that previously pointed to any duplicate; duplicates are tombstoned, not deleted; `PRAGMA foreign_key_check` returns empty; evidence-backed provenance is preserved for every merged node — DEDUP-02
   3. The distinct entity count for "brain-memory" (currently 8+ fragments) drops to 1 canonical node with no observable regression to recall accuracy on a sample query set — DEDUP-03
-**Plans**: TBD
+**Plans**: 3 plans
+- [x] 25-01-PLAN.md — core entity-dedup engine: clustering, canonical selection, FK-safe edge rewire, tombstone, provenance + unit tests (DEDUP-01/02)
+- [x] 25-02-PLAN.md — opt-in `recense dedup-entities` CLI with --dry-run default + dispatcher wiring (DEDUP-01)
+- [x] 25-03-PLAN.md — founder-gated live run: dry-run → approval → real merge, brain-memory 8+→1, recall regression check, verification artifact (DEDUP-03)
 
 ### Phase 26: Retrieval-Embedding Fix
 
@@ -114,7 +120,11 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
   1. The root cause of the sub-0.7 cosine weakness is diagnosed (embedder model, missing query-instruction prefix, or cosine threshold); a fix is applied — either the query-instruction prefix for the current embedder, upgrade to `text-embedding-3-large`, or both — RETR-01
   2. Running the extraction-replay harness (no re-extraction from granite) shows improved EVAL-01 KU retrieval score with reconsolidation judge engaging on at least some KU contradiction cases; EVAL-02 belief-correction score does not regress below 84.6% — RETR-02
   3. Any embedder model change triggers a full re-embedding of stored node texts so the vector cache stays consistent with the graph; the graph remains the source of truth throughout (no node deleted; embeddings are derived and rebuildable) — RETR-03
-**Plans**: TBD
+**Plans**: 4 plans
+- [x] 26-01-PLAN.md — RETR-01 diagnosis: $0 cosine spot-check (large@1536 vs small@1536 on KU pairs) + recorded root cause + GO/NO-GO
+- [ ] 26-02-PLAN.md — RETR-02 build the cached extraction-replay KU harness (no re-extraction; captures KU score + judge engagement)
+- [ ] 26-03-PLAN.md — RETR-03 model swap to text-embedding-3-large@1536 + v11 embedding_model stamp + opt-in `recense reembed` CLI (dry-run default)
+- [ ] 26-04-PLAN.md — RETR-02 founder-gated paid validation: DB backup, live re-embed, before/after replay KU + EVAL-02, three-criteria verdict
 
 ### Phase 27: Reader Layer
 
@@ -157,6 +167,6 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 22. Notify-Only Proactive Push | v4.0 | 3/3 | Complete | 2026-06-16 |
 | 23. Approval-Gated Any-MCP Execution | v4.0 | 10/10 | Complete | 2026-06-17 |
 | 24. Foundational Store | v5.0 | 0/TBD | Not started | - |
-| 25. Entity Dedup / Prune | v5.0 | 0/TBD | Not started | - |
-| 26. Retrieval-Embedding Fix | v5.0 | 0/TBD | Not started | - |
+| 25. Entity Dedup / Prune | v5.0 | 3/3 | Complete   | 2026-06-18 |
+| 26. Retrieval-Embedding Fix | v5.0 | 1/4 | In Progress|  |
 | 27. Reader Layer | v5.0 | 0/TBD | Not started | - |
