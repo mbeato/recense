@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Phase 27 Plan 02 — Tasks 1-3 complete; Task 4 is checkpoint:human-verify (D-05 prose quality spot-check)
-last_updated: "2026-06-18T19:32:00.000Z"
+stopped_at: Phase 27 Plan 02 COMPLETE — doc-gen core (gather+writer+generator+CLI); D-05 prose pass + truncated-id citation bug found+fixed
+last_updated: "2026-06-18T19:55:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 16
-  completed_plans: 9
-  percent: 56
+  completed_plans: 10
+  percent: 63
 ---
 
 # Project State
@@ -26,11 +26,18 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 27 (reader-layer) — EXECUTING
-Plan: 2 of 5 (Tasks 1-3 done; Task 4 checkpoint pending)
-Status: Checkpoint — awaiting D-05 prose quality spot-check (founder)
+Plan: 2 of 5 COMPLETE — next is Plan 03 (viz /doc route + Reader UI)
+Status: Executing Phase 27
 
-[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plan 02 Tasks 1-3 done
+[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-02 done
 ```
+
+**Phase 27 Plan 02 (doc-generation core) — COMPLETE 2026-06-18:**
+- `gatherFacts` (scope ∪ semantic ∪ entity-hop, D-01), `generateDoc` (judge-tier cited markdown + citation-verify, D-04), `writeDoc` (lifecycle-exempt type='doc' node — no embed/decay/FTS/training — single IMMEDIATE transaction), `recense generate-doc <slug>` CLI (lock-guarded, idempotent, --force).
+- **D-05 prose quality: PASS** (env judge model produces well-structured specific deep-dive ≥ Tonos baseline).
+- **Live bug found+fixed (`6960a5c`):** the `claude-headless` judge emitted 8-char id PREFIXES (`recense://fact/e751c852`), not full UUIDs → strict `{36}` regex dropped all 71 citations (0 cites edges). Fix: accept 8+-char prefixes, resolve via unique-prefix match (ambiguous→invented), CANONICALIZE prose to full UUIDs so node.value/cites/reader-regex agree. 22 tests green, tsc clean.
+- **Pending (non-blocking):** live `generate-doc tonos --force` re-run to record post-fix citation numbers needs the actual user's authorization (paid embed + subscription generate; auto-mode classifier blocked the coordinator-authorized attempt — coordinator consent ≠ user consent). Confirmation of an already-tested fix.
+- **Carry into 27-03:** reader.js `recense://fact/<id>` interception MUST use the `{36}` full-UUID regex (the canonicalized doc body guarantees full UUIDs now).
 
 Phase 24 status (verified 2026-06-18):
 
@@ -207,8 +214,8 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-18T19:32:00.000Z
-Stopped at: Phase 27 Plan 02 checkpoint — Tasks 1-3 complete; awaiting D-05 prose quality spot-check
+Last session: 2026-06-18T19:55:00.000Z
+Stopped at: Phase 27 Plan 02 COMPLETE — doc-generation core + D-05 prose pass + citation-resolution bug fixed
 Resume file: .planning/phases/27-reader-layer/27-02-SUMMARY.md
 
 ## Key Decisions (Phase 27)
@@ -223,4 +230,5 @@ Resume file: .planning/phases/27-reader-layer/27-02-SUMMARY.md
 
 ## Operator Next Steps
 
-- **Task 4 (D-05):** Run `recense generate-doc <slug> --db ~/.config/recense/recense.db` against one real project, compare generated prose to `scripts/reader-slice/out/tonos.md`, and type "approved" (or describe the gap) to proceed to Plan 27-03
+- **(Optional, user-authorized) Confirm the citation fix live:** after sourcing `~/.config/recense/sleep.env` then `unset ANTHROPIC_API_KEY` (subscription path, not API), run `recense generate-doc tonos --force --db ~/.config/recense/recense.db` and confirm `citationCount` > 0 (~30–71) and `SELECT COUNT(*) FROM edge WHERE src='<docNodeId>' AND kind='cites'` matches. This is confirmation of an already-unit-tested fix — not blocking.
+- **Next: Plan 27-03** — viz server `/doc` route (DB-backed) + Reader/Brain toggle. reader.js fact-ref interception uses the `{36}` full-UUID regex (the doc body is now canonicalized to full UUIDs).
