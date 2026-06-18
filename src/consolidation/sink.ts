@@ -60,7 +60,8 @@ export type ConsolidationEventType =
   | 'contradict_append_new'
   | 'contradict_force_destabilize'
   | 'schema_emitted'
-  | 'schema_falsified';
+  | 'schema_falsified'
+  | 'entity_merge';  // Phase 25 addition — entity dedup pass (D-10)
 
 // ---------------------------------------------------------------------------
 // Input shape (what callers supply — id/ts/schema_version are minted internally)
