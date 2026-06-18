@@ -140,7 +140,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
   4. A doc→doc corpus graph (`doc_link` edges) is navigable in the viz; centering on a project surfaces its docs alongside neighboring projects and related entities, subsuming the need for a separate per-project graph view — READER-04
 **Plans**: 5 plans
 - [x] 27-01-PLAN.md — v11 schema (node 'doc', edge 'cites'/'doc_link') + node_doc sidecar + store primitives
-- [ ] 27-02-PLAN.md — doc gather (scope∪semantic) + generator (judge-tier, cite-verify) + lifecycle-exempt doc-writer + `recense generate-doc` CLI (READER-01)
+- [x] 27-02-PLAN.md — doc gather (scope∪semantic) + generator (judge-tier, cite-verify) + lifecycle-exempt doc-writer + `recense generate-doc` CLI (READER-01)
 - [ ] 27-03-PLAN.md — DB-backed /doc + lazy-gen spawn + Reader/Brain toggle + fact-ref→atom hero interaction (READER-02)
 - [ ] 27-04-PLAN.md — citation staleness endpoint + banner/inline markers + prev_value→value diff + regenerate (READER-03)
 - [ ] 27-05-PLAN.md — doc_link edges + /graph?type=doc corpus graph + expanded-only swap button (READER-04)
@@ -176,4 +176,4 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 24. Foundational Store | v5.0 | 0/TBD | Not started | - |
 | 25. Entity Dedup / Prune | v5.0 | 3/3 | Complete   | 2026-06-18 |
 | 26. Retrieval-Embedding Fix | v5.0 | 5/5 | Complete   | 2026-06-18 |
-| 27. Reader Layer | v5.0 | 1/5 | Executing   | - |
+| 27. Reader Layer | v5.0 | 2/5 | In Progress|  |
