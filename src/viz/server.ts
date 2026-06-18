@@ -67,6 +67,9 @@ const VIZ_ROOT = path.resolve(__dirname);
 const VENDOR_ROOT = path.resolve(VIZ_ROOT, 'vendor');
 const MODULES_ROOT = path.resolve(VIZ_ROOT, 'modules');
 const CSS_ROOT = path.resolve(VIZ_ROOT, 'css');
+// Reader-slice (throwaway): generated project docs live outside viz root. Read-only,
+// term-sanitized, traversal-guarded — same posture as the other static roots.
+const DOC_ROOT = path.resolve(VIZ_ROOT, '../../scripts/reader-slice/out');
 
 /**
  * Serve a file from the filesystem with:
@@ -319,6 +322,27 @@ export function startVizServer(dbPath: string, port: number): http.Server {
       const resolved = path.resolve(CSS_ROOT, segment);
       if (resolved !== CSS_ROOT && !resolved.startsWith(CSS_ROOT + path.sep)) {
         // T-10-07: path escapes css root → 403
+        res.writeHead(403, { 'content-type': 'text/plain' });
+        res.end('forbidden');
+        return;
+      }
+      serveFile(res, resolved);
+      return;
+    }
+
+    // ── /doc?term= (reader slice — read-only generated markdown) ─────────────
+    // Serves scripts/reader-slice/out/<term>.md. term is hard-sanitized to
+    // [a-z0-9-] and the resolved path is guarded against escaping DOC_ROOT.
+    if (url === '/doc') {
+      const rawTerm = new URLSearchParams(req.url?.split('?')[1] ?? '').get('term') ?? '';
+      const term = rawTerm.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+      if (!term) {
+        res.writeHead(400, { 'content-type': 'text/plain' });
+        res.end('bad term');
+        return;
+      }
+      const resolved = path.resolve(DOC_ROOT, term + '.md');
+      if (!resolved.startsWith(DOC_ROOT + path.sep)) {
         res.writeHead(403, { 'content-type': 'text/plain' });
         res.end('forbidden');
         return;
