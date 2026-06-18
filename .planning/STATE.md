@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Phase 27 Plan 01 complete — v11 schema + NodeDoc types + store primitives
-last_updated: "2026-06-18T20:16:00.000Z"
+stopped_at: Phase 27 Plan 02 — Tasks 1-3 complete; Task 4 is checkpoint:human-verify (D-05 prose quality spot-check)
+last_updated: "2026-06-18T19:32:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -26,10 +26,10 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 27 (reader-layer) — EXECUTING
-Plan: 2 of 5 (Plan 01 complete)
-Status: Executing Phase 27
+Plan: 2 of 5 (Tasks 1-3 done; Task 4 checkpoint pending)
+Status: Checkpoint — awaiting D-05 prose quality spot-check (founder)
 
-[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plan 01 done
+[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plan 02 Tasks 1-3 done
 ```
 
 Phase 24 status (verified 2026-06-18):
@@ -207,16 +207,20 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-18T20:16:00.000Z
-Stopped at: Phase 27 Plan 01 complete — v11 schema + NodeDoc types + store primitives
-Resume file: .planning/phases/27-reader-layer/27-01-SUMMARY.md
+Last session: 2026-06-18T19:32:00.000Z
+Stopped at: Phase 27 Plan 02 checkpoint — Tasks 1-3 complete; awaiting D-05 prose quality spot-check
+Resume file: .planning/phases/27-reader-layer/27-02-SUMMARY.md
 
 ## Key Decisions (Phase 27)
 
 - **generated_at is write-once at the SQL layer** (ON CONFLICT omits generated_at from the DO UPDATE SET clause) — staleness predicate cannot be corrupted by doc re-render without regen
 - **Table recreation migration guard** checks live DDL from sqlite_master before running — idempotent and no data loss on re-run
 - **node_doc sidecar** (not a new column on node) — mirrors node_scope/node_temporal pattern for faithfulness
+- **CandidateRetriever created from db inside gatherFacts** (optional injection for tests) — simpler caller API vs. requiring all callers to inject a retriever
+- **generateDoc is read-only** (no DB writes) — CLI composes generateDoc+writeDoc, preserving testability without real DB
+- **FTS suppression via DELETE after upsertNode** in same IMMEDIATE transaction — prevents markdown body polluting BM25 keyword search
+- **Judge-tier config as generate head** (D-04): DefaultModelProvider({ generateConfig: judgeConfig, ... }) — no new docModel/genModel var
 
 ## Operator Next Steps
 
-- Continue Phase 27 with Plan 02
+- **Task 4 (D-05):** Run `recense generate-doc <slug> --db ~/.config/recense/recense.db` against one real project, compare generated prose to `scripts/reader-slice/out/tonos.md`, and type "approved" (or describe the gap) to proceed to Plan 27-03
