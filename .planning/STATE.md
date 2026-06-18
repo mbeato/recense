@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Phase 26 context gathered
-last_updated: "2026-06-18T12:39:21.370Z"
+stopped_at: Phase 27 Plan 01 complete — v11 schema + NodeDoc types + store primitives
+last_updated: "2026-06-18T20:16:00.000Z"
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 10
-  completed_plans: 4
-  percent: 25
+  completed_phases: 2
+  total_plans: 16
+  completed_plans: 9
+  percent: 56
 ---
 
 # Project State
@@ -20,16 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 26 — retrieval-embedding-fix
+**Current focus:** Phase 27 — reader-layer
 
 ## Current Position
 
 ```
-Phase: 26 (retrieval-embedding-fix) — EXECUTING
-Plan: 2 of 4
-Status: Ready to execute
+Phase: 27 (reader-layer) — EXECUTING
+Plan: 2 of 5 (Plan 01 complete)
+Status: Executing Phase 27
 
-[██████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24 CLOSED · Phase 25 next
+[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plan 01 done
 ```
 
 Phase 24 status (verified 2026-06-18):
@@ -207,11 +207,16 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-18T12:39:21.364Z
-Stopped at: Phase 26 context gathered
-Resume file: None
+Last session: 2026-06-18T20:16:00.000Z
+Stopped at: Phase 27 Plan 01 complete — v11 schema + NodeDoc types + store primitives
+Resume file: .planning/phases/27-reader-layer/27-01-SUMMARY.md
+
+## Key Decisions (Phase 27)
+
+- **generated_at is write-once at the SQL layer** (ON CONFLICT omits generated_at from the DO UPDATE SET clause) — staleness predicate cannot be corrupted by doc re-render without regen
+- **Table recreation migration guard** checks live DDL from sqlite_master before running — idempotent and no data loss on re-run
+- **node_doc sidecar** (not a new column on node) — mirrors node_scope/node_temporal pattern for faithfulness
 
 ## Operator Next Steps
 
-- Run `/gsd:plan-phase 24` to plan Phase 24: Foundational Store
-- First task in Phase 24: verify the FK consolidation fix by running a manual sleep pass
+- Continue Phase 27 with Plan 02

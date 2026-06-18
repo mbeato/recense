@@ -76,7 +76,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 
 - [ ] **Phase 24: Foundational Store** — verify the already-landed engine layer + import-memory CLI: confirm FK-free consolidation, re-enable the hourly agent, then run the human-gated consolidate→verify→retire migration
 - [x] **Phase 25: Entity Dedup / Prune** — repeatable consolidation pass merges near-duplicate entities into canonical nodes, rewiring edges and tombstoning duplicates without losing provenance (completed 2026-06-18)
-- [ ] **Phase 26: Retrieval-Embedding Fix** — fix the sub-0.7 cosine weakness (query-instruction prefix and/or text-embedding-3-large), validated via cached extraction replay (~$3–5 API)
+- [x] **Phase 26: Belief-Correction / Duplicate-Fact Fix** (re-scoped 2026-06-18) — RETR-01 diagnosis localized the symptom to the consolidation judge + PE-resistance routing (NOT the embedder/cosine); fix that path + a fact-level dedup pass, validated on the reused replay harness (completed 2026-06-18)
 - [ ] **Phase 27: Reader Layer** — productize the validated reader slice: doc-as-node generation with inline citations, /doc route + Reader/Brain toggle, staleness/regen, doc→doc corpus graph
 
 ## Phase Details — v5.0 Foundational Memory Store + Reader Layer
@@ -110,21 +110,23 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 - [x] 25-02-PLAN.md — opt-in `recense dedup-entities` CLI with --dry-run default + dispatcher wiring (DEDUP-01)
 - [x] 25-03-PLAN.md — founder-gated live run: dry-run → approval → real merge, brain-memory 8+→1, recall regression check, verification artifact (DEDUP-03)
 
-### Phase 26: Retrieval-Embedding Fix
+### Phase 26: Belief-Correction / Duplicate-Fact Fix (RE-SCOPED 2026-06-18)
 
-**Goal**: The sub-0.7 cosine retrieval weakness — which prevents the reconsolidation judge from engaging on knowledge-update cases because contradicting count-claims never cluster as candidates — is diagnosed and fixed, and the fix is validated via the cached extraction-replay harness without re-extraction
-**Depends on**: Phase 25 (clean entity layer ensures the fix is validated against a representative graph, not one muddied by duplicate nodes)
-**API budget**: ~$3–5 (extraction-replay re-eval; explicit approval required before any paid run)
+**Goal**: The duplicate-fact / belief-correction-incomplete symptom — contradicting and restated claims mint a second node instead of reconciling with the existing belief — is fixed in the consolidation judge + PE-resistance routing path (where diagnosis localized it), and the fix is validated on the reused extraction-replay harness without re-extraction. (Originally scoped as an embedder/cosine "retrieval fix"; that premise was falsified by diagnosis — the contradicting claims already cluster as candidates, so the bug is post-retrieval.)
+**Depends on**: Phase 25 (clean entity layer); RETR-01 diagnosis complete (`26-DIAGNOSIS-V{1,2,3}.md`)
+**API budget**: judge-replay diagnosis + extraction-replay validation use LLM-judge calls — cost-gated per the headless-judge billing lesson; the original ~$3–5 re-embed/paid-eval is dropped (no model swap)
 **Requirements**: RETR-01, RETR-02, RETR-03
 **Success Criteria** (what must be TRUE):
-  1. The root cause of the sub-0.7 cosine weakness is diagnosed (embedder model, missing query-instruction prefix, or cosine threshold); a fix is applied — either the query-instruction prefix for the current embedder, upgrade to `text-embedding-3-large`, or both — RETR-01
-  2. Running the extraction-replay harness (no re-extraction from granite) shows improved EVAL-01 KU retrieval score with reconsolidation judge engaging on at least some KU contradiction cases; EVAL-02 belief-correction score does not regress below 84.6% — RETR-02
-  3. Any embedder model change triggers a full re-embedding of stored node texts so the vector cache stays consistent with the graph; the graph remains the source of truth throughout (no node deleted; embeddings are derived and rebuildable) — RETR-03
-**Plans**: 4 plans
-- [x] 26-01-PLAN.md — RETR-01 diagnosis: $0 cosine spot-check (large@1536 vs small@1536 on KU pairs) + recorded root cause + GO/NO-GO
-- [ ] 26-02-PLAN.md — RETR-02 build the cached extraction-replay KU harness (no re-extraction; captures KU score + judge engagement)
-- [ ] 26-03-PLAN.md — RETR-03 model swap to text-embedding-3-large@1536 + v11 embedding_model stamp + opt-in `recense reembed` CLI (dry-run default)
-- [ ] 26-04-PLAN.md — RETR-02 founder-gated paid validation: DB backup, live re-embed, before/after replay KU + EVAL-02, three-criteria verdict
+  1. RETR-01 — DONE: the symptom is diagnosed as post-retrieval (consolidation judge verdict + PE-resistance routing), NOT embedder- or cosine-threshold-bound; evidence in `26-DIAGNOSIS-V{1,2,3}.md` (contradicting claims cluster at cosine 0.3–0.97 yet duplicates are minted; gate is `unrelatedSimilarityThreshold` 0.3, not 0.7).
+  2. A judge-replay over the surfaced near-duplicate claim/candidate pairs isolates the faulty step (judge-misclassify vs PE-routing-escape); the identified path is fixed so same-belief restatements/contradictions reconcile (tombstone prior + update) instead of minting a duplicate; validated on `replay-ku-harness.cjs` with EVAL-02 belief-correction ≥84.6% and duplicate-minting on the surfaced set measurably reduced — RETR-02
+  3. A fact-level dedup/reconciliation pass (Phase 25 entity-dedup analog) collapses residual real duplicate fact nodes, excluding known self-ingestion pollution; losers tombstoned (never deleted), edges rewired, provenance preserved; graph stays source of truth — RETR-03
+**Plans**: 4 plans (re-planned 2026-06-18 — old swap/re-embed/paid-eval plans superseded; 26-01 RETR-01 diagnosis DONE)
+- [x] 26-01-PLAN.md — RETR-01 diagnosis (DONE; root cause = judge/PE-routing, swap correctly rejected; see 26-DIAGNOSIS-V{1,2,3})
+- [superseded] 26-02/26-03/26-04 — embedder-swap harness + re-embed + paid eval; retired (premise falsified)
+- [x] 26-05-PLAN.md — RETR-02a: build the embedder-agnostic extraction-replay KU harness (KU score + judge-engagement + duplicate-mint counts; validation tool, no swap)
+- [x] 26-06-PLAN.md — RETR-02b: cost-gated judge-replay over the surfaced near-dup pairs; split judge-misclassify vs PE-routing-escape; names the 26-07 fix target
+- [x] 26-07-PLAN.md — RETR-02c: fix the implicated judge/PE path so restatements reconcile (tombstone+update) not mint dupes; validate on the harness (EVAL-02 ≥84.6%, dupes reduced)
+- [x] 26-08-PLAN.md — RETR-03: opt-in `recense dedup-facts` pass (EntityDedup analog for fact nodes; pollution-excluded, tombstone-only, FK-clean, --dry-run default)
 
 ### Phase 27: Reader Layer
 
@@ -136,7 +138,12 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
   2. The viz serves the doc at a `/doc` route; a Reader/Brain toggle lets the user switch between the prose view and a brain graph focused on that doc's cited atoms; clicking a fact-ref in the prose focuses the correct atom in the graph with selection state preserved across the toggle — READER-02
   3. On doc load, the reader detects stale citations (`node.last_access > doc.generatedAt`), surfaces a `prev_value → value` diff for changed facts, and flags refs to tombstoned facts as "cited fact was removed"; a regenerate action rebuilds the doc from current facts — READER-03
   4. A doc→doc corpus graph (`doc_link` edges) is navigable in the viz; centering on a project surfaces its docs alongside neighboring projects and related entities, subsuming the need for a separate per-project graph view — READER-04
-**Plans**: TBD
+**Plans**: 5 plans
+- [x] 27-01-PLAN.md — v11 schema (node 'doc', edge 'cites'/'doc_link') + node_doc sidecar + store primitives
+- [ ] 27-02-PLAN.md — doc gather (scope∪semantic) + generator (judge-tier, cite-verify) + lifecycle-exempt doc-writer + `recense generate-doc` CLI (READER-01)
+- [ ] 27-03-PLAN.md — DB-backed /doc + lazy-gen spawn + Reader/Brain toggle + fact-ref→atom hero interaction (READER-02)
+- [ ] 27-04-PLAN.md — citation staleness endpoint + banner/inline markers + prev_value→value diff + regenerate (READER-03)
+- [ ] 27-05-PLAN.md — doc_link edges + /graph?type=doc corpus graph + expanded-only swap button (READER-04)
 **UI hint**: yes
 
 ## Progress
@@ -168,5 +175,5 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 23. Approval-Gated Any-MCP Execution | v4.0 | 10/10 | Complete | 2026-06-17 |
 | 24. Foundational Store | v5.0 | 0/TBD | Not started | - |
 | 25. Entity Dedup / Prune | v5.0 | 3/3 | Complete   | 2026-06-18 |
-| 26. Retrieval-Embedding Fix | v5.0 | 1/4 | In Progress|  |
-| 27. Reader Layer | v5.0 | 0/TBD | Not started | - |
+| 26. Retrieval-Embedding Fix | v5.0 | 5/5 | Complete   | 2026-06-18 |
+| 27. Reader Layer | v5.0 | 1/5 | Executing   | - |
