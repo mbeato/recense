@@ -214,8 +214,9 @@ describe('Source-aware ingestion: D-57/D-60 (gmail sourceWeight + dedup)', () =>
     await expect(consolidator.consolidate()).resolves.toBeUndefined();
 
     // gmail sourceWeight=0.35 → salience is very low; consolSkipThresholdBySource.gmail=0.4
-    // The episode is skipped by the per-source threshold and stays unconsolidated
-    expect(h.episodes.listUnconsolidated()).toHaveLength(1);
+    // The episode is skipped by the per-source threshold and MUST be marked consolidated=1
+    // so it is not re-scanned on every future pass (SKIP-01 fix).
+    expect(h.episodes.listUnconsolidated()).toHaveLength(0);
     // generate() was not consumed (episode was skipped)
     // provider.generateScript had 1 item; if it had been consumed the next call would throw
   });

@@ -173,6 +173,41 @@ describe('Consolidator', () => {
     // Provider generate was never called (if it were, the queue would be consumed but not throw)
   });
 
+  // ── SKIP-01: salience-skip must mark consolidated so the episode is not re-scanned ──
+
+  it('SKIP-01 consolidation mark: sub-threshold episode is marked consolidated=1 and produces no graph effects', async () => {
+    // Regression: before the fix, the salience-skip `continue` ran without calling markConsolidated,
+    // leaving consolidated=0 forever — causing the episode to be re-scanned every pass.
+    const provider = new MockModelProvider({
+      embedFn: makeSyntheticEmbedFn(h.config.embeddingDimensions),
+      generateScript: [],
+      judgeScript: [],
+    });
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    const ep = h.episodes.append({
+      content: 'sub-threshold episode that should be skipped and marked',
+      origin: 'observed',
+      // Below consolSkipThreshold (0.2) and hard_keep=0 → salience-skip path
+      salience: 0.1,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-skip-01',
+    });
+
+    await consolidator.consolidate();
+
+    // (a) The episode must be marked consolidated=1 after the pass (not left at 0).
+    const row = h.episodes.getEpisode(ep.id);
+    expect(row?.consolidated).toBe(1);
+
+    // (b) No graph effects: zero nodes minted from this skipped episode.
+    const nodes = h.db.prepare('SELECT * FROM node').all() as NodeRow[];
+    expect(nodes).toHaveLength(0);
+  });
+
   it('CONSOL-01 hard_keep override: low-salience hard_keep=1 episode IS processed', async () => {
     const provider = new MockModelProvider({
       embedFn: makeSyntheticEmbedFn(h.config.embeddingDimensions),

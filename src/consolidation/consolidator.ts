@@ -357,6 +357,21 @@ export class Consolidator {
     return bestSim >= this.config.echoSimilarityThreshold ? bestId : null;
   }
 
+  /**
+   * Mark a skipped episode as consolidated so it is not re-scanned on every future pass.
+   *
+   * A skipped episode (salience-filtered OR inferred/echo/hitl hard-stop) produces zero graph
+   * effects, but MUST be marked consolidated=1 so listUnconsolidated() excludes it on subsequent
+   * passes. Centralised here so the "a skipped episode is always marked" rule cannot silently
+   * diverge across the two skip sites — the same duplicated-logic drift that caused FK-01/FK-02.
+   *
+   * M-5: .immediate() prevents SQLITE_BUSY_SNAPSHOT in WAL mode on upgrade race.
+   * better-sqlite3 API: transaction.immediate() calls the transaction in IMMEDIATE mode.
+   */
+  private markSkipped(episodeId: string): void {
+    this.db.transaction(() => this.episodes.markConsolidated(episodeId)).immediate();
+  }
+
   // ── Public interface ─────────────────────────────────────────────────────
 
   /**
@@ -407,6 +422,7 @@ export class Consolidator {
             ? this.config.consolSkipThresholdAssistant
             : this.config.consolSkipThreshold);
         if (episode.salience < skipThreshold && episode.hard_keep === 0) {
+          this.markSkipped(episode.id);
           continue;
         }
 
@@ -439,9 +455,7 @@ export class Consolidator {
         //        both sites cannot drift (per the header comment above isEligibleForExtraction).
         // Backfill persists above for the audit trail; no claims are extracted for any of these classes.
         if (episode.origin === 'inferred' || echoSourceId !== null || episode.source === 'hitl') {
-          // M-5: .immediate() prevents SQLITE_BUSY_SNAPSHOT in WAL mode on upgrade race.
-          // better-sqlite3 API: transaction.immediate() calls the transaction in IMMEDIATE mode.
-          this.db.transaction(() => this.episodes.markConsolidated(episode.id)).immediate();
+          this.markSkipped(episode.id);
           continue;
         }
 
