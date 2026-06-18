@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Phase 27 Plan 03 Tasks 1+2 COMPLETE — DB-backed /doc + reader.js promoted; awaiting Task 3 hero-interaction human-verify checkpoint
-last_updated: "2026-06-18T21:15:00.000Z"
+stopped_at: Phase 27 Plan 03 — hero interaction VERIFIED by founder (round-trip works); 2 post-verify UX fixes landed (reader close button + palette scrollbar); ready for reload-confirm
+last_updated: "2026-06-18T21:45:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -26,16 +26,16 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 27 (reader-layer) — EXECUTING
-Plan: 03 Tasks 1+2 DONE — awaiting Task 3 hero-interaction human-verify checkpoint
-Status: Checkpoint: human-verify (Task 3)
+Plan: 03 — hero interaction VERIFIED by founder; 2 post-verify UX fixes landed; ready for reload-confirm
+Status: 27-03 ready for founder reload-confirm
 
-[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-02 done · 27-03 Tasks 1+2 done
+[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-02 done · 27-03 verified + UX-polished
 ```
 
 **Phase 27 Plan 03 (reader UI — Tasks 1+2 done, Task 3 awaiting human-verify) — 2026-06-18:**
 - **Task 1:** DB-backed `/doc?slug=` route in `server.ts` (replaced file-backed `/doc?term=`). On miss: spawns `generate-doc-cli` detached subprocess (server stays read-only, T-27-11); returns 202 `{status:'generating'}`. `/doc/meta?slug=` returns `{nodeId, generated_at, citedFactIds:[...]}`. `POST /doc/generate?slug=` for force-regen. In-flight Set deduplicates concurrent spawns (T-27-10). 13 tests green.
 - **Task 2:** Promoted `reader.js` to DB-backed load (polls on 202), Reader/Brain toggle (btn text flips, class .open), graph focus on cited atoms via `Graph.nodeColor()/linkColor()` callbacks (client-side — cited set small), fact-ref click → `hide()` + `ctx.selectNode(node)` with selection preserved across toggle (READER-02). XSS-safe: single `innerHTML` from `renderMarkdown` output. 21 tests green.
-- **Task 3 (checkpoint):** Hero-interaction human-verify — founder opens `http://127.0.0.1:7815/?doc=<slug>&reader=1`, exercises prose→atom→brain→prose round-trip.
+- **Task 3 (checkpoint): VERIFIED.** Founder exercised the prose→atom→brain→prose round-trip and confirmed it works (one system at two altitudes). Found 2 UX gaps, both fixed (commit `5fefcac`): (1) added `#reader-close` × button in the header — the open slide-in `#reader` covers `#btn-reader` so the toggle was unreachable from inside; wired to existing `hide()` + Escape; muted-mauve/slate styling (NOT amber); (2) palette-styled `#reader` scrollbar reusing the `.detail-page #detail` muted-mauve treatment. Toggle/focus logic untouched. Dist rebuilt. Ready for founder to reload `http://127.0.0.1:7818/?doc=tonos&reader=1` and confirm.
 
 **Phase 27 Plan 02 (doc-generation core) — COMPLETE 2026-06-18:**
 - `gatherFacts` (scope ∪ semantic ∪ entity-hop, D-01), `generateDoc` (judge-tier cited markdown + citation-verify, D-04), `writeDoc` (lifecycle-exempt type='doc' node — no embed/decay/FTS/training — single IMMEDIATE transaction), `recense generate-doc <slug>` CLI (lock-guarded, idempotent, --force).
