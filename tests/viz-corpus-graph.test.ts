@@ -311,9 +311,6 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).toContain('window.ForceGraph');
     // Has its own separate container (does NOT swap the 3D brain's #graph)
     expect(src).toContain('corpus-graph');
-    // D-08: clicking a doc node navigates to the reader
-    expect(src).toContain('reader');
-    expect(src).toContain('doc=');
   });
 
   it('source: corpus.js does NOT swap data into the 3D brain (no ctx.Graph.graphData swap)', () => {
@@ -324,6 +321,60 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     // The flat-graph approach uses its own ForceGraph() instance, never the brain's.
     // Guard against a regression to the 3D-data-swap approach.
     expect(src).not.toContain('ctx.Graph.graphData');
+  });
+
+  // Fix A — corpus zoom clamp
+  it('source: corpus.js clamps zoom (MAX_ZOOM) after fit + fits on onEngineStop', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+      'utf8',
+    );
+    // A max-zoom ceiling exists so a tiny graph does not blow up
+    expect(src).toContain('MAX_ZOOM');
+    // Clamp applied via .zoom(k, ms)
+    expect(src).toMatch(/\.zoom\(/);
+    // Fit fires on layout settle, not only a fixed timeout
+    expect(src).toContain('onEngineStop');
+    // zoomToFit still used as the fit primitive
+    expect(src).toContain('zoomToFit');
+  });
+
+  // Fix B — corpus doc-node click opens the reader IN PLACE (no page navigation)
+  it('source: corpus.js onNodeClick calls ctx.openReader (NOT window.location)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+      'utf8',
+    );
+    // Opens the reader in-place via the ctx opener with from:'corpus'
+    expect(src).toContain('ctx.openReader');
+    expect(src).toContain("from: 'corpus'");
+    // Must NOT navigate the page (the brain-detour bug)
+    expect(src).not.toContain('window.location');
+  });
+
+  it('source: corpus.js registers ctx.returnToCorpus + ctx.showBrainFromCorpus hooks', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+      'utf8',
+    );
+    expect(src).toContain('ctx.returnToCorpus');
+    expect(src).toContain('ctx.showBrainFromCorpus');
+  });
+
+  it('source: reader.js exports an in-place ctx.openReader honoring from:corpus', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/reader.js'),
+      'utf8',
+    );
+    // In-place opener registered on ctx
+    expect(src).toContain('ctx.openReader');
+    // Close path returns to corpus when opened from corpus
+    expect(src).toContain('ctx.returnToCorpus');
+    // Provenance guard exists ('brain' vs 'corpus')
+    expect(src).toContain("openFrom === 'corpus'");
+    expect(src).toContain("openFrom === 'brain'");
+    // openReader does NOT navigate the page
+    expect(src).not.toContain('window.location.href');
   });
 
   it('source: reader.js no longer owns the corpus swap (moved to corpus.js)', () => {

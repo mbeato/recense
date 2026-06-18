@@ -37,6 +37,11 @@ const BG = '#170f1d';           // deep warm aubergine — matches the viz backg
 // NOT the brain's nodeRadius/BRAIN_SCALE). Constant size — doc corpora are small.
 const NODE_R = 5;
 
+// Max zoom ceiling after zoomToFit (Fix A). With very few nodes (e.g. a 2-node
+// corpus) zoomToFit frames them so tightly each fills the viewport. Clamp so a
+// small graph reads as small circles with room around them, not blown up.
+const MAX_ZOOM = 2.5;
+
 /**
  * Initialise the flat 2D corpus graph + #btn-corpus toggle.
  * Lazy: the ForceGraph instance is only built on the first Corpus open.
@@ -119,7 +124,7 @@ export function initCorpus(ctx) {
         hoveredId = node ? node.id : null;
         container.style.cursor = node ? 'pointer' : '';
       })
-      // D-08: click a doc node → open its reader.
+      // D-08: click a doc node → open its reader IN PLACE over the corpus.
       .onNodeClick((node) => {
         if (node && node.id) openDocReader(node.id);
       });
@@ -128,16 +133,18 @@ export function initCorpus(ctx) {
   }
 
   /**
-   * Navigate to the reader for a doc node (D-08).
-   * Resolves the slug from nodeSlugs (built during buildCorpusGraph).
+   * Open the reader for a doc node IN PLACE over the corpus (D-08, Fix B).
+   * Resolves the slug from nodeSlugs (built during buildCorpusGraph) and calls the
+   * reader's in-place opener (ctx.openReader) with from:'corpus' — the #reader overlay
+   * slides in over the still-mounted #corpus-graph; NO page navigation, no brain detour.
+   * Closing the reader returns to the corpus (reader.js calls ctx.returnToCorpus).
    */
   function openDocReader(docNodeId) {
     const slug = nodeSlugs[docNodeId];
     if (!slug) return;
-    const newUrl = new URL(window.location.href);
-    newUrl.searchParams.set('doc', slug);
-    newUrl.searchParams.set('reader', '1');
-    window.location.href = newUrl.toString();
+    if (typeof ctx.openReader === 'function') {
+      ctx.openReader(slug, { from: 'corpus' });
+    }
   }
 
   /** Resize the corpus graph to fill its container (force-graph needs explicit size). */
@@ -148,23 +155,50 @@ export function initCorpus(ctx) {
     CorpusGraph.width(w).height(h);
   }
 
+  /**
+   * Fit the corpus graph to the viewport, then clamp the zoom to MAX_ZOOM (Fix A).
+   * zoomToFit frames a tiny graph (e.g. 2 nodes) so tightly each node fills the
+   * screen; the clamp keeps a small corpus reading as small circles with breathing room.
+   */
+  function fitAndClamp() {
+    if (!CorpusGraph || !CorpusGraph.zoomToFit) return;
+    try {
+      CorpusGraph.zoomToFit(400, 40);
+      // After the fit animation, clamp the zoom ceiling. The fit is animated (400ms),
+      // so check/clamp slightly after it settles.
+      setTimeout(() => {
+        try {
+          if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
+            CorpusGraph.zoom(MAX_ZOOM, 0);
+          }
+        } catch (_) { /* ignore */ }
+      }, 450);
+    } catch (_) { /* ignore */ }
+  }
+
   async function showCorpus() {
     // Lazy-init on first open.
     if (!CorpusGraph) {
       CorpusGraph = await buildCorpusGraph();
       if (!CorpusGraph) return; // force-graph not available — bail (brain stays shown)
+      // Fit when the force layout settles (settled positions → correct framing).
+      // onEngineStop fires once the simulation cools; this is the primary fit trigger.
+      if (typeof CorpusGraph.onEngineStop === 'function') {
+        CorpusGraph.onEngineStop(() => {
+          if (corpusActive) fitAndClamp();
+        });
+      }
     }
     // Show the flat corpus, hide the 3D brain (pure visibility — brain untouched).
     container.classList.add('open');
     if (brainEl) brainEl.style.visibility = 'hidden';
     sizeCorpusGraph();
-    // force-graph computes layout on data set; nudge a re-zoom-to-fit after layout.
-    if (CorpusGraph.zoomToFit) {
-      setTimeout(() => { try { CorpusGraph.zoomToFit(400, 40); } catch (_) { /* ignore */ } }, 350);
-    }
     corpusActive = true;
     corpusBtn.textContent = 'Brain';
     corpusBtn.classList.add('corpus-active');
+    // Fallback fit on a fixed timeout in case onEngineStop already fired before the
+    // corpus was shown (e.g. a tiny graph settles instantly), or never fires.
+    setTimeout(() => { if (corpusActive) fitAndClamp(); }, 350);
   }
 
   function showBrain() {
@@ -184,4 +218,23 @@ export function initCorpus(ctx) {
   window.addEventListener('resize', () => {
     if (corpusActive) sizeCorpusGraph();
   });
+
+  // ── ctx hooks for reader.js in-place open/close (Fix B) ─────────────────────
+  // returnToCorpus(): reader.js calls this when a from:'corpus' reader closes. The
+  // corpus stayed mounted underneath the overlay, so there is nothing to rebuild —
+  // we just confirm the corpus is shown and the brain stays hidden (idempotent).
+  ctx.returnToCorpus = function returnToCorpus() {
+    container.classList.add('open');
+    if (brainEl) brainEl.style.visibility = 'hidden';
+    corpusActive = true;
+    corpusBtn.textContent = 'Brain';
+    corpusBtn.classList.add('corpus-active');
+  };
+
+  // showBrainFromCorpus(): reader.js calls this when an inline fact-ref is clicked
+  // while the reader was opened over the corpus — the explicit hero interaction
+  // deliberately drops to the brain (atom focus). Restore the 3D brain view.
+  ctx.showBrainFromCorpus = function showBrainFromCorpus() {
+    showBrain();
+  };
 }
