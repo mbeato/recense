@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -38,7 +38,7 @@ export const DDL = `
 
   CREATE TABLE IF NOT EXISTS node (
     id                     TEXT    PRIMARY KEY,
-    type                   TEXT    NOT NULL CHECK(type IN ('entity','fact','schema')),
+    type                   TEXT    NOT NULL CHECK(type IN ('entity','fact','schema','doc')),
     value                  TEXT    NOT NULL,
     value_hash             TEXT    NOT NULL,
     embedding              BLOB,
@@ -60,7 +60,7 @@ export const DDL = `
     rel         TEXT    NOT NULL,
     w           REAL    NOT NULL DEFAULT 0.1,
     last_access INTEGER NOT NULL,
-    kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel')),
+    kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link')),
     PRIMARY KEY (src, dst, rel)
   );
 
@@ -141,6 +141,18 @@ export const DDL = `
     node_id    TEXT    PRIMARY KEY REFERENCES node(id),
     scope      TEXT    NOT NULL,    -- project slug (e.g. 'vtx') or 'global'
     updated_at INTEGER NOT NULL     -- epoch ms; set on every upsert
+  );
+
+  -- READER-01: doc metadata sidecar (1:1 with type='doc' nodes, Phase 27).
+  -- generated_at is a DEDICATED column — NOT node.last_access — so the staleness predicate
+  -- (node.last_access > doc.generated_at) cannot be corrupted when the doc node is accessed
+  -- (CONTEXT D §generatedAt). Single writer: doc-writer path only (CONSOL-03 discipline).
+  -- FK → node(id): tombstoning a doc node does NOT auto-delete node_doc; stale rows are harmless.
+  CREATE TABLE IF NOT EXISTS node_doc (
+    node_id      TEXT    PRIMARY KEY REFERENCES node(id),
+    slug         TEXT    NOT NULL,      -- project slug (matches node_scope.scope)
+    generated_at INTEGER NOT NULL,      -- epoch ms; set once on first generate, updated on regen
+    updated_at   INTEGER NOT NULL       -- epoch ms; always updated
   );
 
   -- SURF-02: operational surface-outcome log (append-only, single-writer: serve path only).
@@ -331,6 +343,98 @@ export function initSchema(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_node_scope_scope
       ON node_scope(scope);
+  `);
+
+  // v11 migration: extend node.type CHECK to include 'doc'; extend edge.kind CHECK to include
+  // 'cites' and 'doc_link'. SQLite cannot ALTER a CHECK constraint — table recreation required.
+  // Guard: check whether the live DDL already includes 'doc' / 'cites' — idempotent re-run safe.
+  // In-memory / fresh DBs built from the updated DDL above already have the new constraints →
+  // guard skips. The node table recreation must also re-create all node-referencing indexes and
+  // FTS triggers that reference node; the edge recreation re-creates idx_edge_dst.
+  //
+  // T-27-01 atomicity: both recreations are wrapped in explicit BEGIN/COMMIT so a crash mid-swap
+  // rolls back cleanly (mirrors the v7 CR-02 pattern).
+  // T-27-02 idempotency: the guard checks the live DDL string — a re-run is a no-op if the
+  // constraint already includes 'doc' / 'cites'.
+  //
+  // node recreation guard — check live DDL for 'doc'
+  const nodeDdl = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='node'")
+    .get() as { sql: string } | undefined)?.sql ?? '';
+  if (!nodeDdl.includes("'doc'")) {
+    // PRAGMA foreign_keys must be set OUTSIDE a transaction (SQLite requirement).
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      BEGIN;
+      CREATE TABLE node_v11 (
+        id                     TEXT    PRIMARY KEY,
+        type                   TEXT    NOT NULL CHECK(type IN ('entity','fact','schema','doc')),
+        value                  TEXT    NOT NULL,
+        value_hash             TEXT    NOT NULL,
+        embedding              BLOB,
+        embedded_hash          TEXT,
+        origin                 TEXT    NOT NULL CHECK(origin IN ('observed','asserted_by_user','inferred')),
+        s                      REAL    NOT NULL DEFAULT 0.1,
+        c                      REAL    NOT NULL DEFAULT 0.5,
+        last_access            INTEGER NOT NULL,
+        prev_value             TEXT,
+        prev_ts                INTEGER,
+        pending_contradictions TEXT    NOT NULL DEFAULT '[]',
+        tombstoned             INTEGER NOT NULL DEFAULT 0,
+        training_eligible      INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO node_v11 SELECT * FROM node;
+      DROP TABLE node;
+      ALTER TABLE node_v11 RENAME TO node;
+      COMMIT;
+    `);
+    // Re-create node indexes (dropped with the old table).
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_node_dirty
+        ON node(embedded_hash) WHERE embedded_hash IS NULL;
+    `);
+    // Re-create node_fts virtual table (may still exist; IF NOT EXISTS is safe).
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS node_fts USING fts5(
+        node_id UNINDEXED,
+        value,
+        tokenize='unicode61 remove_diacritics 2'
+      );
+    `);
+    db.pragma('foreign_keys = ON');
+  }
+
+  // edge recreation guard — check live DDL for 'cites'
+  const edgeDdlV11 = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='edge'")
+    .get() as { sql: string } | undefined)?.sql ?? '';
+  if (!edgeDdlV11.includes("'cites'")) {
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      BEGIN;
+      CREATE TABLE edge_v11 (
+        src         TEXT    NOT NULL REFERENCES node(id),
+        dst         TEXT    NOT NULL REFERENCES node(id),
+        rel         TEXT    NOT NULL,
+        w           REAL    NOT NULL DEFAULT 0.1,
+        last_access INTEGER NOT NULL,
+        kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link')),
+        PRIMARY KEY (src, dst, rel)
+      );
+      INSERT INTO edge_v11 SELECT * FROM edge;
+      DROP TABLE edge;
+      ALTER TABLE edge_v11 RENAME TO edge;
+      COMMIT;
+    `);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_edge_dst ON edge(dst);`);
+    db.pragma('foreign_keys = ON');
+  }
+
+  // v11 migration: add node_doc sidecar table + idx_node_doc_slug.
+  // Table uses CREATE TABLE IF NOT EXISTS in DDL above → idempotent on fresh DBs.
+  // Existing v10 DBs: node_doc absent → DDL above creates it (IF NOT EXISTS catches it).
+  // No ALTER TABLE needed — the whole table is new (no column additions to existing tables).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_node_doc_slug
+      ON node_doc(slug);
   `);
 
   // Stamp schema version — read first to guard against downgrade (M-9).
