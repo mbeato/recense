@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
-status: executing
-stopped_at: Phase 27 Plan 04 — staleness detection (Tasks 1+2 done, Task 3 awaiting human-verify); demo viz running at http://127.0.0.1:7818/?doc=tonos&reader=1
-last_updated: "2026-06-18T20:55:00.000Z"
+status: "27-05 Tasks 1+2 complete — awaiting founder corpus-graph verification (Task 3 checkpoint)"
+stopped_at: Phase 27 Plan 05 Tasks 1+2 DONE — corpus graph endpoint + expanded-only swap button + doc_link edges; Task 3 checkpoint pending founder verify
+last_updated: "2026-06-18T21:11:41.862Z"
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 16
-  completed_plans: 10
-  percent: 63
+  completed_plans: 14
+  percent: 88
 ---
 
 # Project State
@@ -26,23 +26,32 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 27 (reader-layer) — EXECUTING
-Plan: 04 — Tasks 1+2 done (staleness endpoint + banner/markers/diff/regenerate); Task 3 awaiting human-verify
-Status: 27-04 checkpoint:human-verify (demo at http://127.0.0.1:7818/?doc=tonos&reader=1)
+Plan: 05 CHECKPOINT — doc_link edges + corpus graph endpoint + expanded-only swap button + doc-node→reader; awaiting Task 3 founder verify
+Status: Tasks 1+2 committed (971c69b, 738aa66); Task 3 checkpoint open — founder to verify corpus graph at http://127.0.0.1:7810
 
-[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-02 done · 27-03 verified + UX-polished
+[████████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-04 done · 27-05 Tasks 1+2 done · awaiting Task 3 verify
 ```
 
-**Phase 27 Plan 04 (staleness — Tasks 1+2 done, Task 3 awaiting human-verify) — 2026-06-18:**
-- **Task 1:** `GET /doc/staleness?slug=` in `server.ts`. `stmtCitedFacts` stmt compiled once: joins cites-edge reverse lookup to cited fact rows (tombstoned + last_access + prev_value). Returns `{generated_at, stale:[{factId,prev_value,value}], tombstoned:[id,...]}`. Read-only (T-27-13). 10 tests green.
-- **Task 2:** `fetchStaleness()` in `reader.js` — after wireFactLinks, fetches staleness, marks `.fact-stale` (+ data-prevValue) and `.fact-tombstoned` (pointer-events:none + aria-label) inline refs, prepends `.staleness-banner` with textContent count + `.btn-regen`. Stores `ctx.staleFactIds` + `ctx.staleFactPrevValues`. `regenerate()` POSTs to `/doc/generate` + reloads via loadWithPoll. `detail.js` populateDetail: `.meta-row.meta-diff` row shows "was: `<prev_value>`" via textContent (T-27-12). CSS: `.staleness-banner`, `.btn-regen`, `.meta-diff` rules in muted slate/mauve (not amber). 31/31 tests green. tsc clean.
-- **Task 3 (checkpoint): PENDING.** Demo DB at `/tmp/staleness-demo.db` (fact `05ea9c70` STALE, fact `06e46335` TOMBSTONED). Viz server at http://127.0.0.1:7818/?doc=tonos&reader=1.
+**Phase 27 Plan 05 (corpus graph — Tasks 1+2 done, Task 3 checkpoint) — 2026-06-18:**
+
+- **Task 1 (`971c69b`):** `generateDoc` returns `linkedDocRefs` from `recense://doc/<id>` refs in prose; `writeDoc` creates `kind='doc_link'` edges for live target doc nodes only (in-set guard, T-27-15, FK-safe). 9 tests green.
+- **Task 2 (`738aa66`):** `GET /graph?type=doc` returns live doc nodes (with slug via node_doc JOIN) + doc_link edges; `/graph` unchanged. `#btn-corpus` in index.html; CSS gate `.mode-window #btn-corpus { display:inline-flex }` (D-07). `reader.js` corpus swap: `swapToCorpus()` → `/graph?type=doc` fetch + graphData swap + corpusNodeSlugs map; `openDocReader()` → navigate to `/?doc=slug&reader=1` (D-08). 10 tests green; tsc clean; dist rebuilt.
+- **Task 3 (checkpoint): PENDING founder verify.**
+
+**Phase 27 Plan 04 (staleness — COMPLETE, founder-approved) — 2026-06-18:**
+
+- **Task 1 (`63dbe0f`):** `GET /doc/staleness?slug=` in `server.ts`. `stmtCitedFacts` stmt compiled once: joins cites-edge reverse lookup to cited fact rows (tombstoned + last_access + prev_value). Returns `{generated_at, stale:[{factId,prev_value,value}], tombstoned:[id,...]}`. Read-only (T-27-13). 10 tests green.
+- **Task 2 (`f38a9ec`):** `fetchStaleness()` in `reader.js` — after wireFactLinks, fetches staleness, marks `.fact-stale` (+ data-prevValue) and `.fact-tombstoned` (pointer-events:none + aria-label) inline refs, prepends `.staleness-banner` with textContent count + `.btn-regen`. Stores `ctx.staleFactIds` + `ctx.staleFactPrevValues`. `regenerate()` POSTs to `/doc/generate` + reloads via loadWithPoll. `detail.js` populateDetail: `.meta-row.meta-diff` row shows "was: `<prev_value>`" via textContent (T-27-12). CSS: `.staleness-banner`, `.btn-regen`, `.meta-diff` rules in muted slate/mauve (not amber). 31/31 tests green. tsc clean.
+- **Task 3 (checkpoint): APPROVED.** Founder verified banner + tombstone marker + atom-panel diff + detection — all good. ONE palette fix requested + applied (`fcaa1e9`): `.fact-stale` re-toned from orange/amber `rgba(217,130,60,...)` (the activation color — founder-locked violation) to the muted `.doc-ref` rose family `rgba(156,112,128,...)`. `.fact-tombstoned` (muted red) + `.staleness-banner` (mauve) untouched. Dist rebuilt; 31/31 tests + tsc clean. Demo at `/tmp/staleness-demo.db` (re-seeded), viz server on port 7818 — founder to hard-reload http://127.0.0.1:7818/?doc=tonos&reader=1 to confirm the rose tone.
 
 **Phase 27 Plan 03 (reader UI — Tasks 1+2 done, Task 3 awaiting human-verify) — 2026-06-18:**
+
 - **Task 1:** DB-backed `/doc?slug=` route in `server.ts` (replaced file-backed `/doc?term=`). On miss: spawns `generate-doc-cli` detached subprocess (server stays read-only, T-27-11); returns 202 `{status:'generating'}`. `/doc/meta?slug=` returns `{nodeId, generated_at, citedFactIds:[...]}`. `POST /doc/generate?slug=` for force-regen. In-flight Set deduplicates concurrent spawns (T-27-10). 13 tests green.
 - **Task 2:** Promoted `reader.js` to DB-backed load (polls on 202), Reader/Brain toggle (btn text flips, class .open), graph focus on cited atoms via `Graph.nodeColor()/linkColor()` callbacks (client-side — cited set small), fact-ref click → `hide()` + `ctx.selectNode(node)` with selection preserved across toggle (READER-02). XSS-safe: single `innerHTML` from `renderMarkdown` output. 21 tests green.
 - **Task 3 (checkpoint): VERIFIED.** Founder exercised the prose→atom→brain→prose round-trip and confirmed it works (one system at two altitudes). Found 2 UX gaps, both fixed (commit `5fefcac`): (1) added `#reader-close` × button in the header — the open slide-in `#reader` covers `#btn-reader` so the toggle was unreachable from inside; wired to existing `hide()` + Escape; muted-mauve/slate styling (NOT amber); (2) palette-styled `#reader` scrollbar reusing the `.detail-page #detail` muted-mauve treatment. Toggle/focus logic untouched. Dist rebuilt. Ready for founder to reload `http://127.0.0.1:7818/?doc=tonos&reader=1` and confirm.
 
 **Phase 27 Plan 02 (doc-generation core) — COMPLETE 2026-06-18:**
+
 - `gatherFacts` (scope ∪ semantic ∪ entity-hop, D-01), `generateDoc` (judge-tier cited markdown + citation-verify, D-04), `writeDoc` (lifecycle-exempt type='doc' node — no embed/decay/FTS/training — single IMMEDIATE transaction), `recense generate-doc <slug>` CLI (lock-guarded, idempotent, --force).
 - **D-05 prose quality: PASS** (env judge model produces well-structured specific deep-dive ≥ Tonos baseline).
 - **Live bug 1 found+fixed (`6960a5c`):** the `claude-headless` judge emitted 8-char id PREFIXES (`recense://fact/e751c852`), not full UUIDs → strict `{36}` regex dropped all 71 citations (0 cites edges). Fix: accept 8+-char prefixes, resolve via unique-prefix match (ambiguous→invented), CANONICALIZE prose to full UUIDs so node.value/cites/reader-regex agree.
@@ -231,6 +240,10 @@ Resume file: .planning/phases/27-reader-layer/27-03-SUMMARY.md
 
 ## Key Decisions (Phase 27)
 
+- **linkedDocRefs returned by generateDoc includes ALL doc refs from prose** — writeDoc is responsible for the in-set guard (tombstoned/non-existent skipped); generator stays read-only and composable
+- **/graph?type=doc JOINs node_doc to expose slug field** — enables D-08 doc-node click → reader open without a new server endpoint; slug in corpus node records (Plan 27-05)
+- **openDocReader() navigates via window.location** — simpler than in-app re-init; per plan's "open /?doc=<slug>&reader=1" path (Plan 27-05)
+- **Corpus button expanded-only CSS gate** — mirrors search/topic-wrap pattern: `#btn-corpus { display:none }` / `.mode-window #btn-corpus { display:inline-flex }` (D-07, Plan 27-05)
 - **generated_at is write-once at the SQL layer** (ON CONFLICT omits generated_at from the DO UPDATE SET clause) — staleness predicate cannot be corrupted by doc re-render without regen
 - **Table recreation migration guard** checks live DDL from sqlite_master before running — idempotent and no data loss on re-run
 - **node_doc sidecar** (not a new column on node) — mirrors node_scope/node_temporal pattern for faithfulness
