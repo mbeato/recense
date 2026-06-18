@@ -9,10 +9,10 @@ This milestone makes recense the **single foundational store** for the founder's
 
 ### Foundational Store (Phase 24 — ex-999.3; engine + importer code already landed, this is verify + migrate)
 
-- [ ] **SCOPE-01**: Consolidation completes a full FK-free sleep pass on the live DB, clears the dirty sentinel, and the hourly sleep-pass launchd agent is re-enabled — the clean-consolidation gate that unblocks the migration (verifies the schema-relations DELETE-side FK fix end-to-end).
-- [ ] **SCOPE-02**: Each consolidated fact carries single-tenant provenance — `node_scope` scope derived from its contributing episodes' `cwd` (single known project → that slug; multi-project or personal/unknown → `global`); retrieval stays GLOBAL (scope is attribution, not an isolation boundary). Verified live.
-- [ ] **SCOPE-03**: `recense import-memory` idempotently migrates `~/.claude/projects/*/memory` recall-facts into recense through the ingestion pipeline (`source='memory-import'`, stable `external_id`), skipping load-bearing policy bundles and MEMORY.md index files.
-- [ ] **SCOPE-04**: A verified end-to-end migration runs the consolidate→verify→retire flow — imported facts are confirmed retrievable with correct `[scope]` surfaced in recall output before any source file is retired (retirement human-confirmed; never delete a source before its facts are verified in recense).
+- [x] **SCOPE-01**: Consolidation completes a full FK-free sleep pass on the live DB, clears the dirty sentinel, and the hourly sleep-pass launchd agent is re-enabled — the clean-consolidation gate that unblocks the migration (verifies the schema-relations DELETE-side FK fix end-to-end). (NOTE: "dirty sentinel clears" is unmeetable — the sentinel is a permanent launchd TRIGGER, not clearable state; real signal = backlog≈0 + clean FK pass. Met 2026-06-18.)
+- [x] **SCOPE-02**: Each consolidated fact carries single-tenant provenance — `node_scope` scope derived from its contributing episodes' `cwd` (single known project → that slug; multi-project or personal/unknown → `global`); retrieval stays GLOBAL (scope is attribution, not an isolation boundary). Verified live.
+- [x] **SCOPE-03**: `recense import-memory` idempotently migrates `~/.claude/projects/*/memory` recall-facts into recense through the ingestion pipeline (`source='memory-import'`, stable `external_id`), skipping load-bearing policy bundles and MEMORY.md index files.
+- [x] **SCOPE-04**: A verified end-to-end migration runs the consolidate→verify→retire flow — imported facts are confirmed retrievable with correct `[scope]` surfaced in recall output before any source file is retired (retirement human-confirmed; never delete a source before its facts are verified in recense). Retirement EXECUTED 2026-06-18 (quick-260617-w0u): 197 fact files moved (not deleted) to `~/.claude/projects-memory-archive-2026-06-18/`; 12 MEMORY.md indexes + 7 policy bundles + 2 live trackers kept in place.
 
 ### Entity Dedup / Prune (Phase 25 — ex-999.5; new build)
 
@@ -22,7 +22,7 @@ This milestone makes recense the **single foundational store** for the founder's
 
 ### Retrieval-Embedding Fix (Phase 26 — ex-999.2; new build, ~$3–5 API)
 
-- [ ] **RETR-01**: The sub-0.7 cosine retrieval weakness is diagnosed and fixed — apply the embedder's query-instruction prefix and/or swap to a stronger embedding model (`text-embedding-3-large` / Qwen3 query-prefix).
+- [x] **RETR-01**: The sub-0.7 cosine retrieval weakness is diagnosed and fixed — apply the embedder's query-instruction prefix and/or swap to a stronger embedding model (`text-embedding-3-large` / Qwen3 query-prefix).
 - [ ] **RETR-02**: The fix is validated via the cached extraction-replay harness (no re-extraction) showing improved retrieval/KU on EVAL-01 with no regression to belief-correction.
 - [ ] **RETR-03**: Any embedder change re-embeds stored node texts and rebuilds the derived vector cache consistently — the graph stays the source of truth, the vector store a derived cache.
 
@@ -60,14 +60,14 @@ Each requirement maps to exactly one phase. Filled at definition; roadmapper val
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCOPE-01 | Phase 24 | Pending |
-| SCOPE-02 | Phase 24 | Pending |
-| SCOPE-03 | Phase 24 | Pending |
-| SCOPE-04 | Phase 24 | Pending |
+| SCOPE-01 | Phase 24 | Satisfied |
+| SCOPE-02 | Phase 24 | Satisfied |
+| SCOPE-03 | Phase 24 | Satisfied |
+| SCOPE-04 | Phase 24 | Satisfied |
 | DEDUP-01 | Phase 25 | Pending |
 | DEDUP-02 | Phase 25 | Pending |
 | DEDUP-03 | Phase 25 | Pending |
-| RETR-01 | Phase 26 | Pending |
+| RETR-01 | Phase 26 | Complete |
 | RETR-02 | Phase 26 | Pending |
 | RETR-03 | Phase 26 | Pending |
 | READER-01 | Phase 27 | Pending |
