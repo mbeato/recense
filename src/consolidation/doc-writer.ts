@@ -32,6 +32,14 @@ export interface WriteDocParams {
   markdown: string;
   /** Unique fact node IDs whose recense://fact/<id> was verified to resolve. */
   citedFactIds: string[];
+  /**
+   * Target doc node IDs parsed from recense://doc/<id> refs in the generated prose
+   * (from generateDoc result.linkedDocRefs). writeDoc creates one kind='doc_link' edge
+   * per ref whose target is a LIVE (tombstoned=0) doc node — refs to non-existent or
+   * tombstoned doc nodes are skipped (FK-safe in-set guard, mirrors the cites path).
+   * Optional: callers that don't track doc-refs may omit this.
+   */
+  linkedDocRefs?: string[];
   /** Epoch ms for generated_at / last_access / updated_at. */
   now: number;
 }
@@ -59,10 +67,21 @@ export function writeDoc(
   db: Database.Database,
   params: WriteDocParams,
 ): void {
-  const { docId, slug, markdown, citedFactIds, now } = params;
+  const { docId, slug, markdown, citedFactIds, linkedDocRefs, now } = params;
 
   // Dedup cited fact IDs so we write exactly one edge per unique fact.
   const uniqueCitedIds = [...new Set(citedFactIds)];
+
+  // Dedup linked doc refs so we write at most one doc_link edge per unique target.
+  const uniqueLinkedDocRefs = [...new Set(linkedDocRefs ?? [])];
+
+  // Prepared statement to check whether a target doc node is live (tombstoned=0) before
+  // creating a doc_link edge. This is the in-set guard (T-27-15): only create edges to
+  // nodes that actually exist and are not tombstoned — never create dangling FK refs.
+  // Compiled inside writeDoc; safe for use within the transaction (same connection).
+  const stmtCheckLiveDoc = db.prepare(
+    "SELECT id FROM node WHERE id = ? AND type = 'doc' AND tombstoned = 0",
+  );
 
   // Prepared statement for FTS delete — compiled inside writeDoc and used inside the
   // transaction. Safe: prepared statements are reentrant within the same connection.
@@ -133,6 +152,23 @@ export function writeDoc(
         dst: factId,
         rel: 'cites',
         kind: 'cites',
+        w: 1.0,
+        last_access: now,
+      });
+    }
+
+    // 6. Write one kind='doc_link' edge per unique doc ref that resolves to a live doc node.
+    //    In-set guard (T-27-15): only create edges to nodes that are live (tombstoned=0)
+    //    and are type='doc'. Refs to non-existent or tombstoned doc nodes are silently
+    //    skipped — no dangling FK. Same atomicity as the cites path.
+    for (const targetDocId of uniqueLinkedDocRefs) {
+      const liveRow = stmtCheckLiveDoc.get(targetDocId) as { id: string } | undefined;
+      if (!liveRow) continue; // dangling or tombstoned — skip (T-27-15)
+      store.upsertEdge({
+        src: docId,
+        dst: targetDocId,
+        rel: 'doc_link',
+        kind: 'doc_link',
         w: 1.0,
         last_access: now,
       });

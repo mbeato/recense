@@ -53,6 +53,12 @@ export interface GenerateDocResult {
   invented: number;
   /** Count of cited IDs that resolved but are tombstoned. */
   tombstoned: number;
+  /**
+   * Unique target doc node IDs parsed from recense://doc/<id> refs in the generated prose.
+   * Only IDs that appear in the markdown are returned here — writeDoc is responsible for
+   * filtering to live nodes (dangling refs are skipped FK-safely inside the transaction).
+   */
+  linkedDocRefs: string[];
 }
 
 /**
@@ -191,6 +197,17 @@ Output ONLY the markdown deep-dive, no preamble.`;
   // same canonical node — dedup so citationCount and cites edges count unique facts.
   const uniqueVerified = [...new Set(verifiedFactIds)];
 
+  // ── 6. Parse recense://doc/<id> refs from the generated prose ─────────────
+  // These become linkedDocRefs in the result. writeDoc will create kind='doc_link'
+  // edges from this doc node to each target doc node that EXISTS (FK-safe in-set guard).
+  // Uses the same DOC_LINK id shape as reader.js: [a-z0-9-]+
+  // We parse from the CANONICALIZED markdown so fact-ref rewriting is already applied.
+  // Note: doc refs are NOT canonicalized here (they come directly from the generated prose
+  // as-is — the generator is expected to use the full slug-based id, not a truncated prefix).
+  const DOC_REF = /recense:\/\/doc\/([a-z0-9-]+)/g;
+  const rawDocRefs = [...canonicalMarkdown.matchAll(DOC_REF)].map(m => m[1]!);
+  const linkedDocRefs = [...new Set(rawDocRefs)];
+
   return {
     markdown: canonicalMarkdown,
     docId: newId(),
@@ -198,5 +215,6 @@ Output ONLY the markdown deep-dive, no preamble.`;
     citationCount: uniqueVerified.length,
     invented: inventedCount,
     tombstoned: tombstonedCount,
+    linkedDocRefs,
   };
 }
