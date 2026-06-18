@@ -77,7 +77,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 - [ ] **Phase 24: Foundational Store** — verify the already-landed engine layer + import-memory CLI: confirm FK-free consolidation, re-enable the hourly agent, then run the human-gated consolidate→verify→retire migration
 - [x] **Phase 25: Entity Dedup / Prune** — repeatable consolidation pass merges near-duplicate entities into canonical nodes, rewiring edges and tombstoning duplicates without losing provenance (completed 2026-06-18)
 - [x] **Phase 26: Belief-Correction / Duplicate-Fact Fix** (re-scoped 2026-06-18) — RETR-01 diagnosis localized the symptom to the consolidation judge + PE-resistance routing (NOT the embedder/cosine); fix that path + a fact-level dedup pass, validated on the reused replay harness (completed 2026-06-18)
-- [ ] **Phase 27: Reader Layer** — productize the validated reader slice: doc-as-node generation with inline citations, /doc route + Reader/Brain toggle, staleness/regen, doc→doc corpus graph
+- [x] **Phase 27: Reader Layer** — productize the validated reader slice: doc-as-node generation with inline citations, /doc route + Reader/Brain toggle, staleness/regen, doc→doc corpus graph (completed 2026-06-18)
 
 ## Phase Details — v5.0 Foundational Memory Store + Reader Layer
 
@@ -142,8 +142,8 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 - [x] 27-01-PLAN.md — v11 schema (node 'doc', edge 'cites'/'doc_link') + node_doc sidecar + store primitives
 - [x] 27-02-PLAN.md — doc gather (scope∪semantic) + generator (judge-tier, cite-verify) + lifecycle-exempt doc-writer + `recense generate-doc` CLI (READER-01)
 - [x] 27-03-PLAN.md — DB-backed /doc + lazy-gen spawn + Reader/Brain toggle + fact-ref→atom hero interaction (READER-02)
-- [ ] 27-04-PLAN.md — citation staleness endpoint + banner/inline markers + prev_value→value diff + regenerate (READER-03)
-- [ ] 27-05-PLAN.md — doc_link edges + /graph?type=doc corpus graph + expanded-only swap button (READER-04)
+- [x] 27-04-PLAN.md — citation staleness endpoint + banner/inline markers + prev_value→value diff + regenerate (READER-03)
+- [x] 27-05-PLAN.md — doc_link edges + /graph?type=doc corpus graph + expanded-only swap button (READER-04)
 **UI hint**: yes
 
 ## Progress
@@ -176,4 +176,4 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 24. Foundational Store | v5.0 | 0/TBD | Not started | - |
 | 25. Entity Dedup / Prune | v5.0 | 3/3 | Complete   | 2026-06-18 |
 | 26. Retrieval-Embedding Fix | v5.0 | 5/5 | Complete   | 2026-06-18 |
-| 27. Reader Layer | v5.0 | 3/5 | In Progress|  |
+| 27. Reader Layer | v5.0 | 5/5 | Complete   | 2026-06-18 |
