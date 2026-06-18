@@ -1,16 +1,27 @@
 /**
- * Reader layer (READER-02) — DB-backed project deep-dive with Reader/Brain toggle.
+ * Reader layer (READER-02/03) — DB-backed project deep-dive with Reader/Brain toggle
+ * and citation staleness detection (D-10).
  *
  * The hero interaction: read prose → click a cited claim → the atom it came from is
  * selected in the graph (camera-focus + existing detail panel) → toggle to Brain →
  * graph is FOCUSED on this doc's cited atoms with selection preserved → toggle back.
+ *
+ * READER-03 additions:
+ *   - After wireFactLinks(), fetches /doc/staleness?slug= to classify cited refs.
+ *   - Prepends a .staleness-banner summarising stale/tombstoned count + regenerate CTA.
+ *   - Marks inline .fact-stale (changed) and .fact-tombstoned (removed/non-clickable) refs.
+ *   - Stores ctx.staleFactIds (Set) + ctx.staleFactPrevValues (Map id→prev_value) so
+ *     detail.js can show the prev_value→value diff row when a stale atom is selected.
+ *   - Regenerate button → POST /doc/generate?slug= (force), then polls until doc reloads.
  *
  * renderMarkdown is a PURE string→string function (no DOM) so it is unit-testable in node.
  * Module top-level is side-effect-free; all DOM access is inside initReader.
  *
  * Security: all node/fact values go through escapeHtml before any innerHTML assignment
  * (T-10-12 / T-27-08). The only innerHTML assignment is renderMarkdown output (pure,
- * all user-supplied text escaped). Fact values in the detail panel use textContent (detail.js).
+ * all user-supplied text escaped). Staleness banner count text and prev_value diff row
+ * use textContent (never innerHTML with node values — T-27-12).
+ * Fact values in the detail panel use textContent (detail.js).
  */
 
 const FACT_LINK = /\[([^\]]+)\]\(recense:\/\/fact\/([0-9a-f-]{36})\)/g;
@@ -87,6 +98,11 @@ export function initReader(ctx) {
   let loaded = false;
   // citedFactIds fetched from /doc/meta; used for graph focus.
   let citedFactIds = [];
+  // Staleness state (READER-03): populated from /doc/staleness after wireFactLinks().
+  // staleFactIds: Set of factId strings whose last_access > doc.generated_at.
+  // staleFactPrevValues: Map factId → prev_value string (for diff in atom panel).
+  let staleFactIds = new Set();
+  let staleFactPrevValues = new Map();
 
   // ── Show / hide ────────────────────────────────────────────────────────────
 
@@ -147,6 +163,8 @@ export function initReader(ctx) {
         // T-10-12/T-27-08: only innerHTML from renderMarkdown output (all values escaped).
         body.innerHTML = renderMarkdown(md);
         wireFactLinks();
+        // Fetch staleness data (READER-03): marks inline refs + shows banner.
+        await fetchStaleness();
         // Fetch /doc/meta for cited ids (graph focus).
         await fetchMeta();
         return;
@@ -185,6 +203,111 @@ export function initReader(ctx) {
       }
     } catch (_) {
       // Meta failure is non-fatal — doc still renders.
+    }
+  }
+
+  // ── Staleness (READER-03, D-10) ────────────────────────────────────────────
+  // Fetches /doc/staleness?slug=, marks changed/tombstoned inline refs, prepends
+  // the .staleness-banner (with regenerate CTA), and stores stale ids on ctx so
+  // the atom panel (detail.js) can show the prev_value→value diff row.
+
+  async function fetchStaleness() {
+    try {
+      const res = await fetch('/doc/staleness?slug=' + encodeURIComponent(slug));
+      if (!res.ok) return; // non-fatal: staleness is an enhancement, not load-critical
+      const data = await res.json();
+      const staleList = Array.isArray(data.stale) ? data.stale : [];
+      const tombstonedList = Array.isArray(data.tombstoned) ? data.tombstoned : [];
+
+      // Build lookup structures.
+      staleFactIds = new Set(staleList.map(s => s.factId));
+      staleFactPrevValues = new Map(staleList.map(s => [s.factId, s.prev_value]));
+      const tombstonedSet = new Set(tombstonedList);
+
+      // Store on ctx so detail.js can access the stale set when populating the atom panel.
+      ctx.staleFactIds = staleFactIds;
+      ctx.staleFactPrevValues = staleFactPrevValues;
+
+      // Mark inline refs.
+      body.querySelectorAll('a.fact-ref[data-fact]').forEach(a => {
+        const id = a.getAttribute('data-fact');
+        if (tombstonedSet.has(id)) {
+          a.classList.add('fact-tombstoned');
+          // Tombstoned refs are non-clickable (no navigate-to-atom).
+          a.style.pointerEvents = 'none';
+          a.setAttribute('aria-label', 'cited fact was removed');
+          a.setAttribute('title', 'cited fact was removed');
+        } else if (staleFactIds.has(id)) {
+          a.classList.add('fact-stale');
+          // Store prev_value on dataset for any downstream consumers.
+          const pv = staleFactPrevValues.get(id);
+          if (pv != null) a.dataset.prevValue = pv;
+        }
+      });
+
+      // If nothing is stale/tombstoned, skip the banner.
+      const totalChanged = staleList.length + tombstonedList.length;
+      if (totalChanged === 0) return;
+
+      // Prepend .staleness-banner to reader-body (T-27-12: count text via textContent only).
+      const banner = document.createElement('div');
+      banner.className = 'staleness-banner';
+
+      const msgEl = document.createElement('span');
+      // Build a human-readable summary without innerHTML with data.
+      const parts = [];
+      if (staleList.length > 0) parts.push(staleList.length + ' cited fact' + (staleList.length > 1 ? 's' : '') + ' changed');
+      if (tombstonedList.length > 0) parts.push(tombstonedList.length + ' removed');
+      msgEl.textContent = parts.join(', ') + ' since this was written';
+
+      const regenBtn = document.createElement('button');
+      regenBtn.className = 'btn-regen';
+      regenBtn.textContent = 'regenerate';
+      regenBtn.addEventListener('click', () => regenerate());
+
+      banner.appendChild(msgEl);
+      banner.appendChild(regenBtn);
+      // Prepend: insert before the first child (if any), or append if body is empty.
+      body.insertBefore(banner, body.firstChild);
+    } catch (_) {
+      // Staleness fetch failure is non-fatal — doc still renders correctly.
+    }
+  }
+
+  // ── Regenerate (READER-03) ──────────────────────────────────────────────────
+  // Force-rebuilds the doc from current facts via POST /doc/generate?slug= then
+  // polls until the fresh doc is ready and reloads it (reusing the poll loop).
+
+  async function regenerate() {
+    try {
+      // Remove the stale banner immediately to signal the action was taken.
+      const existingBanner = body.querySelector('.staleness-banner');
+      if (existingBanner) existingBanner.remove();
+      body.insertBefore(
+        Object.assign(document.createElement('div'), {
+          className: 'reader-loading',
+          textContent: 'regenerating doc…',
+        }),
+        body.firstChild,
+      );
+
+      // POST /doc/generate — force-regen (returns 202 immediately).
+      await fetch('/doc/generate?slug=' + encodeURIComponent(slug), { method: 'POST' });
+
+      // Clear the body and reload via the existing poll loop.
+      loaded = false;
+      body.textContent = '';
+      staleFactIds = new Set();
+      staleFactPrevValues = new Map();
+      ctx.staleFactIds = staleFactIds;
+      ctx.staleFactPrevValues = staleFactPrevValues;
+      await loadWithPoll();
+    } catch (e) {
+      // Non-fatal: show an inline error.
+      const errEl = document.createElement('div');
+      errEl.className = 'reader-loading';
+      errEl.textContent = 'regenerate failed: ' + String(e);
+      body.insertBefore(errEl, body.firstChild);
     }
   }
 

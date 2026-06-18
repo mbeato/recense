@@ -206,6 +206,24 @@ export function initDetail(ctx) {
       metaEl.appendChild(row);
     }
 
+    // READER-03 (D-10): prev_value → value diff row when the selected atom is stale.
+    // Shown when the reader has identified this node as changed (ctx.staleFactIds) AND
+    // the node carries a prev_value. T-27-12: value set via textContent ONLY — never
+    // innerHTML with node data (hard invariant, T-10-12, line 184).
+    if (node.prev_value && ctx.staleFactIds && ctx.staleFactIds.has(node.id)) {
+      const diffRow = document.createElement('div');
+      diffRow.className = 'meta-row meta-diff';
+      const kEl = document.createElement('span');
+      kEl.className = 'meta-key';
+      kEl.textContent = 'was';
+      const vEl = document.createElement('span');
+      vEl.className = 'meta-val';
+      vEl.textContent = node.prev_value;  // textContent only — T-27-12
+      diffRow.appendChild(kEl);
+      diffRow.appendChild(vEl);
+      metaEl.appendChild(diffRow);
+    }
+
     // Body — textContent only
     bodyEl.textContent = node.value || '';
 
