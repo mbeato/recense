@@ -92,6 +92,9 @@ switch (cmd) {
   // dedup-entities-cli.ts guards execution with `require.main === module` (it exports
   // printDryRun for unit tests), so spawn as a subprocess so the guard fires.
   case 'dedup-entities': spawnScript('dedup-entities-cli.js', process.argv.slice(3)); break;
+  // dedup-facts-cli.ts guards execution with `require.main === module` (it exports
+  // printDryRun for unit tests), so spawn as a subprocess so the guard fires.
+  case 'dedup-facts': spawnScript('dedup-facts-cli.js', process.argv.slice(3)); break;
   // mcp-cli exports createBrainMcpServer for tests, so its CLI entry is guarded by
   // `require.main === module` — a bare require() here would never fire the guard
   // (require.main stays recense.js) and the server would never start.
@@ -105,7 +108,7 @@ switch (cmd) {
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, import-memory, dedup-entities, snapshot, scheduler, mcp, serve\n',
+      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, import-memory, dedup-entities, dedup-facts, snapshot, scheduler, mcp, serve\n',
     );
     process.exit(1);
 }
