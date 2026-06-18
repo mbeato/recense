@@ -12,6 +12,7 @@
  *                        If no doc exists, returns 202 {status:'generating'} and spawns CLI.
  *   GET /doc/meta?slug= → {nodeId, generated_at, citedFactIds:[...]} (DB-backed, READER-02)
  *   POST /doc/generate?slug= → force-spawns CLI, returns 202 {status:'generating'} (READER-02)
+ *   GET /doc/staleness?slug= → {generated_at, stale:[{factId,prev_value,value}], tombstoned:[id,...]} (READER-03)
  *
  * Security invariants (threat model T-10-07/08/09/10/11, T-27-08/09/10/11):
  *   T-10-07: path-traversal guard — resolves absolute path and asserts it stays
@@ -22,6 +23,7 @@
  *   T-10-11: SSE clients Set removes res on req 'close'; poll only reads rows past cursor.
  *   T-27-10: in-flight-slug Set prevents duplicate concurrent generate spawns; slug sanitized.
  *   T-27-11: viz server DB handle stays read-only; all writes happen inside the spawned CLI.
+ *   T-27-13: /doc/staleness is read-only SELECT; never touches last_access of cited facts.
  */
 
 import * as http from 'node:http';
@@ -155,6 +157,16 @@ export function startVizServer(dbPath: string, port: number): http.Server {
   // Returns the set of fact ids cited by the doc node (kind='cites' outgoing edges).
   const stmtCitedIds = db.prepare(`
     SELECT dst AS factId FROM edge WHERE src = ? AND kind = 'cites'
+  `);
+
+  // Compile /doc/staleness cited-facts statement once (READER-03, T-27-13 — read-only).
+  // Joins the cites edges to the cited fact node rows; caller compares n.last_access to
+  // node_doc.generated_at to determine which refs have changed or been tombstoned.
+  const stmtCitedFacts = db.prepare(`
+    SELECT ce.dst AS factId, n.value, n.prev_value, n.prev_ts, n.last_access, n.tombstoned
+    FROM edge ce
+    JOIN node n ON n.id = ce.dst
+    WHERE ce.src = ? AND ce.kind = 'cites'
   `);
 
   // Compile /search BM25 prepared statement once (T-19-01 — query passes through
@@ -434,6 +446,54 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         const citedFactIds = cited.map(r => r.factId);
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ nodeId: row.id, generated_at: row.generated_at, citedFactIds }));
+      } catch (err) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── /doc/staleness?slug= (citation staleness check, READER-03) ─────────────
+    // Returns {generated_at, stale:[{factId,prev_value,value}], tombstoned:[factId,...]}
+    // comparing each cited fact's last_access against node_doc.generated_at.
+    // T-27-13: read-only SELECT only — never touches last_access of the cited facts.
+    if (url === '/doc/staleness') {
+      const rawSlug = new URLSearchParams(req.url?.split('?')[1] ?? '').get('slug') ?? '';
+      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+      if (!slug) {
+        res.writeHead(400, { 'content-type': 'text/plain' });
+        res.end('bad slug');
+        return;
+      }
+      try {
+        const docRow = stmtGetDoc.get(slug) as { id: string; value: string; generated_at: number } | undefined;
+        if (!docRow) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'no doc for slug' }));
+          return;
+        }
+        const { generated_at } = docRow;
+        // Fetch all cited facts and classify as stale (last_access > generated_at)
+        // or tombstoned. Unchanged facts are excluded from the response.
+        const citedRows = stmtCitedFacts.all(docRow.id) as Array<{
+          factId: string;
+          value: string;
+          prev_value: string | null;
+          prev_ts: number | null;
+          last_access: number;
+          tombstoned: number;
+        }>;
+        const stale: Array<{ factId: string; prev_value: string | null; value: string }> = [];
+        const tombstoned: string[] = [];
+        for (const row of citedRows) {
+          if (row.tombstoned === 1) {
+            tombstoned.push(row.factId);
+          } else if (row.last_access > generated_at) {
+            stale.push({ factId: row.factId, prev_value: row.prev_value, value: row.value });
+          }
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ generated_at, stale, tombstoned }));
       } catch (err) {
         res.writeHead(500, { 'content-type': 'text/plain' });
         res.end('internal error');
