@@ -23,6 +23,11 @@
 <!-- The WebGL canvas host — fixed full-bleed, opacity:0 until the layout settles -->
 <div id="graph"></div>
 
+<!-- Flat 2D Obsidian-style doc→doc corpus graph host (READER-04). Hidden by default;
+     the expanded-only #btn-corpus toggle shows it full-window (replacing the 3D brain)
+     and hides it again. Owned by modules/corpus.js (vendored 2D force-graph instance). -->
+<div id="corpus-graph"></div>
+
 <!-- Control strip / status surface — styled to recede by default (D-13) -->
 <div id="panel">
   <div class="row status-row">

@@ -298,29 +298,80 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).toMatch(/kind\s*=\s*'doc_link'/);
   });
 
-  it('source: reader.js has #btn-corpus and /graph?type=doc fetch', () => {
+  it('source: corpus.js owns #btn-corpus + 2D force-graph + /graph?type=doc fetch', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+      'utf8',
+    );
+    // Corpus toggle button is owned here (moved out of reader.js)
+    expect(src).toContain('btn-corpus');
+    // Fetches the corpus data from the doc-only endpoint
+    expect(src).toContain('/graph?type=doc');
+    // Uses the vendored 2D force-graph library (NOT the 3D brain instance)
+    expect(src).toContain('window.ForceGraph');
+    // Has its own separate container (does NOT swap the 3D brain's #graph)
+    expect(src).toContain('corpus-graph');
+    // D-08: clicking a doc node navigates to the reader
+    expect(src).toContain('reader');
+    expect(src).toContain('doc=');
+  });
+
+  it('source: corpus.js does NOT swap data into the 3D brain (no ctx.Graph.graphData swap)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+      'utf8',
+    );
+    // The flat-graph approach uses its own ForceGraph() instance, never the brain's.
+    // Guard against a regression to the 3D-data-swap approach.
+    expect(src).not.toContain('ctx.Graph.graphData');
+  });
+
+  it('source: reader.js no longer owns the corpus swap (moved to corpus.js)', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/modules/reader.js'),
       'utf8',
     );
-    expect(src).toContain('btn-corpus');
-    expect(src).toContain('type=doc');
+    // The corpus logic was extracted to corpus.js; reader.js should not reference
+    // btn-corpus or swapToCorpus anymore.
+    expect(src).not.toContain('swapToCorpus');
+    expect(src).not.toContain("getElementById('btn-corpus')");
   });
 
-  it('source: index.html has #btn-corpus button', () => {
+  it('source: app.js injects the vendored force-graph bundle and inits corpus', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/app.js'),
+      'utf8',
+    );
+    expect(src).toContain('./vendor/force-graph.min.js');
+    expect(src).toContain('initCorpus');
+  });
+
+  it('source: index.html has #btn-corpus button and #corpus-graph container', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/index.html'),
       'utf8',
     );
     expect(src).toContain('btn-corpus');
+    expect(src).toContain('corpus-graph');
   });
 
-  it('source: styles.css has expanded-only gate for #btn-corpus', () => {
+  it('source: styles.css has expanded-only gate for #btn-corpus + corpus container', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/css/styles.css'),
       'utf8',
     );
     expect(src).toContain('#btn-corpus');
     expect(src).toContain('.mode-window #btn-corpus');
+    expect(src).toContain('#corpus-graph');
+  });
+
+  it('vendored force-graph.min.js exists and is a non-empty UMD bundle exposing ForceGraph', () => {
+    const fp = path.resolve(__dirname, '../src/viz/vendor/force-graph.min.js');
+    expect(fs.existsSync(fp)).toBe(true);
+    const content = fs.readFileSync(fp, 'utf8');
+    // Non-empty
+    expect(content.length).toBeGreaterThan(10000);
+    // UMD bundle exposing the ForceGraph global
+    expect(content).toContain('ForceGraph');
   });
 });

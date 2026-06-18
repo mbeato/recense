@@ -729,3 +729,20 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   border-color: rgba(156, 112, 128, 0.55);
   color: #c8bcd0;
 }
+
+/* ── Flat 2D corpus graph host (READER-04) ────────────────────────────────
+   Full-bleed canvas host for the vendored 2D force-graph instance (corpus.js).
+   Hidden by default; .open shows it full-window (the toggle hides #graph at the
+   same time, so the corpus REPLACES the 3D brain rather than overlaying it).
+   Dark aubergine background matches the viz; force-graph paints its own canvas
+   background on top, this is the fallback while the instance initialises. */
+#corpus-graph {
+  position: fixed;
+  inset: 0;
+  z-index: 5;            /* above the brain canvas (#graph), below #panel chrome (z:10) */
+  display: none;
+  background: #170f1d;
+}
+#corpus-graph.open {
+  display: block;
+}
