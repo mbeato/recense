@@ -40,8 +40,10 @@ decisions:
   - "citation-verify loop includes tombstoned resolved IDs in citedFactIds (tombstoned count reported separately) — caller decides what to display"
   - "FTS suppression: after upsertNode sets the FTS row, a DELETE WHERE node_id=? removes it in the same IMMEDIATE transaction"
   - "Truncated-id robustness (D-05 live bug): accept 8+-char hex prefixes, resolve via unique-prefix match (ambiguous=invented), canonicalize prose to full UUIDs so node.value/cites/reader-regex agree"
+  - "Empty-output guard (D-05 timeout bug): doc-gen raises headless timeout to 600s (env-overridable, scoped to CLI — shared client fail-safe untouched); generateDoc THROWS on empty output so no silent empty doc is persisted"
+  - "One-live-doc-per-slug: writeDoc tombstones any prior live doc for the slug in-transaction so --force supersedes instead of appending"
 metrics:
-  duration: "~70 min (incl. D-05 bug fix)"
+  duration: "~95 min (incl. two D-05 live-bug fixes)"
   completed: "2026-06-18"
   tasks_completed: 4
   files_changed: 8
@@ -139,19 +141,52 @@ clears the `out/tonos.md` baseline on aesthetics.
   ambiguous-prefix=invented (no edge), full+prefix-of-same-fact dedup. All 22 27-02 tests green;
   `npx tsc --noEmit` clean.
 
-**Live after-numbers: PENDING USER-AUTHORIZED RUN.** Re-running `generate-doc tonos --force`
-against the live DB is a paid/stateful action (one OpenAI embed of the slug string + one
-subscription-billed `claude -p` generate) that requires the actual user's authorization. The
-auto-mode classifier correctly blocked a coordinator-authorized attempt (cost guard +
-blocking-human checkpoint — coordinator consent carries no user authority). Expected post-fix:
-`citationCount` ~30–71, with `SELECT COUNT(*) FROM edge WHERE src='<docNodeId>' AND kind='cites'`
-matching. The 4 unit tests prove the resolution+canonicalization logic against a seeded DB; the
-live run is confirmation, not validation.
+**Empty-doc timeout bug: FOUND + FIXED** (commit `809a0f7`). The first `--force` re-run produced
+an EMPTY doc node — and the root cause was NOT model non-determinism but a **swallowed timeout**:
+
+- **Root cause:** the shared headless `claude -p` client (`src/model/claude-headless-client.ts`,
+  `DEFAULT_TIMEOUT_MS = 120_000`) returns EMPTY content on timeout / non-zero exit / spawn failure —
+  its production fail-safe (`parseVerdict('')` → SAFE 'unrelated', `parseClaims('')` → []), which the
+  always-on sleep pass relies on. Doc-gen emits ~4000 tokens of cited prose (live run took ~122s:
+  19:54:20 → 19:56:22), crossed the 120s timeout, got SIGKILL'd, and the empty string was persisted
+  as a silent "successful" 0-citation doc (`97dc7e6a-…`, len 0). The earlier good run took ~100s,
+  under the limit.
+- **Three scoped fixes** (the shared client's empty-on-failure fail-safe is left UNCHANGED — the
+  sleep pass depends on it):
+  1. **Raise the doc-gen timeout** (`generate-doc-cli.ts`): default
+     `RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS` to `600000` (10min) if unset, before building the provider.
+     Env-overridable; matches the sleep-pass slowness precedent. Scoped to doc-gen only.
+  2. **Fail loud on empty output** (`doc-generator.ts`): after `provider.generate`, if the markdown
+     is empty/whitespace-only, THROW (`'…empty output (likely a headless timeout or subprocess
+     failure) — not persisting'`). The CLI catch logs it + exits non-zero; NO empty doc is written,
+     and the prior doc (if any) is left untouched.
+  3. **--force supersedes, never appends** (`doc-writer.ts`): `writeDoc` now tombstones any prior
+     live `type='doc'` node for the slug inside the same IMMEDIATE transaction, before the new write,
+     so there is at most ONE live doc per slug. FK-safe — tombstone leaves the node row + its
+     node_doc/node_scope/cites edges intact (the row still exists, just `tombstoned=1`).
+- **Tests:** +2 doc-generator (empty + whitespace-only → throws, nothing written), +3 doc-writer
+  (supersede retires prior, FK-clean after supersede, different-slug docs coexist). **27 tests green;
+  tsc clean.**
+
+**Live items PENDING USER AUTHORIZATION (not blocking — confirmation of unit-tested fixes):**
+
+1. **DB cleanup of two stray tonos doc nodes.** The live DB has exactly two stray test-artifact doc
+   nodes (verified read-only): `218260d4-…` (len 8900, the truncated-id run, 0 cites) and
+   `97dc7e6a-…` (len 0, the empty-timeout run, 0 cites). A FK-consistent hard-delete script is ready
+   (children first: edge/node_doc/node_scope/node_fts, then the node row, in one transaction).
+2. **Live `generate-doc tonos --force` re-verify.** Paid/stateful (one OpenAI embed + one
+   subscription `claude -p` generate). With the 600s timeout it should complete and report
+   `citationCount` ~30–71 with a matching `cites`-edge count, leaving exactly ONE live tonos doc.
+
+The auto-mode classifier correctly blocked BOTH the cleanup hard-delete and the `--force` re-run as
+coordinator-authorized live mutations of a stateful service — coordinator consent carries no user
+authority. Both are confirmation of fixes already proven by the 27 unit tests; they do not block
+plan closure.
 
 **Billing-leak note:** the `~/.claude/settings.json` `ANTHROPIC_API_KEY` injection (which would make
-`claude -p` silently bill the API) is confirmed closed (0 occurrences). A live run should still
-`unset ANTHROPIC_API_KEY` after sourcing sleep.env so headless `claude -p` uses the Max-subscription
-OAuth, not API billing.
+`claude -p` silently bill the API) is confirmed closed (0 occurrences). The headless client also
+strips `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from its spawn env (verified in source), so a live
+run uses the Max-subscription OAuth, not API billing.
 
 ## Deviations from Plan
 
@@ -177,10 +212,25 @@ OAuth, not API billing.
 - **Files modified:** `src/reader/doc-generator.ts`, `tests/doc-generator.test.ts`
 - **Commit:** `6960a5c`
 
+**3. [Rule 1 - Bug] Empty doc persisted on a swallowed headless timeout (D-05 second live run)**
+- **Found during:** Task 4 D-05 live `--force` re-run (produced an empty 0-citation doc node)
+- **Issue:** The shared headless `claude -p` client returns EMPTY content on timeout (120s default)
+  / non-zero exit / spawn failure — its production fail-safe. Doc-gen's ~4000-token generation took
+  ~122s, crossed 120s, got SIGKILL'd, and the empty string was persisted as a silent "successful"
+  doc. Also `--force` appended a 2nd live doc node instead of retiring the prior one.
+- **Fix (three scoped changes; shared client fail-safe UNCHANGED):** (1) raise the doc-gen headless
+  timeout to 600s (env-overridable) in the CLI; (2) THROW in `generateDoc` on empty/whitespace-only
+  output so no empty doc is ever persisted; (3) `writeDoc` tombstones any prior live doc for the slug
+  in-transaction so there is at most ONE live doc per slug.
+- **Files modified:** `src/adapter/generate-doc-cli.ts`, `src/reader/doc-generator.ts`,
+  `src/consolidation/doc-writer.ts`, `tests/doc-generator.test.ts`, `tests/doc-writer.test.ts`
+- **Commit:** `809a0f7`
+
 ## Known Stubs
 
-None. All four tasks complete (Task 4 prose quality = pass; citation bug = found+fixed). The live
-after-numbers re-run is pending the actual user's authorization (paid/stateful action), not a stub.
+None. All four tasks complete (Task 4 prose quality = pass; both live bugs = found+fixed+unit-tested).
+The two pending live items (stray-doc cleanup + `--force` re-verify) are confirmation of unit-tested
+fixes, pending the actual user's authorization (live/paid mutations) — not stubs.
 
 ## Threat Flags
 
@@ -199,15 +249,24 @@ None beyond what's in the plan's `<threat_model>`:
 - `src/adapter/generate-doc-cli.ts` — FOUND
 - `src/adapter/recense.ts` — FOUND (generate-doc case added)
 - `tests/doc-gather.test.ts` — FOUND, 6 tests pass
-- `tests/doc-writer.test.ts` — FOUND, 8 tests pass
-- `tests/doc-generator.test.ts` — FOUND, 8 tests pass (4 original + 4 prefix-resolution)
-- Total 22 tests pass; `npx tsc --noEmit` clean
-- Commits `fe39ae4`, `e9c919d`, `59dce5b`, `71edd98`, `744c152`, `6960a5c` — all verified in git log
+- `tests/doc-writer.test.ts` — FOUND, 11 tests pass (8 original + 3 supersede)
+- `tests/doc-generator.test.ts` — FOUND, 10 tests pass (4 original + 4 prefix-resolution + 2 empty-guard)
+- Total 27 tests pass; `npx tsc --noEmit` clean
+- Commits `fe39ae4`, `e9c919d`, `59dce5b`, `71edd98`, `744c152`, `6960a5c`, `809a0f7` — all verified in git log
 
-## Pending (live confirmation only — not blocking)
+## Pending (live confirmation only — needs USER authorization; not blocking closure)
 
-The D-05 prose quality gate PASSED and the citation-resolution bug it surfaced is FIXED + unit-tested.
-The only remaining item is a live `generate-doc tonos --force` re-run to record post-fix
-citationCount + cites-edge numbers — a paid/stateful action that needs the actual user's
-authorization (the auto-mode classifier correctly blocked the coordinator-authorized attempt). This
-is confirmation of an already-tested fix, so it does not block plan closure.
+The D-05 prose quality gate PASSED. Both correctness bugs it surfaced are FIXED + unit-tested
+(truncated-id resolution `6960a5c`; empty-timeout + supersede `809a0f7`; 27 tests green, tsc clean).
+Two live items remain, BOTH blocked by the auto-mode classifier as coordinator-authorized live
+mutations of a stateful service (coordinator consent ≠ user authority):
+
+1. **Stray-doc cleanup** — hard-delete the two test-artifact tonos doc nodes (`218260d4-…` len 8900,
+   `97dc7e6a-…` len 0; both 0 cites). FK-consistent delete script is ready.
+2. **`generate-doc tonos --force` re-verify** — with the 600s timeout, expect `citationCount` ~30–71,
+   matching `cites`-edge count, and exactly ONE live tonos doc.
+
+Both confirm fixes already proven by unit tests; they do not block plan closure. If the user
+authorizes: build is already current (`dist` has the fixes); source `~/.config/recense/sleep.env`,
+run the cleanup script, then `node dist/src/adapter/recense.js generate-doc tonos --force --db
+~/.config/recense/recense.db`, and record the final numbers here.
