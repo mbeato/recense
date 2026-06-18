@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Phase 27 Plan 02 COMPLETE — doc-gen core; D-05 prose pass + two live bugs fixed (truncated-id citations + empty-timeout/supersede); 27 tests
-last_updated: "2026-06-18T20:10:00.000Z"
+stopped_at: Phase 27 Plan 03 Tasks 1+2 COMPLETE — DB-backed /doc + reader.js promoted; awaiting Task 3 hero-interaction human-verify checkpoint
+last_updated: "2026-06-18T21:15:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -26,11 +26,16 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 27 (reader-layer) — EXECUTING
-Plan: 2 of 5 COMPLETE — next is Plan 03 (viz /doc route + Reader UI)
-Status: Executing Phase 27
+Plan: 03 Tasks 1+2 DONE — awaiting Task 3 hero-interaction human-verify checkpoint
+Status: Checkpoint: human-verify (Task 3)
 
-[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-02 done
+[████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-02 done · 27-03 Tasks 1+2 done
 ```
+
+**Phase 27 Plan 03 (reader UI — Tasks 1+2 done, Task 3 awaiting human-verify) — 2026-06-18:**
+- **Task 1:** DB-backed `/doc?slug=` route in `server.ts` (replaced file-backed `/doc?term=`). On miss: spawns `generate-doc-cli` detached subprocess (server stays read-only, T-27-11); returns 202 `{status:'generating'}`. `/doc/meta?slug=` returns `{nodeId, generated_at, citedFactIds:[...]}`. `POST /doc/generate?slug=` for force-regen. In-flight Set deduplicates concurrent spawns (T-27-10). 13 tests green.
+- **Task 2:** Promoted `reader.js` to DB-backed load (polls on 202), Reader/Brain toggle (btn text flips, class .open), graph focus on cited atoms via `Graph.nodeColor()/linkColor()` callbacks (client-side — cited set small), fact-ref click → `hide()` + `ctx.selectNode(node)` with selection preserved across toggle (READER-02). XSS-safe: single `innerHTML` from `renderMarkdown` output. 21 tests green.
+- **Task 3 (checkpoint):** Hero-interaction human-verify — founder opens `http://127.0.0.1:7815/?doc=<slug>&reader=1`, exercises prose→atom→brain→prose round-trip.
 
 **Phase 27 Plan 02 (doc-generation core) — COMPLETE 2026-06-18:**
 - `gatherFacts` (scope ∪ semantic ∪ entity-hop, D-01), `generateDoc` (judge-tier cited markdown + citation-verify, D-04), `writeDoc` (lifecycle-exempt type='doc' node — no embed/decay/FTS/training — single IMMEDIATE transaction), `recense generate-doc <slug>` CLI (lock-guarded, idempotent, --force).
@@ -217,7 +222,7 @@ Carried forward from v4.0 close (2026-06-17):
 
 Last session: 2026-06-18T19:55:00.000Z
 Stopped at: Phase 27 Plan 02 COMPLETE — doc-generation core + D-05 prose pass + citation-resolution bug fixed
-Resume file: .planning/phases/27-reader-layer/27-02-SUMMARY.md
+Resume file: .planning/phases/27-reader-layer/27-03-SUMMARY.md
 
 ## Key Decisions (Phase 27)
 
@@ -231,8 +236,12 @@ Resume file: .planning/phases/27-reader-layer/27-02-SUMMARY.md
 - **Doc-gen headless timeout = 600s** (env-overridable, scoped to the CLI): doc-gen's ~4000-token gen crosses the shared client's 120s default → swallowed-timeout empty doc. Shared client's empty-on-failure fail-safe left UNCHANGED (sleep pass depends on it)
 - **generateDoc fails loud on empty output** — never persists a silent empty doc (the swallowed-timeout backstop)
 - **One live doc per slug** — writeDoc tombstones the prior live doc for the slug in-transaction so --force supersedes, not appends
+- **spawnGenerateDoc as inner closure in startVizServer** — closes over dbPath and inFlightSlugs; no arg-passing overhead; detached subprocess with unref() (fire-and-forget)
+- **Graph focus via Graph.nodeColor()/linkColor() callbacks** — client-side, cited set is small (from /doc/meta), no server nodeIds filter needed; liftGraphFocus() restores null callbacks on hide()
+- **Selection NOT cleared on toggle** — `hide()` does NOT clear ctx.selectedId or selectNode; detail panel stays open; the brain→reader toggle feels like one system at two altitudes (READER-02)
 
 ## Operator Next Steps
 
-- **(User-authorized live confirmation, not blocking) Clean up + re-verify tonos doc:** `dist` already has the fixes (built). (1) Hard-delete the two stray test-artifact tonos doc nodes (`218260d4` len 8900, `97dc7e6a` len 0, both 0 cites) FK-consistently. (2) Source `~/.config/recense/sleep.env` (the headless client self-strips `ANTHROPIC_API_KEY` → Max subscription, not API), then `node dist/src/adapter/recense.js generate-doc tonos --force --db ~/.config/recense/recense.db`. With the 600s timeout expect `citationCount` ~30–71, matching `cites`-edge count, exactly ONE live tonos doc. Record numbers in 27-02-SUMMARY.md. Both confirm unit-tested fixes — the auto-mode classifier blocked the coordinator-authorized attempts (coordinator consent ≠ user consent).
-- **Next: Plan 27-03** — viz server `/doc` route (DB-backed) + Reader/Brain toggle. reader.js fact-ref interception uses the `{36}` full-UUID regex (the doc body is now canonicalized to full UUIDs).
+- **Task 3 hero-verify:** Start `recense viz` on a copy of the live DB (`cp ~/.config/recense/recense.db /tmp/review.db && recense viz --db /tmp/review.db`), open `http://127.0.0.1:7810/?doc=tonos&reader=1`. The reader will show a loading state while `generate-doc tonos` runs in the background (or immediately serve a cached doc if one exists). Exercise: click a fact-ref → atom selected → toggle to Brain → brain focused on cited atoms → toggle back → selection intact. Type "approved" or describe the gap.
+- **(User-authorized, non-blocking) Clean up + re-verify tonos doc:** Two stray test-artifact tonos doc nodes in live DB (`218260d4` len 8900, `97dc7e6a` len 0, both 0 cites) need FK-consistent delete. Then `recense generate-doc tonos --force --db ~/.config/recense/recense.db` (600s timeout, subscription billing).
+- **Next after Task 3 approval: Plan 27-04** (doc corpus view, staleness diff, regen button).
