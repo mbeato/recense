@@ -41,14 +41,14 @@ describe('activation_trace table', () => {
     expect(tables).toHaveLength(1);
   });
 
-  it('schema_version meta equals SCHEMA_VERSION (10) after initSchema', () => {
+  it('schema_version meta equals SCHEMA_VERSION (11) after initSchema', () => {
     const db = new Database(':memory:');
     initSchema(db);
     const row = db
       .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string } | undefined;
     expect(row?.value).toBe(String(SCHEMA_VERSION));
-    expect(SCHEMA_VERSION).toBe(10);
+    expect(SCHEMA_VERSION).toBe(11);
   });
 
   it('activation_trace has expected columns (id, ts, query_id, seeds, hops)', () => {
@@ -88,8 +88,8 @@ describe('activation_trace table', () => {
     expect(epCount.cnt).toBe(1);
   });
 
-  it('SCHEMA_VERSION constant equals 10', () => {
-    expect(SCHEMA_VERSION).toBe(10);
+  it('SCHEMA_VERSION constant equals 11', () => {
+    expect(SCHEMA_VERSION).toBe(11);
   });
 });
 

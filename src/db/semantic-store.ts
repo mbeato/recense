@@ -25,6 +25,8 @@ import type {
   UpsertNodeTemporalParams,
   NodeTemporalRow,
   UpsertNodeScopeParams,
+  UpsertNodeDocParams,
+  NodeDocRow,
 } from '../lib/types';
 
 export class SemanticStore {
@@ -61,6 +63,11 @@ export class SemanticStore {
   // Written exclusively by the sleep-pass consolidator (single writer, CONSOL-03).
   private readonly stmtUpsertNodeScope: Database.Statement;
   private readonly stmtGetNodeScope: Database.Statement;
+  // node_doc: single idempotent writer + reader (READER-01, Plan 27-01).
+  // generated_at is write-once: ON CONFLICT preserves the original value, only slug+updated_at update.
+  // Written exclusively by the doc-writer path (CONSOL-03 single-writer discipline).
+  private readonly stmtUpsertNodeDoc: Database.Statement;
+  private readonly stmtGetNodeDoc: Database.Statement;
 
   // Transaction-wrapped upsertNode body (defined in constructor, called in upsertNode)
   private readonly txUpsertNode: (params: UpsertNodeParams) => void;
@@ -191,6 +198,21 @@ export class SemanticStore {
     `);
     this.stmtGetNodeScope = db.prepare(
       'SELECT scope FROM node_scope WHERE node_id = ?'
+    );
+
+    // node_doc INSERT — generated_at is write-once (READER-01, Plan 27-01).
+    // ON CONFLICT(node_id) DO UPDATE: updates slug and updated_at but NOT generated_at —
+    // this preserves the original generation timestamp for the staleness predicate
+    // (node.last_access > doc.generated_at). T-01-SQL: named params, no interpolation.
+    this.stmtUpsertNodeDoc = db.prepare(`
+      INSERT INTO node_doc (node_id, slug, generated_at, updated_at)
+      VALUES (@node_id, @slug, @generated_at, @updated_at)
+      ON CONFLICT(node_id) DO UPDATE SET
+        slug       = excluded.slug,
+        updated_at = excluded.updated_at
+    `);
+    this.stmtGetNodeDoc = db.prepare(
+      'SELECT node_id, slug, generated_at, updated_at FROM node_doc WHERE node_id = ?'
     );
 
     // ── Transaction — defined once, called in upsertNode ─────────────────────
@@ -509,5 +531,40 @@ export class SemanticStore {
       .all(...nodeIds) as Array<{ node_id: string; scope: string }>;
     for (const r of rows) out.set(r.node_id, r.scope);
     return out;
+  }
+
+  /**
+   * Write a node_doc sidecar row — doc metadata for READER-01 (Plan 27-01).
+   *
+   * generated_at is WRITE-ONCE: the ON CONFLICT clause updates only slug and updated_at,
+   * leaving generated_at at its original value. This preserves the staleness predicate
+   * (node.last_access > doc.generated_at, READER-03) across re-renders that do not
+   * regenerate the doc content (CONTEXT D §generatedAt).
+   *
+   * To reset generated_at (i.e. after full doc regeneration), call this method with the
+   * new generated_at value — the ON CONFLICT clause will NOT update it, so the caller
+   * must DELETE the old row and re-insert if a true generated_at reset is needed.
+   * For the v1 use case (generate-once or regenerate-and-replace), simply delete the old
+   * node_doc row before calling upsertNodeDoc with the new generated_at.
+   *
+   * IMPORTANT: this is the ONLY write path for node_doc. No raw SQL on node_doc outside
+   * SemanticStore (single-writer invariant, CONSOL-03). T-01-SQL: all params are bound.
+   */
+  upsertNodeDoc(params: UpsertNodeDocParams): void {
+    this.stmtUpsertNodeDoc.run({
+      node_id: params.node_id,
+      slug: params.slug,
+      generated_at: params.generated_at,
+      updated_at: params.updated_at,
+    });
+  }
+
+  /**
+   * Read the node_doc sidecar row for a given node_id.
+   * Returns undefined when no doc annotation exists for the node.
+   */
+  getNodeDoc(nodeId: string): NodeDocRow | undefined {
+    const row = this.stmtGetNodeDoc.get(nodeId) as NodeDocRow | undefined;
+    return row;
   }
 }

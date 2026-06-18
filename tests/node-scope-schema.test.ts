@@ -23,8 +23,8 @@ function makeDb(): Database.Database {
 }
 
 describe('SCHEMA_VERSION', () => {
-  it('is 10 (bumped by exactly 1 from the pre-plan value of 9)', () => {
-    expect(SCHEMA_VERSION).toBe(10);
+  it('is 11 (v11 adds doc type + cites/doc_link edge kinds + node_doc sidecar)', () => {
+    expect(SCHEMA_VERSION).toBe(11);
   });
 });
 
