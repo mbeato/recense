@@ -236,4 +236,36 @@ describe('generateDoc', () => {
     // Both refs now point at the full UUID
     expect(result.markdown).not.toContain('recense://fact/cafe1234)');
   });
+
+  // ── Fail-loud on empty generation (timeout/subprocess-failure guard) ──────
+  // The headless client returns EMPTY content on timeout/non-zero-exit/spawn-failure.
+  // generateDoc must THROW on empty output so the CLI never persists a silent empty doc.
+
+  test('(empty) empty markdown output THROWS and writes nothing', async () => {
+    const { db, store } = makeStore();
+    seedFact(store, '22222222-2222-2222-2222-222222222222', 'a fact');
+    store.upsertNodeScope({ node_id: '22222222-2222-2222-2222-222222222222', scope: 'projx', updated_at: 500 });
+
+    const provider = makeStubProvider(''); // simulate a timeout → empty content
+
+    await expect(
+      generateDoc({ db, store, provider: provider as any }, 'projx'),
+    ).rejects.toThrow(/empty output/i);
+
+    // Nothing written: no doc node exists
+    const docNodes = db.prepare("SELECT id FROM node WHERE type = 'doc'").all();
+    expect(docNodes).toHaveLength(0);
+  });
+
+  test('(empty) whitespace-only markdown output THROWS', async () => {
+    const { db, store } = makeStore();
+    seedFact(store, '33333333-3333-3333-3333-333333333333', 'a fact');
+    store.upsertNodeScope({ node_id: '33333333-3333-3333-3333-333333333333', scope: 'projy', updated_at: 500 });
+
+    const provider = makeStubProvider('   \n  \t  \n'); // whitespace-only → still a failure
+
+    await expect(
+      generateDoc({ db, store, provider: provider as any }, 'projy'),
+    ).rejects.toThrow(/empty output/i);
+  });
 });

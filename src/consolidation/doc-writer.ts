@@ -40,11 +40,15 @@ export interface WriteDocParams {
  * Write a lifecycle-exempt doc node atomically.
  *
  * All writes are wrapped in a single IMMEDIATE transaction:
+ *  0. Supersede: tombstone any prior live doc node for the slug (one-live-doc-per-slug)
  *  1. upsertNode (type='doc', origin='inferred' → training_eligible=0, s=0, embedding=NULL)
  *  2. Delete from node_fts (FTS suppression — markdown body must not pollute search)
  *  3. upsertNodeDoc sidecar
  *  4. upsertNodeScope
  *  5. upsertEdge (kind='cites') for each unique cited fact id
+ *
+ * Invariant: after writeDoc there is exactly ONE live (tombstoned=0) type='doc' node for
+ * the slug. A regenerate retires the prior doc instead of appending a second live node.
  *
  * @param store  SemanticStore instance (provides the owned write primitives).
  * @param db     The raw Database handle — needed for the transaction wrapper and FTS delete.
@@ -64,10 +68,32 @@ export function writeDoc(
   // transaction. Safe: prepared statements are reentrant within the same connection.
   const stmtFtsDelete = db.prepare('DELETE FROM node_fts WHERE node_id = ?');
 
+  // Find any EXISTING live doc node(s) for this slug so they can be superseded.
+  // Invariant: at most ONE live type='doc' node per slug after writeDoc. A regenerate
+  // (--force) must retire the prior doc, not append a second live node. Exclude the new
+  // docId (it does not exist yet, but be defensive). FK-safe: tombstoning leaves the node
+  // row + its node_doc/node_scope/cites edges intact (the row still exists), so no FK breaks.
+  const stmtFindLiveDocsForSlug = db.prepare(
+    `SELECT n.id
+     FROM node n
+     JOIN node_scope ns ON ns.node_id = n.id
+     WHERE n.type = 'doc' AND n.tombstoned = 0 AND ns.scope = ? AND n.id != ?`,
+  );
+
   // All writes in ONE IMMEDIATE transaction (single-writer invariant, T-27-07).
   // IMMEDIATE acquires a RESERVED lock upfront — prevents SQLITE_BUSY_SNAPSHOT in WAL mode
   // when concurrent readers hold a SHARED lock (same rationale as SemanticStore.txUpsertNode).
   const txWrite = db.transaction(() => {
+    // 0. Supersede: tombstone any prior live doc node for this slug (one-live-doc-per-slug).
+    //    store.tombstone() sets tombstoned=1, clears training_eligible, and removes the node
+    //    from node_fts. node_doc/node_scope/cites edges are left in place but reference a
+    //    now-tombstoned node — FK-consistent (the node row still exists). Done BEFORE the
+    //    new write so the new doc is the only live one for the slug after this transaction.
+    const priorLiveDocs = stmtFindLiveDocsForSlug.all(slug, docId) as Array<{ id: string }>;
+    for (const { id } of priorLiveDocs) {
+      store.tombstone(id);
+    }
+
     // 1. Write the doc node.
     //    origin='inferred' → SemanticStore forces training_eligible=0 (lifecycle guard).
     //    s=0    → no Hebbian decay contribution.

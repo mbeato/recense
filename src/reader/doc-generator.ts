@@ -106,6 +106,19 @@ Output ONLY the markdown deep-dive, no preamble.`;
   // No new docModel/genModel config var.
   const md = await provider.generate(prompt, { maxTokens: 4000 });
 
+  // ── 3b. Fail loud on empty output — NEVER persist an empty doc ──────────────
+  // The headless `claude -p` client returns EMPTY content on timeout / non-zero exit /
+  // spawn failure (its production fail-safe, which the sleep pass relies on). For doc-gen,
+  // an empty body is a hard failure — not a valid doc — and must NOT be persisted as a
+  // silent "successful" 0-citation node. Throw so the CLI's catch logs it and exits
+  // non-zero; the existing doc node (if any) is left untouched. (The CLI also raises the
+  // headless timeout to 600s to make a real timeout unlikely; this is the backstop.)
+  if (md.trim().length === 0) {
+    throw new Error(
+      'doc generation returned empty output (likely a headless timeout or subprocess failure) — not persisting',
+    );
+  }
+
   // ── 4. Citation-verify + canonicalize loop ─────────────────────────────────
   // Extract all recense://fact/<id> references. The slice's Sonnet emitted full
   // 36-char UUIDs (19/19), but production env models (e.g. the local 35b judge)

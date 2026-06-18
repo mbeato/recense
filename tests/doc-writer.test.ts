@@ -197,4 +197,83 @@ describe('writeDoc', () => {
     expect(scope).toBeDefined();
     expect(scope!.scope).toBe('tonos');
   });
+
+  // ── Supersede: at most ONE live doc per slug (--force retires the prior) ───
+
+  test('(supersede) regenerating a slug retires the prior live doc node', () => {
+    const { db, store } = makeStore();
+    seedFact(store, 'fact-a');
+    seedFact(store, 'fact-b');
+
+    // First doc for slug 'myproject'
+    writeDoc(store, db, {
+      docId: 'doc-old',
+      slug: 'myproject',
+      markdown: '# Old version',
+      citedFactIds: ['fact-a'],
+      now: 1000,
+    });
+
+    // Second doc (regenerate) for the same slug — must supersede the first
+    writeDoc(store, db, {
+      docId: 'doc-new',
+      slug: 'myproject',
+      markdown: '# New version',
+      citedFactIds: ['fact-b'],
+      now: 2000,
+    });
+
+    // The old doc must be tombstoned
+    const oldRow = db.prepare('SELECT tombstoned FROM node WHERE id = ?').get('doc-old') as
+      | { tombstoned: number }
+      | undefined;
+    expect(oldRow!.tombstoned).toBe(1);
+
+    // The new doc must be live
+    const newRow = db.prepare('SELECT tombstoned FROM node WHERE id = ?').get('doc-new') as
+      | { tombstoned: number }
+      | undefined;
+    expect(newRow!.tombstoned).toBe(0);
+
+    // Exactly ONE live doc node for the slug
+    const liveDocs = db.prepare(
+      `SELECT n.id FROM node n JOIN node_scope ns ON ns.node_id = n.id
+       WHERE n.type = 'doc' AND n.tombstoned = 0 AND ns.scope = ?`,
+    ).all('myproject') as Array<{ id: string }>;
+    expect(liveDocs).toHaveLength(1);
+    expect(liveDocs[0]!.id).toBe('doc-new');
+  });
+
+  test('(supersede) FK-clean after supersede; prior cites edges remain FK-valid', () => {
+    const { db, store } = makeStore();
+    seedFact(store, 'fact-1');
+    seedFact(store, 'fact-2');
+
+    writeDoc(store, db, { docId: 'doc-1', slug: 'proj', markdown: '# v1', citedFactIds: ['fact-1'], now: 1000 });
+    writeDoc(store, db, { docId: 'doc-2', slug: 'proj', markdown: '# v2', citedFactIds: ['fact-2'], now: 2000 });
+
+    // FK check must be empty — the tombstoned old doc's node_doc/node_scope/cites edges
+    // still reference a node row that exists (just tombstoned), so no FK breaks.
+    const violations = db.pragma('foreign_key_check') as unknown[];
+    expect(violations).toHaveLength(0);
+
+    // The old doc's cites edge still exists (points to fact-1, FK-valid)
+    const oldEdges = db.prepare("SELECT dst FROM edge WHERE src = ? AND kind = 'cites'").all('doc-1') as Array<{ dst: string }>;
+    expect(oldEdges).toHaveLength(1);
+    expect(oldEdges[0]!.dst).toBe('fact-1');
+  });
+
+  test('(supersede) docs for DIFFERENT slugs do not supersede each other', () => {
+    const { db, store } = makeStore();
+    seedFact(store, 'fact-x');
+
+    writeDoc(store, db, { docId: 'doc-tonos', slug: 'tonos', markdown: '# Tonos', citedFactIds: ['fact-x'], now: 1000 });
+    writeDoc(store, db, { docId: 'doc-vtx', slug: 'vtx', markdown: '# VTX', citedFactIds: ['fact-x'], now: 2000 });
+
+    // Both remain live — different slugs
+    const tonos = db.prepare('SELECT tombstoned FROM node WHERE id = ?').get('doc-tonos') as { tombstoned: number };
+    const vtx = db.prepare('SELECT tombstoned FROM node WHERE id = ?').get('doc-vtx') as { tombstoned: number };
+    expect(tonos.tombstoned).toBe(0);
+    expect(vtx.tombstoned).toBe(0);
+  });
 });
