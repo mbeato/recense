@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Phase 27 Plan 03 — hero interaction VERIFIED by founder (round-trip works); 2 post-verify UX fixes landed (reader close button + palette scrollbar); ready for reload-confirm
-last_updated: "2026-06-18T21:45:00.000Z"
+stopped_at: Phase 27 Plan 04 — staleness detection (Tasks 1+2 done, Task 3 awaiting human-verify); demo viz running at http://127.0.0.1:7818/?doc=tonos&reader=1
+last_updated: "2026-06-18T20:55:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -26,11 +26,16 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 27 (reader-layer) — EXECUTING
-Plan: 03 — hero interaction VERIFIED by founder; 2 post-verify UX fixes landed; ready for reload-confirm
-Status: 27-03 ready for founder reload-confirm
+Plan: 04 — Tasks 1+2 done (staleness endpoint + banner/markers/diff/regenerate); Task 3 awaiting human-verify
+Status: 27-04 checkpoint:human-verify (demo at http://127.0.0.1:7818/?doc=tonos&reader=1)
 
 [████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-02 done · 27-03 verified + UX-polished
 ```
+
+**Phase 27 Plan 04 (staleness — Tasks 1+2 done, Task 3 awaiting human-verify) — 2026-06-18:**
+- **Task 1:** `GET /doc/staleness?slug=` in `server.ts`. `stmtCitedFacts` stmt compiled once: joins cites-edge reverse lookup to cited fact rows (tombstoned + last_access + prev_value). Returns `{generated_at, stale:[{factId,prev_value,value}], tombstoned:[id,...]}`. Read-only (T-27-13). 10 tests green.
+- **Task 2:** `fetchStaleness()` in `reader.js` — after wireFactLinks, fetches staleness, marks `.fact-stale` (+ data-prevValue) and `.fact-tombstoned` (pointer-events:none + aria-label) inline refs, prepends `.staleness-banner` with textContent count + `.btn-regen`. Stores `ctx.staleFactIds` + `ctx.staleFactPrevValues`. `regenerate()` POSTs to `/doc/generate` + reloads via loadWithPoll. `detail.js` populateDetail: `.meta-row.meta-diff` row shows "was: `<prev_value>`" via textContent (T-27-12). CSS: `.staleness-banner`, `.btn-regen`, `.meta-diff` rules in muted slate/mauve (not amber). 31/31 tests green. tsc clean.
+- **Task 3 (checkpoint): PENDING.** Demo DB at `/tmp/staleness-demo.db` (fact `05ea9c70` STALE, fact `06e46335` TOMBSTONED). Viz server at http://127.0.0.1:7818/?doc=tonos&reader=1.
 
 **Phase 27 Plan 03 (reader UI — Tasks 1+2 done, Task 3 awaiting human-verify) — 2026-06-18:**
 - **Task 1:** DB-backed `/doc?slug=` route in `server.ts` (replaced file-backed `/doc?term=`). On miss: spawns `generate-doc-cli` detached subprocess (server stays read-only, T-27-11); returns 202 `{status:'generating'}`. `/doc/meta?slug=` returns `{nodeId, generated_at, citedFactIds:[...]}`. `POST /doc/generate?slug=` for force-regen. In-flight Set deduplicates concurrent spawns (T-27-10). 13 tests green.
