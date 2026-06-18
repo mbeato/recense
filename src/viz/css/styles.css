@@ -576,15 +576,59 @@ button:hover {
 #reader.open { transform: translateX(0); }
 html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
 
+/* Palette-styled scrollbar (muted mauve — amber stays activation-only).
+   Same treatment as `.detail-page #detail` (styles.css §detail-page) for visual
+   consistency: thin, 8px, transparent track, rounded thumb, brighter on hover. */
+#reader { scrollbar-width: thin; scrollbar-color: rgba(170, 150, 180, 0.28) transparent; }
+#reader::-webkit-scrollbar { width: 8px; }
+#reader::-webkit-scrollbar-track { background: transparent; }
+#reader::-webkit-scrollbar-thumb {
+  background: rgba(170, 150, 180, 0.28);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+#reader::-webkit-scrollbar-thumb:hover { background: rgba(170, 150, 180, 0.45); background-clip: content-box; }
+
 #reader-head {
+  position: relative;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   letter-spacing: 0.04em;
   color: #9a90a4;
   margin-bottom: 18px;
+  /* Reserve room at the right so the title text never collides with the × button */
+  padding-right: 28px;
 }
 #reader-kicker { color: #6b5f73; }
 #reader-title { color: #d9a05c; }
+
+/* In-panel close — muted mauve at rest, slate on hover (amber stays activation-only,
+   per the founder-locked palette rule). Top-right of the reader header. */
+#reader-close {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: #8b7090;          /* muted mauve at rest */
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+#reader-close:hover {
+  color: #c8cfd8;          /* slate on hover — never amber */
+  background: rgba(170, 150, 180, 0.1);
+}
 
 #reader-body { color: #c2bac9; font-size: 13.5px; line-height: 1.62; }
 #reader-body h1 { font-size: 19px; color: #e7dfec; margin: 4px 0 10px; }
