@@ -81,6 +81,7 @@ export function initReader(ctx) {
   const body = document.getElementById('reader-body');
   const titleEl = document.getElementById('reader-title');
   const btn = document.getElementById('btn-reader');
+  const closeBtn = document.getElementById('reader-close');
   if (!panel || !body || !btn) return;
 
   let loaded = false;
@@ -107,6 +108,16 @@ export function initReader(ctx) {
   }
 
   btn.addEventListener('click', () => (panel.classList.contains('open') ? hide() : show()));
+
+  // In-panel close: the open #reader panel covers #btn-reader, so the toggle is
+  // unreachable from inside the reader. The header × calls hide() (which lifts focus).
+  if (closeBtn) closeBtn.addEventListener('click', () => hide());
+
+  // Escape closes the reader when open (only when the reader has focus context —
+  // guarded so it never swallows Escape for other surfaces when the reader is hidden).
+  document.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape' && panel.classList.contains('open')) hide();
+  });
 
   // Deep-link: /?doc=<slug>&reader=1 opens the reader on load.
   if (new URLSearchParams(location.search).has('reader')) show();
