@@ -112,6 +112,17 @@ async function main(): Promise<void> {
     }
 
     // ── 5. Build the judge-tier provider (D-04 — generateConfig = judgeConfig) ─
+    // Doc-gen produces ~4000 tokens of cited prose — far slower than the small judge
+    // calls the shared headless client's 120s default was tuned for. A run that crosses
+    // 120s gets SIGKILL'd and the headless client returns EMPTY content (its production
+    // fail-safe), which would silently persist as an empty "successful" doc. Raise the
+    // doc-gen timeout to 600s (~10min headroom) when unset; env-overridable. Scoped to
+    // this CLI only — the shared client's empty-on-failure fail-safe is unchanged (the
+    // always-on sleep pass relies on it). Matches the sleep-pass slowness precedent.
+    if (!process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS']) {
+      process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS'] = '600000';
+    }
+
     // The judge-tier config is the strong-model slot in any env — no new docModel var.
     const judgeConfig = { ...config, ...resolveProviderOverlay(process.env, 'RECENSE_JUDGE_PROVIDER') };
     const embedConfig = config; // embedding uses base config (same pattern as sleep-pass)
