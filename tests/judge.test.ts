@@ -683,3 +683,191 @@ describe('AnthropicJudge.judgeBatch — batch>1: prompt shape and order-swap', (
     expect(results[2]!).toEqual({ best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] });
   });
 });
+
+// ── 26-07 judge-miss fix: prompt contains updated relation guidance ────────────
+//
+// These tests verify the 26-07 fix (D-02 isolate-driven):
+//   (a) The judge prompt now includes clarified "confirm"/"contradict"/"extend"/"unrelated"
+//       boundaries so same-belief restatements route correctly.
+//   (b) A restatement verdict of "confirm" parses and routes correctly (no mint).
+//   (c) An updated-belief verdict of "contradict" routes to reconcile (tombstone + prev_value).
+//   (d) A genuinely-distinct pair verdict of "unrelated" is preserved (no over-tombstoning).
+//
+// The actual LLM classification is validated by the orchestrator's checkpoint harness
+// (replay-ku-harness.cjs at EVAL-02 >= 84.6%). These unit tests verify:
+//   1. The prompt shape carries the new guidance (so the live judge sees it).
+//   2. parseVerdict correctly handles "confirm" and "contradict" outputs the live judge
+//      now returns for restatement pairs.
+//   3. The regression guard: "unrelated" still parses and a distinct pair does NOT
+//      produce a contradict/reconcile verdict (no over-tombstoning, T-26-12).
+
+describe('26-07 judge-miss fix: prompt contains updated relation guidance', () => {
+  /**
+   * Build a mock AnthropicLike that records the prompt and returns the scripted response.
+   */
+  function makeCapturingClient(responseText: string): { client: AnthropicLike; capturedPrompt: () => string } {
+    let captured = '';
+    const client: AnthropicLike = {
+      messages: {
+        async create(params) {
+          captured = typeof params.messages[0]?.content === 'string' ? params.messages[0].content : '';
+          return { content: [{ type: 'text' as const, text: responseText }] } as any;
+        },
+      },
+    };
+    return { client, capturedPrompt: () => captured };
+  }
+
+  it('single-claim prompt contains updated confirm guidance (same-belief restatement → confirm)', async () => {
+    const { client, capturedPrompt } = makeCapturingClient(
+      '{"best_candidate_id":"n1","relation":"confirm","magnitude":0,"contradicted_ids":[]}'
+    );
+    const judge = AnthropicJudge.forTest(client, 'test-model');
+    const result = await judge.judge(
+      'text-embedding-3-large clears 0.7 similarity on 0 of 18 pairs',
+      [{ id: 'n1', value: 'text-embedding-3-small clears 0.7 similarity on 0 of 18 pairs' }]
+    );
+
+    // Prompt must carry the updated guidance so the live judge classifies restatements correctly
+    const prompt = capturedPrompt();
+    expect(prompt).toContain('same core belief about the same subject');
+    expect(prompt).toContain('paraphrases, restatements');
+    // Verdict parsed correctly: confirm routes to strengthen (no new mint)
+    expect(result.relation).toBe('confirm');
+    expect(result.best_candidate_id).toBe('n1');
+    expect(result.contradicted_ids).toEqual([]);
+  });
+
+  it('single-claim prompt contains updated contradict guidance (updated-belief → contradict)', async () => {
+    const { client, capturedPrompt } = makeCapturingClient(
+      '{"best_candidate_id":"n2","relation":"contradict","magnitude":0.6,"contradicted_ids":["n2"]}'
+    );
+    const judge = AnthropicJudge.forTest(client, 'test-model');
+
+    // Simulate a second (swap) call that also returns contradict (both orderings agree → reconcile)
+    let callCount = 0;
+    const swapClient: AnthropicLike = {
+      messages: {
+        async create(params) {
+          callCount++;
+          const content = typeof params.messages[0]?.content === 'string' ? params.messages[0].content : '';
+          if (callCount === 1) {
+            // First call: capture and return contradict
+            return { content: [{ type: 'text' as const, text: '{"best_candidate_id":"n2","relation":"contradict","magnitude":0.6,"contradicted_ids":["n2"]}' }] } as any;
+          }
+          // Swap call: also returns contradict (both agree → chooseConsistentVerdict keeps contradict)
+          return { content: [{ type: 'text' as const, text: '{"best_candidate_id":"n2","relation":"contradict","magnitude":0.5,"contradicted_ids":["n2"]}' }] } as any;
+        },
+      },
+    };
+    const judge2 = AnthropicJudge.forTest(swapClient, 'test-model');
+    const result = await judge2.judge(
+      'Claude Code subscription should not be marketed as plug-and-play when API key acquisition is required',
+      [
+        { id: 'n2', value: 'Claude Code subscription users need to obtain an API key' },
+        { id: 'n3', value: 'Claude Code subscription is a paid service' },
+      ]
+    );
+
+    // The judge returns contradict; both orderings agree → chooseConsistentVerdict returns contradict
+    // This routes to reconcile → tombstone + prev_value (correct belief-correction path)
+    expect(result.relation).toBe('contradict');
+    expect(result.best_candidate_id).toBe('n2');
+    expect(result.contradicted_ids).toContain('n2');
+  });
+
+  it('single-claim prompt contains updated extend guidance (additive-only extend)', async () => {
+    const { client, capturedPrompt } = makeCapturingClient(
+      '{"best_candidate_id":"n1","relation":"confirm","magnitude":0,"contradicted_ids":[]}'
+    );
+    const judge = AnthropicJudge.forTest(client, 'test-model');
+    await judge.judge('claim', [{ id: 'n1', value: 'candidate' }]);
+
+    const prompt = capturedPrompt();
+    // Extend guidance: only additive new dimension, not requalification
+    expect(prompt).toContain('genuinely NEW dimension or attribute');
+    expect(prompt).toContain('not a requalification or update');
+  });
+
+  it('single-claim prompt contains updated unrelated guidance (different subject → unrelated)', async () => {
+    const { client, capturedPrompt } = makeCapturingClient(
+      '{"best_candidate_id":null,"relation":"unrelated","magnitude":0,"contradicted_ids":[]}'
+    );
+    const judge = AnthropicJudge.forTest(client, 'test-model');
+    const result = await judge.judge(
+      '24.3-PLAN.md mapped to decisions D-06, D-08',
+      [{ id: 'n1', value: '24.1-PLAN.md mapped to decisions D-01, D-02, D-03' }]
+    );
+
+    const prompt = capturedPrompt();
+    // Unrelated guidance: different specific instances of shared schema
+    expect(prompt).toContain('different entities, different sessions, different plan files');
+    expect(prompt).toContain('Structural similarity alone is NOT sufficient');
+    // Different plan files ARE genuinely unrelated — regression guard: judge returns unrelated
+    // and this MUST NOT reconcile (no over-tombstoning, T-26-12)
+    expect(result.relation).toBe('unrelated');
+    expect(result.best_candidate_id).toBeNull();
+    expect(result.contradicted_ids).toEqual([]);
+  });
+
+  it('regression guard: distinct-pair verdict of unrelated parses correctly — no over-tombstoning (T-26-12)', () => {
+    // parseVerdict must accept "unrelated" and produce a safe non-reconcile verdict
+    const text = JSON.stringify({
+      best_candidate_id: null,
+      relation: 'unrelated',
+      magnitude: 0,
+      contradicted_ids: [],
+    });
+    const result = parseVerdictForTest(text);
+    // Non-contradict relation: no contradicted_ids, no candidate → does NOT route to reconcile
+    expect(result.relation).toBe('unrelated');
+    expect(result.best_candidate_id).toBeNull();
+    expect(result.contradicted_ids).toEqual([]);
+    // Verify: this verdict has no contradicted_ids so consolidator will NOT tombstone anything
+    expect(result.contradicted_ids).toHaveLength(0);
+  });
+
+  it('confirm verdict parses correctly — restatement routes to strengthen, not mint (D-02)', () => {
+    // When the live judge now returns "confirm" for a restatement, parseVerdict must handle it
+    const text = JSON.stringify({
+      best_candidate_id: 'existing-node-id',
+      relation: 'confirm',
+      magnitude: 0,
+    });
+    const result = parseVerdictForTest(text);
+    expect(result.relation).toBe('confirm');
+    expect(result.best_candidate_id).toBe('existing-node-id');
+    expect(result.contradicted_ids).toEqual([]); // confirm forces [] (non-contradict)
+    expect(result.magnitude).toBe(0);
+  });
+
+  it('batch prompt also contains updated relation guidance', async () => {
+    let capturedPrompt = '';
+    const batchClient: AnthropicLike = {
+      messages: {
+        async create(params) {
+          capturedPrompt = typeof params.messages[0]?.content === 'string' ? params.messages[0].content : '';
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify([
+                { claim_index: 0, best_candidate_id: 'n1', relation: 'confirm', magnitude: 0, contradicted_ids: [] },
+                { claim_index: 1, best_candidate_id: null, relation: 'unrelated', magnitude: 0, contradicted_ids: [] },
+              ]),
+            }],
+          } as any;
+        },
+      },
+    };
+    const judge = AnthropicJudge.forTest(batchClient, 'test-model');
+    await judge.judgeBatch([
+      { claim: 'claim A (restatement)', candidates: [{ id: 'n1', value: 'same belief different words' }] },
+      { claim: 'claim B (different plan file)', candidates: [{ id: 'n2', value: 'unrelated plan' }] },
+    ]);
+
+    // Batch prompt must also carry the updated guidance (RELATION_GUIDANCE injected into both prompts)
+    expect(capturedPrompt).toContain('same core belief about the same subject');
+    expect(capturedPrompt).toContain('genuinely NEW dimension or attribute');
+    expect(capturedPrompt).toContain('different entities, different sessions, different plan files');
+  });
+});

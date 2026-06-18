@@ -316,6 +316,39 @@ export function chooseConsistentVerdict(v1: JudgeVerdict, v2: JudgeVerdict): Jud
 // Prompt for the AnthropicJudge
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Relation classification guidance (D-02 isolate-driven, 26-07 judge-miss fix)
+// ---------------------------------------------------------------------------
+// Root cause (26-06 replay): the judge mis-classifies same-belief restatements as
+// "unrelated" or "extend" when they should be "confirm" (identical belief, different
+// wording) or "contradict" (updated / qualified / superseded belief).
+//
+// The two boundaries that caused 20/30 judge-miss failures:
+//   (a) extend vs contradict: "extend" is only for genuinely additive new attributes
+//       (adds a new dimension not present in the candidate). When a claim updates,
+//       qualifies, corrects, or supersedes the candidate's existing assertion about the
+//       SAME subject — even partially — that is "contradict", not "extend".
+//   (b) confirm vs unrelated: a claim that says the same thing as the candidate in
+//       different words IS "confirm", not "unrelated". Do not require word-for-word
+//       match; judge meaning and intent.
+//
+// Preserved: contradicted_ids candidate-set filter (T-UE6-02), order-swap consistency
+// check (chooseConsistentVerdict), SAFE_VERDICT fallback, per-claim (no batch).
+// ---------------------------------------------------------------------------
+
+/** Shared relation guidance text injected into both single and batch prompts. */
+const RELATION_GUIDANCE = `Relations:
+- "confirm": the claim and the candidate assert the same core belief about the same subject, even if worded differently. Use "confirm" when both are saying the same thing — paraphrases, restatements, and different-phrasing descriptions of an identical fact all qualify.
+- "extend": the claim introduces a genuinely NEW dimension or attribute about the candidate's subject that is ABSENT from the candidate (not a requalification or update of an existing assertion). Use "extend" only when the claim adds something truly additive.
+- "contradict": the claim UPDATES, CORRECTS, QUALIFIES, or SUPERSEDES the candidate's existing assertion about the same subject — including partial updates and strengthened/narrowed qualifications of the same belief. Any change to the WHAT or the VALUE of the same subject-predicate is a contradiction, not an extension. Use magnitude to reflect severity (0.0 = mild update, 1.0 = direct reversal).
+- "unrelated": the claim and the candidate are about genuinely different subjects or different specific instances of a shared schema (different entities, different sessions, different plan files). Structural similarity alone is NOT sufficient — the subjects must match.
+
+Key decision rules:
+  1. Same subject + same assertion (different words) → "confirm"
+  2. Same subject + updated/corrected/qualified assertion → "contradict"
+  3. Same subject + new attribute not present in candidate → "extend"
+  4. Different subject/entity/instance → "unrelated"`;
+
 /**
  * Batch prompt prefix for judgeBatch (items.length > 1). One LLM call per episode
  * amortizes the think-block cost across N claims. Relations block and contradicted_ids
@@ -325,11 +358,7 @@ const JUDGE_BATCH_PROMPT_PREFIX = `You are a knowledge graph judge. For EACH num
 Return ONLY a valid JSON array with EXACTLY one verdict object per claim, in claim order:
 [{"claim_index": <int>, "best_candidate_id": ..., "relation": ..., "magnitude": ..., "contradicted_ids": [...]}, ...]
 
-Relations:
-- "confirm": claim reaffirms the candidate's existing value
-- "extend": claim adds new information to the candidate
-- "contradict": claim directly conflicts with the candidate (magnitude = severity of conflict)
-- "unrelated": no meaningful match; use null for best_candidate_id
+${RELATION_GUIDANCE}
 
 For relation "contradict": list the ids of ALL candidates the claim contradicts in "contradicted_ids" (best_candidate_id should also appear in the list). For every other relation use an empty array [].
 
@@ -345,11 +374,7 @@ Return ONLY valid JSON with exactly these fields:
   "contradicted_ids": ["<id>", ...]
 }
 
-Relations:
-- "confirm": claim reaffirms the candidate's existing value
-- "extend": claim adds new information to the candidate
-- "contradict": claim directly conflicts with the candidate (magnitude = severity of conflict)
-- "unrelated": no meaningful match; use null for best_candidate_id
+${RELATION_GUIDANCE}
 
 For relation "contradict": list the ids of ALL candidates the claim contradicts in "contradicted_ids" (best_candidate_id should also appear in the list). For every other relation use an empty array [].
 
