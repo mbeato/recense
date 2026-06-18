@@ -30,6 +30,7 @@ import { initDetail }  from './detail.js';
 import { initSearch }  from './search.js';
 import { initTopics }  from './topics.js';
 import { initReader }  from './reader.js';
+import { initCorpus }  from './corpus.js';
 
 // ── Spike 001: window.THREE MUST be set BEFORE injecting 3d-force-graph.min.js ─
 // The UMD bundle reads window.THREE at parse time to acquire the THREE namespace.
@@ -54,6 +55,20 @@ await new Promise((resolve, reject) => {
   s.src = './vendor/3d-force-graph.min.js';
   s.onload = resolve;
   s.onerror = () => reject(new Error('failed to load vendored 3d-force-graph.min.js'));
+  document.head.appendChild(s);
+});
+
+// ── Inject vendored 2D force-graph UMD bundle (READER-04 corpus graph) ────────
+// The flat Obsidian-style doc→doc corpus view (corpus.js) uses the 2D `force-graph`
+// library — the canvas sibling of 3d-force-graph (same author), exposing window.ForceGraph.
+// It has NO THREE dependency (pure 2D canvas). Injected here alongside the 3D bundle so
+// corpus.js can lazy-init on first Corpus open. Non-fatal on failure: the brain still works;
+// only the corpus toggle is unavailable (corpus.js guards on typeof window.ForceGraph).
+await new Promise((resolve) => {
+  const s = document.createElement('script');
+  s.src = './vendor/force-graph.min.js';
+  s.onload = resolve;
+  s.onerror = () => resolve(); // non-fatal — corpus.js no-ops if window.ForceGraph absent
   document.head.appendChild(s);
 });
 
@@ -196,6 +211,7 @@ initDetail(ctx);
 initSearch(ctx);  // Plan 19-01: after initDetail — reads ctx.activate, ctx.Graph, ctx.allNodes
 initTopics(ctx);  // Phase 19 exploration: topic browser — after initDetail (reads ctx.selectNode)
 initReader(ctx);  // Reader slice: doc overlay; fact-refs call ctx.selectNode (after initDetail)
+initCorpus(ctx);  // READER-04: flat 2D Obsidian corpus graph (#btn-corpus full-window toggle)
 
 // Clear bootstrap loading message now that modules are wired — but NOT when it
 // carries the load-error or empty-graph message set above (clearing those would
