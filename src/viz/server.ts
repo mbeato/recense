@@ -2,25 +2,32 @@
  * viz server — local read-only HTTP/SSE server for brain-activation visualization (VIZ-03).
  *
  * Endpoints:
- *   GET /          → src/viz/index.html (Plan 04; 503 if absent)
- *   GET /index.html → same
- *   GET /vendor/*  → src/viz/vendor/<file> (path-traversal-safe, MIME-guarded)
- *   GET /graph     → { nodes, links } JSON from read-only DB handle
- *   GET /search?q= → BM25-ranked node IDs (string[]), LLM-free, tombstone-filtered (VIZ-07)
- *   GET /events    → SSE stream: polls activation_trace every 250ms past a cursor
+ *   GET /              → src/viz/index.html (Plan 04; 503 if absent)
+ *   GET /index.html    → same
+ *   GET /vendor/*      → src/viz/vendor/<file> (path-traversal-safe, MIME-guarded)
+ *   GET /graph         → { nodes, links } JSON from read-only DB handle
+ *   GET /search?q=     → BM25-ranked node IDs (string[]), LLM-free, tombstone-filtered (VIZ-07)
+ *   GET /events        → SSE stream: polls activation_trace every 250ms past a cursor
+ *   GET /doc?slug=     → markdown body of the type='doc' node for <slug> (DB-backed, READER-02)
+ *                        If no doc exists, returns 202 {status:'generating'} and spawns CLI.
+ *   GET /doc/meta?slug= → {nodeId, generated_at, citedFactIds:[...]} (DB-backed, READER-02)
+ *   POST /doc/generate?slug= → force-spawns CLI, returns 202 {status:'generating'} (READER-02)
  *
- * Security invariants (threat model T-10-07/08/09/10/11):
+ * Security invariants (threat model T-10-07/08/09/10/11, T-27-08/09/10/11):
  *   T-10-07: path-traversal guard — resolves absolute path and asserts it stays
  *            inside __dirname (src/viz/) or vendor subdirectory; 403 on escape.
  *   T-10-08: DB opened { readonly: true } — no writes possible from this process.
  *   T-10-09: listens on 127.0.0.1 ONLY — loopback-only, never a wildcard.
  *   T-10-10: all assets vendored under src/viz/vendor — no CDN/fetch to external domains.
  *   T-10-11: SSE clients Set removes res on req 'close'; poll only reads rows past cursor.
+ *   T-27-10: in-flight-slug Set prevents duplicate concurrent generate spawns; slug sanitized.
+ *   T-27-11: viz server DB handle stays read-only; all writes happen inside the spawned CLI.
  */
 
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as child_process from 'node:child_process';
 import Database from 'better-sqlite3';
 import { ftsQueryFromText } from '../retrieval/topk';
 
@@ -67,9 +74,10 @@ const VIZ_ROOT = path.resolve(__dirname);
 const VENDOR_ROOT = path.resolve(VIZ_ROOT, 'vendor');
 const MODULES_ROOT = path.resolve(VIZ_ROOT, 'modules');
 const CSS_ROOT = path.resolve(VIZ_ROOT, 'css');
-// Reader-slice (throwaway): generated project docs live outside viz root. Read-only,
-// term-sanitized, traversal-guarded — same posture as the other static roots.
-const DOC_ROOT = path.resolve(VIZ_ROOT, '../../scripts/reader-slice/out');
+
+// T-27-10: track in-flight slug generations to prevent duplicate concurrent spawns.
+// Key = slug, Value = true while the generate-doc CLI is running.
+const inFlightSlugs = new Set<string>();
 
 /**
  * Serve a file from the filesystem with:
@@ -132,6 +140,23 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     'SELECT src, dst, rel, w, kind FROM edge'
   );
 
+  // Compile /doc?slug= prepared statements once (READER-02, T-27-11 — read-only only).
+  // Returns the live doc node for the given scope (slug); tombstoned docs are excluded.
+  const stmtGetDoc = db.prepare(`
+    SELECT n.id, n.value, nd.generated_at
+    FROM node n
+    JOIN node_doc nd ON nd.node_id = n.id
+    JOIN node_scope ns ON ns.node_id = n.id
+    WHERE n.type = 'doc' AND ns.scope = ? AND n.tombstoned = 0
+    LIMIT 1
+  `);
+
+  // Compile /doc/meta?slug= cited-ids statement once (READER-02).
+  // Returns the set of fact ids cited by the doc node (kind='cites' outgoing edges).
+  const stmtCitedIds = db.prepare(`
+    SELECT dst AS factId FROM edge WHERE src = ? AND kind = 'cites'
+  `);
+
   // Compile /search BM25 prepared statement once (T-19-01 — query passes through
   // ftsQueryFromText before reaching MATCH; JOIN ON tombstoned=0 excludes deleted nodes;
   // ORDER BY rank ascending = best BM25 first; LIMIT caps the result set, T-19-03).
@@ -192,6 +217,32 @@ export function startVizServer(dbPath: string, port: number): http.Server {
 
   // Prevent the interval from keeping the process alive after server.close().
   pollInterval.unref();
+
+  // ── spawnGenerateDoc: shell out to generate-doc CLI (T-27-11) ─────────────
+  // The viz server's DB handle is READ-ONLY, so it cannot write doc nodes directly.
+  // Instead, it spawns the `recense generate-doc <slug>` CLI as a detached subprocess.
+  // T-27-10: an in-flight Set prevents duplicate concurrent spawns for the same slug.
+  function spawnGenerateDoc(slug: string, force = false): void {
+    if (inFlightSlugs.has(slug)) return; // T-27-10: already generating
+    inFlightSlugs.add(slug);
+
+    // Resolve the compiled CLI script path from the adapter directory.
+    const cliScript = path.resolve(__dirname, '../adapter/generate-doc-cli.js');
+    const args = [cliScript, slug, '--db', dbPath];
+    if (force) args.push('--force');
+
+    // Use process.execPath so we always match the pinned Node binary (same ABI as
+    // better-sqlite3 in the child). detached:true + stdio:'ignore' → fire-and-forget.
+    const child = child_process.spawn(process.execPath, args, {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref(); // don't prevent the viz server from exiting
+
+    // Clear in-flight once the child exits (success or failure).
+    child.on('close', () => inFlightSlugs.delete(slug));
+    child.on('error', () => inFlightSlugs.delete(slug));
+  }
 
   const server = http.createServer((req, res) => {
     const url = (req.url ?? '/').split('?')[0]!;
@@ -330,24 +381,80 @@ export function startVizServer(dbPath: string, port: number): http.Server {
       return;
     }
 
-    // ── /doc?term= (reader slice — read-only generated markdown) ─────────────
-    // Serves scripts/reader-slice/out/<term>.md. term is hard-sanitized to
-    // [a-z0-9-] and the resolved path is guarded against escaping DOC_ROOT.
+    // ── /doc?slug= (DB-backed project deep-dive, READER-02) ─────────────────
+    // Returns the markdown body of the type='doc' node for the given slug.
+    // If no doc exists, lazily spawns `recense generate-doc <slug>` and returns
+    // 202 {status:'generating'} so the client can poll (D-02/D-03).
+    // The server handle is READ-ONLY (T-27-11) — all writes happen inside the CLI.
     if (url === '/doc') {
-      const rawTerm = new URLSearchParams(req.url?.split('?')[1] ?? '').get('term') ?? '';
-      const term = rawTerm.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
-      if (!term) {
+      const rawSlug = new URLSearchParams(req.url?.split('?')[1] ?? '').get('slug') ?? '';
+      // T-27-10: sanitize slug to [a-z0-9-], length-cap (same as the CLI's --slug flag).
+      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+      if (!slug) {
         res.writeHead(400, { 'content-type': 'text/plain' });
-        res.end('bad term');
+        res.end('bad slug');
         return;
       }
-      const resolved = path.resolve(DOC_ROOT, term + '.md');
-      if (!resolved.startsWith(DOC_ROOT + path.sep)) {
-        res.writeHead(403, { 'content-type': 'text/plain' });
-        res.end('forbidden');
+      try {
+        const row = stmtGetDoc.get(slug) as { id: string; value: string; generated_at: number } | undefined;
+        if (row) {
+          res.writeHead(200, { 'content-type': 'text/plain' });
+          res.end(row.value);
+        } else {
+          // D-02/D-03: lazy generate on first access — spawn CLI (server is read-only).
+          spawnGenerateDoc(slug);
+          res.writeHead(202, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ status: 'generating' }));
+        }
+      } catch (err) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── /doc/meta?slug= (cited fact ids, READER-02) ──────────────────────────
+    // Returns {nodeId, generated_at, citedFactIds:[...]} for the graph-focus step.
+    if (url === '/doc/meta') {
+      const rawSlug = new URLSearchParams(req.url?.split('?')[1] ?? '').get('slug') ?? '';
+      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+      if (!slug) {
+        res.writeHead(400, { 'content-type': 'text/plain' });
+        res.end('bad slug');
         return;
       }
-      serveFile(res, resolved);
+      try {
+        const row = stmtGetDoc.get(slug) as { id: string; value: string; generated_at: number } | undefined;
+        if (!row) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'no doc for slug' }));
+          return;
+        }
+        const cited = stmtCitedIds.all(row.id) as Array<{ factId: string }>;
+        const citedFactIds = cited.map(r => r.factId);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ nodeId: row.id, generated_at: row.generated_at, citedFactIds }));
+      } catch (err) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── POST /doc/generate?slug= (force-spawn generate-doc CLI, READER-02) ───
+    // Triggers doc generation/regeneration for the given slug. Returns 202 immediately.
+    // Used by the reader's regenerate button (27-04) and explicit regen.
+    if (url === '/doc/generate' && req.method === 'POST') {
+      const rawSlug = new URLSearchParams(req.url?.split('?')[1] ?? '').get('slug') ?? '';
+      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+      if (!slug) {
+        res.writeHead(400, { 'content-type': 'text/plain' });
+        res.end('bad slug');
+        return;
+      }
+      spawnGenerateDoc(slug, true);
+      res.writeHead(202, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'generating' }));
       return;
     }
 
