@@ -87,13 +87,23 @@ export function renderMarkdown(md) {
 }
 
 export function initReader(ctx) {
-  const slug = new URLSearchParams(location.search).get('doc') || 'tonos';
+  // currentSlug is mutable: the deep-link path seeds it from the URL, but the
+  // in-place corpus opener (openReader) can re-target it to another doc's slug
+  // WITHOUT a page navigation (Fix B — no brain detour).
+  let currentSlug = new URLSearchParams(location.search).get('doc') || 'tonos';
   const panel = document.getElementById('reader');
   const body = document.getElementById('reader-body');
   const titleEl = document.getElementById('reader-title');
   const btn = document.getElementById('btn-reader');
   const closeBtn = document.getElementById('reader-close');
   if (!panel || !body || !btn) return;
+
+  // Provenance of the current reader open:
+  //   'brain'  → opened from the 3D brain (the 27-03 hero path) — toggle/close
+  //              restores the brain + applies/lifts graph focus (existing behavior).
+  //   'corpus' → opened in-place over the flat 2D corpus (Fix B) — close returns to
+  //              the corpus; the brain is NEVER shown and graph-focus is skipped.
+  let openFrom = 'brain';
 
   let loaded = false;
   // citedFactIds fetched from /doc/meta; used for graph focus.
@@ -111,15 +121,25 @@ export function initReader(ctx) {
     document.documentElement.classList.add('reader-open');
     btn.textContent = 'Brain';
     if (!loaded) { load(); loaded = true; }
-    // When showing reader, apply graph focus on cited atoms (READER-02).
-    applyGraphFocus(citedFactIds);
+    // Graph focus on cited atoms is a BRAIN-only enhancement (READER-02): only
+    // apply it when the reader was opened from the brain. When opened over the
+    // corpus (Fix B) the brain is hidden, so focusing it is pointless.
+    if (openFrom === 'brain') applyGraphFocus(citedFactIds);
   }
 
   function hide() {
     panel.classList.remove('open');
     document.documentElement.classList.remove('reader-open');
     btn.textContent = 'Reader';
-    // Lift graph focus so all nodes are visible in brain view.
+    if (openFrom === 'corpus') {
+      // Opened in-place over the corpus (Fix B): closing returns to the corpus —
+      // do NOT show the brain or lift its focus. The corpus stayed mounted
+      // underneath the overlay, so removing the .open class is all that's needed.
+      if (typeof ctx.returnToCorpus === 'function') ctx.returnToCorpus();
+      return;
+    }
+    // Brain path (the 27-03 hero interaction): lift graph focus so all nodes
+    // are visible in brain view.
     liftGraphFocus();
   }
 
@@ -135,17 +155,41 @@ export function initReader(ctx) {
     if (ev.key === 'Escape' && panel.classList.contains('open')) hide();
   });
 
-  // Deep-link: /?doc=<slug>&reader=1 opens the reader on load.
+  // Deep-link: /?doc=<slug>&reader=1 opens the reader on load (brain provenance).
   if (new URLSearchParams(location.search).has('reader')) show();
+
+  // ── In-place reader opener (Fix B — corpus doc-node entry, D-08) ────────────
+  // openReader(slug, { from }) re-targets the reader to `slug` and shows the
+  // #reader overlay WITHOUT any page navigation. corpus.js calls this with
+  // from:'corpus' so the reader slides in OVER the flat corpus (which stays
+  // mounted underneath) instead of reloading the page into brain mode.
+  ctx.openReader = function openReader(targetSlug, opts) {
+    const from = (opts && opts.from) || 'brain';
+    openFrom = from;
+    if (targetSlug && targetSlug !== currentSlug) {
+      // New target doc: reset load state so the new prose is fetched fresh and
+      // stale state from the prior doc does not bleed in.
+      currentSlug = targetSlug;
+      loaded = false;
+      citedFactIds = [];
+      ctx.citedFactIds = citedFactIds;
+      staleFactIds = new Set();
+      staleFactPrevValues = new Map();
+      ctx.staleFactIds = staleFactIds;
+      ctx.staleFactPrevValues = staleFactPrevValues;
+      body.textContent = '';
+    }
+    show();
+  };
 
   // NOTE: the doc→doc corpus graph (READER-04, #btn-corpus) is a SEPARATE flat 2D
   // Obsidian-style view owned by corpus.js — it is NOT a data-swap on the 3D brain.
-  // reader.js only owns the prose reader + fact-ref→atom focus.
+  // reader.js only owns the prose reader + fact-ref→atom focus + this in-place opener.
 
   // ── Load (DB-backed, lazy-aware) ───────────────────────────────────────────
 
   async function load() {
-    if (titleEl) titleEl.textContent = slug;
+    if (titleEl) titleEl.textContent = currentSlug;
     body.textContent = 'loading…';
     try {
       await loadWithPoll();
@@ -161,7 +205,7 @@ export function initReader(ctx) {
   async function loadWithPoll() {
     let attempts = 0;
     while (attempts < POLL_MAX) {
-      const res = await fetch('/doc?slug=' + encodeURIComponent(slug));
+      const res = await fetch('/doc?slug=' + encodeURIComponent(currentSlug));
       if (res.ok) {
         const md = await res.text();
         // T-10-12/T-27-08: only innerHTML from renderMarkdown output (all values escaped).
@@ -195,7 +239,7 @@ export function initReader(ctx) {
 
   async function fetchMeta() {
     try {
-      const res = await fetch('/doc/meta?slug=' + encodeURIComponent(slug));
+      const res = await fetch('/doc/meta?slug=' + encodeURIComponent(currentSlug));
       if (!res.ok) return;
       const data = await res.json();
       citedFactIds = Array.isArray(data.citedFactIds) ? data.citedFactIds : [];
@@ -217,7 +261,7 @@ export function initReader(ctx) {
 
   async function fetchStaleness() {
     try {
-      const res = await fetch('/doc/staleness?slug=' + encodeURIComponent(slug));
+      const res = await fetch('/doc/staleness?slug=' + encodeURIComponent(currentSlug));
       if (!res.ok) return; // non-fatal: staleness is an enhancement, not load-critical
       const data = await res.json();
       const staleList = Array.isArray(data.stale) ? data.stale : [];
@@ -296,7 +340,7 @@ export function initReader(ctx) {
       );
 
       // POST /doc/generate — force-regen (returns 202 immediately).
-      await fetch('/doc/generate?slug=' + encodeURIComponent(slug), { method: 'POST' });
+      await fetch('/doc/generate?slug=' + encodeURIComponent(currentSlug), { method: 'POST' });
 
       // Clear the body and reload via the existing poll loop.
       loaded = false;
@@ -363,6 +407,14 @@ export function initReader(ctx) {
       a.addEventListener('click', ev => {
         ev.preventDefault();
         // prose → atom: close reader, select the cited node (camera-focus + detail panel).
+        // This is the explicit hero interaction (READER-02) — it ALWAYS drops to the
+        // brain, even when the reader was opened in-place over the corpus (Fix B): the
+        // user is deliberately choosing to inspect this atom in the brain. So force the
+        // brain return path here regardless of openFrom, and ensure the brain is shown.
+        if (openFrom === 'corpus' && typeof ctx.showBrainFromCorpus === 'function') {
+          ctx.showBrainFromCorpus();
+        }
+        openFrom = 'brain';
         // Selection is NOT cleared on hide() — it persists across the toggle (READER-02).
         hide();
         if (ctx.selectNode) ctx.selectNode(node);
