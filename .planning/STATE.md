@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Phase 27 Plan 02 COMPLETE — doc-gen core (gather+writer+generator+CLI); D-05 prose pass + truncated-id citation bug found+fixed
-last_updated: "2026-06-18T19:55:00.000Z"
+stopped_at: Phase 27 Plan 02 COMPLETE — doc-gen core; D-05 prose pass + two live bugs fixed (truncated-id citations + empty-timeout/supersede); 27 tests
+last_updated: "2026-06-18T20:10:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -35,8 +35,9 @@ Status: Executing Phase 27
 **Phase 27 Plan 02 (doc-generation core) — COMPLETE 2026-06-18:**
 - `gatherFacts` (scope ∪ semantic ∪ entity-hop, D-01), `generateDoc` (judge-tier cited markdown + citation-verify, D-04), `writeDoc` (lifecycle-exempt type='doc' node — no embed/decay/FTS/training — single IMMEDIATE transaction), `recense generate-doc <slug>` CLI (lock-guarded, idempotent, --force).
 - **D-05 prose quality: PASS** (env judge model produces well-structured specific deep-dive ≥ Tonos baseline).
-- **Live bug found+fixed (`6960a5c`):** the `claude-headless` judge emitted 8-char id PREFIXES (`recense://fact/e751c852`), not full UUIDs → strict `{36}` regex dropped all 71 citations (0 cites edges). Fix: accept 8+-char prefixes, resolve via unique-prefix match (ambiguous→invented), CANONICALIZE prose to full UUIDs so node.value/cites/reader-regex agree. 22 tests green, tsc clean.
-- **Pending (non-blocking):** live `generate-doc tonos --force` re-run to record post-fix citation numbers needs the actual user's authorization (paid embed + subscription generate; auto-mode classifier blocked the coordinator-authorized attempt — coordinator consent ≠ user consent). Confirmation of an already-tested fix.
+- **Live bug 1 found+fixed (`6960a5c`):** the `claude-headless` judge emitted 8-char id PREFIXES (`recense://fact/e751c852`), not full UUIDs → strict `{36}` regex dropped all 71 citations (0 cites edges). Fix: accept 8+-char prefixes, resolve via unique-prefix match (ambiguous→invented), CANONICALIZE prose to full UUIDs so node.value/cites/reader-regex agree.
+- **Live bug 2 found+fixed (`809a0f7`):** `--force` re-run produced an EMPTY doc — NOT model non-determinism but a SWALLOWED TIMEOUT. The shared headless client (`DEFAULT_TIMEOUT_MS=120s`) returns empty content on timeout (its sleep-pass fail-safe); doc-gen's ~4000-token gen took ~122s → SIGKILL → empty string persisted as a silent 0-citation doc. Three scoped fixes (shared client UNCHANGED): (1) CLI raises doc-gen headless timeout to 600s (env-overridable); (2) generateDoc THROWS on empty output (never persists an empty doc); (3) writeDoc tombstones any prior live doc for the slug → one-live-doc-per-slug (--force supersedes, not appends). **27 tests green, tsc clean.**
+- **Pending (non-blocking, needs USER auth):** (a) stray-doc cleanup — two test-artifact tonos doc nodes (`218260d4` len 8900, `97dc7e6a` len 0, both 0 cites) need an FK-consistent delete; (b) live `generate-doc tonos --force` re-verify (expect citationCount ~30–71, matching cites edges, one live doc). The auto-mode classifier blocked BOTH as coordinator-authorized live/paid mutations (coordinator consent ≠ user consent). Both confirm unit-tested fixes; do not block closure.
 - **Carry into 27-03:** reader.js `recense://fact/<id>` interception MUST use the `{36}` full-UUID regex (the canonicalized doc body guarantees full UUIDs now).
 
 Phase 24 status (verified 2026-06-18):
@@ -227,8 +228,11 @@ Resume file: .planning/phases/27-reader-layer/27-02-SUMMARY.md
 - **generateDoc is read-only** (no DB writes) — CLI composes generateDoc+writeDoc, preserving testability without real DB
 - **FTS suppression via DELETE after upsertNode** in same IMMEDIATE transaction — prevents markdown body polluting BM25 keyword search
 - **Judge-tier config as generate head** (D-04): DefaultModelProvider({ generateConfig: judgeConfig, ... }) — no new docModel/genModel var
+- **Doc-gen headless timeout = 600s** (env-overridable, scoped to the CLI): doc-gen's ~4000-token gen crosses the shared client's 120s default → swallowed-timeout empty doc. Shared client's empty-on-failure fail-safe left UNCHANGED (sleep pass depends on it)
+- **generateDoc fails loud on empty output** — never persists a silent empty doc (the swallowed-timeout backstop)
+- **One live doc per slug** — writeDoc tombstones the prior live doc for the slug in-transaction so --force supersedes, not appends
 
 ## Operator Next Steps
 
-- **(Optional, user-authorized) Confirm the citation fix live:** after sourcing `~/.config/recense/sleep.env` then `unset ANTHROPIC_API_KEY` (subscription path, not API), run `recense generate-doc tonos --force --db ~/.config/recense/recense.db` and confirm `citationCount` > 0 (~30–71) and `SELECT COUNT(*) FROM edge WHERE src='<docNodeId>' AND kind='cites'` matches. This is confirmation of an already-unit-tested fix — not blocking.
+- **(User-authorized live confirmation, not blocking) Clean up + re-verify tonos doc:** `dist` already has the fixes (built). (1) Hard-delete the two stray test-artifact tonos doc nodes (`218260d4` len 8900, `97dc7e6a` len 0, both 0 cites) FK-consistently. (2) Source `~/.config/recense/sleep.env` (the headless client self-strips `ANTHROPIC_API_KEY` → Max subscription, not API), then `node dist/src/adapter/recense.js generate-doc tonos --force --db ~/.config/recense/recense.db`. With the 600s timeout expect `citationCount` ~30–71, matching `cites`-edge count, exactly ONE live tonos doc. Record numbers in 27-02-SUMMARY.md. Both confirm unit-tested fixes — the auto-mode classifier blocked the coordinator-authorized attempts (coordinator consent ≠ user consent).
 - **Next: Plan 27-03** — viz server `/doc` route (DB-backed) + Reader/Brain toggle. reader.js fact-ref interception uses the `{36}` full-UUID regex (the doc body is now canonicalized to full UUIDs).
