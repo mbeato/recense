@@ -69,10 +69,15 @@ describe('createClaudeHeadlessClient', () => {
     expect(msg.content).toEqual([{ type: 'text', text: '{"relation":"unrelated"}' }]);
 
     const call = spawnCalls[0]!;
-    // (a) lean flag set + model
+    // (a) lean flag set + model + hook-isolation flag
     expect(call.args).toEqual(expect.arrayContaining([
       '-p', '--tools', 'none', '--strict-mcp-config', '--exclude-dynamic-system-prompt-sections',
     ]));
+    // hook isolation: --setting-sources project drops global capture/inject hooks
+    // (prevents the self-ingestion loop) — must be a flag+value pair, in order.
+    const ssIdx = call.args.indexOf('--setting-sources');
+    expect(ssIdx).toBeGreaterThanOrEqual(0);
+    expect(call.args[ssIdx + 1]).toBe('project');
     const modelIdx = call.args.indexOf('--model');
     expect(modelIdx).toBeGreaterThanOrEqual(0);
     expect(call.args[modelIdx + 1]).toBe('claude-sonnet-4-6');
