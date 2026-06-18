@@ -53,10 +53,19 @@ const DEFAULT_TIMEOUT_MS = 120_000;
  * Build the `claude -p` argv. Exported for the unit test so the flag set + model are
  * asserted without spawning a real process.
  *
+ * `--setting-sources project` (load-bearing): hooks/CLAUDE.md/skills live in the USER
+ * settings source (~/.claude/settings.json). Loading only `project` (and we run from a
+ * neutral tmpdir = no project settings) drops EVERY global hook — critically the global
+ * `UserPromptSubmit` turn-capture and `SessionStart` inject hooks. Without this, each
+ * internal `claude -p` extract/judge call is itself captured as a new "user" episode
+ * (self-ingestion loop) and gets recalled context injected into its prompt. The neutral
+ * cwd alone does NOT prevent this — those hooks are global (cwd-independent). OAuth /
+ * subscription auth is a SEPARATE source, unaffected (only `--bare` disables OAuth — which
+ * is why `--bare` can't be used on the Max subscription).
+ *
  * `--tools none` + `--strict-mcp-config` + `--exclude-dynamic-system-prompt-sections`
  * trim the Claude Code harness (~28.6K → ~5.5K tokens/call) and make the remainder
- * cacheable; the judge/extractor need no tools and no MCP. NOT `--bare` — that ignores
- * the OAuth/subscription token.
+ * cacheable; the judge/extractor need no tools and no MCP.
  */
 export function buildHeadlessArgs(model: string, systemPrompt: string): string[] {
   return [
@@ -64,6 +73,7 @@ export function buildHeadlessArgs(model: string, systemPrompt: string): string[]
     '--output-format', 'json',
     '--model', model,
     '--system-prompt', systemPrompt,
+    '--setting-sources', 'project',
     '--tools', 'none',
     '--strict-mcp-config',
     '--exclude-dynamic-system-prompt-sections',
