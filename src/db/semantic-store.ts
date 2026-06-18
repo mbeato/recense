@@ -48,6 +48,9 @@ export class SemanticStore {
   private readonly stmtUpsertEdge: Database.Statement;
   private readonly stmtGetOutEdges: Database.Statement;
   private readonly stmtGetInEdges: Database.Statement;
+  // entity-dedup rewire helpers (Phase 25 addition — CONSOL-03 single-writer, T-01-SQL)
+  private readonly stmtDeleteEdge: Database.Statement;
+  private readonly stmtGetAllEdgesForNode: Database.Statement;
   // node_temporal: single idempotent writer + read helpers (TEMP-02, Plan 20-01).
   // Written exclusively by the sleep-pass consolidator (single writer, CONSOL-03).
   private readonly stmtUpsertNodeTemporal: Database.Statement;
@@ -144,6 +147,16 @@ export class SemanticStore {
     // T-01-SQL: bound ? param, no string interpolation
     this.stmtGetInEdges = db.prepare(
       'SELECT src, w, kind FROM edge WHERE dst = ?'
+    );
+
+    // entity-dedup rewire helpers (Phase 25 addition, CONSOL-03 single-writer).
+    // T-01-SQL: bound ? params only — no string interpolation anywhere.
+    this.stmtDeleteEdge = db.prepare(
+      'DELETE FROM edge WHERE src = ? AND dst = ? AND rel = ?'
+    );
+    // Fetch all edges touching a node in either direction for rewire planning.
+    this.stmtGetAllEdgesForNode = db.prepare(
+      'SELECT src, dst, rel, w, last_access, kind FROM edge WHERE src = ? OR dst = ?'
     );
 
     // node_temporal INSERT OR REPLACE — idempotent on re-consolidation (TEMP-02).
@@ -372,6 +385,25 @@ export class SemanticStore {
    */
   getInEdges(nodeId: string): Array<{ src: string; w: number; kind: string }> {
     return this.stmtGetInEdges.all(nodeId) as Array<{ src: string; w: number; kind: string }>;
+  }
+
+  /**
+   * Delete a single edge by PK (src, dst, rel).
+   * Used exclusively by the entity-dedup edge-rewire pass (Phase 25).
+   * Must be called BEFORE upsertEdge with the canonical id to maintain FK safety (T-FK-01).
+   * T-01-SQL: bound ? params, no string interpolation.
+   */
+  deleteEdge(src: string, dst: string, rel: string): void {
+    this.stmtDeleteEdge.run(src, dst, rel);
+  }
+
+  /**
+   * Read all edges touching nodeId in either direction (src OR dst).
+   * Returns the full EdgeRow shape for rewire planning in the entity-dedup pass (Phase 25).
+   * T-01-SQL: bound positional params — nodeId passed twice for the OR clause.
+   */
+  getEdgesForNode(nodeId: string): Array<import('../lib/types').EdgeRow> {
+    return this.stmtGetAllEdgesForNode.all(nodeId, nodeId) as Array<import('../lib/types').EdgeRow>;
   }
 
   /** Read a meta value by key. Returns null if not found. */
