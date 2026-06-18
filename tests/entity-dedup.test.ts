@@ -109,7 +109,7 @@ function unitVec(dims: number): Float32Array {
 
 /**
  * Build a Float32Array orthogonal to the unit vector (all zeros except last dim = 1).
- * cosine(unitVec, orthogVec) ≈ 1/√dims ≈ 0.026 for dims=1536 — well below 0.88 threshold.
+ * cosine(unitVec, orthogVec) ≈ 1/√dims ≈ 0.026 for dims=16 — well below 0.88 threshold.
  */
 function orthogVec(dims: number): Float32Array {
   const v = new Float32Array(dims);
@@ -148,30 +148,45 @@ describe('EntityDedup', () => {
 
   it('Test 2 — edge inheritance: duplicate edge rewired to canonical after merge', () => {
     const vec = unitVec(DIMS);
-    // n1 will become canonical (inserted first, but n2 will have lower degree)
-    insertEntityNode(h.db, { id: 'canonical', value: 'brain memory', embedding: vec });
-    insertEntityNode(h.db, { id: 'duplicate', value: 'brain memory', embedding: vec });
-    // Third node target of the duplicate's edge
+    // Give 'hub' more edges so it becomes canonical; 'leaf' has only one edge (to target)
+    insertEntityNode(h.db, { id: 'hub', value: 'brain memory', embedding: vec });
+    insertEntityNode(h.db, { id: 'leaf', value: 'brain memory', embedding: vec });
+    // Third node — target of the leaf's edge (not a duplicate)
     insertEntityNode(h.db, { id: 'target', value: 'some target', embedding: orthogVec(DIMS) });
+    // Extra nodes to give 'hub' higher degree
+    insertEntityNode(h.db, { id: 'e1', value: 'extra1', embedding: orthogVec(DIMS) });
+    insertEntityNode(h.db, { id: 'e2', value: 'extra2', embedding: orthogVec(DIMS) });
 
-    // duplicate → target edge (will be rewired to canonical → target)
-    h.store.upsertEdge({ src: 'duplicate', dst: 'target', rel: 'related', w: 0.5, kind: 'relation' });
+    // Give hub 3 edges → highest degree → canonical
+    h.store.upsertEdge({ src: 'hub', dst: 'e1', rel: 'r', w: 0.5, kind: 'relation' });
+    h.store.upsertEdge({ src: 'hub', dst: 'e2', rel: 'r', w: 0.5, kind: 'relation' });
+    // leaf → target edge (will be rewired to hub → target)
+    h.store.upsertEdge({ src: 'leaf', dst: 'target', rel: 'related', w: 0.5, kind: 'relation' });
 
-    h.dedup.run({ threshold: 0.88, dryRun: false });
+    const result = h.dedup.run({ threshold: 0.88, dryRun: false });
+    expect(result.mergedClusters).toBe(1);
 
-    // The canonical should now have an edge to target
-    const canonicalNode = h.store.getNode('canonical');
-    expect(canonicalNode).not.toBeNull();
-    expect(canonicalNode!.tombstoned).toBe(0);
+    // hub is canonical (highest degree)
+    const hubNode = h.store.getNode('hub');
+    expect(hubNode).not.toBeNull();
+    expect(hubNode!.tombstoned).toBe(0);
 
-    const allEdges = h.store.getEdgesForNode('canonical');
-    const rewired = allEdges.find(e => e.dst === 'target' && e.rel === 'related');
+    // leaf is tombstoned
+    const leafNode = h.store.getNode('leaf');
+    expect(leafNode!.tombstoned).toBe(1);
+
+    // hub should now have an edge to target (rewired from leaf)
+    const hubEdges = h.store.getEdgesForNode('hub');
+    const rewired = hubEdges.find(e => e.dst === 'target' && e.rel === 'related');
     expect(rewired).toBeDefined();
 
-    // The old duplicate → target edge should be gone
-    const dupEdges = h.store.getEdgesForNode('duplicate');
-    const staleEdge = dupEdges.find(e => e.src === 'duplicate' && e.dst === 'target');
-    expect(staleEdge).toBeUndefined();
+    // The old leaf → target edge should be gone
+    const leafEdges = h.store.getEdgesForNode('leaf');
+    // All leaf's edges should have been rewired (leaf has no src/dst edges pointing to live non-canonicals)
+    const staleLeafToTarget = h.db
+      .prepare('SELECT * FROM edge WHERE src = ? AND dst = ? AND rel = ?')
+      .get('leaf', 'target', 'related');
+    expect(staleLeafToTarget).toBeUndefined();
   });
 
   // ---------------------------------------------------------------------------
@@ -180,20 +195,27 @@ describe('EntityDedup', () => {
 
   it('Test 3 — PK collision: max(w) + latest last_access survives on edge conflict', () => {
     const vec = unitVec(DIMS);
+    // Give 'can' more edges so it becomes canonical
     insertEntityNode(h.db, { id: 'can', value: 'brain memory', embedding: vec, last_access: 1000 });
     insertEntityNode(h.db, { id: 'dup', value: 'brain memory', embedding: vec, last_access: 900 });
     insertEntityNode(h.db, { id: 'x', value: 'target x', embedding: orthogVec(DIMS) });
+    insertEntityNode(h.db, { id: 'y', value: 'target y', embedding: orthogVec(DIMS) });
+    insertEntityNode(h.db, { id: 'z', value: 'target z', embedding: orthogVec(DIMS) });
 
-    // Both canonical and duplicate have edge to x — canonical has higher w
+    // Give 'can' 3 edges (to y, z, and the shared x) → canonical
+    h.store.upsertEdge({ src: 'can', dst: 'y', rel: 'r', w: 0.5, kind: 'relation', last_access: 1000 });
+    h.store.upsertEdge({ src: 'can', dst: 'z', rel: 'r', w: 0.5, kind: 'relation', last_access: 1000 });
+    // Both can and dup have edge to x with same rel (PK collision)
     h.store.upsertEdge({ src: 'can', dst: 'x', rel: 'uses', w: 0.8, kind: 'relation', last_access: 1000 });
     h.store.upsertEdge({ src: 'dup', dst: 'x', rel: 'uses', w: 0.3, kind: 'relation', last_access: 500 });
 
     h.dedup.run({ threshold: 0.88, dryRun: false });
 
+    // can is canonical (4 edges vs 1)
     const edges = h.store.getEdgesForNode('can');
     const edge = edges.find(e => e.src === 'can' && e.dst === 'x' && e.rel === 'uses');
     expect(edge).toBeDefined();
-    // w should be max(0.8, 0.3) = 0.8
+    // w should be max(0.8, 0.3) = 0.8 (canonical's own edge survives, dup's lower w doesn't override)
     expect(edge!.w).toBeCloseTo(0.8, 5);
     // last_access should be max(1000, 500) = 1000
     expect(edge!.last_access).toBe(1000);
@@ -205,8 +227,15 @@ describe('EntityDedup', () => {
 
   it('Test 4 — self-loop drop: canonical→canonical edge not written', () => {
     const vec = unitVec(DIMS);
+    // 'can' has more edges → canonical
     insertEntityNode(h.db, { id: 'can', value: 'brain memory', embedding: vec, last_access: 1000 });
     insertEntityNode(h.db, { id: 'dup', value: 'brain memory', embedding: vec, last_access: 900 });
+    insertEntityNode(h.db, { id: 'extra', value: 'extra', embedding: orthogVec(DIMS) });
+    insertEntityNode(h.db, { id: 'extra2', value: 'extra2', embedding: orthogVec(DIMS) });
+
+    // Give can more edges than dup
+    h.store.upsertEdge({ src: 'can', dst: 'extra', rel: 'r', w: 0.5, kind: 'relation' });
+    h.store.upsertEdge({ src: 'can', dst: 'extra2', rel: 'r', w: 0.5, kind: 'relation' });
 
     // dup → can edge: after rewire this becomes can → can (self-loop — must be dropped)
     h.store.upsertEdge({ src: 'dup', dst: 'can', rel: 'alias', w: 0.5, kind: 'relation' });
@@ -224,8 +253,14 @@ describe('EntityDedup', () => {
 
   it('Test 5 — tombstone-not-delete: duplicate row exists with tombstoned=1 after merge', () => {
     const vec = unitVec(DIMS);
+    // 'can' has more edges → canonical; 'dup' gets tombstoned
     insertEntityNode(h.db, { id: 'can', value: 'brain memory', embedding: vec, last_access: 1000 });
     insertEntityNode(h.db, { id: 'dup', value: 'brain memory', embedding: vec, last_access: 900 });
+    insertEntityNode(h.db, { id: 'e1', value: 'e1', embedding: orthogVec(DIMS) });
+    insertEntityNode(h.db, { id: 'e2', value: 'e2', embedding: orthogVec(DIMS) });
+
+    h.store.upsertEdge({ src: 'can', dst: 'e1', rel: 'r', w: 0.5, kind: 'relation' });
+    h.store.upsertEdge({ src: 'can', dst: 'e2', rel: 'r', w: 0.5, kind: 'relation' });
 
     h.dedup.run({ threshold: 0.88, dryRun: false });
 
@@ -249,6 +284,11 @@ describe('EntityDedup', () => {
     insertEntityNode(h.db, { id: 'can', value: 'brain memory', embedding: vec, last_access: 1000 });
     insertEntityNode(h.db, { id: 'dup', value: 'brain memory', embedding: vec, last_access: 900 });
     insertEntityNode(h.db, { id: 'tgt', value: 'some target', embedding: orthogVec(DIMS) });
+    insertEntityNode(h.db, { id: 'e1', value: 'e1', embedding: orthogVec(DIMS) });
+    insertEntityNode(h.db, { id: 'e2', value: 'e2', embedding: orthogVec(DIMS) });
+
+    h.store.upsertEdge({ src: 'can', dst: 'e1', rel: 'r', w: 0.5, kind: 'relation' });
+    h.store.upsertEdge({ src: 'can', dst: 'e2', rel: 'r', w: 0.5, kind: 'relation' });
     h.store.upsertEdge({ src: 'dup', dst: 'tgt', rel: 'related', w: 0.4, kind: 'relation' });
 
     h.dedup.run({ threshold: 0.88, dryRun: false });
@@ -277,12 +317,12 @@ describe('EntityDedup', () => {
     // Two nodes with slightly different values (non-identical normalized value)
     // and crossing asserted_by_user↔inferred boundary
     const vec = unitVec(DIMS);
+    // Different values → different bucket keys → stage-1 blocks them
     insertEntityNode(h.db, { id: 'u1', value: 'brain memory project', embedding: vec, origin: 'asserted_by_user' });
     insertEntityNode(h.db, { id: 'i1', value: 'brain memory system', embedding: vec, origin: 'inferred' });
 
     const result = h.dedup.run({ threshold: 0.88, dryRun: false });
-    // Different normalized values → blocked (stage-1 block key differs)
-    // Even if they ended up in same bucket due to cosine similarity, origin guard rejects cross-origin non-identical
+    // Different normalized values → in different buckets → no match regardless of cosine
     expect(result.mergedClusters).toBe(0);
   });
 
@@ -292,14 +332,21 @@ describe('EntityDedup', () => {
 
   it('Test 8 — provenance: consolidation_event row with entity_merge after merge', () => {
     const vec = unitVec(DIMS);
+    // 'can' has more edges → canonical
     insertEntityNode(h.db, { id: 'can', value: 'brain memory', embedding: vec, last_access: 1000 });
     insertEntityNode(h.db, { id: 'dup', value: 'brain memory', embedding: vec, last_access: 900 });
+    insertEntityNode(h.db, { id: 'e1', value: 'e1', embedding: orthogVec(DIMS) });
+    insertEntityNode(h.db, { id: 'e2', value: 'e2', embedding: orthogVec(DIMS) });
+
+    h.store.upsertEdge({ src: 'can', dst: 'e1', rel: 'r', w: 0.5, kind: 'relation' });
+    h.store.upsertEdge({ src: 'can', dst: 'e2', rel: 'r', w: 0.5, kind: 'relation' });
 
     h.dedup.run({ threshold: 0.88, dryRun: false });
 
     const events = h.sink.events.filter(e => e.event_type === 'entity_merge');
     expect(events.length).toBeGreaterThanOrEqual(1);
 
+    // There should be an event where node_id=canonical (can) and candidate_id=duplicate (dup)
     const mergeEvent = events.find(e => e.node_id === 'can' && e.candidate_id === 'dup');
     expect(mergeEvent).toBeDefined();
     expect(mergeEvent!.event_type).toBe('entity_merge');
@@ -318,7 +365,7 @@ describe('EntityDedup', () => {
     insertEntityNode(h.db, { id: 'low', value: 'brain memory', embedding: vec, last_access: 1000 });
     insertEntityNode(h.db, { id: 'mid', value: 'brain memory', embedding: vec, last_access: 900 });
     insertEntityNode(h.db, { id: 'high', value: 'brain memory', embedding: vec, last_access: 800 });
-    // 'high' and 'low' are extra nodes (not duplicates) to create edge degree differences
+    // Extra nodes to create edge degree differences (not duplicates)
     insertEntityNode(h.db, { id: 'x1', value: 'extra1', embedding: orthogVec(DIMS) });
     insertEntityNode(h.db, { id: 'x2', value: 'extra2', embedding: orthogVec(DIMS) });
     insertEntityNode(h.db, { id: 'x3', value: 'extra3', embedding: orthogVec(DIMS) });
@@ -333,7 +380,7 @@ describe('EntityDedup', () => {
 
     h.dedup.run({ threshold: 0.88, dryRun: false });
 
-    // 'high' should survive (most edges)
+    // 'high' should survive (most edges) — canonical keeps its own id (D-05)
     const highNode = h.store.getNode('high');
     expect(highNode).not.toBeNull();
     expect(highNode!.tombstoned).toBe(0);
