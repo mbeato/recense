@@ -22,6 +22,8 @@ sleep.env
 recense.db.pre-unification-*
 # extraction bake-off log runs on the live DB (leaks real episode fragments) — never commit
 scripts/eval/extract-bakeoff.log
+# reader-slice generated deep-dives are built from the live DB (real fact content) — never commit
+scripts/reader-slice/out/
 # Eval DATA/RESULTS stay local; the harness CODE (.cjs/.sh) is committed.
 scripts/eval/results/
 scripts/eval/*-results.json
