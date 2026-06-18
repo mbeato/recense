@@ -18,13 +18,13 @@ export interface PendingContradiction {
 }
 
 /** Semantic node classification (spec §1). */
-export type NodeType = 'entity' | 'fact' | 'schema';
+export type NodeType = 'entity' | 'fact' | 'schema' | 'doc';
 
 /** Role of a conversation episode (D-10). */
 export type EpisodeRole = 'user' | 'assistant' | 'tool';
 
 /** Graph edge classification — typed relation or schema-evidence provenance (spec §1). */
-export type EdgeKind = 'relation' | 'abstracts' | 'schema_rel';
+export type EdgeKind = 'relation' | 'abstracts' | 'schema_rel' | 'cites' | 'doc_link';
 
 /**
  * Full SQLite row shape for the node table (spec §1).
@@ -146,6 +146,33 @@ export interface UpsertNodeScopeParams {
   node_id: string;
   scope: string;       // project slug (e.g. 'vtx') or 'global'
   updated_at: number;  // epoch ms; set on every upsert
+}
+
+/**
+ * Parameters for SemanticStore.upsertNodeDoc() (READER-01, Plan 27-01).
+ * generated_at is a DEDICATED doc field — NOT node.last_access — so the staleness predicate
+ * (node.last_access > doc.generated_at) cannot be corrupted when the doc node is accessed.
+ * Written exclusively by the doc-writer path (CONSOL-03 discipline, single writer).
+ *
+ * Upsert semantics: generated_at is write-once (preserved on conflict — set only on first insert);
+ * slug and updated_at are always updated.
+ */
+export interface UpsertNodeDocParams {
+  node_id: string;
+  slug: string;           // project slug (matches node_scope.scope)
+  generated_at: number;   // epoch ms — set once on first generate, NOT updated on conflict
+  updated_at: number;     // epoch ms — always updated
+}
+
+/**
+ * Row shape returned by SemanticStore.getNodeDoc() (READER-01, Plan 27-01).
+ * Mirrors the node_doc sidecar table columns.
+ */
+export interface NodeDocRow {
+  node_id: string;
+  slug: string;
+  generated_at: number;   // epoch ms — NOT node.last_access (CONTEXT D §generatedAt)
+  updated_at: number;
 }
 
 /**
