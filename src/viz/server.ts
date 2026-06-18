@@ -142,6 +142,20 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     'SELECT src, dst, rel, w, kind FROM edge'
   );
 
+  // Compile /graph?type=doc corpus statements once (READER-04 — doc-only corpus graph).
+  // Returns live (tombstoned=0) type='doc' nodes with their slug (from node_doc sidecar)
+  // so the client can resolve doc-node click → slug → reader open (D-08).
+  // The slug is included as an extra field alongside the standard NodeRecord fields.
+  const stmtDocNodes = db.prepare(`
+    SELECT n.id, n.type, n.value, n.s, n.c, n.origin, n.tombstoned, nd.slug
+    FROM node n
+    JOIN node_doc nd ON nd.node_id = n.id
+    WHERE n.type='doc' AND n.tombstoned=0
+  `);
+  const stmtDocLinks = db.prepare(
+    "SELECT src, dst, rel, w, kind FROM edge WHERE kind='doc_link'"
+  );
+
   // Compile /doc?slug= prepared statements once (READER-02, T-27-11 — read-only only).
   // Returns the live doc node for the given scope (slug); tombstoned docs are excluded.
   const stmtGetDoc = db.prepare(`
@@ -270,12 +284,22 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     }
 
     // ── /graph ─────────────────────────────────────────────────────────────
+    // ?type=doc returns the doc-only corpus graph (READER-04).
+    // No type param (or any other value) returns the full brain graph.
     if (url === '/graph') {
       try {
-        const nodes = stmtNodes.all() as NodeRecord[];
-        const edgeRows = stmtEdges.all() as Array<{
-          src: string; dst: string; rel: string; w: number; kind: string;
-        }>;
+        const qType = new URLSearchParams(req.url?.split('?')[1] ?? '').get('type');
+        let nodes: NodeRecord[];
+        let edgeRows: Array<{ src: string; dst: string; rel: string; w: number; kind: string }>;
+        if (qType === 'doc') {
+          // Corpus graph: only live doc nodes + doc_link edges (READER-04 / T-27-16).
+          nodes = stmtDocNodes.all() as NodeRecord[];
+          edgeRows = stmtDocLinks.all() as Array<{ src: string; dst: string; rel: string; w: number; kind: string }>;
+        } else {
+          // Full brain graph (default — no type filter).
+          nodes = stmtNodes.all() as NodeRecord[];
+          edgeRows = stmtEdges.all() as Array<{ src: string; dst: string; rel: string; w: number; kind: string }>;
+        }
         // Map src/dst → source/target (LOCKED link-key contract for Plan 04).
         const links: LinkRecord[] = edgeRows.map(e => ({
           source: e.src,
