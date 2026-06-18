@@ -711,3 +711,21 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   color: #6b5f73;
   font-style: italic;
 }
+
+/* ── Corpus graph swap button (READER-04 / D-07) ──────────────────────────
+   Expanded Brain Window ONLY — never in the tray/popover (.mode-popover).
+   The CSS gate mirrors the search/topic-wrap pattern: hidden by default,
+   shown only under .mode-window (the full expanded window class). */
+#btn-corpus {
+  display: none;
+}
+.mode-window #btn-corpus {
+  display: inline-flex;
+}
+/* Active state: when the corpus graph is shown, the button reads "Brain" to signal
+   the swap-back action — styled with a faint rose border to mark active mode
+   (muted palette only; amber is activation-only and never used on static chrome). */
+#btn-corpus.corpus-active {
+  border-color: rgba(156, 112, 128, 0.55);
+  color: #c8bcd0;
+}

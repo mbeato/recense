@@ -93,6 +93,7 @@ export function initReader(ctx) {
   const titleEl = document.getElementById('reader-title');
   const btn = document.getElementById('btn-reader');
   const closeBtn = document.getElementById('reader-close');
+  const corpusBtn = document.getElementById('btn-corpus');
   if (!panel || !body || !btn) return;
 
   let loaded = false;
@@ -137,6 +138,102 @@ export function initReader(ctx) {
 
   // Deep-link: /?doc=<slug>&reader=1 opens the reader on load.
   if (new URLSearchParams(location.search).has('reader')) show();
+
+  // ── Corpus graph swap (READER-04 / D-07 / D-08 / D-09) ───────────────────
+  // #btn-corpus is EXPANDED-ONLY (shown by CSS gate .mode-window #btn-corpus).
+  // Clicking swaps the live graph data to the doc→doc corpus view (or back to full brain).
+  // Clicking a doc node in the corpus graph opens its reader (D-08 entry point).
+
+  // Whether the corpus graph is currently active.
+  let corpusActive = false;
+  // Cached full-graph data for restoring on swap-back.
+  let fullGraphData = null;
+
+  async function swapToCorpus() {
+    if (!ctx.Graph) return;
+    try {
+      const res = await fetch('/graph?type=doc');
+      if (!res.ok) return;
+      const data = await res.json();
+      // Save the current full-graph data so we can restore it on swap-back.
+      if (ctx.Graph.graphData) {
+        fullGraphData = ctx.Graph.graphData();
+      }
+      // Build a nodeId → slug map from the corpus nodes (slug is included in the
+      // /graph?type=doc response via node_doc JOIN so D-08 click resolution works).
+      ctx._corpusNodeSlugs = {};
+      for (const node of (data.nodes || [])) {
+        if (node.slug) ctx._corpusNodeSlugs[node.id] = node.slug;
+      }
+      // Swap the graph to the corpus view (only doc nodes + doc_link edges).
+      ctx.Graph.graphData({ nodes: data.nodes, links: data.links });
+      corpusActive = true;
+      if (corpusBtn) {
+        corpusBtn.textContent = 'Brain';
+        corpusBtn.classList.add('corpus-active');
+      }
+
+      // D-08: clicking a doc node in the corpus graph opens its reader.
+      if (ctx.Graph.onNodeClick) {
+        ctx.Graph.onNodeClick((node) => {
+          if (node && node.type === 'doc') {
+            openDocReader(node.id);
+          }
+        });
+      }
+    } catch (_) {
+      // Non-fatal: corpus swap failure leaves the brain unchanged.
+    }
+  }
+
+  function swapToBrain() {
+    if (!ctx.Graph) return;
+    try {
+      // Restore the full-graph data.
+      if (fullGraphData) {
+        ctx.Graph.graphData(fullGraphData);
+        fullGraphData = null;
+      }
+      corpusActive = false;
+      if (corpusBtn) {
+        corpusBtn.textContent = 'Corpus';
+        corpusBtn.classList.remove('corpus-active');
+      }
+      // Restore the default node-click handler (graph.js / selection module).
+      if (ctx.Graph.onNodeClick && ctx._prevNodeClick !== undefined) {
+        ctx.Graph.onNodeClick(ctx._prevNodeClick);
+        ctx._prevNodeClick = undefined;
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  /**
+   * Open the reader for a doc node identified by its node id (D-08).
+   * The slug is resolved from ctx._corpusNodeSlugs which was populated when
+   * swapToCorpus() fetched /graph?type=doc (the response includes node_doc.slug).
+   * Navigates to /?doc=<slug>&reader=1 to open the reader for that project.
+   */
+  function openDocReader(docNodeId) {
+    const slugForNode = ctx._corpusNodeSlugs && ctx._corpusNodeSlugs[docNodeId];
+    if (!slugForNode) return;
+    // Swap back to brain before navigating so the visual state is consistent.
+    swapToBrain();
+    // Navigate to the reader for this doc's slug (D-08 browse path).
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.set('doc', slugForNode);
+    newUrl.searchParams.set('reader', '1');
+    window.location.href = newUrl.toString();
+  }
+
+  if (corpusBtn) {
+    corpusBtn.addEventListener('click', () => {
+      if (corpusActive) {
+        swapToBrain();
+      } else {
+        swapToCorpus();
+      }
+    });
+  }
 
   // ── Load (DB-backed, lazy-aware) ───────────────────────────────────────────
 
