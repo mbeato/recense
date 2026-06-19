@@ -10,7 +10,7 @@
  *  (f) No lexical LIKE on fact.value for the slug (D-01 — only entity-name LIKE is allowed).
  */
 import Database from 'better-sqlite3';
-import { describe, test, expect, beforeEach } from 'vitest';
+import { describe, test, it, expect, beforeEach } from 'vitest';
 import { initSchema } from '../src/db/schema';
 import { SemanticStore } from '../src/db/semantic-store';
 import { FakeClock } from '../src/lib/clock';
@@ -187,6 +187,32 @@ describe('gatherFacts', () => {
     expect(typeof row.last_access).toBe('number');
     expect(typeof row.via).toBe('string');
   });
+});
+
+// ── gatherFactsForSchema (CORPUS-01) — Wave-0 scaffold ────────────────────
+//
+// These tests are intentionally SKIPPED. Plan 28-02 (schema-anchored gather)
+// will add gatherFactsForSchema to doc-gather.ts and unskip these assertions.
+// The describe.skip keeps the suite GREEN while providing a failing target.
+
+describe.skip('gatherFactsForSchema (CORPUS-01)', () => {
+  it.todo(
+    'returns facts from the schema evidence set (kind=abstracts edges from schemaId to live facts/entities)',
+  );
+  it.todo(
+    'returns entity-hop 1-hop fact neighbors of entities that are direct abstracts members of the schema',
+  );
+  it.todo(
+    'semantic breadth: returns semantically-near facts via hybridTopk seeded by schema centroid',
+  );
+  it.todo('tombstoned facts are excluded from all sources');
+  it.todo('multi-source facts are deduped to one row with combined via tags');
+  it.todo('returns GatheredFact[] with id, value, c, origin, last_access, via fields');
+  it.todo(
+    'gatherFactsForSchema with a null centroid skips the semantic pass (no embed call) ' +
+    'but still returns spine + entity-hop facts',
+  );
+  it.todo('does NOT touch source schema s/c/embedding (read-only guard, CORPUS-05)');
 });
 
 // ── gatherSiblingDocs (READER-04) ──────────────────────────────────────────

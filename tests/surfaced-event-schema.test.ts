@@ -73,14 +73,14 @@ describe('surfaced_event schema (21-01)', () => {
     }
   });
 
-  it('schema_version meta is "11" after initSchema', () => {
+  it('schema_version meta is "12" after initSchema', () => {
     tmpDbPath = makeTempDbPath();
     const db = new Database(tmpDbPath);
     try {
       initSchema(db);
       const row = db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as { value: string } | undefined;
       expect(row).toBeDefined();
-      expect(row!.value).toBe('11');
+      expect(row!.value).toBe('12');
     } finally {
       db.close();
     }

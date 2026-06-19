@@ -23,8 +23,8 @@ function makeDb(): Database.Database {
 }
 
 describe('SCHEMA_VERSION', () => {
-  it('is 11 (v11 adds doc type + cites/doc_link edge kinds + node_doc sidecar)', () => {
-    expect(SCHEMA_VERSION).toBe(11);
+  it('is 12 (v12 adds doc_containment + doc_reference edge kinds)', () => {
+    expect(SCHEMA_VERSION).toBe(12);
   });
 });
 
