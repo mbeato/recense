@@ -64,6 +64,7 @@ export function initCorpus(ctx) {
   let CorpusGraph = null;
   // nodeId → slug map for D-08 click resolution (built from /graph?type=doc).
   let nodeSlugs = {};
+  let nodeLabels = {};
   // Currently-hovered node (for amber activation highlight).
   let hoveredId = null;
 
@@ -83,8 +84,13 @@ export function initCorpus(ctx) {
     // Build the nodeId → slug map (slug is included in /graph?type=doc node records
     // via the node_doc JOIN, so D-08 click→reader resolution works client-side).
     nodeSlugs = {};
+    nodeLabels = {};
     for (const node of (data.nodes || [])) {
       if (node.slug) nodeSlugs[node.id] = node.slug;
+      // BUG-1 fix (28-04): display the human schema label (server resolves it via the schema
+      // node JOIN: COALESCE(schema.value, slug)). For schema-anchored docs the slug is a UUID,
+      // so without this the node renders as a UUID. Click resolution still uses nodeSlugs.
+      nodeLabels[node.id] = node.label || node.slug || node.id;
     }
 
     const G = ForceGraph()(container)
@@ -106,7 +112,7 @@ export function initCorpus(ctx) {
         canvasCtx.stroke();
         // Label: the slug/title, drawn below the node. Scale font with zoom for
         // legibility but cap so it doesn't explode when zoomed in.
-        const label = nodeSlugs[node.id] || node.id;
+        const label = nodeLabels[node.id] || nodeSlugs[node.id] || node.id;
         const fontSize = Math.max(10 / globalScale, 2.2);
         canvasCtx.font = `${fontSize}px system-ui, -apple-system, sans-serif`;
         canvasCtx.textAlign = 'center';

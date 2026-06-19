@@ -145,11 +145,17 @@ export function startVizServer(dbPath: string, port: number): http.Server {
   // Compile /graph?type=doc corpus statements once (READER-04 — doc-only corpus graph).
   // Returns live (tombstoned=0) type='doc' nodes with their slug (from node_doc sidecar)
   // so the client can resolve doc-node click → slug → reader open (D-08).
-  // The slug is included as an extra field alongside the standard NodeRecord fields.
+  // BUG-1 fix (28-04): for schema-anchored docs the slug = schemaId (UUID). LEFT JOIN the
+  // schema node to resolve its human label; COALESCE(NULLIF(sch.value,''), nd.slug) gives
+  // the human label when the schema has one, or falls back to the slug (which = schemaId UUID
+  // for schema docs, or the project name string for project-scope docs). Project-scope docs
+  // (slug='tonos' etc.) won't match any schema.id → sch.value IS NULL → fall back to slug.
   const stmtDocNodes = db.prepare(`
-    SELECT n.id, n.type, n.value, n.s, n.c, n.origin, n.tombstoned, nd.slug
+    SELECT n.id, n.type, n.value, n.s, n.c, n.origin, n.tombstoned, nd.slug,
+           COALESCE(NULLIF(sch.value, ''), nd.slug) AS label
     FROM node n
     JOIN node_doc nd ON nd.node_id = n.id
+    LEFT JOIN node sch ON sch.id = nd.slug AND sch.type = 'schema' AND sch.tombstoned = 0
     WHERE n.type='doc' AND n.tombstoned=0
   `);
   // CORPUS-04: Return doc_link + doc_containment + doc_reference edges, but only between
@@ -481,9 +487,17 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         }
         try {
           const row = stmtGetDoc.get(resolvedSlug) as { id: string; value: string; generated_at: number } | undefined;
-          if (row) {
+          // BUG-2a fix (28-04): an empty-value stub (value='') means the CorpusPromoter
+          // created an eager placeholder but generation hasn't run yet. Treat it as a miss
+          // → spawn + 202 so the reader can poll for the real content.
+          if (row && row.value.trim().length > 0) {
             res.writeHead(200, { 'content-type': 'text/plain' });
             res.end(row.value);
+          } else if (row && row.value.trim().length === 0) {
+            // Empty stub — spawn generation and return 202.
+            spawnGenerateDoc(resolvedSlug);
+            res.writeHead(202, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ status: 'generating' }));
           } else {
             res.writeHead(404, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ error: 'no live doc for id' }));
@@ -503,11 +517,14 @@ export function startVizServer(dbPath: string, port: number): http.Server {
       }
       try {
         const row = stmtGetDoc.get(slug) as { id: string; value: string; generated_at: number } | undefined;
-        if (row) {
+        // BUG-2a fix (28-04): an empty-value stub (value='') must be treated as a miss so
+        // the CorpusPromoter's eager-but-empty placeholder triggers lazy generation. A stub
+        // with non-empty prose is served normally.
+        if (row && row.value.trim().length > 0) {
           res.writeHead(200, { 'content-type': 'text/plain' });
           res.end(row.value);
         } else {
-          // D-02/D-03: lazy generate on first access — spawn CLI (server is read-only).
+          // No row OR empty-stub row — spawn CLI and return 202.
           spawnGenerateDoc(slug);
           res.writeHead(202, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ status: 'generating' }));

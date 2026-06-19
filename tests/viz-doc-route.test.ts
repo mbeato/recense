@@ -135,6 +135,13 @@ beforeEach(async () => {
   store.upsertEdge({ src: docId, dst: FACT_ID, rel: 'cites', kind: 'cites', w: 1.0, last_access: 1000 });
   store.upsertEdge({ src: docId, dst: FACT2_ID, rel: 'cites', kind: 'cites', w: 1.0, last_access: 1000 });
 
+  // BUG-2a (28-04): seed an EMPTY stub doc (CorpusPromoter eager placeholder, value='').
+  // The route must treat it as a miss → 202 + spawn, not serve an empty 200.
+  const stubId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+  store.upsertNode({ id: stubId, type: 'doc', value: '', origin: 'inferred', s: 0, c: 1.0, last_access: 1000 });
+  store.upsertNodeDoc({ node_id: stubId, slug: 'emptystub', generated_at: 1000, updated_at: 1000 });
+  store.upsertNodeScope({ node_id: stubId, scope: 'emptystub', updated_at: 1000 });
+
   writeDb.close();
 
   // Start the viz server (read-only handle).
@@ -168,6 +175,15 @@ describe('GET /doc?slug=', () => {
     const json = JSON.parse(r.body) as { status: string };
     expect(json.status).toBe('generating');
     // Verify the CLI was spawned (server stays read-only).
+    expect(spawn).toHaveBeenCalled();
+  });
+
+  it('returns 202 {status:generating} for an EMPTY stub (not an empty 200) and triggers spawn', async () => {
+    const { spawn } = await import('node:child_process');
+    const r = await makeRequest(port, '/doc?slug=emptystub');
+    expect(r.statusCode).toBe(202);
+    const json = JSON.parse(r.body) as { status: string };
+    expect(json.status).toBe('generating');
     expect(spawn).toHaveBeenCalled();
   });
 
