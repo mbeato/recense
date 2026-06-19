@@ -137,7 +137,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
   1. A generated project doc exists as a `type='doc'` node — excluded from recall-embedding, eviction, decay, `training_eligible`, and claim-extraction; its write path routes through the single-writer consolidator; every substantive claim carries an inline `recense://fact/<id>` ref that resolves to a live node — READER-01
   2. The viz serves the doc at a `/doc` route; a Reader/Brain toggle lets the user switch between the prose view and a brain graph focused on that doc's cited atoms; clicking a fact-ref in the prose focuses the correct atom in the graph with selection state preserved across the toggle — READER-02
   3. On doc load, the reader detects stale citations (`node.last_access > doc.generatedAt`), surfaces a `prev_value → value` diff for changed facts, and flags refs to tombstoned facts as "cited fact was removed"; a regenerate action rebuilds the doc from current facts — READER-03
-  4. A doc→doc corpus graph (`doc_link` edges) is navigable in the viz; centering on a project surfaces its docs alongside neighboring projects and related entities, subsuming the need for a separate per-project graph view — READER-04
+  4. A doc→doc corpus graph (`doc_link` edges) is navigable in the viz; centering on a project surfaces its docs alongside neighboring projects and related entities, subsuming the need for a separate per-project graph view — READER-04 _(delivered as the flat 2D corpus; **SUPERSEDED by Phase 28** — the project-doc/`doc_link` corpus is replaced by the schema-anchored abstraction-graph corpus; the flat 2D renderer carries forward)_
 **Plans**: 5 plans
 - [x] 27-01-PLAN.md — v11 schema (node 'doc', edge 'cites'/'doc_link') + node_doc sidecar + store primitives
 - [x] 27-02-PLAN.md — doc gather (scope∪semantic) + generator (judge-tier, cite-verify) + lifecycle-exempt doc-writer + `recense generate-doc` CLI (READER-01)
@@ -177,3 +177,18 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 25. Entity Dedup / Prune | v5.0 | 3/3 | Complete   | 2026-06-18 |
 | 26. Retrieval-Embedding Fix | v5.0 | 5/5 | Complete   | 2026-06-18 |
 | 27. Reader Layer | v5.0 | 5/5 | Complete   | 2026-06-18 |
+
+### Phase 28: Schema-Anchored Corpus
+
+**Goal:** Pivot the reader corpus from project-scope docs to the **abstraction graph rendered as prose**. A doc anchors on a **schema** (the generalization is the thesis) or entity, and its body cites direct facts/nodes as evidence — reusing the existing `scope ∪ semantic ∪ entity-hop` gather, re-anchored from a scope to a schema/entity. **Mass-gated promotion** decides which nodes (schema/entity/scope) earn their own doc via a cheap COUNT-style gate (not an LLM call); fine sentence-grained schemas stay lines in a doc. The doc hierarchy mirrors the `abstracts` edge ladder (high schema = broad doc, child schemas = sub-docs → recursive project→infra→deployment nesting for free); cross-cutting topics = clusters spanning scopes. Decide-cheap / generate-lazy: detect + create the doc node + parent stub-link eagerly, generate prose on first access (existing lazy-gen). Corpus edges become **containment (parent→child) + reference** over the abstraction graph.
+
+**Supersedes:** Phase 27 **READER-04** (doc_link-between-projects corpus) — replaced by the schema-anchored, hierarchical corpus. The project-scope doc becomes the degenerate case (anchor = scope).
+**Inherits (reuses, untouched):** Phase 27 reader UI + Reader/Brain toggle (READER-02), staleness/regen (READER-03), the flat 2D `force-graph` renderer, lazy-gen, `/doc` routes, the gather machinery, and the lifecycle-exempt read-only doc-writer.
+**Guard (load-bearing):** a doc is inferred output and must never strengthen the schema it renders (self-confirmation rule) — doc nodes stay read-only (no embed/decay/training), as they already are.
+
+**Requirements**: CORPUS-01 (schema/entity-anchored doc generation), CORPUS-02 (mass-gated promotion + hierarchy from the `abstracts` ladder), CORPUS-03 (containment + reference corpus edges, superseding READER-04's doc_link), CORPUS-04 (read-only projection / self-confirmation guard) — to be firmed in SPEC.
+**Depends on:** Phase 27 (reader/render foundation) + the schema/abstraction layer (live brain has 7000+ nodes with real schemas + `abstracts` edges, so viable now)
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 28 to break down)
