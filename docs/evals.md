@@ -499,4 +499,10 @@ Numbers are filled from a live run with `RECENSE_JUDGE_PROVIDER=claude-headless 
 - The breakeven combiner uses EVAL-03 point-estimate injection savings, which are a snapshot of a specific db and flat-file state. Read savings vary with db content.
 - The `--with-longmemeval` arm (answerer-token-delta) is not yet implemented. The API-list cost estimate for that arm is ~$3–5 and requires explicit budget approval.
 
+### Cost lever: two-tier judge (validated)
+
+The write ledger showed the Sonnet judge is ~78% of the per-turn dollar cost, and the judge is already gated to fire only when a candidate clears the cosine escalation threshold. The accuracy-safe reduction is therefore *cost-per-call*, not frequency: the **two-tier judge** (`TwoTierJudge`, `RECENSE_TWO_TIER_JUDGE=1`) runs cheap Haiku on every escalation and invokes Sonnet **only** when Haiku returns `contradict`. It never touches the cosine gate, so it carries none of the belief-correction recall risk of raising the threshold (real contradictions sit at cosine ~0.48).
+
+**Validation (EVAL-02, 2026-06-19):** two-tier vs Sonnet-only is byte-identical on belief-correction — 84.6% (11/13) both, **0/17 corrected-flag mismatches, 0/17 tombstone mismatches**, same cases corrected. Sonnet is invoked only on Haiku's `contradict` verdicts; in the live consolidation event stream `contradict` is ~0.3% of verdicts, so on a representative workload ~99% of judgments are cheap-accepted and never reach Sonnet. EVAL-02 is contradict-heavy by construction (13/17 escalate), so it is the *worst case* for the savings and still preserves accuracy exactly. Results: `scripts/eval/results/correctness-{baseline-sonnet,twotier}.json`.
+
 See the [README benchmark table](../README.md#benchmark-results) for the summary view with repro commands. Raise questions or methodology concerns via GitHub issues.

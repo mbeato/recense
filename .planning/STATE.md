@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Completed 28-01-PLAN.md (v12 migration + Wave-0 scaffolds)
-last_updated: "2026-06-19T17:10:11.773Z"
+stopped_at: Completed 28-06-PLAN.md (CORPUS-06 eager offline corpus-doc generation)
+last_updated: "2026-06-19T21:00:00.000Z"
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 20
-  completed_plans: 17
-  percent: 80
+  completed_plans: 18
+  percent: 85
 ---
 
 # Project State
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 28 (schema-anchored-corpus) — EXECUTING
-Plan: 4 of 4
-Status: Ready to execute
+Plan: 6 of 6
+Status: CORPUS-06 complete (4bce161)
 
 [██████████████████████████████████████] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-04 done · 27-05 COMPLETE (flat-2D corpus)
 ```
