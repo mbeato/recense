@@ -49,6 +49,8 @@ import type { SchemaInducer } from './schema-induction';
 import { NoopSchemaRelationDeriver } from './schema-relations';
 import type { SchemaRelationDeriver } from './schema-relations';
 import { NoopConsolidationSink, type ConsolidationSink } from './sink';
+import { NoopCorpusPromoter } from './corpus-promoter';
+import type { CorpusPromoter } from './corpus-promoter';
 
 // ---------------------------------------------------------------------------
 // Module-level helpers
@@ -169,6 +171,7 @@ export class Consolidator {
   private readonly provider: ModelProvider;
   private readonly inducer: SchemaInducer;
   private readonly deriver: SchemaRelationDeriver | NoopSchemaRelationDeriver;
+  private readonly corpusPromoter: CorpusPromoter | NoopCorpusPromoter;
   private readonly config: EngineConfig;
   private readonly clock: Clock;
   private readonly sink: ConsolidationSink;
@@ -193,6 +196,7 @@ export class Consolidator {
     sink: ConsolidationSink = new NoopConsolidationSink(),
     log: (msg: string) => void = () => {},
     deriver: SchemaRelationDeriver | NoopSchemaRelationDeriver = new NoopSchemaRelationDeriver(),
+    corpusPromoter: CorpusPromoter | NoopCorpusPromoter = new NoopCorpusPromoter(),
   ) {
     this.db = db;
     this.episodes = episodes;
@@ -202,6 +206,7 @@ export class Consolidator {
     this.provider = provider;
     this.inducer = inducer;
     this.deriver = deriver;
+    this.corpusPromoter = corpusPromoter;
     this.config = config;
     this.clock = clock;
     this.sink = sink;
@@ -720,6 +725,10 @@ export class Consolidator {
     // before runEvictionSweep(). Artifacts are disposable derived cache — a mid-derive crash
     // leaves wipe-then-rebuild-clean state on the next pass; no extra try/catch needed.
     await this.deriver.deriveSchemaRelations();
+    // D-04 (Phase 28, CORPUS-02/03/05): corpus promotion after schema-relation derivation
+    // (needs fresh schema_rel / super-schema edges), before eviction so the new s=0 doc stubs
+    // are present (eviction leaves lifecycle-exempt s=0 nodes alone). LLM-free + idempotent.
+    await this.corpusPromoter.promote();
     this.strength.runEvictionSweep();
   }
 

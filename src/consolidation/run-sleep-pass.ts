@@ -29,6 +29,7 @@ import type { ExtractedClaim } from '../model/claim-extractor';
 import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
 import { SchemaRelationDeriver } from '../consolidation/schema-relations';
+import { CorpusPromoter } from '../consolidation/corpus-promoter';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
@@ -340,6 +341,20 @@ export async function runConsolidation(
   // D-07: SchemaRelationDeriver — LLM-free, deterministic, no ModelProvider injected.
   const deriver = new SchemaRelationDeriver(db, store, config, realClock);
 
+  // D-04 (Phase 28, CORPUS-02/03/05): CorpusPromoter — LLM-free, idempotent corpus-promotion
+  // pass that runs in Phase C after deriveSchemaRelations(). Produces doc_containment +
+  // doc_reference edges between schema-anchored doc stubs; wipe-and-rebuild on each pass.
+  // corpusCosineThreshold is set LOWER than config.schemaRelSimilarityThreshold so the
+  // corpus ladder enriches past the ~12 schema_rel baseline among promoted schemas.
+  const corpusPromoter = new CorpusPromoter(db, store, realClock, {
+    highMass: 10,
+    lowMass: 7,
+    noiseCap: 0.5,
+    corpusCosineThreshold: 0.55,  // enrichment knob: lower than schemaRelSimilarityThreshold (~0.72)
+    massGapMin: 2,
+    minMembers: 4,
+  });
+
   const consolidator = new Consolidator(
     db,
     episodes,
@@ -353,6 +368,7 @@ export async function runConsolidation(
     sink,
     log,
     deriver,
+    corpusPromoter,
   );
 
   // ── 5. Run the sleep pass ──────────────────────────────────────────────────

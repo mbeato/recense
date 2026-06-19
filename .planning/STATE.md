@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: "28-03 Task 1 complete (CorpusPromoter); stopped at Task 2 checkpoint:human-verify (CORPUS-05 regression gate)"
-last_updated: "2026-06-19T18:00:00.000Z"
+stopped_at: "28-04 Tasks 1+2 complete (server.ts endpoint + corpus.js link-kind styling); stopped at Task 3 checkpoint:human-verify (hero verify — legible forest on live brain)"
+last_updated: "2026-06-19T19:15:00.000Z"
 progress:
   total_phases: 5
   completed_phases: 3
