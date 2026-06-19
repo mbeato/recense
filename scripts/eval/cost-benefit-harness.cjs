@@ -508,6 +508,17 @@ function breakevenNote(writeMeasured, readSavingsPerSession, breakevenN, gap) {
   }
   console.log(`\n  ${breakevenResult.note}`);
 
+  // Batch-size-independent invariant: the N-table breakeven scales with the
+  // arbitrary --sample size, so also report the per-turn ratio. Each ingested
+  // turn costs `per_turn_write` tokens; the memory saves `read_savings_per_session`
+  // inject-tokens every subsequent session → sessions-of-reuse to repay ONE turn.
+  const perTurnWrite = writeLedger.measured ? (writeLedger.totals?.per_turn_tokens_amortized ?? 0) : 0;
+  if (writeLedger.measured && readLedger.read_savings_per_session > 0) {
+    const sessionsPerTurn = perTurnWrite / readLedger.read_savings_per_session;
+    console.log(`  Per-turn breakeven (batch-size-independent): ${sessionsPerTurn.toFixed(1)} sessions of reuse repay one ingested turn`);
+    console.log(`    (per-turn write ${perTurnWrite.toFixed(0)} tok ÷ per-session inject saving ${readLedger.read_savings_per_session} tok). Inject-savings floor only — excludes avoided re-derivation.`);
+  }
+
   // ── Results JSON ──────────────────────────────────────────────────────────────
   const meta = {
     eval:           'cost-benefit',
