@@ -1,6 +1,6 @@
 # Recense evals
 
-This document covers the three published evaluations — EVAL-01 (LongMemEval-S), EVAL-02 (Correctness suite), and EVAL-03 (Injection efficiency) — along with the methodology behind each, the judge-model validation evidence, and the honest caveats that context any published numbers.
+This document covers four published evaluations — EVAL-01 (LongMemEval-S), EVAL-02 (Correctness suite), EVAL-03 (Injection efficiency), and EVAL-04 (Token cost-benefit / breakeven) — along with the methodology behind each, the judge-model validation evidence, and the honest caveats that context any published numbers.
 
 The goal is reproducibility and honesty, not benchmark warfare. recense numbers are published at face value with repro commands, cost estimates, and methodology disclosure. Competitor figures are self-reported with differing methodologies; we note the differences explicitly. If a number looks bad, that is intentional — we publish whatever the harness produces.
 
@@ -420,5 +420,83 @@ The broader judge eval (48-case mined set) and extraction model bake-off are doc
 7. **EVAL-03 injection numbers are a snapshot, not a production SLA.** The injection token count and reduction percentage from EVAL-03 reflect a specific db snapshot and flat-file state. Token reduction will vary based on how many relevant nodes exist, what the current db contains, and how the flat-file baseline evolves. The O(1) budget ceiling (500 tokens) is a config constant; the baseline and db content are user-dependent.
 
 ---
+
+---
+
+## EVAL-04: Token cost-benefit / breakeven
+
+### What it measures
+
+EVAL-04 measures the token cost of a recense sleep pass (the write side) and combines it with the EVAL-03 injection-efficiency savings (the read side) to produce a breakeven analysis: after how many sessions does recense's per-session read savings recover the one-time write cost?
+
+Two measured ledgers:
+
+- **PART A — Write ledger:** what does running the sleep pass over a sample of episodes actually cost in tokens? This requires routing the sleep pass through the headless client (`claude -p`) with the usage sink installed, and reading the per-call `usage` + `total_cost_usd` + `duration_ms` fields from the JSON envelope. Subscription marginal cost is $0; the harness reports a retail-$ equivalent ("what it would cost at API list price") for honest accounting.
+- **PART B — Breakeven combiner:** load the EVAL-03 read savings (inject token delta per session), then compute `net(N) = total_write_tokens − read_savings_per_session × N` for N ∈ {1, 2, 5, 10, 20, 50} and report the smallest N where net ≤ 0 (the breakeven session count).
+
+### Methodology
+
+**PART A — Write ledger:**
+
+1. Open the live `recense.db` read-only to validate it exists and has episodes. VACUUM INTO a scratch file (WAL-safe single-file copy); never write to the live db.
+2. Sample N most-recent unconsolidated episodes from the scratch db (fallback: most-recent overall, noted in results). Record sample size, selection criteria, and consolidated-filter status.
+3. Compute the consolSkipThreshold split LLM-free, mirroring the consolidator gate exactly: per-source override (`salience.consolSkipThresholdBySource[source]`) → per-role (`consolSkipThresholdAssistant` for assistant, `consolSkipThreshold` for other) → `hard_keep=1` always processed. Record `n_below_threshold` (skipped, $0 write cost) and `n_extracted`. Per-turn write cost is amortized over ALL sampled episodes, not just extracted ones.
+4. Trim the scratch db to the sampled unconsolidated episodes (delete non-sampled rows in scratch only).
+5. Install the headless usage sink via `setHeadlessUsageSink(fn)` (EVAL-04 instrumentation in `src/model/claude-headless-client.ts`). Sink accumulates per-call `{model, usage, total_cost_usd, duration_ms}` from the `claude -p --output-format json` envelope.
+6. Run `runConsolidation(scratchDb, scratchPath, env, log)` with `RECENSE_JUDGE_PROVIDER=claude-headless` and `RECENSE_EXTRACTOR_PROVIDER=claude-headless` (routes extract→Haiku, judge→Sonnet through the instrumented headless client).
+7. Reset the sink in a finally block. Aggregate per-model token splits (input / output / cache-creation / cache-read) and compute retail-$ using Anthropic list-price constants (dated in the harness source).
+8. **Graceful degrade:** if the headless path cannot run (no `claude` bin, providers not set, or sink captured 0 calls), the write ledger is marked `measured: false` with a reason. PART B still emits the combiner structure with write cost = unmeasured and clearly states breakeven cannot be computed. No numbers are fabricated.
+
+**PART B — Breakeven combiner:**
+
+1. Load EVAL-03 read savings: if `--read-savings <path>` given, use it; else glob the newest `scripts/eval/results/injection-efficiency-*.json`. If none found, `read_savings_per_session = 0` with a note (combiner still emits).
+2. Extract `read_savings_per_session = point_estimate.flat_tokens − point_estimate.injected_tokens` (guard nulls / `flat_missing` → 0 with note).
+3. Print the breakeven table and report the breakeven N or "cannot compute" if write ledger was not measured.
+
+**`--with-longmemeval` (STUB, approval-gated):** when this flag is absent (default), the harness prints a one-line note that the answerer-token-delta work-savings arm is available on approval. When the flag is present, the harness describes exactly what it would run (full-context baseline vs. recense-retrieval answerer input tokens, estimated cost) and exits that arm without spending. Per the API budget cap, this harness NEVER triggers a direct-API paid run.
+
+### Honesty contract
+
+The results JSON records: `meta` (date, commit, engine version, db path, scratch path), `sample` (requested/found, selection criteria, consolidated-filter used), `skip_split` (n_below_threshold, n_extracted, thresholds), `write_ledger` (measured bool, stack used, per-model token splits, totals, retail_usd, subscription_marginal_usd: 0, prices_dated), `read_ledger` (source path or 'none', savings, note), `breakeven` (table, breakeven_n or null, note), and a top-level `caveats` array.
+
+No headline $ is hardcoded. Everything is computed from the live run or clearly marked unmeasured.
+
+### Run command
+
+```sh
+# Default (write ledger marked unmeasured if headless not configured):
+npm run eval:cost-benefit
+
+# Measured write ledger (requires `claude` auth + Max subscription):
+RECENSE_JUDGE_PROVIDER=claude-headless \
+RECENSE_EXTRACTOR_PROVIDER=claude-headless \
+npm run eval:cost-benefit
+
+# Point at specific EVAL-03 results for the combiner:
+npm run eval:cost-benefit -- --read-savings scripts/eval/results/injection-efficiency-PENDING.json
+
+# Missing-db graceful exit (CI-safe):
+node scripts/eval/cost-benefit-harness.cjs --db /tmp/nonexistent.db
+```
+
+Requires no API keys for the no-data / structure-only path. The measured write-ledger path requires `claude` auth (Max subscription). Does not charge the Anthropic API.
+
+### Recorded results
+
+Numbers are filled from a live run with `RECENSE_JUDGE_PROVIDER=claude-headless RECENSE_EXTRACTOR_PROVIDER=claude-headless`. The harness has not yet been run against the live db with full headless instrumentation active. This placeholder will be replaced with dated results when the measured run completes.
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Write ledger | not yet measured | requires claude auth + headless providers |
+| Read savings (EVAL-03) | 1,155 tokens/session | flat 1,582 tok − injected 427 tok (2026-06-14 snapshot) |
+| Breakeven N | pending | will be computed from measured write ledger |
+
+### EVAL-04 caveats
+
+- The write ledger measures a sample of `N` episodes (default 25). Results are representative; a single-sample write cost does not directly generalize to a full production pass over thousands of episodes.
+- Token counts come from the headless usage envelope, not a re-tokenization. The envelope's `total_cost_usd` is the subscription-billing figure ($0 for Max subscription); the retail-$ computed from per-token rates is an estimate at API list prices.
+- Price constants are dated (see harness source) and may drift as Anthropic updates pricing.
+- The breakeven combiner uses EVAL-03 point-estimate injection savings, which are a snapshot of a specific db and flat-file state. Read savings vary with db content.
+- The `--with-longmemeval` arm (answerer-token-delta) is not yet implemented. The API-list cost estimate for that arm is ~$3–5 and requires explicit budget approval.
 
 See the [README benchmark table](../README.md#benchmark-results) for the summary view with repro commands. Raise questions or methodology concerns via GitHub issues.
