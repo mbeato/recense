@@ -192,6 +192,41 @@ describe('GET /doc?slug=', () => {
   });
 });
 
+// READER-04: doc-ref click opens by doc NODE id via ?id= (exact-or-unique-prefix).
+const DOC_NODE_ID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+describe('GET /doc?id= (READER-04 doc-ref click)', () => {
+  it('returns 200 markdown for an EXACT doc node id', async () => {
+    const r = await makeRequest(port, `/doc?id=${DOC_NODE_ID}`);
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toContain('# Tonos');
+  });
+
+  it('returns 200 markdown for a UNIQUE-PREFIX doc node id (truncated ref)', async () => {
+    // The generator may truncate doc ids; an unambiguous 8-char prefix resolves.
+    const r = await makeRequest(port, '/doc?id=cccccccc');
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toContain('# Tonos');
+  });
+
+  it('returns 404 for an unknown doc id (no generate-on-miss spawn)', async () => {
+    const r = await makeRequest(port, '/doc?id=ffffffff-ffff-4fff-8fff-ffffffffffff');
+    expect(r.statusCode).toBe(404);
+  });
+
+  it('/doc/meta?id= resolves the doc and returns its slug + cited ids', async () => {
+    const r = await makeRequest(port, `/doc/meta?id=${DOC_NODE_ID}`);
+    expect(r.statusCode).toBe(200);
+    const json = JSON.parse(r.body) as { nodeId: string; slug: string; citedFactIds: string[] };
+    expect(json.slug).toBe(DOC_SLUG);
+    expect(json.citedFactIds).toContain(FACT_ID);
+  });
+
+  it('/doc/meta?id= returns 404 for an unknown id', async () => {
+    const r = await makeRequest(port, '/doc/meta?id=ffffffff-ffff-4fff-8fff-ffffffffffff');
+    expect(r.statusCode).toBe(404);
+  });
+});
+
 describe('GET /doc/meta?slug=', () => {
   it('returns nodeId, generated_at, and citedFactIds for a seeded slug', async () => {
     const r = await makeRequest(port, `/doc/meta?slug=${DOC_SLUG}`);

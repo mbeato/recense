@@ -30,7 +30,47 @@ import Database from 'better-sqlite3';
 import { newId } from '../lib/hash';
 import type { SemanticStore } from '../db/semantic-store';
 import type { ModelProvider } from '../model/provider';
-import { gatherFacts } from './doc-gather';
+import { gatherFacts, gatherSiblingDocs } from './doc-gather';
+import type { SiblingDoc } from './doc-gather';
+
+/**
+ * Build the doc-generation prompt (factored out for testability — READER-04).
+ *
+ * Includes a RELATED DOCS block listing the OTHER live deep-dives so the model can
+ * cross-link to them with `recense://doc/<id>` refs (which become doc_link edges). The
+ * block is OMITTED entirely when there are no sibling docs (don't confuse the model).
+ *
+ * @param slug      The project slug being generated.
+ * @param factBlock Pre-formatted "[<uuid>] <fact>" lines.
+ * @param siblings  Other live docs the model may link to (may be empty).
+ */
+export function buildDocPrompt(slug: string, factBlock: string, siblings: SiblingDoc[]): string {
+  // RELATED DOCS block — only when sibling docs exist.
+  const relatedBlock =
+    siblings.length > 0
+      ? `\n\nRELATED PROJECT DOCS (other deep-dives that already exist): each line is [<docId>] <slug>: <title>.
+${siblings.map(s => `[${s.id}] ${s.slug}: ${s.title}`).join('\n')}
+
+When this deep-dive references one of these other projects, link to it inline as [the project name](recense://doc/<docId>) using the EXACT id. Only link to a project that genuinely relates to the facts; do not invent links.`
+      : '';
+
+  return `You are generating a human-readable PROJECT DEEP-DIVE from a set of atomic memory facts.
+
+You are given FACTS about "${slug}". Each line is: [<uuid>] <fact text>
+
+FACTS:
+${factBlock}${relatedBlock}
+
+Write a structured markdown deep-dive about "${slug}". Use only the sections the facts can support (e.g. One-liner, Infrastructure, Pipelines/Operations, State, Open questions).
+
+HARD RULES:
+1. Every substantive claim MUST cite the fact id(s) it draws from, inline, as a markdown link: [the cited phrase](recense://fact/<uuid>). Use the exact uuid from the bracket.
+2. Use ONLY the provided facts. Do NOT add any outside knowledge or invent details. If you cannot cite it from a fact above, do not write it.
+3. If facts conflict, note the conflict and cite both.
+4. Prefer specific, interview-defensible detail over generic prose.
+
+Output ONLY the markdown deep-dive, no preamble.`;
+}
 
 /** Injectable deps (testable without real RECENSE_DB). */
 export interface GenerateDeps {
@@ -80,31 +120,18 @@ export async function generateDoc(
 ): Promise<GenerateDocResult> {
   const { db, store, provider } = deps;
 
-  // ── 1. Gather facts ────────────────────────────────────────────────────────
+  // ── 1. Gather facts + sibling docs ─────────────────────────────────────────
   const facts = await gatherFacts({ db, store, provider }, slug, { semanticK: opts.semanticK });
 
   // Build the factBlock: one line per fact, format "[<uuid>] <value>" (verbatim from slice)
   const factBlock = facts.map(f => `[${f.id}] ${f.value}`).join('\n');
 
-  // ── 2. Build generation prompt ─────────────────────────────────────────────
-  // Verbatim from scripts/reader-slice/generate.ts lines 30–45.
-  // This exact prompt produced 19/19 resolved citations, 0 invented on the Tonos slice.
-  const prompt = `You are generating a human-readable PROJECT DEEP-DIVE from a set of atomic memory facts.
+  // Gather the OTHER live docs so the model can cross-link (READER-04). Without this the
+  // prompt never mentions recense://doc refs → doc_link edges never form organically.
+  const siblingDocs = gatherSiblingDocs(db, slug);
 
-You are given FACTS about "${slug}". Each line is: [<uuid>] <fact text>
-
-FACTS:
-${factBlock}
-
-Write a structured markdown deep-dive about "${slug}". Use only the sections the facts can support (e.g. One-liner, Infrastructure, Pipelines/Operations, State, Open questions).
-
-HARD RULES:
-1. Every substantive claim MUST cite the fact id(s) it draws from, inline, as a markdown link: [the cited phrase](recense://fact/<uuid>). Use the exact uuid from the bracket.
-2. Use ONLY the provided facts. Do NOT add any outside knowledge or invent details. If you cannot cite it from a fact above, do not write it.
-3. If facts conflict, note the conflict and cite both.
-4. Prefer specific, interview-defensible detail over generic prose.
-
-Output ONLY the markdown deep-dive, no preamble.`;
+  // ── 2. Build generation prompt (incl. RELATED DOCS block when siblings exist) ──
+  const prompt = buildDocPrompt(slug, factBlock, siblingDocs);
 
   // ── 3. Generate via judge-tier model (D-04) ────────────────────────────────
   // D-04: use provider.generate directly (the provider's generateConfig is set to judgeConfig
@@ -197,19 +224,51 @@ Output ONLY the markdown deep-dive, no preamble.`;
   // same canonical node — dedup so citationCount and cites edges count unique facts.
   const uniqueVerified = [...new Set(verifiedFactIds)];
 
-  // ── 6. Parse recense://doc/<id> refs from the generated prose ─────────────
-  // These become linkedDocRefs in the result. writeDoc will create kind='doc_link'
-  // edges from this doc node to each target doc node that EXISTS (FK-safe in-set guard).
-  // Uses the same DOC_LINK id shape as reader.js: [a-z0-9-]+
-  // We parse from the CANONICALIZED markdown so fact-ref rewriting is already applied.
-  // Note: doc refs are NOT canonicalized here (they come directly from the generated prose
-  // as-is — the generator is expected to use the full slug-based id, not a truncated prefix).
+  // ── 6. Parse + canonicalize recense://doc/<id> refs from the generated prose ──
+  // doc-refs are resolved EXACTLY like fact-refs: the model may TRUNCATE doc ids the same
+  // way it truncates fact ids. We resolve each ref by exact id then UNIQUE-PREFIX against
+  // LIVE (tombstoned=0) type='doc' nodes; ambiguous/unknown refs are DROPPED (no edge,
+  // like invented fact-refs). Resolved refs are CANONICALIZED in the prose to the full doc
+  // id so node.value, the doc_link edges, AND the reader's ?id= click all agree on full ids.
   const DOC_REF = /recense:\/\/doc\/([a-z0-9-]+)/g;
-  const rawDocRefs = [...canonicalMarkdown.matchAll(DOC_REF)].map(m => m[1]!);
-  const linkedDocRefs = [...new Set(rawDocRefs)];
+  const rawDocRefs = [...new Set([...canonicalMarkdown.matchAll(DOC_REF)].map(m => m[1]!))];
+
+  // Resolution statements scoped to LIVE doc nodes only (in-set guard at the source).
+  const getDocExact = db.prepare(
+    "SELECT id FROM node WHERE id = ? AND type = 'doc' AND tombstoned = 0",
+  );
+  const getDocByPrefix = db.prepare(
+    "SELECT id FROM node WHERE id LIKE ? AND type = 'doc' AND tombstoned = 0 LIMIT 2",
+  );
+
+  // raw doc-ref → canonical full doc id (only for refs that resolve to a live doc).
+  const docCanonical = new Map<string, string>();
+  const resolvedDocIds: string[] = [];
+  for (const raw of rawDocRefs) {
+    let row = getDocExact.get(raw) as { id: string } | undefined;
+    if (!row) {
+      const likePattern = raw.replace(/[%_]/g, '') + '%';
+      const matches = getDocByPrefix.all(likePattern) as Array<{ id: string }>;
+      if (matches.length === 1) row = matches[0];
+      // 0 matches → unknown; >1 → ambiguous. Both DROP the ref (no edge).
+    }
+    if (!row) continue; // dangling/ambiguous doc-ref → not linked
+    docCanonical.set(raw, row.id);
+    resolvedDocIds.push(row.id);
+  }
+
+  // Rewrite each resolved recense://doc/<raw> link to its full canonical doc id so the
+  // persisted prose, the doc_link edges, and the reader's ?id= click all agree.
+  const fullyCanonicalMarkdown = canonicalMarkdown.replace(DOC_REF, (whole, rawId: string) => {
+    const full = docCanonical.get(rawId);
+    return full ? `recense://doc/${full}` : whole; // leave unresolved refs untouched
+  });
+
+  // Dedup: two truncations of the same doc → one edge.
+  const linkedDocRefs = [...new Set(resolvedDocIds)];
 
   return {
-    markdown: canonicalMarkdown,
+    markdown: fullyCanonicalMarkdown,
     docId: newId(),
     citedFactIds: uniqueVerified,
     citationCount: uniqueVerified.length,
