@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
-status: "27-05 COMPLETE — flat 2D Obsidian corpus graph rebuilt; founder to reload-confirm on 7819"
-stopped_at: Phase 27 Plan 05 COMPLETE — doc_link edges + /graph?type=doc + flat 2D corpus graph (vendored force-graph, full-window toggle); ready for founder reload-confirm on 7819
-last_updated: "2026-06-18T21:35:00.000Z"
+status: executing
+stopped_at: Completed 28-01-PLAN.md (v12 migration + Wave-0 scaffolds)
+last_updated: "2026-06-19T16:36:03.930Z"
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 3
-  total_plans: 16
+  total_plans: 20
   completed_plans: 14
-  percent: 88
+  percent: 60
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 27 — reader-layer
+**Current focus:** Phase 28 — schema-anchored-corpus
 
 ## Current Position
 
 ```
-Phase: 27 (reader-layer) — EXECUTING
-Plan: 05 COMPLETE — doc_link edges + /graph?type=doc + flat 2D Obsidian corpus graph (full-window toggle); founder to reload-confirm on 7819
-Status: 971c69b + 738aa66 + f5a46e0 (vendor) + 11e4ba3 (flat-2D) committed; viz server on 7819 against /tmp/corpus-verify.db
+Phase: 28 (schema-anchored-corpus) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
 
 [██████████████████████████████████████] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-04 done · 27-05 COMPLETE (flat-2D corpus)
 ```
@@ -88,6 +88,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 | v3.1 | 18–19 | 8 | 2026-06-15 |
 | v4.0 | 20–23 | 22 | 2026-06-17 |
 | v5.0 | 24–27 | TBD | — |
+| Phase 28-schema-anchored-corpus P01 | 12 | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -239,9 +240,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-18T19:55:00.000Z
-Stopped at: Phase 27 Plan 02 COMPLETE — doc-generation core + D-05 prose pass + citation-resolution bug fixed
-Resume file: .planning/phases/27-reader-layer/27-03-SUMMARY.md
+Last session: 2026-06-19T16:36:03.921Z
+Stopped at: Completed 28-01-PLAN.md (v12 migration + Wave-0 scaffolds)
+Resume file: None
 
 ## Key Decisions (Phase 27)
 
