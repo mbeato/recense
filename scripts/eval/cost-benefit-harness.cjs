@@ -386,6 +386,12 @@ function breakevenNote(writeMeasured, readSavingsPerSession, breakevenN, gap) {
       const passLog = [];
       let passError = null;
 
+      // Episodes ACTUALLY processed = unconsolidated-before − unconsolidated-after.
+      // runConsolidation only extracts/judges consolidated=0 episodes; already-consolidated
+      // rows are never touched, so they must NOT inflate the per-turn denominator (the n=20
+      // artifact: 20 sampled, 2 unconsolidated → divided by 20 = bogus). Measured, not assumed.
+      const nUnconsolBefore = scratchDb.prepare('SELECT COUNT(*) AS n FROM episode WHERE consolidated=0').get().n;
+
       try {
         await runConsolidation(
           scratchDb,
@@ -452,13 +458,23 @@ function breakevenNote(writeMeasured, readSavingsPerSession, breakevenN, gap) {
         }
 
         const totalAllTokens = totalInputTokens + totalOutputTokens + totalCacheWriteTokens + totalCacheReadTokens;
-        // Per-turn cost amortized over ALL sampled episodes (not just extracted).
-        const perTurnTokens = n_found > 0 ? totalAllTokens / n_found : 0;
+        // Denominator = episodes the pass ACTUALLY processed, not the requested sample.
+        const nUnconsolAfter = scratchDb.prepare('SELECT COUNT(*) AS n FROM episode WHERE consolidated=0').get().n;
+        const n_processed = Math.max(0, nUnconsolBefore - nUnconsolAfter);
+        const denom = n_processed > 0 ? n_processed : 1;
+        const perTurnTokens = totalAllTokens / denom;
+        const underSampled = n_processed < n_requested;
 
         console.log('\n  Write ledger:');
         console.log(`    Total calls captured: ${totalCalls}`);
         console.log(`    Total tokens (all models): ${totalAllTokens}`);
-        console.log(`    Per-turn write tokens (amortized over ${n_found} sampled): ${perTurnTokens.toFixed(1)}`);
+        console.log(`    Episodes actually processed: ${n_processed} (requested ${n_requested})`);
+        if (underSampled) {
+          console.log(`    ⚠ UNDER-SAMPLED: only ${n_processed} unconsolidated episode(s) were available to process`);
+          console.log(`      (the live brain is consolidation-exhausted). Per-turn cost is a SMALL-SAMPLE`);
+          console.log(`      estimate — ingest fresh turns or use a novel-turn fixture for a stable figure.`);
+        }
+        console.log(`    Per-turn write tokens (over ${n_processed} processed): ${perTurnTokens.toFixed(1)}`);
         console.log(`    Retail-$ estimate (API list price): $${totalRetailUsd.toFixed(6)}`);
         console.log(`    Subscription marginal cost: $0 (billed to Max subscription, not API)`);
 
@@ -466,6 +482,9 @@ function breakevenNote(writeMeasured, readSavingsPerSession, breakevenN, gap) {
           measured: true,
           stack_used: `judge=${judgeProvider}, extractor=${extractorProvider}`,
           n_calls_total: totalCalls,
+          n_episodes_processed: n_processed,
+          n_requested,
+          under_sampled: underSampled,
           per_model: perModelSummary,
           totals: {
             input_tokens: totalInputTokens,
@@ -473,7 +492,7 @@ function breakevenNote(writeMeasured, readSavingsPerSession, breakevenN, gap) {
             cache_creation_input_tokens: totalCacheWriteTokens,
             cache_read_input_tokens: totalCacheReadTokens,
             all_tokens: totalAllTokens,
-            per_turn_tokens_amortized: +perTurnTokens.toFixed(2),
+            per_turn_tokens_processed: +perTurnTokens.toFixed(2),
           },
           retail_usd: +totalRetailUsd.toFixed(6),
           subscription_marginal_usd: 0,
@@ -512,7 +531,7 @@ function breakevenNote(writeMeasured, readSavingsPerSession, breakevenN, gap) {
   // arbitrary --sample size, so also report the per-turn ratio. Each ingested
   // turn costs `per_turn_write` tokens; the memory saves `read_savings_per_session`
   // inject-tokens every subsequent session → sessions-of-reuse to repay ONE turn.
-  const perTurnWrite = writeLedger.measured ? (writeLedger.totals?.per_turn_tokens_amortized ?? 0) : 0;
+  const perTurnWrite = writeLedger.measured ? (writeLedger.totals?.per_turn_tokens_processed ?? 0) : 0;
   if (writeLedger.measured && readLedger.read_savings_per_session > 0) {
     const sessionsPerTurn = perTurnWrite / readLedger.read_savings_per_session;
     console.log(`  Per-turn breakeven (batch-size-independent): ${sessionsPerTurn.toFixed(1)} sessions of reuse repay one ingested turn`);
