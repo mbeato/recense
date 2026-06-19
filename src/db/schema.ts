@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -60,7 +60,7 @@ export const DDL = `
     rel         TEXT    NOT NULL,
     w           REAL    NOT NULL DEFAULT 0.1,
     last_access INTEGER NOT NULL,
-    kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link')),
+    kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link','doc_containment','doc_reference')),
     PRIMARY KEY (src, dst, rel)
   );
 
@@ -422,6 +422,40 @@ export function initSchema(db: Database.Database): void {
       INSERT INTO edge_v11 SELECT * FROM edge;
       DROP TABLE edge;
       ALTER TABLE edge_v11 RENAME TO edge;
+      COMMIT;
+    `);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_edge_dst ON edge(dst);`);
+    db.pragma('foreign_keys = ON');
+  }
+
+  // v12 migration: extend edge.kind CHECK to include 'doc_containment' and 'doc_reference'.
+  // These two new kinds support schema-anchored corpus edges (Phase 28):
+  //   doc_containment — directed parent→child schema-doc edge
+  //   doc_reference   — undirected/cosine-derived semantic peer edge
+  // SQLite cannot ALTER a CHECK constraint — table recreation is required.
+  // Guard: check whether the live edge DDL already includes 'doc_containment' — idempotent.
+  // In-memory / fresh DBs built from the updated DDL above already have the new constraint →
+  // guard skips. doc_link is NOT retired (scope-doc→scope-doc links still use it).
+  // T-28-FK: mirrors the v11 pattern exactly — foreign_keys=OFF, BEGIN/COMMIT swap, recreate idx.
+  const edgeDdlV12 = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='edge'")
+    .get() as { sql: string } | undefined)?.sql ?? '';
+  if (!edgeDdlV12.includes("'doc_containment'")) {
+    // PRAGMA foreign_keys must be set OUTSIDE a transaction (SQLite requirement).
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      BEGIN;
+      CREATE TABLE edge_v12 (
+        src         TEXT    NOT NULL REFERENCES node(id),
+        dst         TEXT    NOT NULL REFERENCES node(id),
+        rel         TEXT    NOT NULL,
+        w           REAL    NOT NULL DEFAULT 0.1,
+        last_access INTEGER NOT NULL,
+        kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link','doc_containment','doc_reference')),
+        PRIMARY KEY (src, dst, rel)
+      );
+      INSERT INTO edge_v12 SELECT * FROM edge;
+      DROP TABLE edge;
+      ALTER TABLE edge_v12 RENAME TO edge;
       COMMIT;
     `);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_edge_dst ON edge(dst);`);
