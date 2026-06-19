@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: "28-04 Tasks 1+2 complete (server.ts endpoint + corpus.js link-kind styling); stopped at Task 3 checkpoint:human-verify (hero verify — legible forest on live brain)"
-last_updated: "2026-06-19T19:15:00.000Z"
+stopped_at: Completed 28-01-PLAN.md (v12 migration + Wave-0 scaffolds)
+last_updated: "2026-06-19T17:10:11.773Z"
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 20
-  completed_plans: 15
-  percent: 60
+  completed_plans: 17
+  percent: 80
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 28 (schema-anchored-corpus) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 
 [██████████████████████████████████████] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-04 done · 27-05 COMPLETE (flat-2D corpus)
@@ -241,7 +241,7 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-19T16:46:06.850Z
+Last session: 2026-06-19T17:10:11.766Z
 Stopped at: Completed 28-01-PLAN.md (v12 migration + Wave-0 scaffolds)
 Resume file: None
 

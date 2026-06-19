@@ -207,6 +207,14 @@ export interface EngineConfig {
   claudeHeadlessExtractModel: string;
 
   /**
+   * EVAL-04 cost lever: when true, the judge head runs two-tier (cheap Haiku first,
+   * escalate to Sonnet only on a 'contradict' verdict — see TwoTierJudge). Default false
+   * (single Sonnet judge, unchanged). Toggled via env RECENSE_TWO_TIER_JUDGE in
+   * run-sleep-pass for A/B; safe because it never touches the cosine escalation gate.
+   */
+  twoTierJudge: boolean;
+
+  /**
    * OpenAI embedding model — Phase 2+ only.
    * Phase 1 uses synthetic vectors; real embedding is CONSOL-02.
    */
@@ -620,6 +628,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   claudeHeadlessModel: 'claude-sonnet-4-6',        // resolved default = judge model (higher-stakes)
   claudeHeadlessJudgeModel: 'claude-sonnet-4-6',   // spike 003: Sonnet judge on Max
   claudeHeadlessExtractModel: 'claude-haiku-4-5',  // spike 003: Haiku extract on Max
+  twoTierJudge: false,                             // EVAL-04 lever, default off (single Sonnet judge)
   openaiEmbedModel: 'text-embedding-3-small',
   embeddingDimensions: 1536,
   candidateK: 5,
