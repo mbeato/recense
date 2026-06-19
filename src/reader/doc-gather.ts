@@ -308,6 +308,61 @@ export async function gatherFactsForSchema(
   return [...byId.values()];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// computeSchemaCentroid — D-37-gated mean embedding for a schema (CORPUS-06)
+//
+// Factored out of generate-doc-cli.ts (BUG-2b fix inline copy) so that
+// generateCorpusDocs can compute centroids without importing the CLI layer.
+//
+// Gate (D-37 firewall, verbatim from CorpusPromoter and generate-doc-cli):
+//   tombstoned=0, origin!='inferred', type IN ('fact','entity'), embedding IS NOT NULL
+//
+// Pitfall 5: Float32Array decoded with byteOffset + byteLength/4, never bare Buffer.
+//
+// Returns null when no members pass the gate (semantic breadth pass is skipped —
+// spine + entity-hop still produce a doc; this is a design decision, not an error).
+//
+// Read-only — no DB writes. All SQL uses bound ? params (T-01-SQL).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Compute the D-37-gated centroid (mean embedding) for a schema node's abstracted members.
+ *
+ * @param db        SQLite database handle (read-only use).
+ * @param schemaId  UUID of the schema node whose `abstracts` edges are traversed.
+ * @returns Float32Array of the mean embedding, or null when no gated members have embeddings.
+ */
+export function computeSchemaCentroid(
+  db: Database.Database,
+  schemaId: string,
+): Float32Array | null {
+  // D-37 gate: same gated query as CorpusPromoter and SchemaRelationDeriver —
+  // inferred content cannot launder into centroid derivation.
+  const memberRows = db.prepare(
+    "SELECT m.embedding AS embedding FROM edge e " +
+    "JOIN node m ON m.id = e.dst " +
+    "WHERE e.src = ? AND e.kind = 'abstracts' " +
+    "AND m.tombstoned = 0 AND m.origin != 'inferred' " +
+    "AND m.type IN ('fact','entity') AND m.embedding IS NOT NULL",
+  ).all(schemaId) as Array<{ embedding: Buffer }>;
+
+  if (memberRows.length === 0) return null;
+
+  // Pitfall 5: decode each Buffer as a Float32Array using byteOffset + byteLength/4.
+  const vecs = memberRows.map(
+    r => new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4),
+  );
+
+  const dims = vecs[0]!.length;
+  const centroid = new Float32Array(dims);
+  for (const v of vecs) {
+    for (let i = 0; i < dims; i++) centroid[i]! += v[i]!;
+  }
+  for (let i = 0; i < dims; i++) centroid[i]! /= vecs.length;
+
+  return centroid;
+}
+
 /** A sibling doc (another live deep-dive) the generator can link to. */
 export interface SiblingDoc {
   /** Full doc NODE id (used in recense://doc/<id> refs). */

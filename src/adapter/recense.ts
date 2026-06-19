@@ -102,6 +102,10 @@ switch (cmd) {
   // lock-guarded; CORPUS-02/03/05 — LLM-free idempotent corpus-promotion pass that derives
   // doc_containment + doc_reference edges between schema-anchored doc stubs).
   case 'promote-corpus': spawnScript('promote-corpus-cli.js', process.argv.slice(3)); break;
+  // generate-corpus-cli.ts guards execution with `require.main === module` (write-capable,
+  // lock-guarded; CORPUS-06 — fills empty schema-anchored corpus doc stubs with prose via
+  // the offline judge-tier generation path; lazy-on-click stays as fallback).
+  case 'generate-corpus': spawnScript('generate-corpus-cli.js', process.argv.slice(3)); break;
   // mcp-cli exports createBrainMcpServer for tests, so its CLI entry is guarded by
   // `require.main === module` — a bare require() here would never fire the guard
   // (require.main stays recense.js) and the server would never start.
@@ -115,7 +119,7 @@ switch (cmd) {
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, import-memory, dedup-entities, dedup-facts, generate-doc, promote-corpus, snapshot, scheduler, mcp, serve\n',
+      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, import-memory, dedup-entities, dedup-facts, generate-doc, promote-corpus, generate-corpus, snapshot, scheduler, mcp, serve\n',
     );
     process.exit(1);
 }

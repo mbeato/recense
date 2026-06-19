@@ -31,6 +31,7 @@ import { realClock } from '../lib/clock';
 import { SemanticStore } from '../db/semantic-store';
 import { DefaultModelProvider } from '../model/provider';
 import { generateDoc, generateDocForSchema } from '../reader/doc-generator';
+import { computeSchemaCentroid } from '../reader/doc-gather';
 import { writeDoc } from '../consolidation/doc-writer';
 import { acquireLock, releaseLock } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
@@ -152,27 +153,10 @@ async function main(): Promise<void> {
     let genResult;
     if (schemaRow) {
       // Centroid = mean of the schema's abstracted live observed fact/entity member embeddings
-      // (D-37 gate, verbatim from CorpusPromoter — Pitfall 5 byteOffset decode). null → the
-      // semantic-breadth pass is skipped; spine + entity-hop still produce a doc.
-      const memberRows = db.prepare(
-        "SELECT m.embedding AS embedding FROM edge e " +
-        "JOIN node m ON m.id = e.dst " +
-        "WHERE e.src = ? AND e.kind = 'abstracts' " +
-        "AND m.tombstoned = 0 AND m.origin != 'inferred' " +
-        "AND m.type IN ('fact','entity') AND m.embedding IS NOT NULL",
-      ).all(slug) as Array<{ embedding: Buffer }>;
-
-      let centroid: Float32Array | null = null;
-      const vecs = memberRows.map(
-        r => new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4),
-      );
-      if (vecs.length > 0) {
-        const dims = vecs[0]!.length;
-        centroid = new Float32Array(dims);
-        for (const v of vecs) for (let i = 0; i < dims; i++) centroid[i]! += v[i]!;
-        for (let i = 0; i < dims; i++) centroid[i]! /= vecs.length;
-      }
-      fileLog(`schema-anchored: label="${schemaRow.value}" members=${memberRows.length} centroid=${centroid ? 'yes' : 'null'}`);
+      // (D-37 gate, Pitfall 5 byteOffset decode). Delegated to computeSchemaCentroid (CORPUS-06)
+      // so the logic is defined once; null → semantic-breadth pass is skipped.
+      const centroid = computeSchemaCentroid(db, slug);
+      fileLog(`schema-anchored: label="${schemaRow.value}" centroid=${centroid ? 'yes' : 'null'}`);
       genResult = await generateDocForSchema(
         { db, store, provider },
         { schemaId: slug, centroid, schemaLabel: schemaRow.value },
