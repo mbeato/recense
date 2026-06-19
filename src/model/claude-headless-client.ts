@@ -30,6 +30,12 @@
  * (NOT a throw): parseVerdict('') → SAFE 'unrelated' and parseClaims('') → [] are the
  * production fail-safes, so a transient `claude` failure degrades that one call instead
  * of crashing the always-on sleep pass.
+ *
+ * USAGE SINK (EVAL-04): optional, installed via setHeadlessUsageSink(fn). When set,
+ * on every successful (code 0, parseable envelope) call the sink receives the usage
+ * fields from the JSON envelope. The sink is NEVER called on failure/timeout/unparseable
+ * paths. A throwing sink is swallowed (try/catch) — it can never affect the production
+ * result. Default is null (no sink): zero behavior change, one null check per call.
  */
 import { spawn } from 'node:child_process';
 import os from 'node:os';
@@ -45,6 +51,35 @@ import type { AnthropicLike } from './anthropic-client';
  */
 export const NEUTRAL_SYSTEM =
   'Output only the direct answer to the user message. No preamble, no commentary, no tool use, no markdown fences unless the user asks for them.';
+
+/**
+ * Usage payload delivered to the optional sink on each successful headless call.
+ * Fields mirror the `claude -p --output-format json` envelope exactly.
+ * Declared optional to match real envelope variance (e.g. subscription may omit
+ * total_cost_usd in some responses).
+ */
+export interface HeadlessUsage {
+  model: string;
+  usage?: Record<string, number>;
+  total_cost_usd?: number;
+  duration_ms?: number;
+}
+
+/**
+ * Optional per-call usage sink (EVAL-04). Null by default — zero production cost.
+ * Never called on failure, timeout, or unparseable envelope. Throwing sinks are
+ * swallowed so they can NEVER affect the production result.
+ */
+let usageSink: ((u: HeadlessUsage) => void) | null = null;
+
+/**
+ * Install or clear the optional usage sink.
+ * Pass null to clear (subsequent calls will not invoke the sink).
+ * Thread-safety: single-process use; Node.js event loop is single-threaded.
+ */
+export function setHeadlessUsageSink(fn: ((u: HeadlessUsage) => void) | null): void {
+  usageSink = fn;
+}
 
 /** Default per-call timeout; env-overridable via RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS. */
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -146,10 +181,29 @@ export function createClaudeHeadlessClient(config: EngineConfig): { client: Anth
             // --output-format json → stdout is a JSON envelope; the answer is `.result`.
             let text = '';
             try {
-              const envelope = JSON.parse(stdout) as { result?: unknown };
+              const envelope = JSON.parse(stdout) as {
+                result?: unknown;
+                usage?: Record<string, number>;
+                total_cost_usd?: number;
+                duration_ms?: number;
+              };
               text = typeof envelope.result === 'string' ? envelope.result : '';
+              // EVAL-04 usage sink: invoke on success only (failure/timeout excluded above).
+              // Wrapped in try/catch so a throwing sink NEVER affects the production result.
+              if (usageSink !== null) {
+                try {
+                  usageSink({
+                    model: useModel,
+                    usage: envelope.usage,
+                    total_cost_usd: envelope.total_cost_usd,
+                    duration_ms: envelope.duration_ms,
+                  });
+                } catch {
+                  // Sink errors are swallowed — best-effort emit guard.
+                }
+              }
             } catch {
-              text = ''; // unparseable envelope → fail-safe empty
+              text = ''; // unparseable envelope → fail-safe empty (sink NOT called)
             }
             resolve(shape(text));
           });

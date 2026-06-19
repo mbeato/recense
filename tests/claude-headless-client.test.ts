@@ -11,7 +11,7 @@
  */
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // --- mock node:child_process.spawn -----------------------------------------
 const spawnCalls: Array<{ bin: string; args: string[]; opts: any; stdin: string }> = [];
@@ -41,7 +41,7 @@ vi.mock('node:child_process', () => ({
   }),
 }));
 
-import { createClaudeHeadlessClient } from '../src/model/claude-headless-client';
+import { createClaudeHeadlessClient, setHeadlessUsageSink } from '../src/model/claude-headless-client';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 
 function cfg(overrides: Record<string, unknown> = {}) {
@@ -52,6 +52,12 @@ describe('createClaudeHeadlessClient', () => {
   beforeEach(() => {
     spawnCalls.length = 0;
     nextClose = { code: 0, stdout: '' };
+    // Always reset the sink so tests never leak state into each other.
+    setHeadlessUsageSink(null);
+  });
+
+  afterEach(() => {
+    setHeadlessUsageSink(null);
   });
 
   it('builds the lean argv with the resolved --model and parses the envelope', async () => {
@@ -128,5 +134,116 @@ describe('createClaudeHeadlessClient', () => {
       messages: [{ role: 'user', content: [{ type: 'text', text: 'block prompt' }] }],
     } as any);
     expect(spawnCalls[0]!.stdin).toBe('block prompt');
+  });
+
+  // ── EVAL-04 usage sink tests ────────────────────────────────────────────────
+
+  it('default (null sink): sink is never called and behavior is identical', async () => {
+    const spy = vi.fn();
+    // Do NOT install the sink — verify the default null path.
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'answer', usage: { input_tokens: 10 }, total_cost_usd: 0.001, duration_ms: 500 }) };
+    const { client } = createClaudeHeadlessClient(cfg({ claudeHeadlessModel: 'claude-haiku-4-5' }));
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+    // Production result unchanged.
+    expect(msg.content).toEqual([{ type: 'text', text: 'answer' }]);
+    // Spy was never installed — it was never called.
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('installed sink receives parsed usage from a successful call', async () => {
+    const usagePayload = {
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 10,
+    };
+    nextClose = {
+      code: 0,
+      stdout: JSON.stringify({
+        result: 'ok',
+        usage: usagePayload,
+        total_cost_usd: 0.0012,
+        duration_ms: 1234,
+      }),
+    };
+
+    const captured: unknown[] = [];
+    setHeadlessUsageSink(u => captured.push(u));
+
+    const { client } = createClaudeHeadlessClient(cfg({ claudeHeadlessModel: 'claude-sonnet-4-6' }));
+    const msg = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'judge prompt' }],
+    } as any);
+
+    // Production result unchanged.
+    expect(msg.content).toEqual([{ type: 'text', text: 'ok' }]);
+    // Sink called exactly once with the correct payload.
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({
+      model: 'claude-sonnet-4-6',
+      usage: usagePayload,
+      total_cost_usd: 0.0012,
+      duration_ms: 1234,
+    });
+  });
+
+  it('failure path (non-zero exit) does not invoke the sink', async () => {
+    nextClose = { code: 1, stdout: JSON.stringify({ result: 'irrelevant', usage: { input_tokens: 9 }, total_cost_usd: 0.0001 }) };
+
+    const captured: unknown[] = [];
+    setHeadlessUsageSink(u => captured.push(u));
+
+    const { client } = createClaudeHeadlessClient(cfg());
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+
+    // Fail-safe empty result.
+    expect(msg.content).toEqual([{ type: 'text', text: '' }]);
+    // Sink must NOT be called on failure — no usage to report.
+    expect(captured).toHaveLength(0);
+  });
+
+  it('a throwing sink does not break the call (result still returned)', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'safe', usage: { input_tokens: 5 }, total_cost_usd: 0.0005, duration_ms: 300 }) };
+
+    setHeadlessUsageSink(() => { throw new Error('sink exploded'); });
+
+    const { client } = createClaudeHeadlessClient(cfg({ claudeHeadlessModel: 'claude-haiku-4-5' }));
+    // Must not throw.
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+
+    // Production result is unaffected — throwing sink is swallowed.
+    expect(msg.content).toEqual([{ type: 'text', text: 'safe' }]);
+  });
+
+  it('setHeadlessUsageSink(null) clears the sink; subsequent calls do not invoke it', async () => {
+    const captured: unknown[] = [];
+    setHeadlessUsageSink(u => captured.push(u));
+    // Clear it.
+    setHeadlessUsageSink(null);
+
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'after-clear', usage: { input_tokens: 1 }, total_cost_usd: 0.00001, duration_ms: 100 }) };
+    const { client } = createClaudeHeadlessClient(cfg());
+    await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+
+    // Sink was cleared — never called.
+    expect(captured).toHaveLength(0);
   });
 });
