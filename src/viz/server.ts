@@ -152,8 +152,14 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     JOIN node_doc nd ON nd.node_id = n.id
     WHERE n.type='doc' AND n.tombstoned=0
   `);
+  // CORPUS-04: Return doc_link + doc_containment + doc_reference edges, but only between
+  // live (tombstoned=0) doc nodes on both ends. Dangling edges whose src or dst has been
+  // tombstoned or is not a doc node are excluded (T-28-DANGLE guard).
   const stmtDocLinks = db.prepare(
-    "SELECT src, dst, rel, w, kind FROM edge WHERE kind='doc_link'"
+    "SELECT src, dst, rel, w, kind FROM edge" +
+    " WHERE kind IN ('doc_link','doc_containment','doc_reference')" +
+    " AND src IN (SELECT id FROM node WHERE type='doc' AND tombstoned=0)" +
+    " AND dst IN (SELECT id FROM node WHERE type='doc' AND tombstoned=0)"
   );
 
   // Compile /doc?slug= prepared statements once (READER-02, T-27-11 — read-only only).

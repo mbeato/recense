@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Completed 28-02-PLAN.md (gatherFactsForSchema + schema-thesis generator)
-last_updated: "2026-06-19T16:46:06.857Z"
+stopped_at: "28-03 Task 1 complete (CorpusPromoter); stopped at Task 2 checkpoint:human-verify (CORPUS-05 regression gate)"
+last_updated: "2026-06-19T18:00:00.000Z"
 progress:
   total_phases: 5
   completed_phases: 3
