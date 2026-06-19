@@ -290,12 +290,15 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).toContain('type=doc');
   });
 
-  it('source: server.ts has kind=doc_link filter for corpus endpoint', () => {
+  it('source: server.ts has kind filter for corpus endpoint (doc_link, doc_containment, doc_reference)', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/server.ts'),
       'utf8',
     );
-    expect(src).toMatch(/kind\s*=\s*'doc_link'/);
+    // CORPUS-04: stmtDocLinks now selects all three doc-edge kinds via IN (...)
+    expect(src).toContain("'doc_link'");
+    expect(src).toContain("'doc_containment'");
+    expect(src).toContain("'doc_reference'");
   });
 
   it('source: corpus.js owns #btn-corpus + 2D force-graph + /graph?type=doc fetch', () => {
@@ -428,42 +431,248 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Wave-0 scaffold: doc_containment / doc_reference edges (CORPUS-04)
+// CORPUS-04: doc_containment / doc_reference edges — endpoint + renderer
 // ---------------------------------------------------------------------------
 //
-// These tests are intentionally SKIPPED. Plan 28-04 (corpus endpoint + renderer)
-// will update server.ts (stmtDocLinks) and corpus.js (link-kind styling)
-// and unskip these assertions.
-// The describe.skip keeps the suite GREEN while providing a failing target.
+// Plan 28-04: server.ts stmtDocLinks now returns all three kinds; corpus.js
+// styles them by link.kind (containment solid/directed, reference faint/dashed).
 
-describe.skip('doc_containment/doc_reference edges in corpus endpoint and renderer (CORPUS-04)', () => {
-  it.todo(
+describe('doc_containment/doc_reference edges in corpus endpoint and renderer (CORPUS-04)', () => {
+  let dbPath: string;
+  let db: Database.Database;
+  let store: SemanticStore;
+  let server: http.Server;
+  let port: number;
+
+  beforeEach(async () => {
+    dbPath = makeTempDbPath();
+    db = new Database(dbPath);
+    db.pragma('foreign_keys = ON');
+    initSchema(db);
+    store = makeStore(db);
+
+    // Three doc nodes: parent, child (containment from parent), sibling (reference to parent)
+    writeDoc(store, db, {
+      docId: 'doc-parent',
+      slug: 'parent',
+      markdown: '# Parent Schema',
+      citedFactIds: [],
+      linkedDocRefs: [],
+      now: 1000,
+    });
+    writeDoc(store, db, {
+      docId: 'doc-child',
+      slug: 'child',
+      markdown: '# Child Schema',
+      citedFactIds: [],
+      linkedDocRefs: [],
+      now: 1100,
+    });
+    writeDoc(store, db, {
+      docId: 'doc-sibling',
+      slug: 'sibling',
+      markdown: '# Sibling Schema',
+      citedFactIds: [],
+      linkedDocRefs: [],
+      now: 1200,
+    });
+
+    // A tombstoned doc — edges to/from it must be excluded from the payload.
+    writeDoc(store, db, {
+      docId: 'doc-dead',
+      slug: 'dead',
+      markdown: '# Dead',
+      citedFactIds: [],
+      linkedDocRefs: [],
+      now: 1300,
+    });
+    // Tombstone it directly via the node table.
+    db.prepare("UPDATE node SET tombstoned=1 WHERE id='doc-dead'").run();
+
+    // doc_containment: parent → child (directed spine)
+    store.upsertEdge({
+      src: 'doc-parent',
+      dst: 'doc-child',
+      rel: 'doc_containment',
+      kind: 'doc_containment',
+      w: 1.0,
+      last_access: 2000,
+    });
+
+    // doc_reference: sibling ↔ parent (undirected cross-link, modelled as src→dst)
+    store.upsertEdge({
+      src: 'doc-sibling',
+      dst: 'doc-parent',
+      rel: 'doc_reference',
+      kind: 'doc_reference',
+      w: 0.7,
+      last_access: 2100,
+    });
+
+    // doc_link: child → sibling (classic cross-project link)
+    store.upsertEdge({
+      src: 'doc-child',
+      dst: 'doc-sibling',
+      rel: 'doc_link',
+      kind: 'doc_link',
+      w: 1.0,
+      last_access: 2200,
+    });
+
+    // Edge from live doc to tombstoned doc — must be EXCLUDED (T-28-DANGLE).
+    store.upsertEdge({
+      src: 'doc-parent',
+      dst: 'doc-dead',
+      rel: 'doc_containment',
+      kind: 'doc_containment',
+      w: 0.9,
+      last_access: 2300,
+    });
+
+    // Non-doc edges (cites, relation) — must never appear in the corpus payload.
+    seedFact(store, 'fact-x');
+    store.upsertEdge({
+      src: 'doc-parent',
+      dst: 'fact-x',
+      rel: 'cites',
+      kind: 'cites',
+      w: 1.0,
+      last_access: 2400,
+    });
+
+    db.close();
+
+    port = await getFreePort();
+    server = startVizServer(dbPath, port);
+    await new Promise<void>(r => server.once('listening', r));
+  });
+
+  afterEach(async () => {
+    await new Promise<void>(r => server.close(() => r()));
+    try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-shm'); } catch { /* ignore */ }
+  });
+
+  it(
     'GET /graph?type=doc returns doc_containment edges alongside doc_link edges ' +
     'when CorpusPromoter has written doc_containment rows between doc nodes',
+    async () => {
+      const res = await makeRequest(port, '/graph?type=doc');
+      expect(res.statusCode).toBe(200);
+      const data = JSON.parse(res.body) as {
+        nodes: unknown[];
+        links: Array<{ source: string; target: string; kind: string }>;
+      };
+      const containment = data.links.filter(l => l.kind === 'doc_containment');
+      expect(containment.length).toBeGreaterThan(0);
+      // The parent → child link must be present
+      const spine = containment.find(l => l.source === 'doc-parent' && l.target === 'doc-child');
+      expect(spine).toBeDefined();
+    },
   );
-  it.todo(
+
+  it(
     'GET /graph?type=doc returns doc_reference edges alongside doc_link edges ' +
     'when CorpusPromoter has written doc_reference rows between doc nodes',
+    async () => {
+      const res = await makeRequest(port, '/graph?type=doc');
+      expect(res.statusCode).toBe(200);
+      const data = JSON.parse(res.body) as {
+        nodes: unknown[];
+        links: Array<{ source: string; target: string; kind: string }>;
+      };
+      const refs = data.links.filter(l => l.kind === 'doc_reference');
+      expect(refs.length).toBeGreaterThan(0);
+      const crossLink = refs.find(l => l.source === 'doc-sibling' && l.target === 'doc-parent');
+      expect(crossLink).toBeDefined();
+    },
   );
-  it.todo(
+
+  it(
     'GET /graph?type=doc only returns edges where both src and dst are live doc nodes ' +
     '(no cites/relation/abstracts edges leak through)',
+    async () => {
+      const res = await makeRequest(port, '/graph?type=doc');
+      expect(res.statusCode).toBe(200);
+      const data = JSON.parse(res.body) as {
+        nodes: unknown[];
+        links: Array<{ source: string; target: string; kind: string }>;
+      };
+      // No cites or relation edges
+      for (const l of data.links) {
+        expect(['doc_link', 'doc_containment', 'doc_reference']).toContain(l.kind);
+      }
+      // Edge to tombstoned doc must be excluded (T-28-DANGLE)
+      const dangling = data.links.filter(l => l.target === 'doc-dead' || l.source === 'doc-dead');
+      expect(dangling).toHaveLength(0);
+    },
   );
-  it.todo(
+
+  it(
     'source: server.ts stmtDocLinks fetches kind IN (doc_link, doc_containment, doc_reference) ' +
     'with src/dst doc-node filter',
+    () => {
+      const src = fs.readFileSync(
+        path.resolve(__dirname, '../src/viz/server.ts'),
+        'utf8',
+      );
+      // The three kinds must all appear in the stmtDocLinks block
+      expect(src).toContain('doc_containment');
+      expect(src).toContain('doc_reference');
+      expect(src).toContain('doc_link');
+      // Both-endpoints-live guard
+      expect(src).toMatch(/tombstoned\s*=\s*0/);
+    },
   );
-  it.todo(
+
+  it(
     'source: corpus.js linkDirectionalArrowLength is non-zero for doc_containment links ' +
     'and zero for doc_reference links (directed vs undirected rendering)',
+    () => {
+      const src = fs.readFileSync(
+        path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+        'utf8',
+      );
+      expect(src).toContain('linkDirectionalArrowLength');
+      // containment gets a non-zero arrow; reference gets 0 (undirected)
+      expect(src).toMatch(/doc_containment.*?4|4.*?doc_containment/s);
+    },
   );
-  it.todo(
+
+  it(
     'source: corpus.js linkLineDash returns [2,2] for doc_reference links ' +
     'and null for doc_containment links (solid vs dashed)',
+    () => {
+      const src = fs.readFileSync(
+        path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+        'utf8',
+      );
+      expect(src).toContain('linkLineDash');
+      // reference gets a dash pattern; containment gets null (solid)
+      expect(src).toMatch(/doc_reference/);
+      expect(src).toMatch(/\[2,\s*2\]/);
+    },
   );
-  it.todo(
+
+  it(
     'source: corpus.js linkColor distinguishes doc_containment from doc_reference ' +
     '(distinct color constants in corpus.js)',
+    () => {
+      const src = fs.readFileSync(
+        path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+        'utf8',
+      );
+      // A dedicated containment color constant must exist
+      expect(src).toContain('CONTAINMENT_COLOR');
+      // It must be referenced in a linkColor callback
+      expect(src).toMatch(/linkColor/);
+      // CONTAINMENT_COLOR and LINK_REST must NOT be amber (#ffb866/ff8c00) or cyan (#00bfff)
+      // (amber is activation-only HOVER_NODE; the palette rule is founder-locked).
+      // Check the constant definitions directly (not comments, which may mention the word).
+      expect(src).not.toMatch(/const CONTAINMENT_COLOR\s*=\s*['"][^'"]*(?:ff8c00|ffb866|00bfff)[^'"]*['"]/i);
+      expect(src).not.toMatch(/const LINK_REST\s*=\s*['"][^'"]*(?:ff8c00|ffb866|00bfff)[^'"]*['"]/i);
+    },
   );
 });
 
