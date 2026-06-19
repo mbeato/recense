@@ -30,6 +30,7 @@ import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
 import { SchemaRelationDeriver } from '../consolidation/schema-relations';
 import { CorpusPromoter } from '../consolidation/corpus-promoter';
+import { generateCorpusDocs } from '../consolidation/corpus-generator';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
@@ -379,6 +380,32 @@ export async function runConsolidation(
   // the nodes THIS pass touches — consolidation_event.ts (ms) bounds the pass.
   const passStartTs = realClock.nowMs();
   await consolidator.consolidate();
+
+  // CORPUS-06: Offline corpus doc generation — fill empty schema-anchored stub docs
+  // with prose NOW (while the sleep pass holds its lock) so the online /doc click
+  // never pays the ~42s LLM cost. Runs AFTER consolidate() so CorpusPromoter (Phase C
+  // inside the consolidator) has already created any new stubs this pass produced.
+  //
+  // Env gates:
+  //   RECENSE_CORPUS_GEN=0   → skip entirely (default: on)
+  //   RECENSE_CORPUS_GEN_MAX → override the per-pass maxDocs cap (default: 25)
+  if (env['RECENSE_CORPUS_GEN'] !== '0') {
+    const maxDocs = parseInt(env['RECENSE_CORPUS_GEN_MAX'] ?? '25', 10) || 25;
+    try {
+      const corpusGenResult = await generateCorpusDocs(
+        { db, store, provider: inducerProvider },
+        { maxDocs, log, now: realClock.nowMs() },
+      );
+      log(
+        `CORPUS-06: generated=${corpusGenResult.generated} ` +
+        `failed=${corpusGenResult.failed} deferred=${corpusGenResult.deferred}`,
+      );
+    } catch (err) {
+      // Best-effort: corpus generation failure MUST NOT abort the sleep pass
+      // (which has already successfully run consolidation). Log and continue.
+      log(`CORPUS-06: corpus generation threw unexpectedly: ${err}`);
+    }
+  }
 
   // Phase 999.3 (SCOPE-01, D-S3): stamp single-tenant provenance scope on the nodes this
   // pass touched, from their contributing-episode cwd. Additive + best-effort — runs after
