@@ -1,0 +1,112 @@
+[
+  {
+    "case_id": 1,
+    "persona": "Marcus Bell",
+    "initial_fact": "Marcus has been a strict vegetarian for ten years",
+    "contradicting_fact": "At dinner Marcus ordered a ribeye steak and mentioned he started eating meat again last spring",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.4,
+    "query_probe": "What is Marcus's diet?",
+    "expected_answer_hint": "meat"
+  },
+  {
+    "case_id": 2,
+    "persona": "Priya Nair",
+    "initial_fact": "Priya is allergic to penicillin",
+    "contradicting_fact": "Priya's allergist retested her and found the penicillin allergy was a misdiagnosis; she tolerates penicillin fine now",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.4,
+    "query_probe": "Is Priya allergic to penicillin?",
+    "expected_answer_hint": "tolerates"
+  },
+  {
+    "case_id": 3,
+    "persona": "Sofia Reyes",
+    "initial_fact": "Sofia is based in Austin",
+    "contradicting_fact": "Sofia relocated to Seattle over the summer for a new role at a startup",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.4,
+    "query_probe": "Where is Sofia based?",
+    "expected_answer_hint": "Seattle"
+  },
+  {
+    "case_id": 4,
+    "persona": "Liam Walsh",
+    "initial_fact": "Liam works as a junior analyst at the firm",
+    "contradicting_fact": "Liam was promoted twice over two years and now runs the entire analytics department as its director",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.4,
+    "query_probe": "What is Liam's role at the firm?",
+    "expected_answer_hint": "director"
+  },
+  {
+    "case_id": 5,
+    "persona": "Noah Kim",
+    "initial_fact": "Noah's commute is 45 minutes each way",
+    "contradicting_fact": "Since moving closer to the office Noah's commute dropped to about 15 minutes",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.3,
+    "query_probe": "How long is Noah's commute?",
+    "expected_answer_hint": "15"
+  },
+  {
+    "case_id": 6,
+    "persona": "Emma Carter",
+    "initial_fact": "Emma is engaged to her partner Jack",
+    "contradicting_fact": "Emma and Jack called off the wedding and split up in the fall",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.4,
+    "query_probe": "What is Emma's relationship status with Jack?",
+    "expected_answer_hint": "split"
+  },
+  {
+    "case_id": 7,
+    "persona": "Omar Haddad",
+    "initial_fact": "Omar's favorite way to work is fully remote",
+    "contradicting_fact": "Omar said he actually prefers being in the office now; remote work left him feeling isolated",
+    "control_type": "contradiction",
+    "expected_relation": "contradict",
+    "magnitude": 0.3,
+    "query_probe": "How does Omar prefer to work?",
+    "expected_answer_hint": "office"
+  },
+  {
+    "case_id": 8,
+    "persona": "Hana Suzuki",
+    "initial_fact": "Hana lives in Portland, Oregon",
+    "contradicting_fact": "Hana's home is up in the Pacific Northwest, in Portland to be exact",
+    "control_type": "confirm",
+    "expected_relation": "confirm",
+    "magnitude": 0.0,
+    "query_probe": "Where does Hana live?",
+    "expected_answer_hint": "Portland"
+  },
+  {
+    "case_id": 9,
+    "persona": "Raj Patel",
+    "initial_fact": "Raj drives a Toyota",
+    "contradicting_fact": "Raj drives a blue 2019 Toyota Camry",
+    "control_type": "extend",
+    "expected_relation": "extend",
+    "magnitude": 0.0,
+    "query_probe": "What car does Raj drive?",
+    "expected_answer_hint": "Camry"
+  },
+  {
+    "case_id": 10,
+    "persona": "Tara Lindqvist",
+    "initial_fact": "Tara plays the violin",
+    "contradicting_fact": "Tara started learning the piano this year",
+    "control_type": "unrelated",
+    "expected_relation": "unrelated",
+    "magnitude": 0.0,
+    "query_probe": "What instruments does Tara play?",
+    "expected_answer_hint": "violin"
+  }
+]

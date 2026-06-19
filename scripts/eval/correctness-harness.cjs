@@ -54,6 +54,22 @@ const { NoopActivationTraceSink } = require('../../dist/src/viz/activation-sink'
 // runConsolidation and OpenAIEmbedder are only invoked in non-dry-run paths
 const { runConsolidation }    = require('../../dist/src/consolidation/run-sleep-pass');
 const { OpenAIEmbedder }      = require('../../dist/src/model/embedder');
+// EVAL-04 cost instrumentation: capture per-model headless usage across the whole run.
+// Extract (Haiku) is identical between baseline and two-tier runs, so the Haiku-up /
+// Sonnet-down delta between two runs isolates the JUDGE cost effect of the two-tier lever.
+const { setHeadlessUsageSink } = require('../../dist/src/model/claude-headless-client');
+const CAPTURE_USAGE = process.argv.includes('--capture-usage');
+const usageByModel = {}; // { model: { calls, input, output, cache_w, cache_r } }
+if (CAPTURE_USAGE && !DRY_RUN) {
+  setHeadlessUsageSink(u => {
+    const m = usageByModel[u.model] || (usageByModel[u.model] = { calls: 0, input: 0, output: 0, cache_w: 0, cache_r: 0 });
+    m.calls++;
+    m.input  += u.usage?.input_tokens ?? 0;
+    m.output += u.usage?.output_tokens ?? 0;
+    m.cache_w += u.usage?.cache_creation_input_tokens ?? 0;
+    m.cache_r += u.usage?.cache_read_input_tokens ?? 0;
+  });
+}
 
 // ---- API key guard (real runs only) -----------------------------------------
 if (!DRY_RUN) {
@@ -343,12 +359,33 @@ function aggregate(rows) {
     dry_run: DRY_RUN,
   };
 
+  // ── EVAL-04 usage report (--capture-usage) ──────────────────────────────────
+  let usageReport = null;
+  if (CAPTURE_USAGE && !DRY_RUN) {
+    setHeadlessUsageSink(null);
+    let allTok = 0;
+    const perModel = {};
+    for (const [model, m] of Object.entries(usageByModel)) {
+      const total = m.input + m.output + m.cache_w + m.cache_r;
+      allTok += total;
+      perModel[model] = { ...m, total };
+    }
+    usageReport = { two_tier: process.env.RECENSE_TWO_TIER_JUDGE === '1', per_model: perModel, all_tokens: allTok };
+    console.log('\n=== HEADLESS USAGE (judge cost) ===');
+    console.log(`  two_tier judge: ${usageReport.two_tier}`);
+    for (const [model, m] of Object.entries(perModel)) {
+      console.log(`  ${model}: calls=${m.calls} in=${m.input} out=${m.output} cache_r=${m.cache_r} total=${m.total}`);
+    }
+    console.log(`  ALL tokens: ${allTok}`);
+  }
+
   const resultEnvelope = {
     meta,
     scores: {
       brain_memory:      brainMemoryScore,
       add_only_baseline: addOnlyScore,
     },
+    ...(usageReport ? { usage: usageReport } : {}),
     per_case: [
       ...addOnlyRows,
       ...brainMemoryRows,
