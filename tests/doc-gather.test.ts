@@ -16,7 +16,8 @@ import { SemanticStore } from '../src/db/semantic-store';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { ModelProvider } from '../src/model/provider';
-import { gatherFacts, gatherSiblingDocs } from '../src/reader/doc-gather';
+import { gatherFacts, gatherFactsForSchema, gatherSiblingDocs } from '../src/reader/doc-gather';
+import type { GatherSchemaParams } from '../src/reader/doc-gather';
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -189,30 +190,187 @@ describe('gatherFacts', () => {
   });
 });
 
-// ── gatherFactsForSchema (CORPUS-01) — Wave-0 scaffold ────────────────────
+// ── gatherFactsForSchema (CORPUS-01) ──────────────────────────────────────
 //
-// These tests are intentionally SKIPPED. Plan 28-02 (schema-anchored gather)
-// will add gatherFactsForSchema to doc-gather.ts and unskip these assertions.
-// The describe.skip keeps the suite GREEN while providing a failing target.
+// Tests for schema-anchored gather (D-09): evidence-set spine (kind='abstracts')
+// + centroid-seeded semantic breadth + entity-hop re-rooted at schema's entities.
+// Unskipped and fleshed out by Plan 28-02.
 
-describe.skip('gatherFactsForSchema (CORPUS-01)', () => {
-  it.todo(
-    'returns facts from the schema evidence set (kind=abstracts edges from schemaId to live facts/entities)',
-  );
-  it.todo(
-    'returns entity-hop 1-hop fact neighbors of entities that are direct abstracts members of the schema',
-  );
-  it.todo(
-    'semantic breadth: returns semantically-near facts via hybridTopk seeded by schema centroid',
-  );
-  it.todo('tombstoned facts are excluded from all sources');
-  it.todo('multi-source facts are deduped to one row with combined via tags');
-  it.todo('returns GatheredFact[] with id, value, c, origin, last_access, via fields');
-  it.todo(
-    'gatherFactsForSchema with a null centroid skips the semantic pass (no embed call) ' +
-    'but still returns spine + entity-hop facts',
-  );
-  it.todo('does NOT touch source schema s/c/embedding (read-only guard, CORPUS-05)');
+/** Seed a schema node (type='entity' proxy — schema is an entity node in the DB). */
+function seedSchema(
+  store: SemanticStore,
+  id: string,
+  label: string,
+): void {
+  store.upsertNode({
+    id,
+    type: 'schema',
+    value: label,
+    origin: 'inferred',
+    s: 0,
+    c: 1.0,
+    last_access: 5000,
+  });
+}
+
+describe('gatherFactsForSchema (CORPUS-01)', () => {
+  test('returns facts from the schema evidence set (kind=abstracts edges from schemaId to live facts)', async () => {
+    const { db, store, provider } = makeGatherDeps();
+    seedSchema(store, 'schema-a', 'infrastructure patterns');
+    // 3 facts that the schema directly abstracts
+    seedFact(store, 'fact-ev1', 'evidence fact 1 about infra');
+    seedFact(store, 'fact-ev2', 'evidence fact 2 about infra');
+    seedFact(store, 'fact-ev3', 'evidence fact 3 about infra');
+    // wire kind='abstracts' edges
+    store.upsertEdge({ src: 'schema-a', dst: 'fact-ev1', rel: 'abstracts', kind: 'abstracts', w: 1 });
+    store.upsertEdge({ src: 'schema-a', dst: 'fact-ev2', rel: 'abstracts', kind: 'abstracts', w: 1 });
+    store.upsertEdge({ src: 'schema-a', dst: 'fact-ev3', rel: 'abstracts', kind: 'abstracts', w: 1 });
+    // a fact NOT abstracted by the schema — must NOT appear
+    seedFact(store, 'fact-other', 'unrelated fact not in schema');
+
+    const params: GatherSchemaParams = { schemaId: 'schema-a', centroid: null };
+    const results = await gatherFactsForSchema({ db, store, provider }, params);
+    const ids = results.map(r => r.id);
+    expect(ids).toContain('fact-ev1');
+    expect(ids).toContain('fact-ev2');
+    expect(ids).toContain('fact-ev3');
+    expect(ids).not.toContain('fact-other');
+    expect(results.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test('returns entity-hop 1-hop fact neighbors of entities that are direct abstracts members of the schema', async () => {
+    const { db, store, provider } = makeGatherDeps();
+    seedSchema(store, 'schema-b', 'system entities');
+    // An entity directly abstracted by the schema
+    seedEntity(store, 'entity-sys', 'the system entity');
+    store.upsertEdge({ src: 'schema-b', dst: 'entity-sys', rel: 'abstracts', kind: 'abstracts', w: 1 });
+    // A fact that is a 1-hop neighbor of entity-sys (reachable only via entity-hop)
+    seedFact(store, 'fact-hop', 'linked fact only reachable via entity hop');
+    store.upsertEdge({ src: 'entity-sys', dst: 'fact-hop', rel: 'relation', kind: 'relation', w: 1 });
+
+    const params: GatherSchemaParams = { schemaId: 'schema-b', centroid: null };
+    const results = await gatherFactsForSchema({ db, store, provider }, params);
+    const ids = results.map(r => r.id);
+    expect(ids).toContain('fact-hop');
+    // via must include 'linked'
+    const hopRow = results.find(r => r.id === 'fact-hop');
+    expect(hopRow?.via).toMatch(/linked/);
+  });
+
+  test('semantic breadth: returns semantically-near facts via hybridTopk seeded by schema centroid', async () => {
+    const queryVec = new Float32Array([1, 0, 0, 0]);
+    const semanticFactVec = new Float32Array([1, 0, 0, 0]); // identical → high cosine
+    const { db, store, provider } = makeGatherDeps(queryVec);
+
+    seedSchema(store, 'schema-c', 'semantics');
+    // fact with a matching embedding — no abstracts edge, no entity-hop — only semantic
+    seedFact(store, 'fact-semantic', 'semantically close fact with no abstracts link', {
+      embedding: semanticFactVec,
+    });
+
+    const params: GatherSchemaParams = { schemaId: 'schema-c', centroid: queryVec };
+    const results = await gatherFactsForSchema({ db, store, provider }, params);
+    const ids = results.map(r => r.id);
+    expect(ids).toContain('fact-semantic');
+    // Verify via contains 'semantic'
+    const semRow = results.find(r => r.id === 'fact-semantic');
+    expect(semRow?.via).toMatch(/semantic/);
+  });
+
+  test('tombstoned facts are excluded from all sources', async () => {
+    const { db, store, provider } = makeGatherDeps();
+    seedSchema(store, 'schema-d', 'test schema');
+    // tombstoned fact connected via abstracts — must be excluded
+    seedFact(store, 'fact-tomb', 'tombstoned evidence', { tombstoned: true });
+    store.upsertEdge({ src: 'schema-d', dst: 'fact-tomb', rel: 'abstracts', kind: 'abstracts', w: 1 });
+    // live fact connected via abstracts — must be included
+    seedFact(store, 'fact-live', 'live evidence');
+    store.upsertEdge({ src: 'schema-d', dst: 'fact-live', rel: 'abstracts', kind: 'abstracts', w: 1 });
+
+    const params: GatherSchemaParams = { schemaId: 'schema-d', centroid: null };
+    const results = await gatherFactsForSchema({ db, store, provider }, params);
+    const ids = results.map(r => r.id);
+    expect(ids).not.toContain('fact-tomb');
+    expect(ids).toContain('fact-live');
+  });
+
+  test('multi-source facts are deduped to one row with combined via tags', async () => {
+    const queryVec = new Float32Array([1, 0, 0, 0]);
+    const { db, store, provider } = makeGatherDeps(queryVec);
+    seedSchema(store, 'schema-e', 'multi-source');
+    // fact-dual: appears via abstracts spine AND has a matching embedding (semantic)
+    seedFact(store, 'fact-dual', 'dual source fact', { embedding: queryVec });
+    store.upsertEdge({ src: 'schema-e', dst: 'fact-dual', rel: 'abstracts', kind: 'abstracts', w: 1 });
+
+    const params: GatherSchemaParams = { schemaId: 'schema-e', centroid: queryVec };
+    const results = await gatherFactsForSchema({ db, store, provider }, params);
+    const matches = results.filter(r => r.id === 'fact-dual');
+    expect(matches).toHaveLength(1);
+    // via must encode multiple sources (e.g. 'scope+semantic' or similar)
+    expect(matches[0]!.via).toMatch(/semantic/);
+  });
+
+  test('returns GatheredFact[] with id, value, c, origin, last_access, via fields', async () => {
+    const { db, store, provider } = makeGatherDeps();
+    seedSchema(store, 'schema-f', 'field check');
+    seedFact(store, 'fact-fields2', 'a fact with all fields');
+    store.upsertEdge({ src: 'schema-f', dst: 'fact-fields2', rel: 'abstracts', kind: 'abstracts', w: 1 });
+
+    const params: GatherSchemaParams = { schemaId: 'schema-f', centroid: null };
+    const results = await gatherFactsForSchema({ db, store, provider }, params);
+    expect(results.length).toBeGreaterThan(0);
+    const row = results[0]!;
+    expect(typeof row.id).toBe('string');
+    expect(typeof row.value).toBe('string');
+    expect(typeof row.c).toBe('number');
+    expect(typeof row.origin).toBe('string');
+    expect(typeof row.last_access).toBe('number');
+    expect(typeof row.via).toBe('string');
+  });
+
+  test('null centroid skips semantic pass (no embed call) but still returns spine + entity-hop facts', async () => {
+    const { db, store, provider } = makeGatherDeps();
+    let embedCalled = false;
+    const trackingProvider = {
+      ...provider,
+      embed: async (texts: string[]) => {
+        embedCalled = true;
+        return provider.embed(texts);
+      },
+    } as unknown as typeof provider;
+
+    seedSchema(store, 'schema-g', 'null centroid schema');
+    seedFact(store, 'fact-spine', 'spine fact from abstracts');
+    store.upsertEdge({ src: 'schema-g', dst: 'fact-spine', rel: 'abstracts', kind: 'abstracts', w: 1 });
+
+    const params: GatherSchemaParams = { schemaId: 'schema-g', centroid: null };
+    const results = await gatherFactsForSchema({ db, store, provider: trackingProvider }, params);
+
+    // No embed call should have been made
+    expect(embedCalled).toBe(false);
+    // Spine facts still returned
+    const ids = results.map(r => r.id);
+    expect(ids).toContain('fact-spine');
+  });
+
+  test('does NOT touch source schema s/c/embedding (read-only guard, CORPUS-05)', async () => {
+    const { db, store, provider } = makeGatherDeps();
+    seedSchema(store, 'schema-h', 'readonly check');
+    seedFact(store, 'fact-ro', 'readonly fact');
+    store.upsertEdge({ src: 'schema-h', dst: 'fact-ro', rel: 'abstracts', kind: 'abstracts', w: 1 });
+
+    // Snapshot the schema node before gathering
+    const before = db.prepare("SELECT s, c, embedding FROM node WHERE id = ?").get('schema-h') as { s: number; c: number; embedding: Buffer | null };
+
+    const params: GatherSchemaParams = { schemaId: 'schema-h', centroid: null };
+    await gatherFactsForSchema({ db, store, provider }, params);
+
+    // Schema node must be unchanged
+    const after = db.prepare("SELECT s, c, embedding FROM node WHERE id = ?").get('schema-h') as { s: number; c: number; embedding: Buffer | null };
+    expect(after.s).toBe(before.s);
+    expect(after.c).toBe(before.c);
+    expect(after.embedding).toEqual(before.embedding);
+  });
 });
 
 // ── gatherSiblingDocs (READER-04) ──────────────────────────────────────────
