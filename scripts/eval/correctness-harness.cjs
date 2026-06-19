@@ -58,6 +58,7 @@ const { OpenAIEmbedder }      = require('../../dist/src/model/embedder');
 // Extract (Haiku) is identical between baseline and two-tier runs, so the Haiku-up /
 // Sonnet-down delta between two runs isolates the JUDGE cost effect of the two-tier lever.
 const { setHeadlessUsageSink } = require('../../dist/src/model/claude-headless-client');
+const { getTwoTierStats, resetTwoTierStats } = require('../../dist/src/model/judge');
 const CAPTURE_USAGE = process.argv.includes('--capture-usage');
 const usageByModel = {}; // { model: { calls, input, output, cache_w, cache_r } }
 if (CAPTURE_USAGE && !DRY_RUN) {
@@ -69,6 +70,7 @@ if (CAPTURE_USAGE && !DRY_RUN) {
     m.cache_w += u.usage?.cache_creation_input_tokens ?? 0;
     m.cache_r += u.usage?.cache_read_input_tokens ?? 0;
   });
+  resetTwoTierStats();
 }
 
 // ---- API key guard (real runs only) -----------------------------------------
@@ -370,9 +372,12 @@ function aggregate(rows) {
       allTok += total;
       perModel[model] = { ...m, total };
     }
-    usageReport = { two_tier: process.env.RECENSE_TWO_TIER_JUDGE === '1', per_model: perModel, all_tokens: allTok };
+    const ttStats = getTwoTierStats();
+    usageReport = { two_tier: process.env.RECENSE_TWO_TIER_JUDGE === '1', two_tier_stats: ttStats, per_model: perModel, all_tokens: allTok };
     console.log('\n=== HEADLESS USAGE (judge cost) ===');
     console.log(`  two_tier judge: ${usageReport.two_tier}`);
+    console.log(`  two_tier engagement: cheap_calls=${ttStats.cheap_calls} escalations=${ttStats.escalations}` +
+      (ttStats.cheap_calls > 0 ? ` (escalation rate ${(100 * ttStats.escalations / ttStats.cheap_calls).toFixed(0)}%)` : ' (NOT ENGAGED — expected 0 for baseline)'));
     for (const [model, m] of Object.entries(perModel)) {
       console.log(`  ${model}: calls=${m.calls} in=${m.input} out=${m.output} cache_r=${m.cache_r} total=${m.total}`);
     }
