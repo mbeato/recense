@@ -280,6 +280,9 @@ export async function runConsolidation(
   // ── 4. Instantiate the full Consolidator dependency graph ─────────────────
   // Base config (no model-provider overlay — stores/retriever are LLM-free).
   const config = { ...DEFAULT_CONFIG, dbPath };
+  // EVAL-04 cost lever (A/B toggle): two-tier judge (Haiku triage → Sonnet on contradict).
+  // Applied to the base config BEFORE the judgeConfig spread so the judge head inherits it.
+  if (env['RECENSE_TWO_TIER_JUDGE'] === '1') config.twoTierJudge = true;
   // Per-role provider routing in the SAME process (fail-safe overlay each):
   //  - judgeConfig    → AnthropicJudge + SchemaInducer default namingFn.
   //  - extractorConfig → AnthropicClaimExtractor.

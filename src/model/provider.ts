@@ -22,8 +22,8 @@ import type { EngineConfig } from '../lib/config';
 import { createAnthropicClient } from './anthropic-client';
 import type { AnthropicLike } from './anthropic-client';
 import { OpenAIEmbedder } from './embedder';
-import { AnthropicJudge } from './judge';
-import type { JudgeVerdict } from './judge';
+import { AnthropicJudge, TwoTierJudge } from './judge';
+import type { Judge, JudgeVerdict } from './judge';
 
 // ---------------------------------------------------------------------------
 // Public interface — the SEAM-01 contract (spec §7 / D-46)
@@ -86,7 +86,7 @@ export class DefaultModelProvider implements ModelProvider {
 
   private _generateClient: { client: AnthropicLike; model: string } | null = null;
   private _embedder: OpenAIEmbedder | null = null;
-  private _judge: AnthropicJudge | null = null;
+  private _judge: Judge | null = null;
 
   constructor({
     generateConfig,
@@ -139,24 +139,35 @@ export class DefaultModelProvider implements ModelProvider {
     return this._embedder.embed(texts);
   }
 
+  /**
+   * Lazily build the judge head. When judgeConfig.twoTierJudge is set (EVAL-04 cost lever),
+   * wrap a cheap Haiku judge + the Sonnet judge in TwoTierJudge; otherwise a single Sonnet
+   * AnthropicJudge (unchanged default). AnthropicJudge uses createAnthropicClient internally
+   * — T-05-KEY. The cheap config reuses claudeHeadlessExtractModel (Haiku) as the tier-1 model.
+   */
+  private getJudge(): Judge {
+    if (!this._judge) {
+      if (this.judgeConfig.twoTierJudge) {
+        const cheapConfig = { ...this.judgeConfig, claudeHeadlessModel: this.judgeConfig.claudeHeadlessExtractModel };
+        this._judge = new TwoTierJudge(new AnthropicJudge(cheapConfig), new AnthropicJudge(this.judgeConfig));
+      } else {
+        this._judge = new AnthropicJudge(this.judgeConfig);
+      }
+    }
+    return this._judge;
+  }
+
   async judge(
     claim: string,
     candidates: Array<{ id: string; value: string }>
   ): Promise<JudgeVerdict> {
-    if (!this._judge) {
-      // AnthropicJudge uses createAnthropicClient internally — T-05-KEY.
-      this._judge = new AnthropicJudge(this.judgeConfig);
-    }
-    return this._judge.judge(claim, candidates);
+    return this.getJudge().judge(claim, candidates);
   }
 
   async judgeBatch(
     items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>
   ): Promise<JudgeVerdict[]> {
-    if (!this._judge) {
-      this._judge = new AnthropicJudge(this.judgeConfig);
-    }
-    return this._judge.judgeBatch(items);
+    return this.getJudge().judgeBatch(items);
   }
 }
 

@@ -547,6 +547,64 @@ export class AnthropicJudge implements Judge {
 }
 
 // ---------------------------------------------------------------------------
+// TwoTierJudge — cheap-first / escalate-on-contradict (EVAL-04 cost lever)
+// ---------------------------------------------------------------------------
+
+/**
+ * Cost-reduction judge wrapper: run a CHEAP judge (Haiku) first, escalate to the
+ * EXPENSIVE judge (Sonnet) ONLY when the cheap verdict is 'contradict'.
+ *
+ * Why this is safe for the core value (belief-correction):
+ *  - Haiku's measured failure mode (spike 003) is OVER-flagging contradictions — false
+ *    POSITIVES, not false negatives. So escalating every Haiku 'contradict' lets Sonnet
+ *    restore precision (downgrade the spurious ones), preventing over-tombstoning.
+ *  - Because Haiku over-flags, the verdicts it does NOT flag as 'contradict'
+ *    (unrelated/confirm/extend) are strong evidence the pair is truly not a contradiction,
+ *    so accepting them directly preserves contradiction RECALL. This is the savings source:
+ *    'contradict' is rare (~0.3% of verdicts in the live event stream), so ~all judgments
+ *    are cheap-accepted and Sonnet is invoked only on the few escalations.
+ *
+ * Crucially this does NOT touch the cosine escalation gate — every claim that reaches the
+ * judge today still reaches it — so it carries none of the recall risk of raising
+ * unrelatedSimilarityThreshold (real contradictions sit at cosine ~0.48).
+ *
+ * The escalated verdict (magnitude, contradicted_ids, best_candidate_id) comes from the
+ * EXPENSIVE judge — it is authoritative for the destructive 'contradict' path.
+ *
+ * Takes Judge instances (not configs) so it is unit-testable with mocks and provider-agnostic.
+ */
+export class TwoTierJudge implements Judge {
+  constructor(
+    private readonly cheap: Judge,
+    private readonly expensive: Judge,
+  ) {}
+
+  async judge(
+    claim: string,
+    candidates: Array<{ id: string; value: string }>
+  ): Promise<JudgeVerdict> {
+    const cheapVerdict = await this.cheap.judge(claim, candidates);
+    // Escalate ONLY the destructive relation; accept everything else (the savings).
+    if (cheapVerdict.relation === 'contradict') {
+      return this.expensive.judge(claim, candidates);
+    }
+    return cheapVerdict;
+  }
+
+  /**
+   * Batch path delegates wholesale to the expensive judge. judgeBatch is opt-in and OFF
+   * by default (BRAIN_MEMORY_ENABLE_JUDGE_BATCH; it regressed EVAL-02), so the two-tier
+   * savings live entirely on the per-claim judge() path. Keeping batch authoritative avoids
+   * any new accuracy risk on a rarely-used path.
+   */
+  judgeBatch(
+    items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>
+  ): Promise<JudgeVerdict[]> {
+    return this.expensive.judgeBatch(items);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Mock — deterministic, no network; used by all unit tests
 // ---------------------------------------------------------------------------
 
