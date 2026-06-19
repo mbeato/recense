@@ -202,6 +202,32 @@ describe('CorpusPromoter — CORPUS-02: mass gate + noise filter', () => {
     expect(result.promoted).not.toContain(schemas.schemaLow);
   });
 
+  it('D-37 firewall (CR-01): inferred members do not count toward mass', async () => {
+    const { db, store, clock } = buildLiveShapedBrain();
+    // A schema whose only real (observed) evidence is below LOW_MASS=7, but which has
+    // enough INFERRED members to cross HIGH_MASS=10 if they were (wrongly) counted.
+    const schemaInferred = 'schema-inferred-mass';
+    seedSchema(store, schemaInferred, 'Inferred-mass schema');
+    // 6 observed members → real mass 6 (< LOW_MASS) → must never promote.
+    for (let i = 0; i < 6; i++) {
+      const id = `obs-${i}`;
+      store.upsertNode({ id, type: 'fact', value: `observed fact ${i}`, origin: 'observed', s: 0.5, c: 0.8, last_access: 500 });
+      abstracts(db, schemaInferred, id);
+    }
+    // 8 inferred members → would lift mass to 14 (≥ HIGH_MASS) if the firewall were missing.
+    for (let i = 0; i < 8; i++) {
+      const id = `inf-${i}`;
+      store.upsertNode({ id, type: 'fact', value: `inferred fact ${i}`, origin: 'inferred', s: 0.5, c: 0.8, last_access: 500 });
+      abstracts(db, schemaInferred, id);
+    }
+
+    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
+    const result = await promoter.promote();
+
+    // Inferred output must not launder a sub-threshold schema over the promotion gate.
+    expect(result.promoted).not.toContain(schemaInferred);
+  });
+
   it('gate is deterministic: two promote() calls on the same DB produce identical candidate sets', async () => {
     const { db, store, clock } = buildLiveShapedBrain();
     const promoter = new CorpusPromoter(db, store, clock, defaultOpts());

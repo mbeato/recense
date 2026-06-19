@@ -177,6 +177,7 @@ async function main(): Promise<void> {
       slug,
       markdown: genResult.markdown,
       citedFactIds: genResult.citedFactIds,
+      linkedDocRefs: genResult.linkedDocRefs, // WR-01: write doc_link edges on the lazy path too (parity with corpus-generator)
       now,
     });
 
