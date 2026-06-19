@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
-status: "27-05 Tasks 1+2 complete — awaiting founder corpus-graph verification (Task 3 checkpoint)"
-stopped_at: Phase 27 Plan 05 Tasks 1+2 DONE — corpus graph endpoint + expanded-only swap button + doc_link edges; Task 3 checkpoint pending founder verify
-last_updated: "2026-06-18T21:11:41.862Z"
+status: "27-05 COMPLETE — flat 2D Obsidian corpus graph rebuilt; founder to reload-confirm on 7819"
+stopped_at: Phase 27 Plan 05 COMPLETE — doc_link edges + /graph?type=doc + flat 2D corpus graph (vendored force-graph, full-window toggle); ready for founder reload-confirm on 7819
+last_updated: "2026-06-18T21:35:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 3
@@ -26,17 +26,18 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 27 (reader-layer) — EXECUTING
-Plan: 05 CHECKPOINT — doc_link edges + corpus graph endpoint + expanded-only swap button + doc-node→reader; awaiting Task 3 founder verify
-Status: Tasks 1+2 committed (971c69b, 738aa66); Task 3 checkpoint open — founder to verify corpus graph at http://127.0.0.1:7810
+Plan: 05 COMPLETE — doc_link edges + /graph?type=doc + flat 2D Obsidian corpus graph (full-window toggle); founder to reload-confirm on 7819
+Status: 971c69b + 738aa66 + f5a46e0 (vendor) + 11e4ba3 (flat-2D) committed; viz server on 7819 against /tmp/corpus-verify.db
 
-[████████████████████████████████████░░] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-04 done · 27-05 Tasks 1+2 done · awaiting Task 3 verify
+[██████████████████████████████████████] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-04 done · 27-05 COMPLETE (flat-2D corpus)
 ```
 
-**Phase 27 Plan 05 (corpus graph — Tasks 1+2 done, Task 3 checkpoint) — 2026-06-18:**
+**Phase 27 Plan 05 (corpus graph — COMPLETE) — 2026-06-18:**
 
 - **Task 1 (`971c69b`):** `generateDoc` returns `linkedDocRefs` from `recense://doc/<id>` refs in prose; `writeDoc` creates `kind='doc_link'` edges for live target doc nodes only (in-set guard, T-27-15, FK-safe). 9 tests green.
-- **Task 2 (`738aa66`):** `GET /graph?type=doc` returns live doc nodes (with slug via node_doc JOIN) + doc_link edges; `/graph` unchanged. `#btn-corpus` in index.html; CSS gate `.mode-window #btn-corpus { display:inline-flex }` (D-07). `reader.js` corpus swap: `swapToCorpus()` → `/graph?type=doc` fetch + graphData swap + corpusNodeSlugs map; `openDocReader()` → navigate to `/?doc=slug&reader=1` (D-08). 10 tests green; tsc clean; dist rebuilt.
-- **Task 3 (checkpoint): PENDING founder verify.**
+- **Task 2 (`738aa66`):** `GET /graph?type=doc` returns live doc nodes (with slug via node_doc JOIN) + doc_link edges; `/graph` unchanged. Data layer founder-verified correct — stays.
+- **Task 2b (founder-directed redesign — `f5a46e0` vendor + `11e4ba3` rendering):** the corpus view is now a SEPARATE flat 2D Obsidian-style graph (vendored `force-graph@1.43.5`, 2D canvas, no THREE dep, net-zero npm deps) on its own `#corpus-graph` container — NOT a 3D-brain data-swap. `corpus.js` owns `#btn-corpus`; lazy-inits the 2D instance on first open; full-window toggle hides `#graph` + shows `#corpus-graph` (brain untouched, no density regression); muted rose/slate/mauve at rest, amber hover-only; D-08 doc-node click → `/?doc=slug&reader=1`. Removed the 3D-swap code from reader.js. 14 corpus tests green; tsc clean; dist rebuilt.
+- **Task 3:** No new checkpoint opened (per direction). Viz server on **7819** against `/tmp/corpus-verify.db` (tonos + vtx + doc_link) — founder reload-confirms the flat graph there.
 
 **Phase 27 Plan 04 (staleness — COMPLETE, founder-approved) — 2026-06-18:**
 
@@ -89,6 +90,10 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 | v5.0 | 24–27 | TBD | — |
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 28 added (2026-06-19): **Schema-Anchored Corpus** — pivots the reader corpus from project-scope docs to the abstraction graph rendered as prose (docs anchor on schemas/entities, cite direct facts; mass-gated promotion; hierarchy mirrors the `abstracts` ladder; decide-cheap/generate-lazy; read-only projection). **Supersedes Phase 27 READER-04** (doc_link-between-projects); inherits the reader UI + flat 2D renderer + lazy-gen + /doc routes + gather + doc-writer. Origin: design discussion during Phase 27 27-05 verification (see memory [[corpus-from-schemas-design]]).
 
 ### v5.0 Dependency Chain
 
@@ -242,7 +247,9 @@ Resume file: .planning/phases/27-reader-layer/27-03-SUMMARY.md
 
 - **linkedDocRefs returned by generateDoc includes ALL doc refs from prose** — writeDoc is responsible for the in-set guard (tombstoned/non-existent skipped); generator stays read-only and composable
 - **/graph?type=doc JOINs node_doc to expose slug field** — enables D-08 doc-node click → reader open without a new server endpoint; slug in corpus node records (Plan 27-05)
-- **openDocReader() navigates via window.location** — simpler than in-app re-init; per plan's "open /?doc=<slug>&reader=1" path (Plan 27-05)
+- **Corpus view = SEPARATE flat 2D Obsidian graph, NOT a 3D-brain data-swap** (founder-directed, Plan 27-05) — vendored `force-graph@1.43.5` (2D canvas, no THREE dep, net-zero npm deps); `corpus.js` owns a separate `ForceGraph()` instance on `#corpus-graph`; full-window hide/show toggle leaves the 3D brain untouched (no rebuild, no density regression). Supersedes the earlier 3D-data-swap (738aa66 reverted-in-spirit; the data layer stays)
+- **force-graph vendored as a file** — same posture as the existing `3d-force-graph.min.js` (same author Vasco Asturiano); keeps net-zero npm deps; exposes `window.ForceGraph` (Plan 27-05)
+- **openDocReader() (corpus.js) navigates via window.location** — resolves slug from the corpus node data; navigates `/?doc=<slug>&reader=1` (D-08, Plan 27-05)
 - **Corpus button expanded-only CSS gate** — mirrors search/topic-wrap pattern: `#btn-corpus { display:none }` / `.mode-window #btn-corpus { display:inline-flex }` (D-07, Plan 27-05)
 - **generated_at is write-once at the SQL layer** (ON CONFLICT omits generated_at from the DO UPDATE SET clause) — staleness predicate cannot be corrupted by doc re-render without regen
 - **Table recreation migration guard** checks live DDL from sqlite_master before running — idempotent and no data loss on re-run
