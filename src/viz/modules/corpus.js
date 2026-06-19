@@ -28,7 +28,10 @@
 const REST_NODE = '#9c7080';    // dusty rose — doc nodes at rest (muted)
 const REST_NODE_RING = 'rgba(156,112,128,0.55)'; // faint rose ring
 const HOVER_NODE = '#ffb866';   // warm amber — ACTIVATION ONLY (hover/selected)
-const LINK_REST = 'rgba(130,105,140,0.35)'; // muted mauve doc_link edges
+const LINK_REST = 'rgba(130,105,140,0.35)'; // muted mauve — doc_link + doc_reference base
+// Containment spine: slightly stronger slate/mauve (still muted — NOT amber).
+// Heavier and more opaque than LINK_REST so the parent→child hierarchy reads clearly.
+const CONTAINMENT_COLOR = 'rgba(110,90,130,0.70)'; // stronger slate/mauve spine
 const LABEL_COLOR = '#c8bcd0';  // muted slate/mauve label text
 const LABEL_COLOR_HOVER = '#e7dfec'; // brightened on hover
 const BG = '#170f1d';           // deep warm aubergine — matches the viz background
@@ -118,8 +121,15 @@ export function initCorpus(ctx) {
         canvasCtx.arc(node.x, node.y, NODE_R + 2, 0, 2 * Math.PI, false);
         canvasCtx.fill();
       })
-      .linkColor(() => LINK_REST)
-      .linkWidth(1)
+      // D-08: link-kind-aware styling (CORPUS-04).
+      // doc_containment = solid directed spine (heavier, arrow at child, no dash).
+      // doc_reference   = faint dashed undirected cross-link (no arrow).
+      // doc_link        = faint mauve solid (existing treatment, no arrow, no dash).
+      .linkColor(link => link.kind === 'doc_containment' ? CONTAINMENT_COLOR : LINK_REST)
+      .linkWidth(link => link.kind === 'doc_containment' ? 2 : 1)
+      .linkDirectionalArrowLength(link => link.kind === 'doc_containment' ? 4 : 0)
+      .linkDirectionalArrowRelPos(1)
+      .linkLineDash(link => link.kind === 'doc_reference' ? [2, 2] : null)
       .onNodeHover((node) => {
         hoveredId = node ? node.id : null;
         container.style.cursor = node ? 'pointer' : '';
