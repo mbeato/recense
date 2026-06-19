@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v5.0
-milestone_name: Foundational Memory Store + Reader Layer
-status: milestone_complete
-stopped_at: Milestone complete (Phase 28 was final phase)
-last_updated: 2026-06-19T18:36:48.191Z
+milestone: v6.0
+milestone_name: Project Onboarding
+status: executing
+stopped_at: Phase 29 context gathered
+last_updated: "2026-06-19T21:12:56.185Z"
 progress:
-  total_phases: 5
-  completed_phases: 4
-  total_plans: 20
-  completed_plans: 20
-  percent: 80
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 3
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -20,17 +20,26 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Milestone complete
+**Current focus:** v6.0 Project Onboarding — Phase 29 (Survey Quality Spike) next
 
 ## Current Position
 
 ```
-Phase: 28
-Plan: Not started
-Status: Milestone complete
+Milestone: v6.0 Project Onboarding — ROADMAP READY
+Phase: Phase 29 ready to plan (Survey Quality Spike)
+Status: Ready to execute
 
-[██████████████████████████████████████] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-04 done · 27-05 COMPLETE (flat-2D corpus)
+[██████████████████████████████████████░░░░░░░░░] v1-v5.0 SHIPPED · v6.0 roadmap written (Phases 29–32) · Phase 29 next
 ```
+
+**v6.0 phases:**
+
+- Phase 29: Survey Quality Spike (INGEST-03) — go/no-go for the build
+- Phase 30: Core Ingest Command (INGEST-01/02/04) — depends on 29
+- Phase 31: Doc Ingest + Idempotent Re-ingest (DOCING-01, REINGEST-01/02) — depends on 30
+- Phase 32: Project Recall + Auto-Corpus (RECALL-01/02) — depends on 30+31
+
+**v6.0 Project Onboarding — opened 2026-06-19.** Goal: onboard a fresh/unexplored project into the brain via an agentic survey (summarized knowledge, not raw code) → episodes → consolidation; generalized doc ingest; idempotent re-ingest; scoped project recall + auto-corpus. Scope confirmed by founder (all 4 capabilities). Research skipped (designed from first principles + known ingestion seams). Phase numbering continues from 28 → 29+. Earlier v5.0 phase dirs (24-28) retained in `.planning/phases/` (no collision; archived detail in `milestones/v5.0-ROADMAP.md`).
 
 **Phase 27 Plan 05 (corpus graph — COMPLETE) — 2026-06-18:**
 
@@ -222,6 +231,7 @@ API budget: ~$14–15 remaining (Phase 17 closed at ~$12; Phase 23 used ~$0.05).
 | 260617-qat | Gated headless `claude -p` transport (spike 003) behind the AnthropicLike seam — extract→Haiku/judge→Sonnet on Max, env-strip billing safeguard, default provider unchanged. Tasks 1–3 shipped; Task 4 (live sleep.env activation) founder-gated. | 2026-06-17 | 1a58624 | [260617-qat](./quick/260617-qat-integrate-spike-validated-headless-claud) |
 | 260617-ulp | Fix salience-skip consolidation leak — the salience-skip `continue` in consolidator.ts never called markConsolidated, so 142 sub-threshold episodes were re-scanned every pass forever (sentinel never cleared, blocked SCOPE-01). Mark-and-skip via shared `markSkipped` helper (routes both skip sites). Verified on a live-DB copy: backlog 144→2, no graph effects, fk_check clean. | 2026-06-18 | 5326550 | [260617-ulp](./quick/260617-ulp-fix-salience-skip-consolidation-leak-mar) |
 | 260617-w0u | Phase 24 SCOPE-04 source retirement (24-03 T4, founder-gated) — nav-layer safety verified, then MOVED 197 migrated fact files → `~/.claude/projects-memory-archive-2026-06-18/` (reversible). Kept 12 indexes + 7 policy bundles + 2 live trackers (excluded from 199→197 after finding skills read/write them). DB untouched; 199/199 still consolidated+scoped. Closes Phase 24. No git commit (move is under ~/.claude; .planning gitignored). | 2026-06-18 | — | [260617-w0u](./quick/260617-w0u-phase-24-scope-04-source-retirement) |
+| 260619-mbr | Viz scaling (post-v5.0) — brain-viz lagged with ingestion; measured the cause = 6,119 unabstracted "haze" fact/entity nodes rendered as individual transparent meshes in the overview. Render them as ONE InstancedMesh (shared geo + Fresnel material + per-instance color, volume-scattered, pickable via instanceId) + exclude haze from the d3 force sim. Overview ~6,400 meshes → ~270 + 1 instanced cloud; look preserved (founder-locked density anchor untouched). Founder-approved ("feels way better"). Scales toward the v6.0 ingestion milestone. | 2026-06-19 | e5e551e | [260619-mbr](./quick/260619-mbr-viz-haze-instancing) |
 | 260619-mbr | Viz haze instancing — replace ~6,119 per-mesh transparent haze spheres with one THREE.InstancedMesh (T1: exclude haze from ForceGraph3D sim; T2: deterministic in-volume scatter + Fresnel material; T3: instanceId raycasting hover/click/trace). Draw calls: ~6,400 → ~270 + 1 instanced. T4 awaiting founder visual verification at http://localhost:7811. | 2026-06-19 | 1e56b1c, 98a641b, e5e551e (T1–T3) | [260619-mbr](./quick/260619-mbr-viz-haze-instancing) |
 
 ## Deferred Items
@@ -242,9 +252,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-19T17:10:11.766Z
-Stopped at: Completed 28-01-PLAN.md (v12 migration + Wave-0 scaffolds)
-Resume file: None
+Last session: 2026-06-19T20:52:27.632Z
+Stopped at: Phase 29 context gathered
+Resume file: .planning/phases/29-survey-quality-spike/29-CONTEXT.md
 
 ## Key Decisions (Phase 28)
 
