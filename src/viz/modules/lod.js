@@ -36,7 +36,17 @@ import {
   DENSITY_THIN_START,
   DENSITY_THIN_FULL,
   HAZE_DENSE_SCALE,
+  HOT,
 } from './constants.js';
+
+// Lazily-initialised haze trace-highlight color (THREE.Color built on first use
+// via ctx.THREE to avoid importing THREE in lod.js — lod.js is tested standalone
+// in vitest/Node where the 'three' package isn't wired). Reused across calls.
+let _traceColor = null;
+function _getTraceColor(THREE) {
+  if (!_traceColor) _traceColor = new THREE.Color(HOT);
+  return _traceColor;
+}
 
 export function initLod(ctx) {
   const { allNodes, allLinks, idMap } = ctx;
@@ -205,10 +215,26 @@ export function initLod(ctx) {
   // skipped — they have no scene object to flip.
   function revealTrace(pathNodes, pathLinks) {
     if (!ctx.Graph) return;
+    let hazeColorDirty = false;
     for (const n of (pathNodes || [])) {
+      // ── Haze nodes: no __threeObj (excluded from graphData); highlight via
+      // per-instance color bump on the InstancedMesh. Trace reveal = HOT amber;
+      // trace clear = restore __hazeBase. D-04: amber only on real activation.
+      if (n.__cat === 'haze') {
+        if (!ctx.hazeMesh || n.__hazeIdx == null) continue;
+        const lit = traceNodes.has(n.id);
+        const traceCol = ctx.THREE ? _getTraceColor(ctx.THREE) : null;
+        if (!traceCol && lit) continue; // no THREE yet — skip highlight safely
+        ctx.hazeMesh.setColorAt(n.__hazeIdx, lit ? traceCol : n.__hazeBase);
+        hazeColorDirty = true;
+        continue;
+      }
       if (!n.__threeObj) continue;
       const desired = nodeVisible(n);
       if (n.__threeObj.visible !== desired) n.__threeObj.visible = desired;
+    }
+    if (hazeColorDirty && ctx.hazeMesh && ctx.hazeMesh.instanceColor) {
+      ctx.hazeMesh.instanceColor.needsUpdate = true;
     }
     for (const l of (pathLinks || [])) {
       if (!l.__lineObj) continue;

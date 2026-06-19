@@ -361,6 +361,10 @@ function buildHazeLayer(ctx) {
   hazeMesh.instanceMatrix.needsUpdate = true;
   if (hazeMesh.instanceColor) hazeMesh.instanceColor.needsUpdate = true;
 
+  // Save the calibrated base opacity on the material so detail.js clearFocusDim
+  // can restore it after a focus-dim cycle (detail.js reads hazeMat._baseOpacity).
+  hazeMat._baseOpacity = hazeMat.opacity;
+
   // ── Register on ctx and add to scene ─────────────────────────────────────
   ctx.hazeMesh        = hazeMesh;
   ctx.hazeMat         = hazeMat;
@@ -644,4 +648,148 @@ export function initGraph(ctx) {
   // display:none). graph.js owns framing — recenter is in scope, no ctx lookup.
   const btnRecenter = document.getElementById('btn-recenter');
   if (btnRecenter) btnRecenter.addEventListener('click', () => recenter());
+
+  // ── Haze InstancedMesh raycasting (T3) ───────────────────────────────────
+  // ForceGraph3D handles raycasting on its own nodes; haze nodes live only in
+  // ctx.hazeMesh (excluded from graphData). We add a parallel raycaster pass
+  // so hover + click on haze nodes work identically to regular nodes.
+  //
+  // Architecture: pointer events on the renderer canvas → NDC mouse → Raycaster
+  // → InstancedMesh intersections (returns instanceId) → node lookup via
+  // ctx.hazeInstanceMap → same hover/click affordances as graph.js callbacks.
+  //
+  // Guard: if no hazeMesh (no haze nodes), skip entirely.
+  if (ctx.hazeMesh) {
+    const renderer    = Graph.renderer();
+    const camera      = Graph.camera();
+    const domEl       = renderer.domElement;
+    const hazeRay     = new THREE.Raycaster();
+    hazeRay.params.Points = { threshold: 2 }; // not used (Mesh), but set defensively
+
+    // NDC mouse updated on every pointermove
+    const _mouse = new THREE.Vector2();
+    // Track whether ForceGraph3D is currently over a (non-haze) node so we
+    // don't fire haze hover when fg3d already caught something above us.
+    // ForceGraph3D sets _hoveredNode before our listener fires (same-frame).
+    let _hazeHoveredNode = null;
+
+    // ── Color helpers ────────────────────────────────────────────────────
+    const _highlightColor = new THREE.Color(0xffffff); // hover: brighten instance
+
+    function _setHazeColor(node, color) {
+      if (!ctx.hazeMesh || node.__hazeIdx == null) return;
+      ctx.hazeMesh.setColorAt(node.__hazeIdx, color);
+      ctx.hazeMesh.instanceColor.needsUpdate = true;
+    }
+
+    // ── Hover ────────────────────────────────────────────────────────────
+    function _onHazePointerMove(e) {
+      if (!ctx.hazeMesh) return;
+      const rect = domEl.getBoundingClientRect();
+      _mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+      _mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+
+      hazeRay.setFromCamera(_mouse, camera);
+      const hits = hazeRay.intersectObject(ctx.hazeMesh, false);
+
+      if (hits.length && typeof hits[0].instanceId === 'number') {
+        const instanceId = hits[0].instanceId;
+        const node = ctx.hazeInstanceMap.get(instanceId);
+        if (!node) return;
+
+        // If fg3d already has a hovered non-haze node, don't override
+        if (ctx._hoveredNode && ctx._hoveredNode.__cat !== 'haze') {
+          // Un-hover any previous haze node
+          if (_hazeHoveredNode && _hazeHoveredNode !== node) {
+            _setHazeColor(_hazeHoveredNode, _hazeHoveredNode.__hazeBase);
+            _hazeHoveredNode = null;
+          }
+          return;
+        }
+
+        if (_hazeHoveredNode && _hazeHoveredNode !== node) {
+          // Un-hover previous haze node
+          _setHazeColor(_hazeHoveredNode, _hazeHoveredNode.__hazeBase);
+        }
+        _hazeHoveredNode = node;
+
+        // Brighten: lerp base color toward white slightly
+        const hoverColor = node.__hazeBase.clone().lerp(_highlightColor, 0.5);
+        _setHazeColor(node, hoverColor);
+        domEl.style.cursor = 'pointer';
+
+        // Tooltip (same structure as graph.js onNodeHover)
+        const tooltipEl = document.getElementById('tooltip');
+        if (tooltipEl) {
+          tooltipEl.textContent = '';
+          const tipTag = document.createElement('div');
+          tipTag.className = 'tip-tag';
+          tipTag.textContent = node.tombstoned
+            ? 'tombstone'
+            : (node.type || 'node') + (node.origin ? ' · ' + node.origin : '');
+          const tipTitle = document.createElement('div');
+          tipTitle.className = 'tip-title';
+          tipTitle.textContent = truncLabel(node.value || node.id || '', 48);
+          tooltipEl.appendChild(tipTag);
+          tooltipEl.appendChild(tipTitle);
+          tooltipEl.style.display = 'block';
+        }
+      } else {
+        // No haze hit — restore previous haze hover if any
+        if (_hazeHoveredNode) {
+          _setHazeColor(_hazeHoveredNode, _hazeHoveredNode.__hazeBase);
+          domEl.style.cursor = '';
+          const tooltipEl = document.getElementById('tooltip');
+          if (tooltipEl) tooltipEl.style.display = 'none';
+          _hazeHoveredNode = null;
+        }
+      }
+    }
+
+    // ── Click ────────────────────────────────────────────────────────────
+    // Use pointerdown+pointerup instead of 'click' to match fg3d's
+    // click-vs-drag detection (a drag shouldn't open detail).
+    let _hazePointerDownPos = null;
+
+    function _onHazePointerDown(e) {
+      _hazePointerDownPos = { x: e.clientX, y: e.clientY };
+    }
+
+    function _onHazePointerUp(e) {
+      if (!_hazePointerDownPos) return;
+      const dx = e.clientX - _hazePointerDownPos.x;
+      const dy = e.clientY - _hazePointerDownPos.y;
+      _hazePointerDownPos = null;
+      // If the pointer moved more than 4px it was a drag, not a click
+      if (Math.sqrt(dx * dx + dy * dy) > 4) return;
+
+      if (!ctx.hazeMesh) return;
+      const rect = domEl.getBoundingClientRect();
+      _mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+      _mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+
+      hazeRay.setFromCamera(_mouse, camera);
+      const hits = hazeRay.intersectObject(ctx.hazeMesh, false);
+
+      if (hits.length && typeof hits[0].instanceId === 'number') {
+        const node = ctx.hazeInstanceMap.get(hits[0].instanceId);
+        if (node && ctx.selectNode) {
+          ctx.selectNode(node);
+        }
+      }
+    }
+
+    domEl.addEventListener('pointermove', _onHazePointerMove);
+    domEl.addEventListener('pointerdown', _onHazePointerDown);
+    domEl.addEventListener('pointerup',   _onHazePointerUp);
+
+    // Store un-hover helper on ctx so trace.js and external code can restore
+    // a haze hover highlight that gets clobbered mid-trace.
+    ctx._clearHazeHover = () => {
+      if (_hazeHoveredNode) {
+        _setHazeColor(_hazeHoveredNode, _hazeHoveredNode.__hazeBase);
+        _hazeHoveredNode = null;
+      }
+    };
+  }
 }

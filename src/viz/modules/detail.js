@@ -143,6 +143,8 @@ export function initDetail(ctx) {
    * Focus mode: dim every node outside the selected neighborhood so the
    * clicked constellation stands alone. Opacity-only (restored on deselect);
    * never touches visibility, so LOD state is unaffected.
+   * Also dims the haze InstancedMesh material so the haze cloud recedes
+   * with the rest of the unrelated nodes (haze nodes have no __mat).
    */
   function applyFocusDim(node) {
     clearFocusDim();
@@ -153,14 +155,27 @@ export function initDetail(ctx) {
       n.__mat.opacity = FOCUS_DIM_OPACITY;
       dimmedNodes.push(n);
     }
+    // Dim the shared haze InstancedMesh material so haze recedes in focus mode.
+    // Restored by clearFocusDim via _hazeDimmed flag.
+    if (ctx.hazeMat) {
+      ctx.hazeMat.opacity = FOCUS_DIM_OPACITY;
+      ctx._hazeDimmed = true;
+    }
   }
 
-  /** Restore opacity of all focus-dimmed nodes. */
+  /** Restore opacity of all focus-dimmed nodes (and the haze InstancedMesh). */
   function clearFocusDim() {
     for (const n of dimmedNodes) {
       if (n.__mat && n.__baseOp !== undefined) n.__mat.opacity = n.__baseOp;
     }
     dimmedNodes = [];
+    // Restore haze material opacity to its calibrated value
+    if (ctx._hazeDimmed && ctx.hazeMat) {
+      ctx.hazeMat.opacity = ctx.hazeMat._baseOpacity != null
+        ? ctx.hazeMat._baseOpacity
+        : ctx.hazeMat.opacity; // already correct if never saved
+      ctx._hazeDimmed = false;
+    }
   }
 
   /** Remove the selection ring from the previous node and free its GPU resources. */
