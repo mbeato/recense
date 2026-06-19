@@ -176,9 +176,10 @@ function computeBreakeven(totalWriteTokens, readSavingsPerSession, writeMeasured
   const Ns = [1, 2, 5, 10, 20, 50];
   const rows = [];
   for (const n of Ns) {
-    const net_tokens = totalWriteTokens - readSavingsPerSession * n;
-    const net_retail_usd = writeMeasured ? null : null; // computed below when measured
-    rows.push({ n_sessions: n, cumulative_read_savings_tokens: readSavingsPerSession * n, net_tokens: Math.round(net_tokens) });
+    // net is only meaningful with a measured write debit; null otherwise so the
+    // display/JSON never imply a breakeven the cost side was never measured for.
+    const net_tokens = writeMeasured ? Math.round(totalWriteTokens - readSavingsPerSession * n) : null;
+    rows.push({ n_sessions: n, cumulative_read_savings_tokens: readSavingsPerSession * n, net_tokens });
   }
   const breakevenN = writeMeasured && readSavingsPerSession > 0
     ? (rows.find(r => r.net_tokens <= 0)?.n_sessions ?? null)
@@ -501,8 +502,8 @@ function breakevenNote(writeMeasured, readSavingsPerSession, breakevenN, gap) {
   console.log('\n  N sessions | Cumul. read savings (tok) | Net tokens');
   console.log('  ---------- | ------------------------- | ----------');
   for (const row of breakevenResult.table) {
-    const net_str = row.net_tokens.toLocaleString();
-    const prefix  = row.net_tokens <= 0 ? '  ← BREAKEVEN' : '';
+    const net_str = row.net_tokens === null ? 'n/a (write not measured)' : row.net_tokens.toLocaleString();
+    const prefix  = row.n_sessions === breakevenResult.breakeven_n ? '  ← BREAKEVEN' : '';
     console.log(`  ${String(row.n_sessions).padEnd(10)} | ${String(row.cumulative_read_savings_tokens).padEnd(25)} | ${net_str}${prefix}`);
   }
   console.log(`\n  ${breakevenResult.note}`);
