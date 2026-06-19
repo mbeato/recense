@@ -30,7 +30,7 @@ import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
 import { SemanticStore } from '../db/semantic-store';
 import { DefaultModelProvider } from '../model/provider';
-import { generateDoc } from '../reader/doc-generator';
+import { generateDoc, generateDocForSchema } from '../reader/doc-generator';
 import { writeDoc } from '../consolidation/doc-writer';
 import { acquireLock, releaseLock } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
@@ -84,17 +84,21 @@ async function main(): Promise<void> {
     const store = new SemanticStore(db, realClock, config);
 
     // ── 4. Idempotency: check for existing doc node (D-02 lazy-gen) ──────────
+    // BUG-2b fix (28-04): only skip as "already done" when an existing live doc has
+    // a NON-EMPTY value. An empty-value stub (CorpusPromoter's eager placeholder) must
+    // proceed to generation — the stub's node id will be filled in place by writeDoc
+    // (stable-edge invariant). --force bypasses this check as before.
     if (!isForce) {
       const existingDoc = db.prepare(
-        `SELECT n.id, nd.generated_at
+        `SELECT n.id, n.value, nd.generated_at
          FROM node n
          JOIN node_doc nd ON nd.node_id = n.id
          JOIN node_scope ns ON ns.node_id = n.id
          WHERE n.type = 'doc' AND n.tombstoned = 0 AND ns.scope = ?
          LIMIT 1`,
-      ).get(slug) as { id: string; generated_at: number } | undefined;
+      ).get(slug) as { id: string; value: string; generated_at: number } | undefined;
 
-      if (existingDoc) {
+      if (existingDoc && existingDoc.value.trim().length > 0) {
         fileLog(`doc already exists for slug=${slug} nodeId=${existingDoc.id} — skipping (use --force to regen)`);
         process.stdout.write(
           JSON.stringify({
@@ -109,6 +113,7 @@ async function main(): Promise<void> {
         );
         return;
       }
+      // existingDoc with empty value → fall through to generation (stub fill-in-place path)
     }
 
     // ── 5. Build the judge-tier provider (D-04 — generateConfig = judgeConfig) ─
@@ -135,7 +140,46 @@ async function main(): Promise<void> {
     fileLog(`generating: slug=${slug} provider=${judgeConfig.modelProvider}`);
 
     // ── 6. Generate ───────────────────────────────────────────────────────────
-    const genResult = await generateDoc({ db, store, provider }, slug);
+    // BUG-2b fix (28-04): a slug that resolves to a live schema node is a SCHEMA-anchored
+    // doc (the CorpusPromoter's slug = schemaId). Route it through generateDocForSchema
+    // (D-09 thesis framing); a non-schema slug is a project-scope doc → generateDoc. The
+    // schema's evidence is linked by `abstracts` edges, not node_scope, so the scope gather
+    // would find nothing — the branch is load-bearing, not cosmetic.
+    const schemaRow = db.prepare(
+      "SELECT value FROM node WHERE id = ? AND type = 'schema' AND tombstoned = 0",
+    ).get(slug) as { value: string } | undefined;
+
+    let genResult;
+    if (schemaRow) {
+      // Centroid = mean of the schema's abstracted live observed fact/entity member embeddings
+      // (D-37 gate, verbatim from CorpusPromoter — Pitfall 5 byteOffset decode). null → the
+      // semantic-breadth pass is skipped; spine + entity-hop still produce a doc.
+      const memberRows = db.prepare(
+        "SELECT m.embedding AS embedding FROM edge e " +
+        "JOIN node m ON m.id = e.dst " +
+        "WHERE e.src = ? AND e.kind = 'abstracts' " +
+        "AND m.tombstoned = 0 AND m.origin != 'inferred' " +
+        "AND m.type IN ('fact','entity') AND m.embedding IS NOT NULL",
+      ).all(slug) as Array<{ embedding: Buffer }>;
+
+      let centroid: Float32Array | null = null;
+      const vecs = memberRows.map(
+        r => new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4),
+      );
+      if (vecs.length > 0) {
+        const dims = vecs[0]!.length;
+        centroid = new Float32Array(dims);
+        for (const v of vecs) for (let i = 0; i < dims; i++) centroid[i]! += v[i]!;
+        for (let i = 0; i < dims; i++) centroid[i]! /= vecs.length;
+      }
+      fileLog(`schema-anchored: label="${schemaRow.value}" members=${memberRows.length} centroid=${centroid ? 'yes' : 'null'}`);
+      genResult = await generateDocForSchema(
+        { db, store, provider },
+        { schemaId: slug, centroid, schemaLabel: schemaRow.value },
+      );
+    } else {
+      genResult = await generateDoc({ db, store, provider }, slug);
+    }
 
     fileLog(
       `generated: citations=${genResult.citationCount} invented=${genResult.invented} tombstoned=${genResult.tombstoned}`,
