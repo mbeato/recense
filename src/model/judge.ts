@@ -551,6 +551,20 @@ export class AnthropicJudge implements Judge {
 // ---------------------------------------------------------------------------
 
 /**
+ * Module-level deterministic counters for the two-tier judge (EVAL-04 instrumentation).
+ * Unlike token usage (non-deterministic, no temp-0), the COUNT of cheap-accepts vs
+ * escalations is the noise-free driver of the cost saving and proves the path engages.
+ * cheap_calls = every TwoTierJudge.judge() invocation; escalations = those that hit Sonnet.
+ */
+let twoTierStats = { cheap_calls: 0, escalations: 0 };
+export function getTwoTierStats(): { cheap_calls: number; escalations: number } {
+  return { ...twoTierStats };
+}
+export function resetTwoTierStats(): void {
+  twoTierStats = { cheap_calls: 0, escalations: 0 };
+}
+
+/**
  * Cost-reduction judge wrapper: run a CHEAP judge (Haiku) first, escalate to the
  * EXPENSIVE judge (Sonnet) ONLY when the cheap verdict is 'contradict'.
  *
@@ -583,9 +597,11 @@ export class TwoTierJudge implements Judge {
     claim: string,
     candidates: Array<{ id: string; value: string }>
   ): Promise<JudgeVerdict> {
+    twoTierStats.cheap_calls++;
     const cheapVerdict = await this.cheap.judge(claim, candidates);
     // Escalate ONLY the destructive relation; accept everything else (the savings).
     if (cheapVerdict.relation === 'contradict') {
+      twoTierStats.escalations++;
       return this.expensive.judge(claim, candidates);
     }
     return cheapVerdict;
