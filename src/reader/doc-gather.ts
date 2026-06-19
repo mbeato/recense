@@ -158,6 +158,156 @@ export async function gatherFacts(
   return [...byId.values()];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// gatherFactsForSchema — D-09: schema-anchored fact gather (CORPUS-01)
+//
+// Re-anchors the gather from a project scope-slug to a schema node, keeping the
+// same three-source union/dedup structure as gatherFacts:
+//
+//  (1) SPINE — facts and entities directly abstracted by the schema via
+//              kind='abstracts' edges. This replaces node_scope.scope = slug.
+//              Tagged via 'scope' so downstream via-handling is identical to the
+//              scope-anchored path (code comment explains the reuse rationale).
+//
+//  (2) SEMANTIC BREADTH — hybridTopk seeded by the precomputed member CENTROID
+//              (NOT the schema label, which is often a weak "super:a + b + c"
+//              fallback). If centroid is null, this source is SKIPPED entirely —
+//              no provider.embed call, no throw. This is the whole point of D-09:
+//              the centroid is pre-computed by the caller, so no extra embed call.
+//
+//  (3) ENTITY-HOP — 1-hop fact neighbors of entities that the schema directly
+//              abstracts (collected from source 1). Re-rooted at the schema's
+//              own abstracted entities instead of entity-name LIKE slug.
+//
+// Read-only — no DB writes. All SQL uses bound ? params (T-01-SQL).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Parameters for schema-anchored gather (D-09). */
+export interface GatherSchemaParams {
+  /** The UUID of the schema node to gather facts for. */
+  schemaId: string;
+  /**
+   * Pre-computed member centroid (mean embedding of the schema's abstracted
+   * live observed nodes). If null, the semantic breadth pass is skipped
+   * entirely — no provider.embed call is made.
+   */
+  centroid: Float32Array | null;
+  /**
+   * Optional human-readable schema label used as queryText in hybridTopk
+   * (BM25 co-signal). Falls back to '' when absent (centroid alone is used).
+   */
+  schemaLabel?: string;
+}
+
+/**
+ * Gather facts for a schema from three D-09 sources, union/dedup by id.
+ *
+ * @param deps    Injected DB + store + provider (same shape as gatherFacts).
+ * @param params  Schema id + precomputed centroid + optional label.
+ * @param opts    Optional tuning (semanticK defaults to 60).
+ */
+export async function gatherFactsForSchema(
+  deps: GatherDeps,
+  params: GatherSchemaParams,
+  opts: { semanticK?: number } = {},
+): Promise<GatheredFact[]> {
+  const { db } = deps;
+  // Create CandidateRetriever if not injected (mirrors gatherFacts pattern).
+  const retriever = deps.retriever ?? new CandidateRetriever(db);
+  const semanticK = opts.semanticK ?? 60;
+  const { schemaId, centroid, schemaLabel = '' } = params;
+
+  // ── 1. SPINE — facts directly abstracted by the schema ──────────────────
+  // SELECT facts (and collect entity ids for source 3) via kind='abstracts' edges.
+  // Tagged 'scope' — identical tag to the scope-gather so downstream via-handling
+  // (citation verify, via filter) requires no change.
+  const evidenceStmt = db.prepare(`
+    SELECT n.id, n.value, n.c, n.origin, n.last_access, n.type
+    FROM edge e
+    JOIN node n ON n.id = e.dst
+    WHERE e.src = ? AND e.kind = 'abstracts' AND n.tombstoned = 0
+  `);
+  const evidenceRows = evidenceStmt.all(schemaId) as Array<Row & { type: string }>;
+
+  const spineFacts: Row[] = [];
+  const abstractedEntityIds: string[] = [];
+  for (const row of evidenceRows) {
+    if (row.type === 'fact') {
+      spineFacts.push({ id: row.id, value: row.value, c: row.c, origin: row.origin, last_access: row.last_access });
+    } else if (row.type === 'entity') {
+      abstractedEntityIds.push(row.id);
+    }
+  }
+
+  // ── 2. SEMANTIC BREADTH — centroid-seeded hybridTopk ────────────────────
+  // Only when centroid is non-null. Never calls provider.embed — the caller
+  // must pre-compute the centroid (e.g. from SchemaRelationDeriver's centroid
+  // math). Skipping on null is intentional — not a fallback, a design decision.
+  let semanticFacts: Row[] = [];
+  if (centroid !== null) {
+    try {
+      const hits = retriever.hybridTopk(centroid, schemaLabel, semanticK);
+      if (hits.length > 0) {
+        const hitIds = hits.map(h => h.id);
+        const placeholders = hitIds.map(() => '?').join(',');
+        const semanticStmt = db.prepare(`
+          SELECT id, value, c, origin, last_access
+          FROM node
+          WHERE id IN (${placeholders}) AND type = 'fact' AND tombstoned = 0
+        `);
+        semanticFacts = semanticStmt.all(...hitIds) as Row[];
+      }
+    } catch {
+      // Non-fatal — fall back to spine + entity-hop.
+    }
+  }
+
+  // ── 3. ENTITY-HOP — 1-hop fact neighbors of abstracted entities ──────────
+  // Re-rooted at the schema's own abstracted entity ids (from source 1) instead
+  // of entity-name LIKE slug. Same 1-hop pattern as gatherFacts.
+  const linkedFacts: Row[] = [];
+  if (abstractedEntityIds.length > 0) {
+    const placeholders = abstractedEntityIds.map(() => '?').join(',');
+    const neighborSql = `
+      SELECT DISTINCT n.id, n.value, n.c, n.origin, n.last_access
+      FROM edge e
+      JOIN node n ON n.id = (CASE WHEN e.src IN (${placeholders}) THEN e.dst ELSE e.src END)
+      WHERE (e.src IN (${placeholders}) OR e.dst IN (${placeholders}))
+        AND n.type = 'fact' AND n.tombstoned = 0
+    `;
+    linkedFacts.push(
+      ...(db
+        .prepare(neighborSql)
+        .all(...abstractedEntityIds, ...abstractedEntityIds, ...abstractedEntityIds) as Row[]),
+    );
+  }
+
+  // ── 4. Union / dedup by id (verbatim from gatherFacts) ──────────────────
+  const byId = new Map<string, GatheredFact>();
+
+  for (const r of spineFacts) {
+    byId.set(r.id, { ...r, via: 'scope' });
+  }
+  for (const r of semanticFacts) {
+    const existing = byId.get(r.id);
+    if (existing) {
+      existing.via = existing.via.includes('semantic') ? existing.via : `${existing.via}+semantic`;
+    } else {
+      byId.set(r.id, { ...r, via: 'semantic' });
+    }
+  }
+  for (const r of linkedFacts) {
+    const existing = byId.get(r.id);
+    if (existing) {
+      existing.via = existing.via.includes('linked') ? existing.via : `${existing.via}+linked`;
+    } else {
+      byId.set(r.id, { ...r, via: 'linked' });
+    }
+  }
+
+  return [...byId.values()];
+}
+
 /** A sibling doc (another live deep-dive) the generator can link to. */
 export interface SiblingDoc {
   /** Full doc NODE id (used in recense://doc/<id> refs). */
