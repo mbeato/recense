@@ -7,8 +7,8 @@
 - ✅ **v3.0 Interface Layer** — Phases 11–17 (shipped 2026-06-13)
 - ✅ **v3.1 Schema Depth & Brain-Window Polish** — Phases 18–19 (shipped 2026-06-15)
 - ✅ **v4.0 Proactive Memory** — Phases 20–23 (shipped 2026-06-17) — full detail: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
-- ✅ **v5.0 Foundational Memory Store + Reader Layer** — Phases 24–27 (active; Phases 25–28 complete)
-- 🔲 **v6.0 Project Onboarding** — Phases 29–32 (active) — agentic project survey → episodes → consolidation → scoped recall + auto-corpus
+- ✅ **v5.0 Foundational Memory Store + Reader Layer** — Phases 24–28 (shipped 2026-06-19) — full detail: [milestones/v5.0-ROADMAP.md](milestones/v5.0-ROADMAP.md)
+- 🔲 **v6.0 Project Onboarding** — Phases 29–32 (active)
 
 ## Phases
 
@@ -69,13 +69,15 @@ Full detail archived to [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 
 </details>
 
-### v5.0 Foundational Memory Store + Reader Layer (Phases 24–27) — active
+### v5.0 Foundational Memory Store + Reader Layer (Phases 24–28) — SHIPPED 2026-06-19
+
+> Archived: full detail in [milestones/v5.0-ROADMAP.md](milestones/v5.0-ROADMAP.md). Phase 28 (Schema-Anchored Corpus) was added in-milestone and supersedes READER-04. The expanded phase detail below is retained as history.
 
 recense becomes the single source of truth for the founder's knowledge. Dependency chain: 24 → 25 → 26 → 27. Phase 24's clean-consolidation gate (SCOPE-01) unblocks all downstream phases. Phase 27 depends on 24 (scope), 25 (clean entities for gather), and 26 (semantic gather breadth).
 
 **Engine invariants across all phases:** single-tenant; graph is source of truth, vector is derived cache; never delete an evidence-backed fact via decay; surfacing/inference never strengthens a belief (D-43); online paths stay LLM-free; agents live outside the engine.
 
-- [ ] **Phase 24: Foundational Store** — verify the already-landed engine layer + import-memory CLI: confirm FK-free consolidation, re-enable the hourly agent, then run the human-gated consolidate→verify→retire migration
+- [x] **Phase 24: Foundational Store** — verify the already-landed engine layer + import-memory CLI: confirm FK-free consolidation, re-enable the hourly agent, then run the human-gated consolidate→verify→retire migration (completed 2026-06-18; recorded in 999.3-MIGRATION.md)
 - [x] **Phase 25: Entity Dedup / Prune** — repeatable consolidation pass merges near-duplicate entities into canonical nodes, rewiring edges and tombstoning duplicates without losing provenance (completed 2026-06-18)
 - [x] **Phase 26: Belief-Correction / Duplicate-Fact Fix** (re-scoped 2026-06-18) — RETR-01 diagnosis localized the symptom to the consolidation judge + PE-resistance routing (NOT the embedder/cosine); fix that path + a fact-level dedup pass, validated on the reused replay harness (completed 2026-06-18)
 - [x] **Phase 27: Reader Layer** — productize the validated reader slice: doc-as-node generation with inline citations, /doc route + Reader/Brain toggle, staleness/regen, doc→doc corpus graph (completed 2026-06-18)
@@ -187,10 +189,15 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 21. Engine Surfacing API | v4.0 | 4/4 | Complete | 2026-06-16 |
 | 22. Notify-Only Proactive Push | v4.0 | 3/3 | Complete | 2026-06-16 |
 | 23. Approval-Gated Any-MCP Execution | v4.0 | 10/10 | Complete | 2026-06-17 |
-| 24. Foundational Store | v5.0 | 0/TBD | Not started | - |
+| 24. Foundational Store | v5.0 | 3/3 | Complete   | 2026-06-18 |
 | 25. Entity Dedup / Prune | v5.0 | 3/3 | Complete   | 2026-06-18 |
 | 26. Retrieval-Embedding Fix | v5.0 | 5/5 | Complete   | 2026-06-18 |
 | 27. Reader Layer | v5.0 | 5/5 | Complete   | 2026-06-18 |
+| 28. Schema-Anchored Corpus | v5.0 | 5/5 | Complete   | 2026-06-19 |
+| 29. Survey Quality Spike | v6.0 | 0/3 | Not started | - |
+| 30. Core Ingest Command | v6.0 | 0/TBD | Not started | - |
+| 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 0/TBD | Not started | - |
+| 32. Project Recall + Auto-Corpus | v6.0 | 0/TBD | Not started | - |
 
 ### Phase 28: Schema-Anchored Corpus
 
@@ -261,13 +268,22 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 **Goal**: Project documents (README, docs/*.md, CLAUDE.md) can be ingested directly via the extended SourceAdapter seam, and re-running ingestion on a changed project updates existing beliefs in place rather than minting duplicates — with a per-project cursor so only changed/new content is re-surveyed.
 **Depends on**: Phase 30 (ingest-project command exists; SourceAdapter seam extended)
 **Requirements**: DOCING-01, REINGEST-01, REINGEST-02
+**Success Criteria** (what must be TRUE):
+  1. A user can point ingestion at a project dir and the project's README / docs/*.md / CLAUDE.md are ingested as episodes with origin=`observed` and project scope — without configuring an Obsidian vault
+  2. Re-running ingestion on a project where a key fact changed results in the existing belief being updated (tombstone + new node via reconsolidation) rather than a duplicate — a second run on an unchanged project produces zero new consolidated beliefs
+  3. The per-project cursor means only changed/new content triggers re-survey — a full re-survey is not triggered when the majority of project content is unchanged
 
 **Plans**: TBD
 
 ### Phase 32: Project Recall + Auto-Corpus
 
-**Goal**: A user can recall a specific project's ingested knowledge via scoped recall, and onboarding auto-promotes/generates the project's schema-anchored corpus doc so a newly-onboarded project is immediately browsable in the reader.
-**Depends on**: Phase 30 + Phase 31
+**Goal**: Users can surface a specific project's ingested knowledge instantly via scoped recall, and a newly-onboarded project is immediately browsable in the reader — the corpus doc is auto-promoted and generated as part of ingestion, not as a separate manual step.
+**Depends on**: Phase 30 (project facts + schemas exist), Phase 31 (corpus stays current through re-ingest)
 **Requirements**: RECALL-01, RECALL-02
+**Success Criteria** (what must be TRUE):
+  1. A user can run scoped recall for a project and receive only facts attributed to that project — facts from other projects are excluded from the result set
+  2. After `recense ingest-project` completes and the sleep pass runs, the project's schema-anchored corpus doc is automatically promoted and generated — the user can open it in the Reader without a separate `recense generate-doc` step
+  3. The auto-generated corpus doc covers the project's induced schemas as thesis entries with cited evidence from the surveyed facts — it reads as a coherent project overview, not a raw observation list
 
 **Plans**: TBD
+**UI hint**: yes
