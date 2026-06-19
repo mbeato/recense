@@ -31,6 +31,9 @@ const DOC_LINK = /\[([^\]]+)\]\(recense:\/\/doc\/([a-z0-9-]+)\)/g;
 const POLL_MS = 2000;
 // Maximum poll attempts (~120s at 2s intervals) before giving up.
 const POLL_MAX = 60;
+// Typical schema-doc generation wall-time (headless judge-tier, ~4k-token cited prose).
+// Measured ~42s on the live brain; used only to drive the progress-bar ETA estimate.
+const GEN_ESTIMATE_MS = 45000;
 
 function escapeHtml(s) {
   return s
@@ -226,31 +229,82 @@ export function initReader(ctx) {
    */
   async function loadWithPoll() {
     let attempts = 0;
-    while (attempts < POLL_MAX) {
-      const res = await fetch('/doc?' + docQuery());
-      if (res.ok) {
-        const md = await res.text();
-        // T-10-12/T-27-08: only innerHTML from renderMarkdown output (all values escaped).
-        body.innerHTML = renderMarkdown(md);
-        wireFactLinks();
-        // Fetch staleness data (READER-03): marks inline refs + shows banner.
-        await fetchStaleness();
-        // Fetch /doc/meta for cited ids (graph focus).
-        await fetchMeta();
-        return;
+    let progress = null;
+    try {
+      while (attempts < POLL_MAX) {
+        const res = await fetch('/doc?' + docQuery());
+        // IMPORTANT: must be `=== 200`, NOT `res.ok` — 202 ("generating") is also a 2xx,
+        // so `res.ok` would swallow it and render the raw {"status":"generating"} JSON as
+        // the doc body. Only a real 200 carries markdown.
+        if (res.status === 200) {
+          const md = await res.text();
+          if (progress) progress.done();
+          // T-10-12/T-27-08: only innerHTML from renderMarkdown output (all values escaped).
+          body.innerHTML = renderMarkdown(md);
+          wireFactLinks();
+          // Fetch staleness data (READER-03): marks inline refs + shows banner.
+          await fetchStaleness();
+          // Fetch /doc/meta for cited ids (graph focus).
+          await fetchMeta();
+          return;
+        }
+        if (res.status === 202) {
+          // D-03: single honest loading state — a real elapsed/ETA progress bar (built
+          // once on the first 202; it animates independently of the 2s poll cadence).
+          attempts++;
+          if (!progress) progress = startGenProgress();
+          await sleep(POLL_MS);
+          continue;
+        }
+        // Other error.
+        throw new Error('GET /doc → ' + res.status);
       }
-      if (res.status === 202) {
-        // D-03: single honest loading state — show progress, poll.
-        attempts++;
-        const dots = '.'.repeat((attempts % 4) + 1);
-        body.textContent = `generating doc${dots} (${attempts}/${POLL_MAX})`;
-        await sleep(POLL_MS);
-        continue;
-      }
-      // Other error.
-      throw new Error('GET /doc → ' + res.status);
+      throw new Error('timed out waiting for doc generation');
+    } finally {
+      if (progress) progress.stop();
     }
-    throw new Error('timed out waiting for doc generation');
+  }
+
+  /**
+   * Build + animate the generation progress bar. There is no server-side progress signal
+   * for a single LLM generation, so the bar is a time-based ESTIMATE: it eases toward
+   * (but never reaches) 100% on an exponential curve calibrated to GEN_ESTIMATE_MS, and
+   * snaps to 100% only when the real doc arrives. Honest about the estimate via "~Ns left".
+   * Returns { stop, done } to tear down the animation interval.
+   */
+  function startGenProgress() {
+    body.textContent = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'doc-progress';
+    const track = document.createElement('div');
+    track.className = 'doc-progress-track';
+    const fill = document.createElement('div');
+    fill.className = 'doc-progress-fill';
+    track.appendChild(fill);
+    const label = document.createElement('div');
+    label.className = 'doc-progress-label';
+    wrap.appendChild(track);
+    wrap.appendChild(label);
+    body.appendChild(wrap);
+
+    const start = performance.now();
+    const TAU = GEN_ESTIMATE_MS * 0.5; // ~87% at the estimate, ~98% at 2× it; never 100%.
+    function tick() {
+      const elapsed = performance.now() - start;
+      const f = 1 - Math.exp(-elapsed / TAU);
+      fill.style.width = (f * 100).toFixed(1) + '%';
+      const secs = Math.floor(elapsed / 1000);
+      const remain = Math.round((GEN_ESTIMATE_MS - elapsed) / 1000);
+      label.textContent = remain > 0
+        ? `generating · ${secs}s elapsed · ~${remain}s left`
+        : `generating · ${secs}s elapsed · finishing up…`;
+    }
+    tick();
+    const id = setInterval(tick, 150);
+    return {
+      stop() { clearInterval(id); },
+      done() { clearInterval(id); fill.style.width = '100%'; },
+    };
   }
 
   function sleep(ms) {

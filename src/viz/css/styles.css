@@ -712,6 +712,30 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   font-style: italic;
 }
 
+/* Generation progress bar (time-estimate; shown while lazy schema-doc generation runs).
+   Muted mauve/slate — amber/orange is activation-only (founder-locked palette). */
+.doc-progress { margin: 28px 2px; }
+.doc-progress-track {
+  height: 4px;
+  background: rgba(139, 112, 144, 0.14);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.doc-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: rgba(170, 150, 180, 0.55);
+  border-radius: 2px;
+  transition: width 0.18s linear; /* smooths the 150ms estimate ticks */
+}
+.doc-progress-label {
+  margin-top: 9px;
+  font-size: 11.5px;
+  color: #8b7e95;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
 /* ── Corpus graph swap button (READER-04 / D-07) ──────────────────────────
    Expanded Brain Window ONLY — never in the tray/popover (.mode-popover).
    The CSS gate mirrors the search/topic-wrap pattern: hidden by default,
