@@ -87,39 +87,68 @@ export function writeDoc(
   // transaction. Safe: prepared statements are reentrant within the same connection.
   const stmtFtsDelete = db.prepare('DELETE FROM node_fts WHERE node_id = ?');
 
-  // Find any EXISTING live doc node(s) for this slug so they can be superseded.
-  // Invariant: at most ONE live type='doc' node per slug after writeDoc. A regenerate
-  // (--force) must retire the prior doc, not append a second live node. Exclude the new
-  // docId (it does not exist yet, but be defensive). FK-safe: tombstoning leaves the node
-  // row + its node_doc/node_scope/cites edges intact (the row still exists), so no FK breaks.
-  const stmtFindLiveDocsForSlug = db.prepare(
-    `SELECT n.id
+  // BUG-2c fix (28-04): Stable-edge invariant — fill-in-place for existing stubs.
+  //
+  // When CorpusPromoter creates an eager doc stub (value='', node_id = stubId), it writes
+  // doc_containment/doc_reference edges referencing that stubId. If generation tombstones
+  // the stub and creates a new node id, those corpus edges dangle (reference a tombstoned
+  // node → excluded from /graph?type=doc → the entire corpus forest vanishes after the first
+  // doc is generated). Fix: when a live doc stub for the slug already exists, UPDATE its
+  // value in place (same node id) instead of tombstone+recreate. The stub id is preserved
+  // so all corpus edges remain valid.
+  //
+  // Behaviour matrix:
+  //  - Existing live doc with NON-EMPTY value → tombstone + create new (--force regen path)
+  //  - Existing live doc with EMPTY value (CorpusPromoter stub) → fill in place (same id)
+  //  - No existing live doc → create new (original path, unchanged)
+  //
+  // One-live-doc-per-slug invariant still holds after every path.
+
+  // Find any EXISTING live doc node for this slug.
+  // Exclude the caller-supplied docId defensively (it doesn't exist yet but guards
+  // against a bizarre double-call with the same id).
+  const stmtFindLiveDocForSlug = db.prepare(
+    `SELECT n.id, n.value
      FROM node n
      JOIN node_scope ns ON ns.node_id = n.id
-     WHERE n.type = 'doc' AND n.tombstoned = 0 AND ns.scope = ? AND n.id != ?`,
+     WHERE n.type = 'doc' AND n.tombstoned = 0 AND ns.scope = ? AND n.id != ?
+     LIMIT 1`,
   );
 
   // All writes in ONE IMMEDIATE transaction (single-writer invariant, T-27-07).
   // IMMEDIATE acquires a RESERVED lock upfront — prevents SQLITE_BUSY_SNAPSHOT in WAL mode
   // when concurrent readers hold a SHARED lock (same rationale as SemanticStore.txUpsertNode).
   const txWrite = db.transaction(() => {
-    // 0. Supersede: tombstone any prior live doc node for this slug (one-live-doc-per-slug).
-    //    store.tombstone() sets tombstoned=1, clears training_eligible, and removes the node
-    //    from node_fts. node_doc/node_scope/cites edges are left in place but reference a
-    //    now-tombstoned node — FK-consistent (the node row still exists). Done BEFORE the
-    //    new write so the new doc is the only live one for the slug after this transaction.
-    const priorLiveDocs = stmtFindLiveDocsForSlug.all(slug, docId) as Array<{ id: string }>;
-    for (const { id } of priorLiveDocs) {
-      store.tombstone(id);
-    }
+    // 0. Check for an existing live doc for this slug.
+    const existingDoc = stmtFindLiveDocForSlug.get(slug, docId) as
+      | { id: string; value: string }
+      | undefined;
 
-    // 1. Write the doc node.
+    // Decide which node id to write into.
+    // If an empty stub exists → fill it in place (stable-edge invariant, BUG-2c).
+    // If a non-empty doc exists → tombstone it first, then write a fresh node (--force regen).
+    // If nothing exists → write a fresh node (original lazy-gen path).
+    const isEmptyStub = existingDoc && existingDoc.value.trim().length === 0;
+    const effectiveDocId = isEmptyStub ? existingDoc.id : docId;
+
+    if (existingDoc && !isEmptyStub) {
+      // Non-empty prior doc → tombstone it (supersede, one-live-doc-per-slug).
+      // node_doc/node_scope/cites edges are left in place but reference a now-tombstoned
+      // node — FK-consistent (the row still exists). This is the --force regen path.
+      store.tombstone(existingDoc.id);
+    }
+    // Empty stub: skip tombstone — we will UPDATE it in place below.
+    // No existing doc: nothing to tombstone.
+
+    // 1. Write the doc node (insert for new ids, UPDATE in place for the stub id).
+    //    upsertNode uses ON CONFLICT(id) DO UPDATE SET — so calling it with effectiveDocId
+    //    (= the stub's id when filling in place) updates value/s/c/last_access in one op.
     //    origin='inferred' → SemanticStore forces training_eligible=0 (lifecycle guard).
     //    s=0    → no Hebbian decay contribution.
     //    c=1.0  → high confidence (it is what was generated).
     //    Lifecycle: no setEmbedding → embedding stays NULL permanently.
     store.upsertNode({
-      id: docId,
+      id: effectiveDocId,
       type: 'doc',
       value: markdown,
       origin: 'inferred',
@@ -133,22 +162,24 @@ export function writeDoc(
     //    upsertNode auto-syncs FTS (stmtFtsInsert inside txUpsertNode). We delete the
     //    doc node from node_fts immediately after so its markdown body never pollutes
     //    BM25 keyword search. The FTS delete is idempotent (DELETE WHERE node_id = ?).
-    stmtFtsDelete.run(docId);
+    stmtFtsDelete.run(effectiveDocId);
 
     // 3. Write the node_doc sidecar.
-    //    generated_at = now on first write; the ON CONFLICT SQL in SemanticStore preserves
-    //    generated_at on subsequent re-renders (write-once staleness predicate).
-    store.upsertNodeDoc({ node_id: docId, slug, generated_at: now, updated_at: now });
+    //    For the fill-in-place path (effectiveDocId = stub id): upsertNodeDoc's
+    //    ON CONFLICT SQL preserves generated_at (write-once staleness predicate) but
+    //    updates updated_at to now — signalling that prose was generated.
+    //    For the fresh-node path (effectiveDocId = docId): generated_at = now on first write.
+    store.upsertNodeDoc({ node_id: effectiveDocId, slug, generated_at: now, updated_at: now });
 
     // 4. Attribute the doc node to the project slug via node_scope (SCOPE-01 provenance).
-    store.upsertNodeScope({ node_id: docId, scope: slug, updated_at: now });
+    store.upsertNodeScope({ node_id: effectiveDocId, scope: slug, updated_at: now });
 
     // 5. Write one kind='cites' edge per unique cited fact.
-    //    src = doc node, dst = cited fact node.
-    //    weight=1.0 (uniform); no decay (doc is lifecycle-exempt).
+    //    src = doc node (use effectiveDocId so fill-in-place edges point to the live id).
+    //    dst = cited fact node. weight=1.0 (uniform); no decay (doc is lifecycle-exempt).
     for (const factId of uniqueCitedIds) {
       store.upsertEdge({
-        src: docId,
+        src: effectiveDocId,
         dst: factId,
         rel: 'cites',
         kind: 'cites',
@@ -161,11 +192,12 @@ export function writeDoc(
     //    In-set guard (T-27-15): only create edges to nodes that are live (tombstoned=0)
     //    and are type='doc'. Refs to non-existent or tombstoned doc nodes are silently
     //    skipped — no dangling FK. Same atomicity as the cites path.
+    //    Use effectiveDocId so fill-in-place paths emit edges from the correct node id.
     for (const targetDocId of uniqueLinkedDocRefs) {
       const liveRow = stmtCheckLiveDoc.get(targetDocId) as { id: string } | undefined;
       if (!liveRow) continue; // dangling or tombstoned — skip (T-27-15)
       store.upsertEdge({
-        src: docId,
+        src: effectiveDocId,
         dst: targetDocId,
         rel: 'doc_link',
         kind: 'doc_link',

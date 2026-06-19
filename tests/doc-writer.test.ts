@@ -277,3 +277,81 @@ describe('writeDoc', () => {
     expect(vtx.tombstoned).toBe(0);
   });
 });
+
+// BUG-2c (28-04): fill-in-place for CorpusPromoter empty stubs — the stable-edge invariant.
+// The promoter writes doc_containment/doc_reference edges between stub node ids BEFORE prose
+// exists. Lazy generation must fill the stub IN PLACE (same id), never tombstone+recreate, or
+// every corpus edge dangles (references a tombstoned node) and the forest vanishes.
+describe('writeDoc — fill-in-place for empty stubs (28-04 stable-edge invariant)', () => {
+  // Seed an empty doc stub exactly as CorpusPromoter does: type='doc', value='',
+  // node_doc.slug = schemaId, node_scope.scope = schemaId.
+  function seedStub(store: SemanticStore, id: string, slug: string): void {
+    store.upsertNode({ id, type: 'doc', value: '', origin: 'inferred', s: 0, c: 1.0, last_access: 100 });
+    store.upsertNodeDoc({ node_id: id, slug, generated_at: 100, updated_at: 100 });
+    store.upsertNodeScope({ node_id: id, scope: slug, updated_at: 100 });
+  }
+
+  test('fills the SAME stub node id (no new node, no tombstone)', () => {
+    const { db, store } = makeStore();
+    seedFact(store, 'fact-1');
+    seedStub(store, 'stub-1', 'schema-x');
+
+    // Generation proposes a fresh docId, but slug matches the existing empty stub.
+    writeDoc(store, db, {
+      docId: 'would-be-new-id',
+      slug: 'schema-x',
+      markdown: '# Filled\n\nSome [claim](recense://fact/fact-1).',
+      citedFactIds: ['fact-1'],
+      now: 9000,
+    });
+
+    // Stub is filled in place, still live.
+    const stub = db.prepare('SELECT value, tombstoned FROM node WHERE id = ?').get('stub-1') as
+      | { value: string; tombstoned: number }
+      | undefined;
+    expect(stub).toBeDefined();
+    expect(stub!.tombstoned).toBe(0);
+    expect(stub!.value.startsWith('# Filled')).toBe(true);
+
+    // No new node was created for the proposed id.
+    const newNode = db.prepare('SELECT id FROM node WHERE id = ?').get('would-be-new-id');
+    expect(newNode).toBeUndefined();
+
+    // One-live-doc-per-slug still holds.
+    const live = db.prepare(
+      "SELECT COUNT(*) AS n FROM node n JOIN node_scope ns ON ns.node_id = n.id " +
+      "WHERE n.type='doc' AND n.tombstoned=0 AND ns.scope='schema-x'",
+    ).get() as { n: number };
+    expect(live.n).toBe(1);
+  });
+
+  test('corpus edge referencing the stub does NOT dangle after generation', () => {
+    const { db, store } = makeStore();
+    seedFact(store, 'fact-1');
+    seedStub(store, 'parent-stub', 'schema-parent');
+    seedStub(store, 'child-stub', 'schema-child');
+    // Promoter-style containment edge between the two stub ids.
+    store.upsertEdge({ src: 'parent-stub', dst: 'child-stub', rel: 'doc_containment', kind: 'doc_containment', w: 1.0, last_access: 100 });
+
+    // Fill the parent stub via lazy generation (fresh proposed id, same slug).
+    writeDoc(store, db, {
+      docId: 'fresh-id',
+      slug: 'schema-parent',
+      markdown: '# Parent\n\n[c](recense://fact/fact-1).',
+      citedFactIds: ['fact-1'],
+      now: 9000,
+    });
+
+    // The containment edge still points at a LIVE parent doc node (id unchanged).
+    const edge = db.prepare(
+      "SELECT e.src, e.dst FROM edge e WHERE e.kind='doc_containment'",
+    ).get() as { src: string; dst: string };
+    expect(edge.src).toBe('parent-stub');
+    const parent = db.prepare('SELECT tombstoned FROM node WHERE id = ?').get(edge.src) as { tombstoned: number };
+    expect(parent.tombstoned).toBe(0); // not orphaned — forest survives
+
+    // FK-clean.
+    const fk = db.prepare('PRAGMA foreign_key_check').all();
+    expect(fk.length).toBe(0);
+  });
+});
