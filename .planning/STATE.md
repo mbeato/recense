@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
-status: executing
-stopped_at: Completed 28-06-PLAN.md (CORPUS-06 eager offline corpus-doc generation)
-last_updated: "2026-06-19T21:00:00.000Z"
+status: milestone_complete
+stopped_at: Milestone complete (Phase 28 was final phase)
+last_updated: 2026-06-19T18:36:48.191Z
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 20
-  completed_plans: 18
-  percent: 85
+  completed_plans: 20
+  percent: 80
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 28 — schema-anchored-corpus
+**Current focus:** Milestone complete
 
 ## Current Position
 
 ```
-Phase: 28 (schema-anchored-corpus) — EXECUTING
-Plan: 6 of 6
-Status: CORPUS-06 complete (4bce161)
+Phase: 28
+Plan: Not started
+Status: Milestone complete
 
 [██████████████████████████████████████] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-04 done · 27-05 COMPLETE (flat-2D corpus)
 ```
@@ -75,7 +75,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 
 **Velocity (historical baseline):**
 
-- Total plans completed: 147 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
+- Total plans completed: 152 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
 - Average plan duration: ~20–25 min
 
 **By Milestone:**
@@ -222,6 +222,7 @@ API budget: ~$14–15 remaining (Phase 17 closed at ~$12; Phase 23 used ~$0.05).
 | 260617-qat | Gated headless `claude -p` transport (spike 003) behind the AnthropicLike seam — extract→Haiku/judge→Sonnet on Max, env-strip billing safeguard, default provider unchanged. Tasks 1–3 shipped; Task 4 (live sleep.env activation) founder-gated. | 2026-06-17 | 1a58624 | [260617-qat](./quick/260617-qat-integrate-spike-validated-headless-claud) |
 | 260617-ulp | Fix salience-skip consolidation leak — the salience-skip `continue` in consolidator.ts never called markConsolidated, so 142 sub-threshold episodes were re-scanned every pass forever (sentinel never cleared, blocked SCOPE-01). Mark-and-skip via shared `markSkipped` helper (routes both skip sites). Verified on a live-DB copy: backlog 144→2, no graph effects, fk_check clean. | 2026-06-18 | 5326550 | [260617-ulp](./quick/260617-ulp-fix-salience-skip-consolidation-leak-mar) |
 | 260617-w0u | Phase 24 SCOPE-04 source retirement (24-03 T4, founder-gated) — nav-layer safety verified, then MOVED 197 migrated fact files → `~/.claude/projects-memory-archive-2026-06-18/` (reversible). Kept 12 indexes + 7 policy bundles + 2 live trackers (excluded from 199→197 after finding skills read/write them). DB untouched; 199/199 still consolidated+scoped. Closes Phase 24. No git commit (move is under ~/.claude; .planning gitignored). | 2026-06-18 | — | [260617-w0u](./quick/260617-w0u-phase-24-scope-04-source-retirement) |
+| 260619-mbr | Viz haze instancing — replace ~6,119 per-mesh transparent haze spheres with one THREE.InstancedMesh (T1: exclude haze from ForceGraph3D sim; T2: deterministic in-volume scatter + Fresnel material; T3: instanceId raycasting hover/click/trace). Draw calls: ~6,400 → ~270 + 1 instanced. T4 awaiting founder visual verification at http://localhost:7811. | 2026-06-19 | 1e56b1c, 98a641b, e5e551e (T1–T3) | [260619-mbr](./quick/260619-mbr-viz-haze-instancing) |
 
 ## Deferred Items
 

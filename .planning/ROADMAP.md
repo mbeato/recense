@@ -7,7 +7,8 @@
 - ✅ **v3.0 Interface Layer** — Phases 11–17 (shipped 2026-06-13)
 - ✅ **v3.1 Schema Depth & Brain-Window Polish** — Phases 18–19 (shipped 2026-06-15)
 - ✅ **v4.0 Proactive Memory** — Phases 20–23 (shipped 2026-06-17) — full detail: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
-- 🔲 **v5.0 Foundational Memory Store + Reader Layer** — Phases 24–27 (active)
+- ✅ **v5.0 Foundational Memory Store + Reader Layer** — Phases 24–27 (active; Phases 25–28 complete)
+- 🔲 **v6.0 Project Onboarding** — Phases 29–32 (active) — agentic project survey → episodes → consolidation → scoped recall + auto-corpus
 
 ## Phases
 
@@ -213,3 +214,60 @@ Plans:
 
 - [x] 28-03-PLAN.md — CorpusPromoter: mass-gate+noise filter, centroid-cosine+mass-direction ladder, eager doc stubs, CLI + sleep-pass wiring; BLOCKING CORPUS-05 snapshot test (CORPUS-02/03/05)
 - [x] 28-04-PLAN.md — /graph?type=doc + corpus.js link-kind styling (containment solid/directed, reference faint/dashed); hero-verify legible forest (CORPUS-04)
+
+## Phase Details — v6.0 Project Onboarding
+
+recense onboards a fresh/unexplored project into the brain on demand via an agentic survey → episodes → consolidation. Builds on v5.0 scope provenance, the SourceAdapter seam, and the schema-anchored corpus. Spike-first: Phase 29 proves survey quality before the full build.
+
+**Engine invariants across all phases:** single-tenant; graph is source of truth, vector is derived cache; online paths LLM-free (all LLM/embedding cost in the offline sleep pass); origin=`observed` for all survey/doc ingest (never `asserted_by_user`); never strengthen a fact from inferred output; net-zero new runtime deps; summarized semantic knowledge only (no raw code indexing).
+
+- [ ] **Phase 29: Survey Quality Spike** (INGEST-03) — prove agentic-survey fact/schema signal on one real project; go/no-go for the build phases
+- [ ] **Phase 30: Core Ingest Command** (INGEST-01/02/04) — `recense ingest-project <dir>`: survey agent → summarized episodes → scope-tagged facts + schemas via the offline pipeline — depends on 29
+- [ ] **Phase 31: Doc Ingest + Idempotent Re-ingest** (DOCING-01, REINGEST-01/02) — direct project-doc ingest + per-project cursor + in-place belief reconciliation on re-ingest — depends on 30
+- [ ] **Phase 32: Project Recall + Auto-Corpus** (RECALL-01/02) — scoped project recall + auto-promoted/-generated schema-anchored corpus doc — depends on 30+31
+
+### Phase 29: Survey Quality Spike
+
+**Goal**: Before building the full command, prove that an agentic survey of a real project produces facts and schemas with genuine signal — not noise — when ingested through the existing pipeline. The spike output is a go/no-go decision and calibration input (scope-tagging conventions, summarization prompt shape, quality gate definition) for Phases 30–32.
+**Depends on**: Phase 28 (consolidation + corpus pipeline live)
+**Requirements**: INGEST-03
+**Success Criteria** (what must be TRUE):
+  1. A user runs a manual spike: an agent surveys one real repo and emits summarized observations as episodes through the existing pipeline — the spike completes without new runtime deps
+  2. After a sleep pass, the resulting facts are inspectable: ≥5 facts per surveyed area (architecture, conventions, decisions) are judged as genuine semantic knowledge, not raw-code noise or structural trivia like "file X imports Y"
+  3. At least one schema is induced from the surveyed project's facts — the abstraction layer fires, not just fact storage
+  4. The spike produces written calibration notes: what prompt shape / summarization level / quality gate definition to carry into Phase 30
+
+**Plans**: 3 plans
+
+- [ ] 29-01-PLAN.md — survey-feeder spike: agentic survey of ~/usage → summarized episodes (origin=observed, cwd=/Users/vtx/usage) → consolidation on a scratch DB (SC1)
+- [ ] 29-02-PLAN.md — genuine/noise judge harness: per-area tally (≥5-genuine bar) + schema-induction inspection (≥1 bar) over the scratch DB (SC2/SC3)
+- [ ] 29-03-PLAN.md — 29-CALIBRATION.md calibration notes (prompt shape, summarization level, quality gate, scope-tagging) + founder-owned go/no-go (SC4)
+
+### Phase 30: Core Ingest Command
+
+**Goal**: A user runs `recense ingest-project <dir>` on an unexplored repo: an agent surveys it and emits summarized observations as episodes via the existing offline pipeline, scope-tagged to that project, yielding facts + schemas after a sleep pass. Carries the Phase-29 calibration (prompt shape, quality gate, scope-tagging convention).
+**Depends on**: Phase 29 (spike calibration — prompt shape + quality gate proven)
+**Requirements**: INGEST-01, INGEST-02, INGEST-04
+**Success Criteria** (what must be TRUE):
+  1. A user runs `recense ingest-project <dir>` on an unexplored repo and it completes — episodes are written to the DB; no online path is blocked; the command returns promptly (ingestion runs offline)
+  2. After a sleep pass, the ingested facts are retrievable via `recense recall` and carry the correct `[scope]` attribution matching the project
+  3. The brain produces at least one schema induced from the surveyed project — the same abstraction pipeline that fires on conversation turns fires on survey episodes
+  4. Raw code lines and low-value structural facts are absent from the resulting fact set — the quality gate calibrated in Phase 29 is enforced
+
+**Plans**: TBD
+
+### Phase 31: Doc Ingest + Idempotent Re-ingest
+
+**Goal**: Project documents (README, docs/*.md, CLAUDE.md) can be ingested directly via the extended SourceAdapter seam, and re-running ingestion on a changed project updates existing beliefs in place rather than minting duplicates — with a per-project cursor so only changed/new content is re-surveyed.
+**Depends on**: Phase 30 (ingest-project command exists; SourceAdapter seam extended)
+**Requirements**: DOCING-01, REINGEST-01, REINGEST-02
+
+**Plans**: TBD
+
+### Phase 32: Project Recall + Auto-Corpus
+
+**Goal**: A user can recall a specific project's ingested knowledge via scoped recall, and onboarding auto-promotes/generates the project's schema-anchored corpus doc so a newly-onboarded project is immediately browsable in the reader.
+**Depends on**: Phase 30 + Phase 31
+**Requirements**: RECALL-01, RECALL-02
+
+**Plans**: TBD
