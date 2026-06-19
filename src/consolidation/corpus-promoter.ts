@@ -161,12 +161,15 @@ export class CorpusPromoter {
       "SELECT id, value FROM node WHERE type = 'schema' AND tombstoned = 0"
     );
 
-    // Schema members with their node values (for noise-fraction computation, D-07)
+    // Schema members with their node values (for mass + noise-fraction computation, D-07).
+    // D-37 firewall (CR-01): exclude origin='inferred' here too — must match the centroid
+    // query (stmtGetClusterableNodes) so inferred output cannot inflate a schema's mass or
+    // dilute its noise fraction across the promotion gate (self-confirmation guard).
     this.stmtGetSchemaMembersWithValues = db.prepare(
       "SELECT e.dst as id, n.value as value FROM edge e " +
       "JOIN node n ON n.id = e.dst " +
       "WHERE e.src = ? AND e.kind = 'abstracts' " +
-      "AND n.type IN ('fact','entity') AND n.tombstoned = 0"
+      "AND n.type IN ('fact','entity') AND n.tombstoned = 0 AND n.origin != 'inferred'"
     );
 
     // Find existing live doc stub for a schema (via node_scope.scope = schemaId)
