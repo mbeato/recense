@@ -14,7 +14,7 @@ import { initSchema } from '../src/db/schema';
 import { SemanticStore } from '../src/db/semantic-store';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
-import { generateDoc } from '../src/reader/doc-generator';
+import { generateDoc, generateDocForSchema, buildSchemaDocPrompt } from '../src/reader/doc-generator';
 import type { CandidateRetriever } from '../src/retrieval/topk';
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -395,5 +395,182 @@ describe('generateDoc', () => {
     expect(src).toContain('RELATED PROJECT DOCS');
     // doc-refs resolved against LIVE doc nodes only
     expect(src).toContain("type = 'doc' AND tombstoned = 0");
+  });
+});
+
+// ── Schema-thesis generation (CORPUS-01) ──────────────────────────────────
+//
+// Tests for the schema-anchored generation path (Plan 28-02 Task 2):
+//  - buildSchemaDocPrompt frames the schema label as the THESIS
+//  - generateDocForSchema calls gatherFactsForSchema, runs the verbatim
+//    citation-verify + canonicalize loop, and returns a GenerateDocResult
+//  - The empty-output throw guard is preserved in the schema path
+//  - The scope-anchored generateDoc path is unchanged (regression)
+
+/** Seed a schema node. */
+function seedSchema(store: SemanticStore, id: string, label: string): void {
+  store.upsertNode({ id, type: 'schema', value: label, origin: 'inferred', s: 0, c: 1.0, last_access: 500 });
+}
+
+/** Seed an abstracts edge from schema to node. */
+function seedAbstractsEdge(store: SemanticStore, schemaId: string, dstId: string): void {
+  store.upsertEdge({ src: schemaId, dst: dstId, rel: 'abstracts', kind: 'abstracts', w: 1 });
+}
+
+describe('buildSchemaDocPrompt', () => {
+  test('embeds the schema label as the THESIS topic', () => {
+    const prompt = buildSchemaDocPrompt('Infrastructure patterns', '[fact-uuid-1] some fact', []);
+    expect(prompt).toContain('Infrastructure patterns');
+    expect(prompt).toContain('thesis');
+  });
+
+  test('instructs that facts are evidence and must be cited', () => {
+    const prompt = buildSchemaDocPrompt('My schema', '[uuid-1] fact one\n[uuid-2] fact two', []);
+    // Must include the HARD RULES citation requirement
+    expect(prompt).toContain('HARD RULES');
+    // Must reference the schema-as-thesis framing
+    expect(prompt).toContain('thesis');
+  });
+
+  test('includes the factBlock in the prompt', () => {
+    const factBlock = '[aaaaaa-1] a fact about memory\n[bbbbbb-2] another fact';
+    const prompt = buildSchemaDocPrompt('Memory patterns', factBlock, []);
+    expect(prompt).toContain('[aaaaaa-1] a fact about memory');
+    expect(prompt).toContain('[bbbbbb-2] another fact');
+  });
+
+  test('includes RELATED DOCS block when siblings exist', () => {
+    const siblings = [{ id: 'doc-id-1', slug: 'tonos', title: 'Tonos Deep-Dive' }];
+    const prompt = buildSchemaDocPrompt('Schema label', 'facts...', siblings);
+    expect(prompt).toContain('RELATED PROJECT DOCS');
+    expect(prompt).toContain('doc-id-1');
+    expect(prompt).toContain('tonos');
+    expect(prompt).toContain('Tonos Deep-Dive');
+  });
+
+  test('omits RELATED DOCS block when no siblings exist', () => {
+    const prompt = buildSchemaDocPrompt('Schema label', 'facts...', []);
+    expect(prompt).not.toContain('RELATED PROJECT DOCS');
+  });
+});
+
+describe('generateDocForSchema', () => {
+  test('returns ≥1 verified citedFactId and non-empty markdown (stub-provider)', async () => {
+    const { db, store } = makeStore();
+    const schemaId = 'schema-gen-1';
+    const factId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    seedSchema(store, schemaId, 'infrastructure patterns');
+    seedFact(store, factId, 'infrastructure detail fact');
+    seedAbstractsEdge(store, schemaId, factId);
+
+    // Stub returns markdown citing the evidence fact
+    const markdown = `# Infrastructure patterns\n\n[Cited claim](recense://fact/${factId}).`;
+    const provider = makeStubProvider(markdown);
+
+    const result = await generateDocForSchema(
+      { db, store, provider: provider as any },
+      { schemaId, schemaLabel: 'infrastructure patterns', centroid: null },
+    );
+
+    expect(result.markdown.trim().length).toBeGreaterThan(0);
+    expect(result.citationCount).toBeGreaterThanOrEqual(1);
+    expect(result.citedFactIds).toContain(factId);
+  });
+
+  test('calls gatherFactsForSchema (not gatherFacts) — spine comes from abstracts edges', async () => {
+    const { db, store } = makeStore();
+    const schemaId = 'schema-gen-2';
+    const factId = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+    seedSchema(store, schemaId, 'test schema');
+    seedFact(store, factId, 'schema evidence fact');
+    // Wire via abstracts (NOT node_scope — verifies gatherFactsForSchema was called)
+    seedAbstractsEdge(store, schemaId, factId);
+    // Do NOT add a node_scope entry — if gatherFacts were called instead, it would return 0 facts
+
+    const markdown = `# Test schema\n\n[Evidence](recense://fact/${factId}).`;
+    const provider = makeStubProvider(markdown);
+
+    const result = await generateDocForSchema(
+      { db, store, provider: provider as any },
+      { schemaId, schemaLabel: 'test schema', centroid: null },
+    );
+
+    // If gatherFactsForSchema is called, the fact is gathered via abstracts → citation resolves
+    expect(result.citationCount).toBe(1);
+    expect(result.citedFactIds).toContain(factId);
+  });
+
+  test('empty output THROWS (empty-guard preserved from scope path)', async () => {
+    const { db, store } = makeStore();
+    seedSchema(store, 'schema-empty', 'empty test');
+
+    const provider = makeStubProvider(''); // simulate timeout → empty string
+    await expect(
+      generateDocForSchema(
+        { db, store, provider: provider as any },
+        { schemaId: 'schema-empty', schemaLabel: 'empty test', centroid: null },
+      ),
+    ).rejects.toThrow(/empty output/i);
+  });
+
+  test('returns GenerateDocResult shape: markdown, docId, citedFactIds, citationCount, invented, tombstoned, linkedDocRefs', async () => {
+    const { db, store } = makeStore();
+    const schemaId = 'schema-gen-3';
+    seedSchema(store, schemaId, 'shape check');
+
+    const provider = makeStubProvider('# Shape check\n\nno citations here.');
+
+    const result = await generateDocForSchema(
+      { db, store, provider: provider as any },
+      { schemaId, schemaLabel: 'shape check', centroid: null },
+    );
+
+    expect(typeof result.markdown).toBe('string');
+    expect(typeof result.docId).toBe('string');
+    expect(result.docId.length).toBeGreaterThan(0);
+    expect(Array.isArray(result.citedFactIds)).toBe(true);
+    expect(typeof result.citationCount).toBe('number');
+    expect(typeof result.invented).toBe('number');
+    expect(typeof result.tombstoned).toBe('number');
+    expect(Array.isArray(result.linkedDocRefs)).toBe(true);
+  });
+
+  test('prompt framing in generateDocForSchema contains "thesis" (schema-thesis framing)', async () => {
+    const { db, store } = makeStore();
+    const schemaId = 'schema-gen-4';
+    seedSchema(store, schemaId, 'git workflow patterns');
+
+    const capturePrompt = { value: '' };
+    const provider = {
+      ...makeStubProvider('# Git workflow patterns\n\nbody.'),
+      generate: async (prompt: string) => {
+        capturePrompt.value = prompt;
+        return '# Git workflow patterns\n\nbody.';
+      },
+    };
+
+    await generateDocForSchema(
+      { db, store, provider: provider as any },
+      { schemaId, schemaLabel: 'git workflow patterns', centroid: null },
+    );
+
+    expect(capturePrompt.value).toContain('thesis');
+    expect(capturePrompt.value).toContain('git workflow patterns');
+  });
+
+  test('source: FACT_REF verify/canonicalize loop is NOT duplicated between scope and schema paths', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/reader/doc-generator.ts'), 'utf8');
+    // The FACT_REF regex constant should appear only once (shared/factored, not duplicated).
+    // Check by counting occurrences of the defining regex literal pattern.
+    const factRefDefCount = (src.match(/const FACT_REF\s*=/g) ?? []).length;
+    expect(factRefDefCount).toBe(1);
+    // generateDocForSchema must exist
+    expect(src).toContain('generateDocForSchema');
+    // The empty-output throw must exist
+    expect(src).toContain('empty output');
+    // The thesis path must use gatherFactsForSchema
+    expect(src).toContain('gatherFactsForSchema');
   });
 });
