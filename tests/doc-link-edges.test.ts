@@ -243,10 +243,11 @@ describe('doc_link edge creation (READER-04)', () => {
     const provider = makeDocRefProvider(markdown);
     const result = await generateDoc({ db, store, provider }, 'e2e-slug');
 
-    // generateDoc returns ALL doc refs from the prose; writeDoc is responsible for the in-set guard.
+    // generateDoc now RESOLVES doc-refs against live doc nodes (exact-or-unique-prefix) and
+    // DROPS unresolved ones (canonicalization, mirroring fact-refs). So linkedDocRefs holds
+    // the resolved live target ('doc-linked') and NOT the dangling 'does-not-exist-9999'.
     expect(result.linkedDocRefs).toContain('doc-linked');
-    // does-not-exist-9999 IS returned by generateDoc (present in prose) — writeDoc will skip it.
-    expect(result.linkedDocRefs).toContain('does-not-exist-9999');
+    expect(result.linkedDocRefs).not.toContain('does-not-exist-9999');
 
     writeDoc(store, db, {
       docId: result.docId,

@@ -16,7 +16,7 @@ import { SemanticStore } from '../src/db/semantic-store';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { ModelProvider } from '../src/model/provider';
-import { gatherFacts } from '../src/reader/doc-gather';
+import { gatherFacts, gatherSiblingDocs } from '../src/reader/doc-gather';
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -186,5 +186,55 @@ describe('gatherFacts', () => {
     expect(typeof row.origin).toBe('string');
     expect(typeof row.last_access).toBe('number');
     expect(typeof row.via).toBe('string');
+  });
+});
+
+// ── gatherSiblingDocs (READER-04) ──────────────────────────────────────────
+
+describe('gatherSiblingDocs', () => {
+  /** Seed a live doc node with node_doc sidecar + body. */
+  function seedDocNode(store: SemanticStore, id: string, slug: string, body: string): void {
+    store.upsertNode({ id, type: 'doc', value: body, origin: 'inferred', s: 0, c: 1.0, last_access: 5000 });
+    store.upsertNodeDoc({ node_id: id, slug, generated_at: 4000, updated_at: 4000 });
+    store.upsertNodeScope({ node_id: id, scope: slug, updated_at: 4000 });
+  }
+
+  test('returns other live docs (id, slug, title from first H1), excluding the current slug', () => {
+    const { db, store } = makeGatherDeps();
+    seedDocNode(store, 'doc-tonos', 'tonos', '# Tonos — Project Deep-Dive\n\nbody');
+    seedDocNode(store, 'doc-vtx', 'vtx', '# VTX\n\nbody');
+
+    const siblings = gatherSiblingDocs(db, 'vtx');
+    expect(siblings).toHaveLength(1);
+    expect(siblings[0]!.id).toBe('doc-tonos');
+    expect(siblings[0]!.slug).toBe('tonos');
+    expect(siblings[0]!.title).toBe('Tonos — Project Deep-Dive');
+  });
+
+  test('title falls back to the slug when the body has no H1', () => {
+    const { db, store } = makeGatherDeps();
+    seedDocNode(store, 'doc-a', 'alpha', 'no heading here, just prose');
+    const siblings = gatherSiblingDocs(db, 'other');
+    expect(siblings).toHaveLength(1);
+    expect(siblings[0]!.title).toBe('alpha');
+  });
+
+  test('excludes tombstoned docs', () => {
+    const { db, store } = makeGatherDeps();
+    seedDocNode(store, 'doc-live', 'live', '# Live');
+    seedDocNode(store, 'doc-dead', 'dead', '# Dead');
+    store.tombstone('doc-dead');
+
+    const siblings = gatherSiblingDocs(db, 'current');
+    const slugs = siblings.map(s => s.slug);
+    expect(slugs).toContain('live');
+    expect(slugs).not.toContain('dead');
+  });
+
+  test('returns empty when no other docs exist', () => {
+    const { db, store } = makeGatherDeps();
+    seedDocNode(store, 'doc-only', 'only', '# Only');
+    // Generating for the same slug → its own doc is excluded → no siblings
+    expect(gatherSiblingDocs(db, 'only')).toHaveLength(0);
   });
 });

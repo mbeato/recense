@@ -167,6 +167,43 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     LIMIT 1
   `);
 
+  // Resolve a live doc node's slug by its NODE id (READER-04 doc-ref click, ?id= path).
+  // Exact match first; else unique-prefix match (the doc generator can TRUNCATE doc ids
+  // the same way it truncates fact ids — see the 27-02 fix). LIMIT 2 detects ambiguity.
+  // Returns node_doc.slug so the existing slug-based statements can serve the doc as today.
+  const stmtDocSlugByExactId = db.prepare(`
+    SELECT nd.slug
+    FROM node n
+    JOIN node_doc nd ON nd.node_id = n.id
+    WHERE n.id = ? AND n.type = 'doc' AND n.tombstoned = 0
+    LIMIT 1
+  `);
+  const stmtDocSlugByPrefixId = db.prepare(`
+    SELECT nd.slug
+    FROM node n
+    JOIN node_doc nd ON nd.node_id = n.id
+    WHERE n.id LIKE ? AND n.type = 'doc' AND n.tombstoned = 0
+    LIMIT 2
+  `);
+
+  /**
+   * Resolve a doc-node id (full or truncated prefix) to its live doc slug.
+   * Exact match → that slug. Else unique-prefix match → that slug. Unknown or
+   * ambiguous (>1 prefix match) → null. Read-only; T-27-11 posture preserved.
+   */
+  function resolveDocSlugById(rawId: string): string | null {
+    // Sanitize to the doc-id charset (hex + dashes); cap length defensively.
+    const id = rawId.toLowerCase().replace(/[^a-f0-9-]/g, '').slice(0, 64);
+    if (!id) return null;
+    const exact = stmtDocSlugByExactId.get(id) as { slug: string } | undefined;
+    if (exact) return exact.slug;
+    // Unique-prefix: escape LIKE metacharacters (ids are hex+dashes, guard defensively).
+    const likePattern = id.replace(/[%_]/g, '') + '%';
+    const rows = stmtDocSlugByPrefixId.all(likePattern) as Array<{ slug: string }>;
+    if (rows.length === 1) return rows[0]!.slug;
+    return null; // 0 matches → unknown; >1 → ambiguous
+  }
+
   // Compile /doc/meta?slug= cited-ids statement once (READER-02).
   // Returns the set of fact ids cited by the doc node (kind='cites' outgoing edges).
   const stmtCitedIds = db.prepare(`
@@ -423,7 +460,34 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     // 202 {status:'generating'} so the client can poll (D-02/D-03).
     // The server handle is READ-ONLY (T-27-11) — all writes happen inside the CLI.
     if (url === '/doc') {
-      const rawSlug = new URLSearchParams(req.url?.split('?')[1] ?? '').get('slug') ?? '';
+      const params = new URLSearchParams(req.url?.split('?')[1] ?? '');
+      const rawId = params.get('id') ?? '';
+      const rawSlug = params.get('slug') ?? '';
+      // READER-04 doc-ref click: ?id=<docNodeId> resolves (exact-or-unique-prefix) to a
+      // slug. An unknown/ambiguous id → 404 (a stale/bad doc-ref must NOT trigger a
+      // generate-on-miss spawn — that path is slug-only). T-27-11 read-only preserved.
+      if (rawId) {
+        const resolvedSlug = resolveDocSlugById(rawId);
+        if (!resolvedSlug) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'no live doc for id' }));
+          return;
+        }
+        try {
+          const row = stmtGetDoc.get(resolvedSlug) as { id: string; value: string; generated_at: number } | undefined;
+          if (row) {
+            res.writeHead(200, { 'content-type': 'text/plain' });
+            res.end(row.value);
+          } else {
+            res.writeHead(404, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'no live doc for id' }));
+          }
+        } catch (err) {
+          res.writeHead(500, { 'content-type': 'text/plain' });
+          res.end('internal error');
+        }
+        return;
+      }
       // T-27-10: sanitize slug to [a-z0-9-], length-cap (same as the CLI's --slug flag).
       const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
       if (!slug) {
@@ -452,12 +516,26 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     // ── /doc/meta?slug= (cited fact ids, READER-02) ──────────────────────────
     // Returns {nodeId, generated_at, citedFactIds:[...]} for the graph-focus step.
     if (url === '/doc/meta') {
-      const rawSlug = new URLSearchParams(req.url?.split('?')[1] ?? '').get('slug') ?? '';
-      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
-      if (!slug) {
-        res.writeHead(400, { 'content-type': 'text/plain' });
-        res.end('bad slug');
-        return;
+      const params = new URLSearchParams(req.url?.split('?')[1] ?? '');
+      const rawId = params.get('id') ?? '';
+      // READER-04: ?id=<docNodeId> alternative — resolve (exact-or-unique-prefix) to a slug.
+      let slug: string;
+      if (rawId) {
+        const resolvedSlug = resolveDocSlugById(rawId);
+        if (!resolvedSlug) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'no live doc for id' }));
+          return;
+        }
+        slug = resolvedSlug;
+      } else {
+        const rawSlug = params.get('slug') ?? '';
+        slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+        if (!slug) {
+          res.writeHead(400, { 'content-type': 'text/plain' });
+          res.end('bad slug');
+          return;
+        }
       }
       try {
         const row = stmtGetDoc.get(slug) as { id: string; value: string; generated_at: number } | undefined;
@@ -468,8 +546,10 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         }
         const cited = stmtCitedIds.all(row.id) as Array<{ factId: string }>;
         const citedFactIds = cited.map(r => r.factId);
+        // Include the resolved slug so an id-addressed open (doc-ref click) can update
+        // its title/state once meta resolves (READER-04).
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ nodeId: row.id, generated_at: row.generated_at, citedFactIds }));
+        res.end(JSON.stringify({ nodeId: row.id, slug, generated_at: row.generated_at, citedFactIds }));
       } catch (err) {
         res.writeHead(500, { 'content-type': 'text/plain' });
         res.end('internal error');
@@ -482,12 +562,26 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     // comparing each cited fact's last_access against node_doc.generated_at.
     // T-27-13: read-only SELECT only — never touches last_access of the cited facts.
     if (url === '/doc/staleness') {
-      const rawSlug = new URLSearchParams(req.url?.split('?')[1] ?? '').get('slug') ?? '';
-      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
-      if (!slug) {
-        res.writeHead(400, { 'content-type': 'text/plain' });
-        res.end('bad slug');
-        return;
+      const params = new URLSearchParams(req.url?.split('?')[1] ?? '');
+      const rawId = params.get('id') ?? '';
+      // READER-04: ?id=<docNodeId> alternative — resolve (exact-or-unique-prefix) to a slug.
+      let slug: string;
+      if (rawId) {
+        const resolvedSlug = resolveDocSlugById(rawId);
+        if (!resolvedSlug) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'no live doc for id' }));
+          return;
+        }
+        slug = resolvedSlug;
+      } else {
+        const rawSlug = params.get('slug') ?? '';
+        slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+        if (!slug) {
+          res.writeHead(400, { 'content-type': 'text/plain' });
+          res.end('bad slug');
+          return;
+        }
       }
       try {
         const docRow = stmtGetDoc.get(slug) as { id: string; value: string; generated_at: number } | undefined;

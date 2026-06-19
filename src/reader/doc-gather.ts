@@ -157,3 +157,43 @@ export async function gatherFacts(
 
   return [...byId.values()];
 }
+
+/** A sibling doc (another live deep-dive) the generator can link to. */
+export interface SiblingDoc {
+  /** Full doc NODE id (used in recense://doc/<id> refs). */
+  id: string;
+  /** Project slug of the sibling doc. */
+  slug: string;
+  /** Display title: the doc's first H1, falling back to the slug. */
+  title: string;
+}
+
+/**
+ * Gather the OTHER live docs the current doc can cross-link to (READER-04).
+ *
+ * Returns one entry per `type='doc'` node that is NOT tombstoned and NOT the current
+ * slug. `title` is the doc body's first markdown H1 (`# ...`), falling back to the slug.
+ * Read-only — no DB writes; used to build the generator's RELATED DOCS prompt block so
+ * doc→doc refs (and therefore doc_link edges) form organically in production.
+ *
+ * @param db    Database handle (read-only use).
+ * @param slug  The slug of the doc being generated (excluded from the result).
+ */
+export function gatherSiblingDocs(db: Database.Database, slug: string): SiblingDoc[] {
+  // Live doc nodes (excluding the current slug) with their slug + body for title extraction.
+  const stmt = db.prepare(`
+    SELECT n.id AS id, nd.slug AS slug, n.value AS value
+    FROM node n
+    JOIN node_doc nd ON nd.node_id = n.id
+    WHERE n.type = 'doc' AND n.tombstoned = 0 AND nd.slug != ?
+  `);
+  const rows = stmt.all(slug) as Array<{ id: string; slug: string; value: string }>;
+
+  return rows.map(r => {
+    // Title = first markdown H1 in the doc body, else the slug.
+    let title = r.slug;
+    const m = (r.value ?? '').match(/^#\s+(.+?)\s*$/m);
+    if (m && m[1]) title = m[1].trim();
+    return { id: r.id, slug: r.slug, title };
+  });
+}

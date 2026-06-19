@@ -171,15 +171,19 @@ describe('renderMarkdown — inline formatting', () => {
 // ---------------------------------------------------------------------------
 
 describe('reader.js source assertions (T-27-08)', () => {
-  it('fetch uses /doc?slug= (not /doc?term=)', async () => {
+  it('fetch uses the DB-backed /doc route via docQuery (slug= or id=), not /doc?term=', async () => {
     const fs = await import('node:fs');
     const path = await import('node:path');
     const src = fs.readFileSync(
       path.join(process.cwd(), 'src/viz/modules/reader.js'),
       'utf8',
     );
-    // Must fetch the DB-backed route.
-    expect(src).toContain("'/doc?slug='");
+    // Must fetch the DB-backed route. The query string is built by docQuery() which
+    // returns 'slug=...' (normal) or 'id=...' (doc-ref click, READER-04 Fix B).
+    expect(src).toContain("'/doc?' + docQuery()");
+    expect(src).toContain("'slug=' + encodeURIComponent(currentSlug)");
+    // id= path for doc-ref clicks
+    expect(src).toContain("'id=' + encodeURIComponent(currentDocId)");
     // Must not use the old file-backed route.
     expect(src).not.toContain("'/doc?term='");
   });

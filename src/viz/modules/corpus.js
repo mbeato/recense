@@ -156,23 +156,22 @@ export function initCorpus(ctx) {
   }
 
   /**
-   * Fit the corpus graph to the viewport, then clamp the zoom to MAX_ZOOM (Fix A).
-   * zoomToFit frames a tiny graph (e.g. 2 nodes) so tightly each node fills the
-   * screen; the clamp keeps a small corpus reading as small circles with breathing room.
+   * Fit the corpus graph to the viewport and clamp the zoom to MAX_ZOOM (Fix A).
+   * Both steps are INSTANT (0ms): zoomToFit(0,...) sets the fit without animating, then
+   * the clamp snaps the zoom ceiling immediately — so the FIRST paint is already correctly
+   * framed. Animating the fit (e.g. zoomToFit(400,...)) would balloon a tiny graph past
+   * MAX_ZOOM and then rubberband back; doing it all at 0ms avoids that overshoot entirely.
    */
   function fitAndClamp() {
     if (!CorpusGraph || !CorpusGraph.zoomToFit) return;
     try {
-      CorpusGraph.zoomToFit(400, 40);
-      // After the fit animation, clamp the zoom ceiling. The fit is animated (400ms),
-      // so check/clamp slightly after it settles.
-      setTimeout(() => {
-        try {
-          if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
-            CorpusGraph.zoom(MAX_ZOOM, 0);
-          }
-        } catch (_) { /* ignore */ }
-      }, 450);
+      // Instant fit — no animation, so we never render the over-zoomed intermediate frame.
+      CorpusGraph.zoomToFit(0, 40);
+      // Immediately clamp the zoom ceiling (also 0ms). For a small graph zoomToFit lands
+      // above MAX_ZOOM; this snaps it down before the next frame, no rubberband.
+      if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
+        CorpusGraph.zoom(MAX_ZOOM, 0);
+      }
     } catch (_) { /* ignore */ }
   }
 

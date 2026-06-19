@@ -158,18 +158,40 @@ export function initReader(ctx) {
   // Deep-link: /?doc=<slug>&reader=1 opens the reader on load (brain provenance).
   if (new URLSearchParams(location.search).has('reader')) show();
 
-  // ── In-place reader opener (Fix B — corpus doc-node entry, D-08) ────────────
-  // openReader(slug, { from }) re-targets the reader to `slug` and shows the
-  // #reader overlay WITHOUT any page navigation. corpus.js calls this with
-  // from:'corpus' so the reader slides in OVER the flat corpus (which stays
-  // mounted underneath) instead of reloading the page into brain mode.
+  // currentDocId: when a doc is opened by NODE id (a doc-ref click, Fix B) rather than
+  // by slug, the server endpoints are queried with ?id= (which resolves exact-or-unique-
+  // prefix → slug server-side). null = slug-addressed (the normal slug path).
+  let currentDocId = null;
+
+  /**
+   * Build the doc query string for the server endpoints. Prefers ?id= when the doc
+   * was opened by node id (doc-ref click), else ?slug=. The server resolves ?id=
+   * (exact-or-unique-prefix) to the live doc, so truncated generated doc-refs work.
+   */
+  function docQuery() {
+    return currentDocId
+      ? 'id=' + encodeURIComponent(currentDocId)
+      : 'slug=' + encodeURIComponent(currentSlug);
+  }
+
+  // ── In-place reader opener (Fix B — corpus doc-node entry + doc-ref click, D-08) ──
+  // openReader(slug, { from, docId }) re-targets the reader and shows the #reader
+  // overlay WITHOUT any page navigation. corpus.js calls it with a slug + from:'corpus'
+  // (the corpus doc-node click); the in-prose doc-ref click calls it with {docId, from}
+  // (a doc NODE id, resolved server-side via ?id=). The overlay slides in over whatever
+  // is underneath (corpus or brain); closing returns there.
   ctx.openReader = function openReader(targetSlug, opts) {
     const from = (opts && opts.from) || 'brain';
+    const docId = (opts && opts.docId) || null;
     openFrom = from;
-    if (targetSlug && targetSlug !== currentSlug) {
-      // New target doc: reset load state so the new prose is fetched fresh and
-      // stale state from the prior doc does not bleed in.
-      currentSlug = targetSlug;
+    // A re-target happens when the slug OR the docId differs from the current doc.
+    const slugChanged = targetSlug && targetSlug !== currentSlug;
+    const idChanged = docId && docId !== currentDocId;
+    if (slugChanged || idChanged) {
+      // New target doc: reset load state so the new prose is fetched fresh and stale
+      // state from the prior doc does not bleed in.
+      if (targetSlug) currentSlug = targetSlug;
+      currentDocId = docId; // null for slug-addressed opens; set for id-addressed
       loaded = false;
       citedFactIds = [];
       ctx.citedFactIds = citedFactIds;
@@ -205,7 +227,7 @@ export function initReader(ctx) {
   async function loadWithPoll() {
     let attempts = 0;
     while (attempts < POLL_MAX) {
-      const res = await fetch('/doc?slug=' + encodeURIComponent(currentSlug));
+      const res = await fetch('/doc?' + docQuery());
       if (res.ok) {
         const md = await res.text();
         // T-10-12/T-27-08: only innerHTML from renderMarkdown output (all values escaped).
@@ -239,12 +261,18 @@ export function initReader(ctx) {
 
   async function fetchMeta() {
     try {
-      const res = await fetch('/doc/meta?slug=' + encodeURIComponent(currentSlug));
+      const res = await fetch('/doc/meta?' + docQuery());
       if (!res.ok) return;
       const data = await res.json();
       citedFactIds = Array.isArray(data.citedFactIds) ? data.citedFactIds : [];
       // Store on ctx so other modules (detail.js) can see the cited set.
       ctx.citedFactIds = citedFactIds;
+      // If this doc was opened by id (doc-ref click), the server resolved the slug —
+      // adopt it so the title is correct and future fetches can use the slug directly.
+      if (data.slug && data.slug !== currentSlug) {
+        currentSlug = data.slug;
+        if (titleEl) titleEl.textContent = currentSlug;
+      }
       // Re-apply focus if the reader is currently open.
       if (panel.classList.contains('open')) {
         applyGraphFocus(citedFactIds);
@@ -261,7 +289,7 @@ export function initReader(ctx) {
 
   async function fetchStaleness() {
     try {
-      const res = await fetch('/doc/staleness?slug=' + encodeURIComponent(currentSlug));
+      const res = await fetch('/doc/staleness?' + docQuery());
       if (!res.ok) return; // non-fatal: staleness is an enhancement, not load-critical
       const data = await res.json();
       const staleList = Array.isArray(data.stale) ? data.stale : [];
@@ -343,6 +371,10 @@ export function initReader(ctx) {
       await fetch('/doc/generate?slug=' + encodeURIComponent(currentSlug), { method: 'POST' });
 
       // Clear the body and reload via the existing poll loop.
+      // Regeneration supersedes the doc node (new id), so drop any id-addressing and
+      // reload by slug — currentSlug is authoritative here (fetchMeta adopted it on the
+      // prior load if this doc was opened by id).
+      currentDocId = null;
       loaded = false;
       body.textContent = '';
       staleFactIds = new Set();
@@ -397,6 +429,9 @@ export function initReader(ctx) {
   }
 
   // ── wireFactLinks ──────────────────────────────────────────────────────────
+  // Wires BOTH inline ref kinds after each (re-)render:
+  //   .fact-ref[data-fact] → drop to the brain at that atom (the hero interaction)
+  //   .doc-ref[data-doc]   → open the referenced doc IN PLACE (Fix B, doc→doc nav)
 
   function wireFactLinks() {
     let missing = 0;
@@ -420,6 +455,22 @@ export function initReader(ctx) {
         if (ctx.selectNode) ctx.selectNode(node);
       });
     });
+
+    // doc-ref → open the referenced doc IN PLACE (Fix B). data-doc carries the target
+    // doc NODE id (canonicalized to a full id by the generator). We open it via the
+    // in-place opener with the CURRENT `from` preserved: a doc-ref clicked while reading
+    // over the corpus keeps the new doc in the corpus overlay (close → back to corpus);
+    // over the brain it stays a brain-context open. The server resolves the id (?id=,
+    // exact-or-unique-prefix) → slug, so even a truncated generated doc-ref works.
+    body.querySelectorAll('a.doc-ref[data-doc]').forEach(a => {
+      const docId = a.getAttribute('data-doc');
+      if (!docId) return;
+      a.addEventListener('click', ev => {
+        ev.preventDefault();
+        ctx.openReader(null, { from: openFrom, docId });
+      });
+    });
+
     if (missing && ctx.logEvent) ctx.logEvent(`reader: ${missing} cited fact(s) not in graph`);
   }
 }
