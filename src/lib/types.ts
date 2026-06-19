@@ -24,7 +24,7 @@ export type NodeType = 'entity' | 'fact' | 'schema' | 'doc';
 export type EpisodeRole = 'user' | 'assistant' | 'tool';
 
 /** Graph edge classification — typed relation or schema-evidence provenance (spec §1). */
-export type EdgeKind = 'relation' | 'abstracts' | 'schema_rel' | 'cites' | 'doc_link';
+export type EdgeKind = 'relation' | 'abstracts' | 'schema_rel' | 'cites' | 'doc_link' | 'doc_containment' | 'doc_reference';
 
 /**
  * Full SQLite row shape for the node table (spec §1).
