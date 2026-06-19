@@ -22,8 +22,8 @@ function makeDb(): Database.Database {
 }
 
 describe('SCHEMA_VERSION', () => {
-  it('is 11', () => {
-    expect(SCHEMA_VERSION).toBe(11);
+  it('is 12', () => {
+    expect(SCHEMA_VERSION).toBe(12);
   });
 });
 

@@ -426,3 +426,44 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(content).toContain('ForceGraph');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wave-0 scaffold: doc_containment / doc_reference edges (CORPUS-04)
+// ---------------------------------------------------------------------------
+//
+// These tests are intentionally SKIPPED. Plan 28-04 (corpus endpoint + renderer)
+// will update server.ts (stmtDocLinks) and corpus.js (link-kind styling)
+// and unskip these assertions.
+// The describe.skip keeps the suite GREEN while providing a failing target.
+
+describe.skip('doc_containment/doc_reference edges in corpus endpoint and renderer (CORPUS-04)', () => {
+  it.todo(
+    'GET /graph?type=doc returns doc_containment edges alongside doc_link edges ' +
+    'when CorpusPromoter has written doc_containment rows between doc nodes',
+  );
+  it.todo(
+    'GET /graph?type=doc returns doc_reference edges alongside doc_link edges ' +
+    'when CorpusPromoter has written doc_reference rows between doc nodes',
+  );
+  it.todo(
+    'GET /graph?type=doc only returns edges where both src and dst are live doc nodes ' +
+    '(no cites/relation/abstracts edges leak through)',
+  );
+  it.todo(
+    'source: server.ts stmtDocLinks fetches kind IN (doc_link, doc_containment, doc_reference) ' +
+    'with src/dst doc-node filter',
+  );
+  it.todo(
+    'source: corpus.js linkDirectionalArrowLength is non-zero for doc_containment links ' +
+    'and zero for doc_reference links (directed vs undirected rendering)',
+  );
+  it.todo(
+    'source: corpus.js linkLineDash returns [2,2] for doc_reference links ' +
+    'and null for doc_containment links (solid vs dashed)',
+  );
+  it.todo(
+    'source: corpus.js linkColor distinguishes doc_containment from doc_reference ' +
+    '(distinct color constants in corpus.js)',
+  );
+});
+
