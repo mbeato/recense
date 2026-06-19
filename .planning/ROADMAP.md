@@ -201,13 +201,13 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 
 **Requirements**: CORPUS-01 (schema-anchored doc generation), CORPUS-02 (LLM-free mass-gated promotion + noise filter), CORPUS-03 (schema→schema ladder enrichment via centroid-cosine + mass-direction containment/reference; ≥1 parent→child nest), CORPUS-04 (containment + reference corpus edges in the flat 2D corpus, supersedes READER-04 doc_link), CORPUS-05 (read-only projection / self-confirmation guard) — locked in 28-SPEC.md (5 reqs).
 **Depends on:** Phase 27 (reader/render foundation) + the schema/abstraction layer (live brain has 7000+ nodes with real schemas + `abstracts` edges, so viable now)
-**Plans:** 1/4 plans executed
+**Plans:** 2/4 plans executed
 
 Plans:
 **Wave 1**
 
 - [x] 28-01-PLAN.md — v12 migration (edge.kind += doc_containment/doc_reference) + Wave-0 test scaffolds (CORPUS-03/04)
-- [ ] 28-02-PLAN.md — gatherFactsForSchema (D-09 schema-anchored gather) + schema-thesis prompt framing (CORPUS-01)
+- [x] 28-02-PLAN.md — gatherFactsForSchema (D-09 schema-anchored gather) + schema-thesis prompt framing (CORPUS-01)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Foundational Memory Store + Reader Layer
 status: executing
-stopped_at: Completed 28-01-PLAN.md (v12 migration + Wave-0 scaffolds)
-last_updated: "2026-06-19T16:36:03.930Z"
+stopped_at: Completed 28-02-PLAN.md (gatherFactsForSchema + schema-thesis generator)
+last_updated: "2026-06-19T16:46:06.857Z"
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 20
-  completed_plans: 14
+  completed_plans: 15
   percent: 60
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Phase: 28 (schema-anchored-corpus) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 
 [██████████████████████████████████████] v1-4.0 shipped · v5.0 Phase 24/25 CLOSED · Phase 26 done · Phase 27 Plans 01-04 done · 27-05 COMPLETE (flat-2D corpus)
@@ -89,6 +89,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 | v4.0 | 20–23 | 22 | 2026-06-17 |
 | v5.0 | 24–27 | TBD | — |
 | Phase 28-schema-anchored-corpus P01 | 12 | 2 tasks | 9 files |
+| Phase 28-schema-anchored-corpus P02 | 2026-06-19 | 4 commits (2 RED + 2 GREEN) | 4 files |
 
 ## Accumulated Context
 
@@ -240,9 +241,17 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-19T16:36:03.921Z
+Last session: 2026-06-19T16:46:06.850Z
 Stopped at: Completed 28-01-PLAN.md (v12 migration + Wave-0 scaffolds)
 Resume file: None
+
+## Key Decisions (Phase 28)
+
+- **gatherFactsForSchema tags spine facts 'scope'** — identical tag to the scope-gather so downstream via-handling, citation verify, and corpus tests need no change (Plan 28-02)
+- **null centroid = hard skip of semantic pass, no embed call** — D-09 design: the centroid is pre-computed by the caller (promoter/CLI), never computed inside gatherFactsForSchema; null centroid degrades gracefully to spine + entity-hop (Plan 28-02)
+- **verifyCitations() factored as unexported internal helper in doc-generator.ts** — FACT_REF regex defined exactly once, shared by scope (generateDoc) and schema (generateDocForSchema) paths; prevents duplication drift (Plan 28-02)
+- **generateDocForSchema uses gatherSiblingDocs(db, schemaId)** — the schemaId is passed as the "current slug" so the schema's own doc is excluded from the sibling list; consistent with scope path (Plan 28-02)
+- **buildSchemaDocPrompt frames schemaLabel as THESIS** — "This deep-dive's thesis is a generalization that the memory engine abstracted from experience: '<schemaLabel>'"; same HARD RULES + RELATED DOCS block as buildDocPrompt (Plan 28-02)
 
 ## Key Decisions (Phase 27)
 
