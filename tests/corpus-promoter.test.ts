@@ -35,12 +35,6 @@ function makeDb(): { db: Database.Database; store: SemanticStore; clock: FakeClo
   return { db, store, clock };
 }
 
-/** Encode a Float32Array as a Buffer (Pitfall-5 safe: include byteOffset). */
-function encodeEmbedding(vec: number[]): Buffer {
-  const arr = new Float32Array(vec);
-  return Buffer.from(arr.buffer);
-}
-
 /** Insert a live fact/entity node with an embedding so it contributes to centroids. */
 function seedNode(
   store: SemanticStore,
@@ -50,8 +44,8 @@ function seedNode(
   embedding: number[],
 ): void {
   store.upsertNode({ id, type, value, origin: 'observed', s: 0.5, c: 0.8, last_access: 500 });
-  // Set embedding via store (the only setter — STORE-01)
-  store.setEmbedding(id, encodeEmbedding(embedding));
+  // Set embedding via store (the only setter — STORE-01). setEmbedding takes Float32Array.
+  store.setEmbedding(id, new Float32Array(embedding));
 }
 
 /** Insert a schema node (no embedding — schemas are structural, not embedded). */
