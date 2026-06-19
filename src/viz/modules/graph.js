@@ -214,6 +214,162 @@ function seedNodePositions(allNodes, brainVol) {
   }
 }
 
+// ─── Instanced haze layer ────────────────────────────────────────────────────
+
+/**
+ * Simple deterministic integer hash (Knuth multiplicative) used to pick an
+ * occupied voxel for each haze node without Math.random so reloads are stable.
+ * Returns a value in [0, mod).
+ */
+function _hashIndex(idx, mod) {
+  // 32-bit Knuth multiplicative hash; keep low bits for the range
+  const h = (Math.imul(idx + 1, 0x9e3779b9) >>> 0);
+  return h % mod;
+}
+
+/**
+ * Build ONE InstancedMesh for all __cat==='haze' nodes.
+ * Each instance shares the existing _sharedGeo + a Fresnel-rim MeshBasicMaterial
+ * (identical to makeNodeObject's haze branch) so the rendered look is unchanged.
+ * Positions scatter deterministically inside the brain occupancy volume; no
+ * Math.random so reloads produce the same cloud shape.
+ *
+ * Sets on ctx:
+ *   hazeMesh          — THREE.InstancedMesh (added to Graph.scene())
+ *   hazeInstanceMap   — Map<instanceId, node>
+ *   hazeNodeIdMap     — Map<nodeId, instanceId>
+ */
+function buildHazeLayer(ctx) {
+  const hazeNodes = ctx.allNodes.filter(n => n.__cat === 'haze');
+  const hazeCount = hazeNodes.length;
+  if (!hazeCount) return; // nothing to render
+
+  const { brainVol } = ctx;
+
+  // ── Build occupied voxel list (same pattern as seedNodePositions) ────────
+  let occupied = null;
+  let rotMat   = null;
+  if (brainVol) {
+    const euler = new THREE.Euler(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
+    rotMat = new THREE.Matrix4().makeRotationFromEuler(euler);
+    const R    = brainVol.res;
+    const bits = brainVol.bits;
+    const occ  = [];
+    for (let iz = 0; iz < R; iz++) {
+      for (let iy = 0; iy < R; iy++) {
+        for (let ix = 0; ix < R; ix++) {
+          const idx2 = (iz * R + iy) * R + ix;
+          if (!((bits[idx2 >> 3] >> (idx2 & 7)) & 1)) continue;
+          occ.push([(ix / R) * 2 - 1, (iy / R) * 2 - 1, (iz / R) * 2 - 1]);
+        }
+      }
+    }
+    if (occ.length) occupied = occ;
+  }
+
+  // ── Material — mirrors makeNodeObject's haze branch exactly ─────────────
+  // Shared across all instances; hazeOpacityScale honored via the material opacity.
+  const hazeMat = new THREE.MeshBasicMaterial({
+    transparent: true,
+    opacity: HAZE_OPACITY * _hazeOpacityScale,
+    depthWrite: true,
+    // vertexColors needed so per-instance color (instanceColor attribute) is applied
+    vertexColors: false, // three.js InstancedMesh handles instanceColor separately
+  });
+
+  // Same Fresnel-rim onBeforeCompile as makeNodeObject — ensures lit-sphere look
+  // matches individual node meshes exactly. Per-instance color comes through the
+  // automatic vColor attribute populated by THREE.js from instanceColor.
+  hazeMat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>',
+        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
+      .replace('#include <begin_vertex>',
+        '#include <begin_vertex>\nvRimV = normalize(cameraPosition - (modelMatrix * vec4(transformed, 1.0)).xyz);\nvRimN = normalize(mat3(modelMatrix) * transformed);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>',
+        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
+      .replace('#include <dithering_fragment>',
+        '#include <dithering_fragment>\nfloat _rim = pow(1.0 - abs(dot(normalize(vRimV), normalize(vRimN))), 2.0);\ngl_FragColor.rgb += _rim * 0.6 * mix(gl_FragColor.rgb, vec3(1.0), 0.3);');
+  };
+
+  // ── InstancedMesh ─────────────────────────────────────────────────────────
+  const hazeMesh = new THREE.InstancedMesh(_sharedGeo, hazeMat, hazeCount);
+  hazeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  hazeMesh.count = hazeCount;
+
+  // ── Per-instance color and transform ─────────────────────────────────────
+  const dummy    = new THREE.Object3D();
+  const colorBuf = new THREE.Color();
+  const tmpV     = new THREE.Vector3();
+
+  const hazeInstanceMap = new Map(); // instanceId (number) → node
+  const hazeNodeIdMap   = new Map(); // nodeId (string) → instanceId (number)
+
+  for (let i = 0; i < hazeCount; i++) {
+    const node = hazeNodes[i];
+
+    // ── Position: deterministic scatter inside brain volume ──────────────
+    if (occupied && rotMat) {
+      // Pick a voxel deterministically by hashing the node index
+      const [lx, ly, lz] = occupied[_hashIndex(i, occupied.length)];
+      tmpV.set(lx, ly, lz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
+      // Small deterministic jitter: use hash of (i+voxelIdx) to avoid pile-up
+      // at voxel centres. Scale: ±4 units (same as seedNodePositions).
+      const jx = ((_hashIndex(i * 3 + 0, 1000) / 1000) - 0.5) * 8;
+      const jy = ((_hashIndex(i * 3 + 1, 1000) / 1000) - 0.5) * 8;
+      const jz = ((_hashIndex(i * 3 + 2, 1000) / 1000) - 0.5) * 8;
+      dummy.position.set(tmpV.x + jx, tmpV.y + jy, tmpV.z + jz);
+      // Store position on node object so raycaster and trace can read it
+      node.x = dummy.position.x;
+      node.y = dummy.position.y;
+      node.z = dummy.position.z;
+    } else {
+      // Fallback if no brainVol: use node's seeded position (set by seedNodePositions
+      // before this call, which ran for allNodes; haze was still in allNodes then
+      // so x/y/z are set). If still undefined, hash-scatter in a sphere.
+      if (node.x == null) {
+        const r     = BRAIN_SCALE * 0.6 * Math.cbrt((_hashIndex(i, 1000) + 0.5) / 1000);
+        const theta = (_hashIndex(i * 2 + 1, 1000) / 1000) * Math.PI * 2;
+        const phi   = Math.acos(2 * (_hashIndex(i * 3 + 2, 1000) / 1000) - 1);
+        node.x = r * Math.sin(phi) * Math.cos(theta);
+        node.y = r * Math.sin(phi) * Math.sin(theta);
+        node.z = r * Math.cos(phi);
+      }
+      dummy.position.set(node.x, node.y, node.z);
+    }
+
+    const radius = nodeRadius(node); // 2 for haze
+    dummy.scale.setScalar(radius);
+    dummy.updateMatrix();
+    hazeMesh.setMatrixAt(i, dummy.matrix);
+
+    // ── Per-instance color ────────────────────────────────────────────────
+    const baseColor = node.tombstoned
+      ? new THREE.Color(TOMBSTONE_COLOR)
+      : colorBuf.set(TYPE_COLOR[node.type] ?? TYPE_COLOR.fact);
+    hazeMesh.setColorAt(i, baseColor);
+
+    // ── Store metadata on node for raycasting / trace ────────────────────
+    node.__hazeIdx  = i;          // instanceId
+    node.__hazeBase = baseColor.clone(); // rest color for un-hover/un-trace restore
+
+    hazeInstanceMap.set(i, node);
+    hazeNodeIdMap.set(node.id, i);
+  }
+
+  hazeMesh.instanceMatrix.needsUpdate = true;
+  if (hazeMesh.instanceColor) hazeMesh.instanceColor.needsUpdate = true;
+
+  // ── Register on ctx and add to scene ─────────────────────────────────────
+  ctx.hazeMesh        = hazeMesh;
+  ctx.hazeMat         = hazeMat;
+  ctx.hazeInstanceMap = hazeInstanceMap;
+  ctx.hazeNodeIdMap   = hazeNodeIdMap;
+
+  ctx.Graph.scene().add(hazeMesh);
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -315,6 +471,13 @@ export function initGraph(ctx) {
     });
 
   ctx.Graph = Graph;
+
+  // ── Instanced haze layer ───────────────────────────────────────────────
+  // Build AFTER Graph is set (needs ctx.Graph.scene()) and AFTER
+  // seedNodePositions (haze fallback reads node.x/y/z). Haze nodes are
+  // excluded from the ForceGraph3D data (T1, app.js), so they live only
+  // in this InstancedMesh from here on.
+  buildHazeLayer(ctx);
 
   // ── Scene groups ──────────────────────────────────────────────────────
   const hullGroup  = new THREE.Group();
