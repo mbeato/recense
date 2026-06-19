@@ -608,15 +608,28 @@ export class TwoTierJudge implements Judge {
   }
 
   /**
-   * Batch path delegates wholesale to the expensive judge. judgeBatch is opt-in and OFF
-   * by default (BRAIN_MEMORY_ENABLE_JUDGE_BATCH; it regressed EVAL-02), so the two-tier
-   * savings live entirely on the per-claim judge() path. Keeping batch authoritative avoids
-   * any new accuracy risk on a rarely-used path.
+   * Per-item two-tier triage on the batch path. CRITICAL: the consolidator's DEFAULT
+   * (non-batch) judging calls judgeBatch([single item]) per claim — it never calls judge()
+   * — so the savings MUST live here, not on judge(). Run the cheap (Haiku) judge across all
+   * items, then escalate ONLY the items it flagged 'contradict' to the expensive (Sonnet)
+   * judge, and splice those authoritative verdicts back into place. Cheap-accept the rest.
    */
-  judgeBatch(
+  async judgeBatch(
     items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>
   ): Promise<JudgeVerdict[]> {
-    return this.expensive.judgeBatch(items);
+    if (items.length === 0) return [];
+    twoTierStats.cheap_calls += items.length;
+    const cheapVerdicts = await this.cheap.judgeBatch(items);
+    const escalateIdx: number[] = [];
+    for (let i = 0; i < cheapVerdicts.length; i++) {
+      if (cheapVerdicts[i]!.relation === 'contradict') escalateIdx.push(i);
+    }
+    if (escalateIdx.length === 0) return cheapVerdicts;
+    twoTierStats.escalations += escalateIdx.length;
+    const escalated = await this.expensive.judgeBatch(escalateIdx.map(i => items[i]!));
+    const result = cheapVerdicts.slice();
+    for (let k = 0; k < escalateIdx.length; k++) result[escalateIdx[k]!] = escalated[k]!;
+    return result;
   }
 }
 
