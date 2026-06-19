@@ -676,3 +676,58 @@ describe('doc_containment/doc_reference edges in corpus endpoint and renderer (C
   );
 });
 
+// BUG-1 (28-04): corpus node label resolution. A schema-anchored doc has slug = schemaId
+// (a UUID) and an empty stub value; the node MUST render the human schema label, not the UUID.
+// The endpoint resolves COALESCE(NULLIF(schema.value,''), slug). Project-scope docs fall back.
+describe('GET /graph?type=doc resolves human schema label (CORPUS-04 BUG-1)', () => {
+  let dbPath: string;
+  let db: Database.Database;
+  let store: SemanticStore;
+  let server: http.Server;
+  let port: number;
+
+  beforeEach(async () => {
+    dbPath = makeTempDbPath();
+    db = new Database(dbPath);
+    db.pragma('foreign_keys = ON');
+    initSchema(db);
+    store = makeStore(db);
+
+    // A live schema node whose id is used as a doc slug (schema-anchored doc).
+    store.upsertNode({ id: 'schema-bm', type: 'schema', value: 'Brain Memory', origin: 'observed', s: 0.3, c: 0.6, last_access: 400 });
+    // Schema-anchored doc: slug = schema id → label should resolve to 'Brain Memory'.
+    writeDoc(store, db, { docId: 'doc-bm', slug: 'schema-bm', markdown: '# stub', citedFactIds: [], linkedDocRefs: [], now: 1000 });
+    // Project-scope doc: slug 'tonos' matches no schema → label falls back to slug.
+    writeDoc(store, db, { docId: 'doc-tonos', slug: 'tonos', markdown: '# Tonos', citedFactIds: [], linkedDocRefs: [], now: 1100 });
+
+    db.close();
+    port = await getFreePort();
+    server = startVizServer(dbPath, port);
+    await new Promise<void>(r => server.once('listening', r));
+  });
+
+  afterEach(async () => {
+    await new Promise<void>(r => server.close(() => r()));
+    try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-shm'); } catch { /* ignore */ }
+  });
+
+  it('schema-anchored doc node carries label = schema.value (not the UUID slug)', async () => {
+    const res = await makeRequest(port, '/graph?type=doc');
+    const nodes = JSON.parse(res.body).nodes as Array<{ id: string; slug: string; label: string }>;
+    const bm = nodes.find(n => n.id === 'doc-bm');
+    expect(bm).toBeDefined();
+    expect(bm!.slug).toBe('schema-bm');     // slug preserved for click→reader resolution
+    expect(bm!.label).toBe('Brain Memory'); // label resolved from the schema node
+  });
+
+  it('project-scope doc node label falls back to the slug', async () => {
+    const res = await makeRequest(port, '/graph?type=doc');
+    const nodes = JSON.parse(res.body).nodes as Array<{ id: string; slug: string; label: string }>;
+    const tonos = nodes.find(n => n.id === 'doc-tonos');
+    expect(tonos).toBeDefined();
+    expect(tonos!.label).toBe('tonos');
+  });
+});
+
