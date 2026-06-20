@@ -3,7 +3,7 @@
 **Phase:** 30-core-ingest-command
 **Plan:** 03
 **Prepared:** 2026-06-20 · **Validated:** 2026-06-20
-**Status:** ✅ VALIDATED — SC2/SC3/INGEST-02 all PASS on the committed transport (see RESULTS). Founder rubber-stamp pending.
+**Status:** ✅ CLOSED — SC2/SC3/INGEST-02 all PASS on the committed transport; founder-approved 2026-06-20 (see RESULTS).
 
 ---
 
@@ -276,6 +276,6 @@ Why-level observations, no raw code lines. One non-fact artifact slipped past `s
 
 ### GO/NO-GO
 
-**Decision: GO** — SC2, SC3, and INGEST-02 all met on the real committed transport (the unsound Phase-29 82% number is replaced with measured-on-shippable-code evidence). Verification was autonomous per founder delegation; founder rubber-stamp pending.
+**Decision: GO — founder-approved 2026-06-20.** SC2, SC3, and INGEST-02 all met on the real committed transport (the unsound Phase-29 82% number is replaced with measured-on-shippable-code evidence). Verification was autonomous per founder delegation; founder signed off to close the phase.
 
 **Follow-ups (non-blocking):** (1) `splitObservations` preamble filter; (2) replace the SC3 baseline-delta check in any future onboarding validation with the abstracts-edge query (the delta is confounded by brain-wide falsification).

@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: executing
-stopped_at: Phase 30 COMPLETE — INGEST-01/02/04 verified (4/4 must-haves, live SC2/SC3/INGEST-02 PASS on /Users/vtx/usage). Next: Phase 31 (Doc Ingest + Idempotent Re-ingest).
+stopped_at: Phase 30 CLOSED — INGEST-01/02/04 verified (4/4 must-haves, live SC2/SC3/INGEST-02 PASS on /Users/vtx/usage), founder-approved 2026-06-20. Next: Phase 31 (Doc Ingest + Idempotent Re-ingest).
 last_updated: "2026-06-20T17:05:00.000Z"
 progress:
   total_phases: 4
