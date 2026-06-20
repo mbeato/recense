@@ -11,7 +11,7 @@
  * No sleep.env, OPENAI_API_KEY, or headless transport required.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync } from 'fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync, symlinkSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -221,6 +221,46 @@ describe('project-doc', () => {
     const expectedExternalId = contentExternalId('README.md', recordedContent);
     expect(recordedExternalId).toBe(expectedExternalId);
   });
+
+  // IN-01 / T-31-PATH: symlinked README/CLAUDE/docs that escape the project root must be skipped
+  it('skips symlinked README/docs that escape the project root (T-31-PATH)', async () => {
+    const { emitDocEpisodes, collectDocPaths } = await import('../src/adapter/ingest-project-cli');
+
+    // Create a secret file OUTSIDE tmpDir
+    const outsideDir = mkdtempSync(join(tmpdir(), 'recense-outside-'));
+    const secretSentinel = 'TOP-SECRET-OUTSIDE-CONTENT-DO-NOT-INGEST';
+    const outsideFile = join(outsideDir, 'secret.md');
+    writeFileSync(outsideFile, `# secret\n${secretSentinel}`);
+
+    try {
+      // Symlink <tmpDir>/README.md and <tmpDir>/docs/leak.md to the outside file
+      symlinkSync(outsideFile, join(tmpDir, 'README.md'));
+      mkdirSync(join(tmpDir, 'docs'), { recursive: true });
+      symlinkSync(outsideFile, join(tmpDir, 'docs', 'leak.md'));
+
+      // collectDocPaths must exclude the escaping paths (realpath points outside root)
+      const docPaths = collectDocPaths(tmpDir);
+      const outsideReal = join(outsideDir, 'secret.md');
+      for (const p of docPaths) {
+        expect(p).not.toContain(outsideDir);
+        expect(p).not.toBe(outsideReal);
+      }
+
+      // Outside content must never reach any recorded episode
+      await emitDocEpisodes({
+        dir: tmpDir,
+        scope: 'scope',
+        cwd: tmpDir,
+        pipeline: mockPipeline as never,
+        dryRun: false,
+      });
+      for (const event of capturedEvents) {
+        expect(String(event['content'])).not.toContain(secretSentinel);
+      }
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── Task 2: content-hash idempotency (real in-memory DB) ─────────────────────
@@ -386,6 +426,12 @@ describe('fingerprint helpers (Plan 02 Task 1)', () => {
     expect(result).not.toBeNull();
     expect(result!.sha.length).toBeGreaterThanOrEqual(7);
     expect(result!.dirty).toBe(false);
+
+    // Exercise the dirty=true branch: an untracked file makes the tree dirty
+    writeFileSync(join(tmpDir, 'untracked.txt'), 'new content');
+    const dirtyResult = gitFingerprint(tmpDir);
+    expect(dirtyResult).not.toBeNull();
+    expect(dirtyResult!.dirty).toBe(true);
   });
 
   it('computeProjectFingerprint: git repo → git: prefixed string', async () => {
@@ -445,6 +491,11 @@ describe('cursor skip-gate (Plan 02 Task 2)', () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'recense-cursor-test-'));
+    // A non-git dir needs at least one doc so computeProjectFingerprint produces a
+    // STABLE mtime fingerprint (WR-01: an empty doc-less dir fingerprints distinctly
+    // every run and never skips — correct for the survey-gate, wrong for these
+    // cursor-stability tests, which exercise the unchanged→skip path).
+    writeFileSync(join(tmpDir, 'README.md'), '# cursor test\nStable content.');
     db = new Database(':memory:');
     initSchema(db);
     surveyCalls = 0;
@@ -784,11 +835,9 @@ describe('D-07 dup-rate gate (Plan 02 Task 3)', () => {
     const liveNewNodes = allNodes.filter(n => n.value === newValue && n.tombstoned === 0);
     expect(liveNewNodes).toHaveLength(1);
 
-    // No second live duplicate of the new value
-    const liveNewCount = allNodes.filter(n => n.value === newValue).length;
-    // May have tombstoned duplicates from old conflicts but only 1 live
-    expect(liveNewNodes).toHaveLength(1);
-    void liveNewCount;
+    // The old value must have no surviving live node (reconciled in place, not duplicated)
+    const liveOldNodes = allNodes.filter(n => n.value === oldValue && n.tombstoned === 0);
+    expect(liveOldNodes).toHaveLength(0);
 
     // FK-clean
     const fkCheck = db.prepare('PRAGMA foreign_key_check').all();
