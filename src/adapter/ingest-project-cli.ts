@@ -36,6 +36,7 @@ import { DEFAULT_CONFIG } from '../lib/config';
 import type { EngineConfig } from '../lib/config';
 import { realClock } from '../lib/clock';
 import { EpisodicStore } from '../db/episode-store';
+import { SemanticStore } from '../db/semantic-store';
 import { AllocationGate, IngestionPipeline } from '../ingest/pipeline';
 import { cwdToScope } from '../lib/scope';
 import { contentExternalId } from '../source/source-adapter';
@@ -653,7 +654,16 @@ async function main(): Promise<void> {
       const episodes = new EpisodicStore(db, realClock, config);
       const pipeline = new IngestionPipeline(new AllocationGate(config), episodes);
 
-      // Emit doc episodes BEFORE the survey (docs are deterministic; survey may fail)
+      // ── Cursor skip-gate (REINGEST-02 / T-31-CURSOR) ──────────────────────────
+      // MUST use SemanticStore — NOT EpisodicStore (T-31-CURSOR: EpisodicStore
+      // silently disables cursors). Instantiate from the SAME db handle.
+      const semanticStore = new SemanticStore(db, realClock, config);
+      const docPaths = collectDocPaths(args.dir);
+      const fingerprint = computeProjectFingerprint(args.dir, docPaths);
+      const stored = semanticStore.getMeta(`cursor:project:${scope}`);
+      const surveySkipped = !args.force && stored !== null && stored === fingerprint;
+
+      // Emit doc episodes BEFORE the survey (deterministic, independent of cursor — D-06)
       const docResult = await emitDocEpisodes({
         dir: args.dir,
         scope,
@@ -664,25 +674,36 @@ async function main(): Promise<void> {
       process.stdout.write(`  docs: ${docResult.episodeCount} doc episodes from ${docResult.docCount} docs\n`);
       fileLog(`consolidate: docs docCount=${docResult.docCount} episodeCount=${docResult.episodeCount}`);
 
-      const result = await runSurveyAndFeed({
-        dir: args.dir,
-        scope,
-        repoDesc,
-        pipeline,
-        surveyArea: surveyAreaFn,
-        dryRun: false,
-      });
+      let total = 0;
+      let skippedAreas: string[] = [];
+      if (surveySkipped) {
+        process.stdout.write(`  survey skipped (unchanged) — fingerprint matches cursor\n`);
+        fileLog(`consolidate: survey skipped fingerprint=${fingerprint}`);
+      } else {
+        const result = await runSurveyAndFeed({
+          dir: args.dir,
+          scope,
+          repoDesc,
+          pipeline,
+          surveyArea: surveyAreaFn,
+          dryRun: false,
+        });
+        total = result.totalFed;
+        skippedAreas = result.skippedAreas;
+        // Commit cursor AFTER survey succeeds, BEFORE consolidation (A3: cursor not gated on consolidation)
+        semanticStore.setMeta(`cursor:project:${scope}`, fingerprint);
+        fileLog(`consolidate: cursor committed fingerprint=${fingerprint}`);
+      }
 
       fileLog(`consolidation: starting inline sleep pass`);
       await runConsolidation(db, dbPath, process.env, fileLog);
       fileLog('consolidation: complete');
 
-      const total = result.totalFed;
-      process.stdout.write(`\ningest-project complete: ${total} episodes fed, consolidation done\n`);
-      if (result.skippedAreas.length > 0) {
-        process.stdout.write(`skipped areas (refusal): ${result.skippedAreas.join(', ')}\n`);
+      process.stdout.write(`\ningest-project complete: ${total} episodes fed, consolidation done${surveySkipped ? ' (survey skipped)' : ''}\n`);
+      if (skippedAreas.length > 0) {
+        process.stdout.write(`skipped areas (refusal): ${skippedAreas.join(', ')}\n`);
       }
-      fileLog(`done: totalFed=${total} skipped=${result.skippedAreas.join(',')}`);
+      fileLog(`done: totalFed=${total} skipped=${skippedAreas.join(',')}`);
     } catch (err) {
       fileLog(`error: ${err}`);
       process.stderr.write(`ingest-project FAILED: ${err}\nSee ${LOG_PATH}\n`);
@@ -702,7 +723,16 @@ async function main(): Promise<void> {
       const episodes = new EpisodicStore(db, realClock, config);
       const pipeline = new IngestionPipeline(new AllocationGate(config), episodes);
 
-      // Emit doc episodes BEFORE the survey (docs are deterministic; survey may fail)
+      // ── Cursor skip-gate (REINGEST-02 / T-31-CURSOR) ──────────────────────────
+      // MUST use SemanticStore — NOT EpisodicStore (T-31-CURSOR: EpisodicStore
+      // silently disables cursors). Instantiate from the SAME db handle.
+      const semanticStore = new SemanticStore(db, realClock, config);
+      const docPaths = collectDocPaths(args.dir);
+      const fingerprint = computeProjectFingerprint(args.dir, docPaths);
+      const stored = semanticStore.getMeta(`cursor:project:${scope}`);
+      const surveySkipped = !args.force && stored !== null && stored === fingerprint;
+
+      // Emit doc episodes BEFORE the survey (deterministic, independent of cursor — D-06)
       const docResult = await emitDocEpisodes({
         dir: args.dir,
         scope,
@@ -713,22 +743,35 @@ async function main(): Promise<void> {
       process.stdout.write(`  docs: ${docResult.episodeCount} doc episodes from ${docResult.docCount} docs\n`);
       fileLog(`default: docs docCount=${docResult.docCount} episodeCount=${docResult.episodeCount}`);
 
-      const result = await runSurveyAndFeed({
-        dir: args.dir,
-        scope,
-        repoDesc,
-        pipeline,
-        surveyArea: surveyAreaFn,
-        dryRun: false,
-      });
-
-      const total = result.totalFed;
-      process.stdout.write(`\ningest-project complete: ${total} episodes fed\n`);
-      process.stdout.write(`Consolidation deferred to the scheduled sleep pass.\n`);
-      if (result.skippedAreas.length > 0) {
-        process.stdout.write(`skipped areas (refusal): ${result.skippedAreas.join(', ')}\n`);
+      let total = 0;
+      let skippedAreas: string[] = [];
+      if (surveySkipped) {
+        process.stdout.write(`  survey skipped (unchanged) — fingerprint matches cursor\n`);
+        fileLog(`default: survey skipped fingerprint=${fingerprint}`);
+      } else {
+        const result = await runSurveyAndFeed({
+          dir: args.dir,
+          scope,
+          repoDesc,
+          pipeline,
+          surveyArea: surveyAreaFn,
+          dryRun: false,
+        });
+        total = result.totalFed;
+        skippedAreas = result.skippedAreas;
+        // Commit cursor AFTER survey succeeds (deferred commit, RQ3); not on dry-run (N/A here — dry-run returned early)
+        semanticStore.setMeta(`cursor:project:${scope}`, fingerprint);
+        fileLog(`default: cursor committed fingerprint=${fingerprint}`);
       }
-      fileLog(`done: totalFed=${total} skipped=${result.skippedAreas.join(',')}`);
+
+      process.stdout.write(`\ningest-project complete: ${total} episodes fed${surveySkipped ? ' (survey skipped)' : ''}\n`);
+      if (!surveySkipped) {
+        process.stdout.write(`Consolidation deferred to the scheduled sleep pass.\n`);
+      }
+      if (skippedAreas.length > 0) {
+        process.stdout.write(`skipped areas (refusal): ${skippedAreas.join(', ')}\n`);
+      }
+      fileLog(`done: totalFed=${total} skipped=${skippedAreas.join(',')}`);
     } catch (err) {
       fileLog(`error: ${err}`);
       process.stderr.write(`ingest-project FAILED: ${err}\nSee ${LOG_PATH}\n`);
