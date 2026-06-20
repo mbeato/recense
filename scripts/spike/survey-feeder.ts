@@ -14,7 +14,7 @@
  * RUN (founder, subscription-billed — experiment design is human-owned per CLAUDE.md / D-02):
  *   RECENSE_LOCK_PATH=/tmp/recense-spike.lock \
  *   RECENSE_EXTRACTOR_PROVIDER=claude-headless RECENSE_JUDGE_PROVIDER=claude-headless \
- *   npx ts-node scripts/spike/survey-feeder.ts --db /tmp/recense-spike.db
+ *   npx tsx scripts/spike/survey-feeder.ts --db /tmp/recense-spike.db
  *
  * ISOLATION (D-05, load-bearing):
  *  - Scratch DB only: defaults to /tmp/recense-spike.db; ABORTS if the resolved path is
