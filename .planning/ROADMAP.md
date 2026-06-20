@@ -195,7 +195,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 27. Reader Layer | v5.0 | 5/5 | Complete   | 2026-06-18 |
 | 28. Schema-Anchored Corpus | v5.0 | 5/5 | Complete   | 2026-06-19 |
 | 29. Survey Quality Spike | v6.0 | 3/3 | Complete    | 2026-06-20 |
-| 30. Core Ingest Command | v6.0 | 2/3 | In Progress|  |
+| 30. Core Ingest Command | v6.0 | 3/3 | Complete   | 2026-06-20 |
 | 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 0/TBD | Not started | - |
 | 32. Project Recall + Auto-Corpus | v6.0 | 0/TBD | Not started | - |
 
@@ -229,7 +229,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 **Engine invariants across all phases:** single-tenant; graph is source of truth, vector is derived cache; online paths LLM-free (all LLM/embedding cost in the offline sleep pass); origin=`observed` for all survey/doc ingest (never `asserted_by_user`); never strengthen a fact from inferred output; net-zero new runtime deps; summarized semantic knowledge only (no raw code indexing).
 
 - [x] **Phase 29: Survey Quality Spike** (INGEST-03) — prove agentic-survey fact/schema signal on one real project; go/no-go for the build phases (completed 2026-06-20)
-- [ ] **Phase 30: Core Ingest Command** (INGEST-01/02/04) — `recense ingest-project <dir>`: survey agent → summarized episodes → scope-tagged facts + schemas via the offline pipeline — depends on 29
+- [x] **Phase 30: Core Ingest Command** (INGEST-01/02/04) — `recense ingest-project <dir>`: survey agent → summarized episodes → scope-tagged facts + schemas via the offline pipeline — depends on 29 (completed 2026-06-20)
 - [ ] **Phase 31: Doc Ingest + Idempotent Re-ingest** (DOCING-01, REINGEST-01/02) — direct project-doc ingest + per-project cursor + in-place belief reconciliation on re-ingest — depends on 30
 - [ ] **Phase 32: Project Recall + Auto-Corpus** (RECALL-01/02) — scoped project recall + auto-promoted/-generated schema-anchored corpus doc — depends on 30+31
 
@@ -273,7 +273,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 **Wave 3** *(depends on Wave 2)*
 
-- [ ] 30-03-PLAN.md — founder-supervised live SC2 re-validation on the REAL committed transport (the 82% spike number is unsound) + `[scope]` recall (SC2) + ≥1 schema (SC3); `autonomous: false` (INGEST-01/02/04)
+- [x] 30-03-PLAN.md — founder-supervised live SC2 re-validation on the REAL committed transport (the 82% spike number is unsound) + `[scope]` recall (SC2) + ≥1 schema (SC3); `autonomous: false` (INGEST-01/02/04)
 
 ### Phase 31: Doc Ingest + Idempotent Re-ingest
 

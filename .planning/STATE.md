@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: executing
-stopped_at: Phase 30 context gathered
-last_updated: "2026-06-20T14:21:09.632Z"
+stopped_at: Phase 30 — plans 01+02 shipped+verified; 30-03 PAUSED at blocking human checkpoint (live SC2/SC3/INGEST-02 run on /Users/vtx/usage). Verify with /tmp/verify-30-03.js after sleep pass completes; schema baseline=275.
+last_updated: "2026-06-20T15:50:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 1
