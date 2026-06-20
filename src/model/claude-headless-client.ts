@@ -115,6 +115,155 @@ export function buildHeadlessArgs(model: string, systemPrompt: string): string[]
   ];
 }
 
+/**
+ * Survey system prompt. Permits read-only tool use (Read/Grep/Glob) for the survey agent.
+ *
+ * NEUTRAL_SYSTEM ("no tool use") is correct for the judge/extractor path which must NOT
+ * use tools. The survey agent MUST use Read/Grep/Glob to read the target repo; NEUTRAL_SYSTEM
+ * would suppress them. This prompt is intentionally minimal — the per-area survey instructions
+ * live in the user message (buildSurveyPrompt). Exported for test assertion.
+ */
+export const SURVEY_SYSTEM =
+  'You are a code repository surveyor. Use your Read, Grep, and Glob tools to read the target repository and report summarized why-level observations. Output only the observations, one per line.';
+
+/**
+ * Build the `claude -p` argv for the survey agent path.
+ *
+ * Mirrors `buildHeadlessArgs` but replaces the tool/dir/permission flags per
+ * RESEARCH Seam 1 "Exact change required":
+ * - `--tools Read Grep Glob` instead of `--tools none` (read-only, no Bash/Write/Edit)
+ * - `--add-dir surveyDir` to scope tool access to the target directory
+ * - `--permission-mode bypassPermissions` for non-interactive runs
+ *
+ * KEEPS all load-bearing guards:
+ * - `--setting-sources project` (self-ingestion hook guard, load-bearing — cwd-independent)
+ * - `--strict-mcp-config`
+ * - `--exclude-dynamic-system-prompt-sections`
+ *
+ * Exported for unit tests so the exact flag set is asserted without spawning a process.
+ */
+export function buildSurveyHeadlessArgs(model: string, systemPrompt: string, surveyDir: string): string[] {
+  return [
+    '-p',
+    '--output-format', 'json',
+    '--model', model,
+    '--system-prompt', systemPrompt,
+    '--setting-sources', 'project',         // KEEP — self-ingestion guard
+    '--tools', 'Read', 'Grep', 'Glob',      // CHANGED from 'none' — read-only tool set
+    '--add-dir', surveyDir,                  // NEW — scope tool access to target dir
+    '--permission-mode', 'bypassPermissions', // NEW — non-interactive; no stdin for prompts
+    '--strict-mcp-config',
+    '--exclude-dynamic-system-prompt-sections',
+  ];
+}
+
+/**
+ * Construct the AnthropicLike client whose messages.create shells out to `claude -p`
+ * with read-only tool access (Read/Grep/Glob) scoped to `surveyDir`.
+ *
+ * The survey path is ADDITIVE — do NOT mutate `createClaudeHeadlessClient` or
+ * `buildHeadlessArgs`. The existing judge/extractor path keeps `--tools none` and
+ * `cwd: os.tmpdir()` byte-for-byte unchanged.
+ *
+ * Design (RESEARCH Pitfall 4 / Test B defensive choice):
+ * - `cwd: os.tmpdir()` — neutral cwd, NOT surveyDir. Prevents loading the target repo's
+ *   project hooks/CLAUDE.md (a malicious target repo's hooks cannot trigger via `cwd:dir`).
+ * - `--add-dir surveyDir` — grants Read/Grep/Glob access to `surveyDir` from the neutral
+ *   tmpdir cwd. Live probe confirmed this reads the dir with zero permission_denials.
+ *
+ * Billing + self-ingestion guards preserved verbatim:
+ * - `delete childEnv['ANTHROPIC_API_KEY']` / `ANTHROPIC_AUTH_TOKEN` (subscription billing)
+ * - `--setting-sources project` (no global UserPromptSubmit capture hook)
+ */
+export function createClaudeHeadlessSurveyClient(config: EngineConfig, surveyDir: string): { client: AnthropicLike; model: string } {
+  const model = config.claudeHeadlessModel;
+  const bin = process.env['RECENSE_CLAUDE_BIN'] || 'claude';
+  const timeoutRaw = process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS'];
+  const parsed = timeoutRaw ? parseInt(timeoutRaw, 10) : NaN;
+  const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TIMEOUT_MS;
+
+  const client: AnthropicLike = {
+    messages: {
+      create(params): Promise<Anthropic.Message> {
+        const useModel = params.model || model;
+        const prompt = messageContentToText(params.messages[0]?.content ?? '');
+        const args = buildSurveyHeadlessArgs(useModel, SURVEY_SYSTEM, surveyDir);
+
+        return new Promise<Anthropic.Message>(resolve => {
+          // BILLING GUARD: strip the keys so `claude -p` uses the Max subscription, not the API.
+          // Preserved verbatim from the default path (load-bearing).
+          const childEnv = { ...process.env };
+          delete childEnv['ANTHROPIC_API_KEY'];
+          delete childEnv['ANTHROPIC_AUTH_TOKEN'];
+
+          const shape = (text: string): Anthropic.Message =>
+            ({ content: [{ type: 'text', text }] } as unknown as Anthropic.Message);
+
+          const child = spawn(bin, args, {
+            // Defensive neutral cwd (RESEARCH Pitfall 4 / Test B):
+            // cwd: os.tmpdir() + --add-dir surveyDir gives read access to surveyDir
+            // WITHOUT loading the target repo's project hooks/CLAUDE.md.
+            cwd: os.tmpdir(),
+            env: childEnv,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+
+          let stdout = '';
+          let timedOut = false;
+          const timer = setTimeout(() => {
+            timedOut = true;
+            child.kill('SIGKILL');
+          }, timeoutMs);
+
+          child.stdout.on('data', d => { stdout += d; });
+          child.stderr.on('data', () => {});
+          child.on('error', () => {
+            clearTimeout(timer);
+            resolve(shape(''));
+          });
+          child.on('close', code => {
+            clearTimeout(timer);
+            if (timedOut || code !== 0) {
+              resolve(shape(''));
+              return;
+            }
+            let text = '';
+            try {
+              const envelope = JSON.parse(stdout) as {
+                result?: unknown;
+                usage?: Record<string, number>;
+                total_cost_usd?: number;
+                duration_ms?: number;
+              };
+              text = typeof envelope.result === 'string' ? envelope.result : '';
+              if (usageSink !== null) {
+                try {
+                  usageSink({
+                    model: useModel,
+                    usage: envelope.usage,
+                    total_cost_usd: envelope.total_cost_usd,
+                    duration_ms: envelope.duration_ms,
+                  });
+                } catch {
+                  // Sink errors are swallowed — best-effort emit guard.
+                }
+              }
+            } catch {
+              text = '';
+            }
+            resolve(shape(text));
+          });
+
+          child.stdin.write(prompt);
+          child.stdin.end();
+        });
+      },
+    },
+  };
+
+  return { client, model };
+}
+
 /** Coerce an Anthropic message `content` (string | content-block array) to its text. */
 function messageContentToText(content: Anthropic.MessageCreateParamsNonStreaming['messages'][number]['content']): string {
   if (typeof content === 'string') return content;
