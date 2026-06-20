@@ -195,7 +195,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 27. Reader Layer | v5.0 | 5/5 | Complete   | 2026-06-18 |
 | 28. Schema-Anchored Corpus | v5.0 | 5/5 | Complete   | 2026-06-19 |
 | 29. Survey Quality Spike | v6.0 | 3/3 | Complete    | 2026-06-20 |
-| 30. Core Ingest Command | v6.0 | 1/3 | In Progress|  |
+| 30. Core Ingest Command | v6.0 | 2/3 | In Progress|  |
 | 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 0/TBD | Not started | - |
 | 32. Project Recall + Auto-Corpus | v6.0 | 0/TBD | Not started | - |
 
@@ -269,7 +269,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 **Wave 2** *(depends on Wave 1)*
 
-- [ ] 30-02-PLAN.md — `recense ingest-project <dir>` standalone CLI: survey→recordEvent (scope-tagged, origin=observed), real `--scope` threading via synthetic cwd, `--dry-run`/`--db`/`--desc`, deferred-default + `--consolidate` inline, retry-then-skip, dispatcher wiring (INGEST-01/02/04)
+- [x] 30-02-PLAN.md — `recense ingest-project <dir>` standalone CLI: survey→recordEvent (scope-tagged, origin=observed), real `--scope` threading via synthetic cwd, `--dry-run`/`--db`/`--desc`, deferred-default + `--consolidate` inline, retry-then-skip, dispatcher wiring (INGEST-01/02/04)
 
 **Wave 3** *(depends on Wave 2)*
 

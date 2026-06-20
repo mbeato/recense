@@ -9,9 +9,9 @@
 ### INGEST — Agentic project survey (core)
 
 - [x] **INGEST-01**: A user can run `recense ingest-project <dir>` to onboard a project; an agent surveys the repo (README, structure, key modules, conventions, entry points, gotchas) and emits **summarized observations** as episodes through the existing pipeline.
-- [ ] **INGEST-02**: Ingested project knowledge is **scope-tagged** to that project (`node_scope`), so recall and the corpus attribute it under the correct `[scope]`.
+- [x] **INGEST-02**: Ingested project knowledge is **scope-tagged** to that project (`node_scope`), so recall and the corpus attribute it under the correct `[scope]`.
 - [x] **INGEST-03**: The survey emits **summarized semantic knowledge** (architecture, conventions, decisions, current state, gotchas) — raw code dumps and low-value structural facts (e.g. "file X imports Y") are excluded by a quality gate.
-- [ ] **INGEST-04**: Ingestion runs entirely through the **offline** episodic → consolidation path (origin=`observed`); it never blocks an online path and yields facts + schemas like any other source.
+- [x] **INGEST-04**: Ingestion runs entirely through the **offline** episodic → consolidation path (origin=`observed`); it never blocks an online path and yields facts + schemas like any other source.
 
 ### DOCING — Generalized document ingest
 
@@ -46,9 +46,9 @@ Each requirement maps to exactly one phase. Filled by the roadmapper.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | INGEST-01 | Phase 30 | Complete |
-| INGEST-02 | Phase 30 | Pending |
+| INGEST-02 | Phase 30 | Complete |
 | INGEST-03 | Phase 29 | Complete |
-| INGEST-04 | Phase 30 | Pending |
+| INGEST-04 | Phase 30 | Complete |
 | DOCING-01 | Phase 31 | Pending |
 | REINGEST-01 | Phase 31 | Pending |
 | REINGEST-02 | Phase 31 | Pending |
