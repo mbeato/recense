@@ -248,6 +248,70 @@ export function resolveProviderOverlay(
 }
 
 // ---------------------------------------------------------------------------
+// consumePendingCorpusMarkers — crash-safe marker-consume for pending promotions
+// ---------------------------------------------------------------------------
+
+/**
+ * Consume all `pending-corpus-promotion:<scope>` meta markers written by the deferred
+ * `recense ingest-project` path (Plan 32-03, D-05), force-promoting each scope's corpus
+ * before the generateCorpusDocs pass fills the new stubs.
+ *
+ * Must be called BEFORE generateCorpusDocs (run-sleep-pass.ts CORPUS-06 block) so that
+ * stubs created here are filled in the SAME pass.
+ *
+ * CRASH-SAFE ORDER (T-32-MARK):
+ *  For each marker:
+ *    1. Parse scope = key.slice('pending-corpus-promotion:'.length)
+ *    2. await promoter.promoteScope(scope)   ← stubs written
+ *    3. store.deleteMeta(key)                ← marker cleared ONLY after success
+ *
+ *  If promoteScope throws, the marker is NOT cleared — the next pass retries
+ *  (idempotent: promoteScope reuses existing stubs by slug).
+ *
+ * BEST-EFFORT (per-marker try/catch):
+ *  A failure on one scope does not abort the others. The sleep pass must continue.
+ *
+ * T-01-SQL (bound LIKE literal): the scan uses a compiled prepared statement with
+ *  a literal LIKE pattern (not interpolated user input) — safe per T-01-SQL.
+ *
+ * @param db       Open, schema-initialised SQLite database.
+ * @param store    SemanticStore instance (same db handle).
+ * @param promoter CorpusPromoter instance (for promoteScope calls).
+ * @param log      Timestamped log function (callers provide their own log sink).
+ */
+export async function consumePendingCorpusMarkers(
+  db: Database.Database,
+  store: SemanticStore,
+  promoter: Pick<CorpusPromoter, 'promoteScope'>,
+  log: (msg: string) => void,
+): Promise<void> {
+  // T-01-SQL: prepared statement with a bound LIKE literal (static string, not user input)
+  const stmtScanMarkers = db.prepare(
+    "SELECT key FROM meta WHERE key LIKE 'pending-corpus-promotion:%'"
+  );
+
+  const markerRows = stmtScanMarkers.all() as Array<{ key: string }>;
+
+  for (const { key } of markerRows) {
+    const scope = key.slice('pending-corpus-promotion:'.length);
+
+    try {
+      const result = await promoter.promoteScope(scope);
+      log(
+        `CORPUS-MARKER: consumed scope=${scope} promoted=${result.promoted.length} containment=${result.containment}`,
+      );
+
+      // CRASH-SAFE: clear marker ONLY after a successful promoteScope (T-32-MARK)
+      store.deleteMeta(key);
+      log(`CORPUS-MARKER: cleared marker key=${key}`);
+    } catch (err) {
+      // Best-effort per-marker: log + leave marker so the next pass retries
+      log(`CORPUS-MARKER: promoteScope failed for scope=${scope} (marker NOT cleared — will retry): ${err}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // runConsolidation — the shared sleep-pass body
 // ---------------------------------------------------------------------------
 
@@ -395,6 +459,19 @@ export async function runConsolidation(
   //   RECENSE_CORPUS_GEN=0   → skip entirely (default: on)
   //   RECENSE_CORPUS_GEN_MAX → override the per-pass maxDocs cap (default: 25)
   if (env['RECENSE_CORPUS_GEN'] !== '0') {
+    // Plan 32-03 D-05: Consume pending-corpus-promotion:<scope> markers BEFORE generateCorpusDocs
+    // so that force-promoted scope stubs (landing + chapters) are filled in the SAME pass.
+    // Crash-safe order: promoteScope first, deleteMeta only on success (T-32-MARK).
+    // Best-effort: a per-marker failure logs + leaves the marker for retry; does NOT abort.
+    // corpusPromoter is the same instance built above (lines 354-361).
+    try {
+      await consumePendingCorpusMarkers(db, store, corpusPromoter, log);
+    } catch (err) {
+      // consumePendingCorpusMarkers already handles per-marker errors internally.
+      // This outer catch is a final safety net — should never fire in practice.
+      log(`CORPUS-06: consumePendingCorpusMarkers threw unexpectedly: ${err}`);
+    }
+
     const maxDocs = parseInt(env['RECENSE_CORPUS_GEN_MAX'] ?? '25', 10) || 25;
     try {
       const corpusGenResult = await generateCorpusDocs(
