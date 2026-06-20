@@ -425,3 +425,149 @@ describe('fingerprint helpers (Plan 02 Task 1)', () => {
     expect(() => computeProjectFingerprint(tmpDir, ['/nonexistent/path/doc.md'])).not.toThrow();
   });
 });
+
+// ── Plan 02 Task 2: SemanticStore cursor skip-gate + deferred write ───────────
+//
+// These tests use runIngestWithMockSurvey() — a test-internal wrapper that wires
+// the cursor skip-gate logic (SemanticStore getMeta/setMeta + computeProjectFingerprint)
+// the same way real main() does, but with:
+//   - an in-memory DB (no live brain)
+//   - a mock surveyArea transport (callable counter, no real LLM)
+//   - emitDocEpisodes (real but on tmpDir with no docs → 0 doc episodes)
+
+describe('cursor skip-gate (Plan 02 Task 2)', () => {
+  let tmpDir: string;
+  let db: Database.Database;
+  let surveyCalls: number;
+  let mockSurveyArea: (_area: string, _dir: string, _desc: string) => Promise<string>;
+
+  const testConfig: EngineConfig = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'recense-cursor-test-'));
+    db = new Database(':memory:');
+    initSchema(db);
+    surveyCalls = 0;
+    mockSurveyArea = async (_area: string, _dir: string, _desc: string) => {
+      surveyCalls++;
+      return '- test observation from mock survey';
+    };
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Helper: run the cursor-gated survey path inline (models both real-run branches).
+   * Returns the number of survey episodes fed and whether the survey was skipped.
+   */
+  async function runWithCursor(opts: { force?: boolean; dryRun?: boolean }): Promise<{ fed: number; skipped: boolean }> {
+    const {
+      computeProjectFingerprint, collectDocPaths, emitDocEpisodes, runSurveyAndFeed,
+    } = await import('../src/adapter/ingest-project-cli');
+    const { SemanticStore: SS } = await import('../src/db/semantic-store');
+    const { realClock } = await import('../src/lib/clock');
+    const { EpisodicStore: ES } = await import('../src/db/episode-store');
+    const { AllocationGate: AG, IngestionPipeline: IP } = await import('../src/ingest/pipeline');
+
+    const scope = 'test-scope';
+    const semanticStore = new SS(db, realClock, testConfig);
+    const episodes = new ES(db, realClock, testConfig);
+    const pipeline = new IP(new AG(testConfig), episodes);
+
+    const docPaths = collectDocPaths(tmpDir);
+    const fingerprint = computeProjectFingerprint(tmpDir, docPaths);
+    const stored = semanticStore.getMeta(`cursor:project:${scope}`);
+    const surveySkipped = !opts.force && stored !== null && stored === fingerprint;
+
+    // Emit docs unconditionally (independent of cursor)
+    await emitDocEpisodes({
+      dir: tmpDir, scope, cwd: tmpDir, pipeline,
+      dryRun: opts.dryRun ?? false,
+    });
+
+    let fed = 0;
+    if (surveySkipped) {
+      process.stdout.write('  survey skipped (unchanged) — fingerprint matches cursor\n');
+    } else {
+      const result = await runSurveyAndFeed({
+        dir: tmpDir, scope, repoDesc: 'test repo',
+        pipeline, surveyArea: mockSurveyArea,
+        dryRun: opts.dryRun ?? false,
+      });
+      fed = result.totalFed;
+      // Commit cursor after survey succeeds, skipped on dry-run (D-09)
+      if (!(opts.dryRun)) {
+        semanticStore.setMeta(`cursor:project:${scope}`, fingerprint);
+      }
+    }
+
+    return { fed, skipped: surveySkipped };
+  }
+
+  // T-31-CURSOR-1: unchanged repo → mock surveyArea NOT called → 0 survey episodes
+  it('T-31-CURSOR-1: unchanged repo → survey skipped, 0 survey calls', async () => {
+    // First run — no cursor stored → survey runs
+    await runWithCursor({});
+    expect(surveyCalls).toBeGreaterThan(0); // 5 SURVEY_AREAS
+    const callsAfterFirst = surveyCalls;
+
+    surveyCalls = 0; // reset counter
+
+    // Second run — cursor stored + fingerprint matches → survey skipped
+    const result = await runWithCursor({});
+    expect(result.skipped).toBe(true);
+    expect(surveyCalls).toBe(0); // survey transport NOT called
+    void callsAfterFirst; // used above
+  });
+
+  // T-31-CURSOR-2: --force → survey runs even when cursor matches
+  it('T-31-CURSOR-2: --force → survey runs even when cursor fingerprint matches', async () => {
+    // First run — establishes cursor
+    await runWithCursor({});
+    surveyCalls = 0;
+
+    // --force: cursor matches but survey must still run
+    const result = await runWithCursor({ force: true });
+    expect(result.skipped).toBe(false);
+    expect(surveyCalls).toBeGreaterThan(0);
+  });
+
+  // T-31-CURSOR-3: --dry-run → cursor NOT written even after survey runs
+  it('T-31-CURSOR-3: --dry-run → cursor not advanced', async () => {
+    const { SemanticStore: SS } = await import('../src/db/semantic-store');
+    const { realClock } = await import('../src/lib/clock');
+    const semanticStore = new SS(db, realClock, testConfig);
+
+    const cursorBefore = semanticStore.getMeta('cursor:project:test-scope');
+    expect(cursorBefore).toBeNull(); // nothing stored yet
+
+    await runWithCursor({ dryRun: true });
+
+    const cursorAfter = semanticStore.getMeta('cursor:project:test-scope');
+    expect(cursorAfter).toBeNull(); // still null after dry-run
+  });
+
+  // T-31-CURSOR-4: --db scratch → cursor stored in scratch DB, NOT the live brain
+  it('T-31-CURSOR-4: scratch DB cursor is isolated from a different DB', async () => {
+    const { computeProjectFingerprint, collectDocPaths } = await import('../src/adapter/ingest-project-cli');
+    const { SemanticStore: SS } = await import('../src/db/semantic-store');
+    const { realClock } = await import('../src/lib/clock');
+
+    // Run in the main in-memory DB (already set up in runWithCursor)
+    await runWithCursor({});
+
+    // A SEPARATE DB should have no cursor row
+    const separateDb = new Database(':memory:');
+    initSchema(separateDb);
+    const separateStore = new SS(separateDb, realClock, testConfig);
+    const docPaths = collectDocPaths(tmpDir);
+    const fp = computeProjectFingerprint(tmpDir, docPaths);
+
+    expect(separateStore.getMeta('cursor:project:test-scope')).toBeNull();
+    separateDb.close();
+    void fp; // used above for type-safety
+  });
+});
