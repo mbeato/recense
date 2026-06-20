@@ -97,6 +97,37 @@ describe('planImport — scan + skiplist (D-S5)', () => {
     expect(skipReasons).toEqual(['memory-index', 'policy-bundle']);
   });
 
+  it('skips live tracker files with reason "tracker" (quick-260617-w0u)', () => {
+    base = mkdtempSync(join(tmpdir(), 'import-mem-'));
+    makeFixture(base, 'resume');
+    const memDir = join(base, '-Users-vtx-resume', 'memory');
+    writeFileSync(join(memDir, 'leetcode_practice_tracker.md'), '# leetcode\nTwo Sum: solved\n');
+    writeFileSync(join(memDir, 'interview_readiness_tracker.md'), '# interview\nDue now: 74\n');
+
+    const plan = planImport(base, {});
+    const imports = plan.filter(p => p.action === 'import');
+    const trackerSkips = plan.filter(p => p.skipReason === 'tracker');
+
+    // The 2 fact files still import; neither tracker does.
+    expect(imports).toHaveLength(2);
+    expect(imports.map(p => p.filename)).not.toContain('leetcode_practice_tracker.md');
+    expect(trackerSkips.map(s => s.filename).sort()).toEqual([
+      'interview_readiness_tracker.md',
+      'leetcode_practice_tracker.md',
+    ]);
+    // Trackers are NOT lumped into the policy-bundle count (gate baseline stays clean).
+    const db = new Database(':memory:');
+    initSchema(db);
+    const pipeline = new IngestionPipeline(
+      new AllocationGate(TEST_CONFIG),
+      new EpisodicStore(db, new FakeClock(1_000_000), TEST_CONFIG),
+    );
+    const counts = runImport(plan, pipeline, () => {});
+    db.close();
+    expect(counts.skippedTracker).toBe(2);
+    expect(counts.skippedPolicy).toBe(1);
+  });
+
   it('the resume project maps to global scope', () => {
     base = mkdtempSync(join(tmpdir(), 'import-mem-'));
     makeFixture(base, 'resume');

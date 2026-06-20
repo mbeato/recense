@@ -13,7 +13,9 @@
  *    makes re-runs idempotent; D-59 backstop).
  *  - SKIPS the load-bearing policy bundles and MEMORY.md index files (D-S5) — those
  *    stay deterministic config; retrieval is probabilistic and must never risk
- *    dropping a load-bearing rule.
+ *    dropping a load-bearing rule. ALSO skips live mutable TRACKER files
+ *    (quick-260617-w0u) — append-logs that skills rewrite each session, so a snapshot
+ *    would freeze a stale count as a fact.
  *  - NOT one-shot — NO `seeded` meta flag. Safe to re-run any time.
  *  - NEVER deletes or modifies a source file. Retirement is a separate, human-gated
  *    step (D-S7, Task 3 / docs/import-memory.md).
@@ -58,8 +60,21 @@ export const POLICY_BUNDLES = new Set<string>([
   'user_profile',
 ]);
 
+/**
+ * Live, mutable TRACKER files that must NOT be imported as facts (quick-260617-w0u).
+ * These are append-log state files that skills (leetcode-drill/-summary, interview-drill)
+ * and the session-stop-vault-update hook read AND rewrite every session — importing a
+ * snapshot freezes a stale point-in-time count as a "fact". Distinct skip category from
+ * POLICY_BUNDLES so the dry-run's "7 policy bundles" gate baseline stays meaningful.
+ * Matched by filename basename WITHOUT the .md extension.
+ */
+export const TRACKER_FILES = new Set<string>([
+  'interview_readiness_tracker',
+  'leetcode_practice_tracker',
+]);
+
 /** Why a scanned file was excluded from import. */
-export type SkipReason = 'policy-bundle' | 'memory-index';
+export type SkipReason = 'policy-bundle' | 'memory-index' | 'tracker';
 
 /** One scanned fact file and the decision made about it. */
 export interface ImportPlanItem {
@@ -82,6 +97,7 @@ export interface ImportCounts {
   imported: number;
   skippedPolicy: number;
   skippedIndex: number;
+  skippedTracker: number;
 }
 
 /**
@@ -90,10 +106,11 @@ export interface ImportCounts {
  */
 export function skipReasonFor(filename: string): SkipReason | undefined {
   // Case-insensitive: skiplist matching must not depend on filename casing
-  // (POLICY_BUNDLES stems are lowercase; index files are conventionally MEMORY.md).
+  // (POLICY_BUNDLES / TRACKER_FILES stems are lowercase; index files are conventionally MEMORY.md).
   if (filename.toLowerCase() === 'memory.md') return 'memory-index';
   const stem = filename.replace(/\.md$/i, '').toLowerCase();
   if (POLICY_BUNDLES.has(stem)) return 'policy-bundle';
+  if (TRACKER_FILES.has(stem)) return 'tracker';
   return undefined;
 }
 
@@ -188,10 +205,11 @@ export function runImport(
   pipeline: IngestionPipeline,
   log: (msg: string) => void,
 ): ImportCounts {
-  const counts: ImportCounts = { imported: 0, skippedPolicy: 0, skippedIndex: 0 };
+  const counts: ImportCounts = { imported: 0, skippedPolicy: 0, skippedIndex: 0, skippedTracker: 0 };
   for (const item of plan) {
     if (item.action === 'skip') {
       if (item.skipReason === 'policy-bundle') counts.skippedPolicy++;
+      else if (item.skipReason === 'tracker') counts.skippedTracker++;
       else counts.skippedIndex++;
       continue;
     }
@@ -224,8 +242,9 @@ function printPlan(plan: ImportPlanItem[]): void {
   }
   const policy = skips.filter(s => s.skipReason === 'policy-bundle').length;
   const index = skips.filter(s => s.skipReason === 'memory-index').length;
+  const tracker = skips.filter(s => s.skipReason === 'tracker').length;
   process.stdout.write(
-    `\nplan: ${imports.length} to import, ${policy} policy-bundle skipped, ${index} index skipped\n`,
+    `\nplan: ${imports.length} to import, ${policy} policy-bundle skipped, ${index} index skipped, ${tracker} tracker skipped\n`,
   );
 }
 
@@ -281,11 +300,11 @@ async function main(): Promise<void> {
 
     const counts = runImport(plan, pipeline, fileLog);
     process.stdout.write(
-      `imported ${counts.imported} fact file(s); skipped ${counts.skippedPolicy} policy + ${counts.skippedIndex} index.\n` +
+      `imported ${counts.imported} fact file(s); skipped ${counts.skippedPolicy} policy + ${counts.skippedIndex} index + ${counts.skippedTracker} tracker.\n` +
         'Next: run `recense sleep-pass` (adapters disabled) so facts consolidate + get scope. See docs/import-memory.md.\n',
     );
     fileLog(
-      `done: imported=${counts.imported} skippedPolicy=${counts.skippedPolicy} skippedIndex=${counts.skippedIndex}`,
+      `done: imported=${counts.imported} skippedPolicy=${counts.skippedPolicy} skippedIndex=${counts.skippedIndex} skippedTracker=${counts.skippedTracker}`,
     );
   } catch (err) {
     fileLog(`error: ${err}`);
