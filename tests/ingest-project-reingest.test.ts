@@ -571,3 +571,230 @@ describe('cursor skip-gate (Plan 02 Task 2)', () => {
     void fp; // used above for type-safety
   });
 });
+
+// ── Plan 02 Task 3: D-07 dup-rate / reconciliation gate ──────────────────────
+//
+// Two tests prove the REINGEST-01 / D-07 contract using a deterministic
+// in-memory harness with MockModelProvider (no real LLM / headless transport):
+//
+// (1) unchanged-re-run → cursor structural skip → 0 new consolidated beliefs
+// (2) changed fact → tombstone+new (not dup); FK-clean
+
+describe('D-07 dup-rate gate (Plan 02 Task 3)', () => {
+  // ── helpers mirrored from consolidation.test.ts ────────────────────────────
+
+  function makeAlwaysSameEmbedFn(dims: number): (text: string) => Float32Array {
+    return (_text: string) => {
+      const vec = new Float32Array(dims);
+      vec[0] = 1.0;
+      return vec;
+    };
+  }
+
+  // ── Test 1: unchanged re-run → zero new consolidated beliefs ──────────────
+
+  it('unchanged re-run yields zero new consolidated beliefs (SC2 — structural via cursor)', async () => {
+    // Imports
+    const DB = Database;
+    const { initSchema: IS } = await import('../src/db/schema');
+    const { FakeClock: FC } = await import('../src/lib/clock');
+    const { DEFAULT_CONFIG: DC } = await import('../src/lib/config');
+    const { SemanticStore: SS } = await import('../src/db/semantic-store');
+    const { EpisodicStore: ES } = await import('../src/db/episode-store');
+    const { AllocationGate: AG, IngestionPipeline: IP } = await import('../src/ingest/pipeline');
+    const { Consolidator } = await import('../src/consolidation/consolidator');
+    const { StrengthDecayManager } = await import('../src/strength/decay');
+    const { CandidateRetriever } = await import('../src/retrieval/topk');
+    const { MockModelProvider: MMP } = await import('../src/model/provider');
+    const { SchemaInducer } = await import('../src/consolidation/schema-induction');
+    const {
+      computeProjectFingerprint, collectDocPaths, runSurveyAndFeed,
+    } = await import('../src/adapter/ingest-project-cli');
+    const { mkdtempSync: mdt, rmSync: rms, writeFileSync: wfs } = await import('fs');
+    const { join: pj } = await import('path');
+    const { tmpdir: td } = await import('os');
+
+    const tmpDir = mdt(pj(td(), 'recense-d07-1-'));
+    wfs(pj(tmpDir, 'README.md'), '# Test project\nThis project does X.');
+
+    const db = new DB(':memory:');
+    IS(db);
+    const clock = new FC(Date.UTC(2026, 0, 1));
+    const cfg = { ...DC, dbPath: ':memory:', consolSkipThreshold: 0.2, unrelatedSimilarityThreshold: 0.3, candidateK: 5 };
+    const store = new SS(db, clock, cfg);
+    const episodes = new ES(db, clock, cfg);
+    const strength = new StrengthDecayManager(db, clock, cfg);
+    const retriever = new CandidateRetriever(db);
+
+    let surveyCalls = 0;
+    const mockSurveyArea = async () => {
+      surveyCalls++;
+      return '- the project uses TypeScript';
+    };
+
+    // Helper to make a SchemaInducer no-op
+    const makeInducer = (h: { db: Database.Database; store: InstanceType<typeof SS>; strength: InstanceType<typeof StrengthDecayManager>; retriever: InstanceType<typeof CandidateRetriever>; clock: InstanceType<typeof FC>; config: typeof cfg }) =>
+      new SchemaInducer(
+        h.db, h.store, h.strength, h.retriever,
+        new MMP(),
+        h.config, h.clock,
+        async () => 'no-op-schema',
+      );
+
+    const alwaysSameEmbed = makeAlwaysSameEmbedFn(cfg.embeddingDimensions);
+
+    // ── First run: no cursor stored → survey runs ────────────────────────────
+    const provider1 = new MMP({
+      embedFn: alwaysSameEmbed,
+      generateScript: ['[{"type":"fact","value":"uses TypeScript"}]'],
+      judgeScript: [],
+    });
+    const pipeline1 = new IP(new AG(cfg), episodes);
+    await runSurveyAndFeed({
+      dir: tmpDir, scope: 'test-scope', repoDesc: 'test',
+      pipeline: pipeline1, surveyArea: mockSurveyArea, dryRun: false,
+    });
+    const consolidator1 = new Consolidator(db, episodes, store, strength, retriever, provider1, makeInducer({ db, store, strength, retriever, clock, config: cfg }), cfg, clock);
+    await consolidator1.consolidate();
+    const countAfterFirst = (db.prepare('SELECT COUNT(*) as c FROM node WHERE tombstoned=0').get() as { c: number }).c;
+    expect(countAfterFirst).toBeGreaterThan(0);
+
+    // Commit cursor — simulate what main() does after first survey
+    const docPaths = collectDocPaths(tmpDir);
+    const fingerprint = computeProjectFingerprint(tmpDir, docPaths);
+    store.setMeta('cursor:project:test-scope', fingerprint);
+
+    // ── Second run: cursor matches fingerprint → survey SKIPPED ─────────────
+    const callsBeforeSecond = surveyCalls;
+    const storedFp = store.getMeta('cursor:project:test-scope');
+    const currentFp = computeProjectFingerprint(tmpDir, docPaths);
+    const surveySkipped = storedFp !== null && storedFp === currentFp;
+
+    expect(surveySkipped).toBe(true);
+
+    if (!surveySkipped) {
+      // This branch should NOT execute — if it does, the test will fail below
+      const pipeline2 = new IP(new AG(cfg), episodes);
+      await runSurveyAndFeed({
+        dir: tmpDir, scope: 'test-scope', repoDesc: 'test',
+        pipeline: pipeline2, surveyArea: mockSurveyArea, dryRun: false,
+      });
+    }
+
+    // Consolidation on zero new unconsolidated episodes → no new beliefs
+    const provider2 = new MMP({
+      embedFn: alwaysSameEmbed,
+      generateScript: [], // nothing to generate
+      judgeScript: [],
+    });
+    const consolidator2 = new Consolidator(db, episodes, store, strength, retriever, provider2, makeInducer({ db, store, strength, retriever, clock, config: cfg }), cfg, clock);
+    await consolidator2.consolidate();
+
+    const countAfterSecond = (db.prepare('SELECT COUNT(*) as c FROM node WHERE tombstoned=0').get() as { c: number }).c;
+    // Zero new consolidated beliefs: count unchanged
+    expect(countAfterSecond).toBe(countAfterFirst);
+    // Survey transport mock NOT called on second run
+    expect(surveyCalls).toBe(callsBeforeSecond);
+
+    db.close();
+    rms(tmpDir, { recursive: true, force: true });
+  });
+
+  // ── Test 2: changed fact → reconcile in place (tombstone+new, not dup) ────
+
+  it('changed fact reconciles in place (tombstone+new, not duplicate); FK-clean', async () => {
+    const DB = Database;
+    const { initSchema: IS } = await import('../src/db/schema');
+    const { FakeClock: FC } = await import('../src/lib/clock');
+    const { DEFAULT_CONFIG: DC } = await import('../src/lib/config');
+    const { SemanticStore: SS } = await import('../src/db/semantic-store');
+    const { EpisodicStore: ES } = await import('../src/db/episode-store');
+    const { AllocationGate: AG, IngestionPipeline: IP } = await import('../src/ingest/pipeline');
+    const { Consolidator } = await import('../src/consolidation/consolidator');
+    const { StrengthDecayManager } = await import('../src/strength/decay');
+    const { CandidateRetriever } = await import('../src/retrieval/topk');
+    const { MockModelProvider: MMP } = await import('../src/model/provider');
+    const { SchemaInducer } = await import('../src/consolidation/schema-induction');
+    const { newId } = await import('../src/lib/hash');
+    const { runSurveyAndFeed } = await import('../src/adapter/ingest-project-cli');
+    const { mkdtempSync: mdt, rmSync: rms, writeFileSync: wfs } = await import('fs');
+    const { join: pj } = await import('path');
+    const { tmpdir: td } = await import('os');
+
+    const tmpDir = mdt(pj(td(), 'recense-d07-2-'));
+    wfs(pj(tmpDir, 'README.md'), '# Test project\nThe lang is TypeScript.');
+
+    const db = new DB(':memory:');
+    IS(db);
+    const clock = new FC(Date.UTC(2026, 0, 1));
+    const cfg = { ...DC, dbPath: ':memory:', consolSkipThreshold: 0.2, unrelatedSimilarityThreshold: 0.3, candidateK: 5 };
+    const store = new SS(db, clock, cfg);
+    const episodes = new ES(db, clock, cfg);
+    const strength = new StrengthDecayManager(db, clock, cfg);
+    const retriever = new CandidateRetriever(db);
+
+    const makeInducer = () =>
+      new SchemaInducer(
+        db, store, strength, retriever,
+        new MMP(),
+        cfg, clock,
+        async () => 'no-op-schema',
+      );
+
+    const alwaysSameEmbed = makeAlwaysSameEmbedFn(cfg.embeddingDimensions);
+
+    // Seed an existing belief node: "project language is TypeScript"
+    const oldNodeId = newId();
+    const oldValue = 'project language is TypeScript';
+    store.upsertNode({ id: oldNodeId, type: 'fact', value: oldValue, origin: 'observed', s: 0.5, c: 0.7 });
+    const oldVec = alwaysSameEmbed(oldValue);
+    store.setEmbedding(oldNodeId, oldVec);
+
+    // Survey returns a contradicting restatement: "project language is JavaScript"
+    const newValue = 'project language is JavaScript';
+    const contradictVerdict = {
+      best_candidate_id: oldNodeId,
+      relation: 'contradict' as const,
+      magnitude: 0.5, // mid-band: ratio 0.5/(0.5*0.7)=0.5/0.35≈1.43 → reconcile band
+    };
+
+    const mockSurveyArea = async () => `- ${newValue}`;
+
+    const provider = new MMP({
+      embedFn: alwaysSameEmbed,
+      generateScript: [`[{"type":"fact","value":"${newValue}"}]`],
+      judgeScript: [contradictVerdict],
+    });
+
+    const pipeline = new IP(new AG(cfg), episodes);
+    await runSurveyAndFeed({
+      dir: tmpDir, scope: 'test-scope', repoDesc: 'test',
+      pipeline, surveyArea: mockSurveyArea, dryRun: false,
+    });
+
+    const consolidator = new Consolidator(db, episodes, store, strength, retriever, provider, makeInducer(), cfg, clock);
+    await consolidator.consolidate();
+
+    // Prior node must be tombstoned (superseded)
+    const oldNode = store.getNode(oldNodeId)!;
+    expect(oldNode.tombstoned).toBe(1);
+
+    // Exactly one new live node with the new value (not a dup)
+    const allNodes = db.prepare('SELECT id, value, tombstoned FROM node').all() as Array<{ id: string; value: string; tombstoned: number }>;
+    const liveNewNodes = allNodes.filter(n => n.value === newValue && n.tombstoned === 0);
+    expect(liveNewNodes).toHaveLength(1);
+
+    // No second live duplicate of the new value
+    const liveNewCount = allNodes.filter(n => n.value === newValue).length;
+    // May have tombstoned duplicates from old conflicts but only 1 live
+    expect(liveNewNodes).toHaveLength(1);
+    void liveNewCount;
+
+    // FK-clean
+    const fkCheck = db.prepare('PRAGMA foreign_key_check').all();
+    expect(fkCheck).toHaveLength(0);
+
+    db.close();
+    rms(tmpDir, { recursive: true, force: true });
+  });
+});
