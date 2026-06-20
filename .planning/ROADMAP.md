@@ -196,7 +196,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 28. Schema-Anchored Corpus | v5.0 | 5/5 | Complete   | 2026-06-19 |
 | 29. Survey Quality Spike | v6.0 | 3/3 | Complete    | 2026-06-20 |
 | 30. Core Ingest Command | v6.0 | 3/3 | Complete   | 2026-06-20 |
-| 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 0/TBD | Not started | - |
+| 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 1/2 | In Progress|  |
 | 32. Project Recall + Auto-Corpus | v6.0 | 0/TBD | Not started | - |
 
 ### Phase 28: Schema-Anchored Corpus
@@ -285,7 +285,16 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
   2. Re-running ingestion on a project where a key fact changed results in the existing belief being updated (tombstone + new node via reconsolidation) rather than a duplicate — a second run on an unchanged project produces zero new consolidated beliefs
   3. The per-project cursor means only changed/new content triggers re-survey — a full re-survey is not triggered when the majority of project content is unchanged
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+**Wave 1**
+
+- [x] 31-01-PLAN.md — doc ingest: recursive doc walk (README/CLAUDE/docs/**/*.md) + chunkNote/redactSecrets/contentExternalId reuse → episodes (origin=observed, source=project-doc, project scope); content-hash idempotency (DOCING-01)
+
+**Wave 2** *(depends on Wave 1 — same file)*
+
+- [ ] 31-02-PLAN.md — per-project cursor: git HEAD/dirty + mtime fingerprint, SemanticStore `cursor:project:<scope>` skip-gate, --force/--dry-run/--db discipline, + D-07 dup-rate reconciliation gate test (REINGEST-01, REINGEST-02)
+
 
 ### Phase 32: Project Recall + Auto-Corpus
 

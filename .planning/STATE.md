@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: executing
-stopped_at: Phase 30 CLOSED — INGEST-01/02/04 verified (4/4 must-haves, live SC2/SC3/INGEST-02 PASS on /Users/vtx/usage), founder-approved 2026-06-20. Next: Phase 31 (Doc Ingest + Idempotent Re-ingest).
-last_updated: "2026-06-20T17:05:00.000Z"
+stopped_at: Phase 31 context gathered
+last_updated: "2026-06-20T20:28:22.903Z"
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
+  total_plans: 8
+  completed_plans: 7
   percent: 50
 ---
 
@@ -20,13 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 30 — core-ingest-command
+**Current focus:** Phase 31 — doc-ingest-idempotent-re-ingest
 
 ## Current Position
 
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
-Phase: 30 (core-ingest-command) — ✅ COMPLETE (3/3 plans, 4/4 must-haves verified)
+Phase: 31 (doc-ingest-idempotent-re-ingest) — EXECUTING
+Plan: 2 of 2
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
 [████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
@@ -253,8 +254,8 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-20T14:21:09.625Z
-Stopped at: Phase 30 context gathered
+Last session: 2026-06-20T20:28:22.896Z
+Stopped at: Phase 31 context gathered
 Resume file: None
 
 ## Key Decisions (Phase 28)

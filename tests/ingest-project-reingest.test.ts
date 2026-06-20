@@ -1,14 +1,18 @@
 /**
- * Doc-ingest + idempotent re-ingest tests (Phase 31 Plan 01).
+ * Doc-ingest + idempotent re-ingest tests (Phase 31 Plans 01 + 02).
  *
- * Task 1 covers: emitDocEpisodes helper — origin/source, redaction, deterministic relPath.
- * Task 2 covers: content-hash idempotency via a real in-memory EpisodicStore + IngestionPipeline.
+ * Plan 01 (Tasks 1+2): emitDocEpisodes helper — origin/source, redaction, deterministic relPath,
+ *   content-hash idempotency via a real in-memory EpisodicStore + IngestionPipeline.
  *
- * All tests are deterministic in-memory (better-sqlite3 + mocked pipeline for Task 1).
+ * Plan 02 (Tasks 1+2+3): fingerprint + --force flag, SemanticStore cursor skip-gate/write,
+ *   dup-rate / reconciliation gate (D-07).
+ *
+ * All tests are deterministic in-memory (better-sqlite3 + mocked pipeline/transport).
  * No sleep.env, OPENAI_API_KEY, or headless transport required.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync } from 'fs';
+import { execSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import Database from 'better-sqlite3';
@@ -16,6 +20,7 @@ import { initSchema } from '../src/db/schema';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
+import { SemanticStore } from '../src/db/semantic-store';
 import { EpisodicStore } from '../src/db/episode-store';
 import { AllocationGate, IngestionPipeline } from '../src/ingest/pipeline';
 
@@ -316,5 +321,107 @@ describe('project-doc idempotency', () => {
 
     const count = (db.prepare("SELECT COUNT(*) as c FROM episode WHERE source='project-doc'").get() as { c: number }).c;
     expect(count).toBe(0);
+  });
+});
+
+// ── Plan 02 Task 1: --force flag + repo fingerprint helpers ──────────────────
+
+describe('fingerprint helpers (Plan 02 Task 1)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'recense-fp-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('parseIngestArgs: --force absent → force=false', async () => {
+    const { parseIngestArgs } = await import('../src/adapter/ingest-project-cli');
+    const args = parseIngestArgs(['/tmp/somedir']);
+    expect(args.force).toBe(false);
+  });
+
+  it('parseIngestArgs: --force present → force=true', async () => {
+    const { parseIngestArgs } = await import('../src/adapter/ingest-project-cli');
+    const args = parseIngestArgs(['/tmp/somedir', '--force']);
+    expect(args.force).toBe(true);
+  });
+
+  it('parseIngestArgs: --force with other flags → force=true', async () => {
+    const { parseIngestArgs } = await import('../src/adapter/ingest-project-cli');
+    const args = parseIngestArgs(['/tmp/somedir', '--dry-run', '--force', '--db', '/tmp/x.db']);
+    expect(args.force).toBe(true);
+    expect(args.dryRun).toBe(true);
+    expect(args.db).toBe('/tmp/x.db');
+  });
+
+  it('gitFingerprint: non-git dir returns null', async () => {
+    const { gitFingerprint } = await import('../src/adapter/ingest-project-cli');
+    // tmpDir has no .git directory — spawnSync git rev-parse HEAD exits non-zero
+    const result = gitFingerprint(tmpDir);
+    expect(result).toBeNull();
+  });
+
+  it('gitFingerprint: git repo returns {sha, dirty} (uses process.cwd() which is a git repo)', async () => {
+    const { gitFingerprint } = await import('../src/adapter/ingest-project-cli');
+    // process.cwd() in the test runner is the brain-memory repo root (a git repo)
+    const result = gitFingerprint(process.cwd());
+    expect(result).not.toBeNull();
+    expect(result!.sha.length).toBeGreaterThanOrEqual(7);
+    expect(typeof result!.dirty).toBe('boolean');
+  });
+
+  it('gitFingerprint: init-ed temp repo returns {sha, dirty}', async () => {
+    const { gitFingerprint } = await import('../src/adapter/ingest-project-cli');
+    // Create a real git repo in tmpDir
+    try {
+      execSync(`git -C ${JSON.stringify(tmpDir)} init && git -C ${JSON.stringify(tmpDir)} config user.email "test@test.com" && git -C ${JSON.stringify(tmpDir)} config user.name "Test" && touch ${JSON.stringify(join(tmpDir, 'file.txt'))} && git -C ${JSON.stringify(tmpDir)} add . && git -C ${JSON.stringify(tmpDir)} commit -m "init"`, { stdio: 'pipe' });
+    } catch {
+      // If git init fails in CI, skip gracefully
+      return;
+    }
+    const result = gitFingerprint(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.sha.length).toBeGreaterThanOrEqual(7);
+    expect(result!.dirty).toBe(false);
+  });
+
+  it('computeProjectFingerprint: git repo → git: prefixed string', async () => {
+    const { computeProjectFingerprint } = await import('../src/adapter/ingest-project-cli');
+    const fp = computeProjectFingerprint(process.cwd(), []);
+    expect(fp).toMatch(/^git:/);
+  });
+
+  it('computeProjectFingerprint: non-git dir → mtime: prefixed string', async () => {
+    const { computeProjectFingerprint } = await import('../src/adapter/ingest-project-cli');
+    // Write a doc file so mtime has a real value
+    const docPath = join(tmpDir, 'README.md');
+    writeFileSync(docPath, '# Hello');
+    const fp = computeProjectFingerprint(tmpDir, [docPath]);
+    expect(fp).toMatch(/^mtime:/);
+  });
+
+  it('computeProjectFingerprint: non-git mtime changes when doc is touched', async () => {
+    const { computeProjectFingerprint } = await import('../src/adapter/ingest-project-cli');
+    const docPath = join(tmpDir, 'README.md');
+    writeFileSync(docPath, '# Hello');
+    const fp1 = computeProjectFingerprint(tmpDir, [docPath]);
+
+    // Advance mtime by 5 seconds
+    const now = Date.now() / 1000;
+    utimesSync(docPath, now + 5, now + 5);
+    const fp2 = computeProjectFingerprint(tmpDir, [docPath]);
+
+    expect(fp1).toMatch(/^mtime:/);
+    expect(fp2).toMatch(/^mtime:/);
+    expect(fp1).not.toBe(fp2);
+  });
+
+  it('computeProjectFingerprint: non-existent doc path is skipped (no throw)', async () => {
+    const { computeProjectFingerprint } = await import('../src/adapter/ingest-project-cli');
+    // Pass a non-existent path — should not throw, mtime fallback with 0
+    expect(() => computeProjectFingerprint(tmpDir, ['/nonexistent/path/doc.md'])).not.toThrow();
   });
 });

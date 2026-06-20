@@ -15,7 +15,7 @@
 
 ### DOCING — Generalized document ingest
 
-- [ ] **DOCING-01**: A user can ingest a project's **own documents** (README, `docs/*.md`, `CLAUDE.md`) directly — not only the single configured Obsidian vault dir — with origin=`observed` and project scope.
+- [x] **DOCING-01**: A user can ingest a project's **own documents** (README, `docs/*.md`, `CLAUDE.md`) directly — not only the single configured Obsidian vault dir — with origin=`observed` and project scope.
 
 ### REINGEST — Idempotent re-ingest
 
@@ -49,7 +49,7 @@ Each requirement maps to exactly one phase. Filled by the roadmapper.
 | INGEST-02 | Phase 30 | Complete |
 | INGEST-03 | Phase 29 | Complete |
 | INGEST-04 | Phase 30 | Complete |
-| DOCING-01 | Phase 31 | Pending |
+| DOCING-01 | Phase 31 | Complete |
 | REINGEST-01 | Phase 31 | Pending |
 | REINGEST-02 | Phase 31 | Pending |
 | RECALL-01 | Phase 32 | Pending |
