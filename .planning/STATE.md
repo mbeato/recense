@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: executing
-stopped_at: Phase 30 — plans 01+02 shipped+verified; 30-03 PAUSED at blocking human checkpoint (live SC2/SC3/INGEST-02 run on /Users/vtx/usage). Verify with /tmp/verify-30-03.js after sleep pass completes; schema baseline=275.
-last_updated: "2026-06-20T15:50:00.000Z"
+stopped_at: Phase 30 COMPLETE — INGEST-01/02/04 verified (4/4 must-haves, live SC2/SC3/INGEST-02 PASS on /Users/vtx/usage). Next: Phase 31 (Doc Ingest + Idempotent Re-ingest).
+last_updated: "2026-06-20T17:05:00.000Z"
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 5
-  percent: 25
+  completed_plans: 6
+  percent: 50
 ---
 
 # Project State
@@ -25,12 +25,11 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 ## Current Position
 
 ```
-Milestone: v6.0 Project Onboarding — ROADMAP READY
-Phase: 30 (core-ingest-command) — EXECUTING
-Plan: 3 of 3
-Status: Ready to execute
+Milestone: v6.0 Project Onboarding — IN PROGRESS
+Phase: 30 (core-ingest-command) — ✅ COMPLETE (3/3 plans, 4/4 must-haves verified)
+Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
-[████████████████████████████████████████░░░░░░░] v1-v5.0 SHIPPED · v6.0 Phase 29: 2/3 plans done · Plan 03 paused at go/no-go checkpoint
+[████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
 ```
 
 **v6.0 phases:**
