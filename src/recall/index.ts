@@ -43,6 +43,7 @@ import { EpisodicStore } from '../db/episode-store';
 import type { ActivationTraceSink } from '../viz/activation-sink';
 import { NoopActivationTraceSink } from '../viz/activation-sink';
 import { newId } from '../lib/hash';
+import { GLOBAL_SCOPE } from '../lib/scope';
 
 // T-04-03-I: bound query length to cap compose prompt size (4 KB is generous)
 const MAX_QUERY_BYTES = 4_000;
@@ -107,10 +108,20 @@ export class RecallEngine {
    * Returns RecallResult tagged `origin:'inferred'`. `inference` and `episodeId` are null
    * when no schema is reachable, or when the compose output is empty/malformed (T-02-PARSE).
    *
+   * Optional `scope` parameter (RECALL-01, D-01): when provided, the assembled neighborhood
+   * is post-filtered to retain only members whose node_scope is `scope` OR `GLOBAL_SCOPE`.
+   * Members with no scope annotation are treated as global (kept) — mirrors the ambient-recall
+   * display rule (D-S6). Members from other named projects are excluded.
+   *
+   * IMPORTANT: scope filtering is applied AFTER the full neighborhood is assembled — AFTER
+   * schema resolution (Case A/B) and topk. Scope NEVER enters CandidateRetriever/topk.ts
+   * (D-S1: scope is provenance, not a retrieval signal). When the filtered neighborhood is
+   * empty, NULL_RESULT is returned without an LLM compose call (D-05 discretion).
+   *
    * NEVER calls store.upsertNode/upsertEdge/tombstone or strength.strengthen.
    * The ONLY write is episodes.append({ origin:'inferred', ... }).
    */
-  async recall(query: string, sessionId: string): Promise<RecallResult> {
+  async recall(query: string, sessionId: string, scope?: string): Promise<RecallResult> {
     // T-04-03-I: length-bound the query before use in the compose prompt
     const boundedQuery = query.slice(0, MAX_QUERY_BYTES);
 
@@ -228,6 +239,32 @@ export class RecallEngine {
           nodeCount++;
         }
       }
+    }
+
+    // ── (D-01 / RECALL-01): Post-resolution scope filter ─────────────────────
+    // Applied AFTER the full neighborhood is assembled (primary members + sideways hop).
+    // Scope filtering is a MEMBER filter, NOT a candidate prefilter — this preserves the
+    // exact schema-resolution path (Case A/B + topk) so scope provably never alters ranking
+    // (D-S1: scope is provenance-only, never a retrieval signal — 999.3).
+    //
+    // Retain only members whose scope is the passed slug OR GLOBAL_SCOPE.
+    // Members with no scope entry (undefined) are treated as global and kept — mirrors the
+    // ambient-recall display rule where unscoped renders no marker (D-S6).
+    //
+    // If scope is empty/undefined, skip filtering entirely (two-arg callers unchanged).
+    if (scope) {
+      const memberIds = neighborhood.map(n => n.id);
+      const scopeMap = this.store.getNodeScopes(memberIds); // batch read, no SQL interpolation
+      const kept = neighborhood.filter(n => {
+        const nodeScope = scopeMap.get(n.id);
+        // undefined → no scope annotation → treat as global → keep
+        return nodeScope === undefined || nodeScope === scope || nodeScope === GLOBAL_SCOPE;
+      });
+      neighborhood.length = 0;
+      for (const n of kept) neighborhood.push(n);
+      // D-05 discretion: if the scope filter empties the neighborhood entirely,
+      // return NULL_RESULT without an LLM compose call (no in-scope memory to reason over).
+      if (neighborhood.length === 0) return NULL_RESULT;
     }
 
     // ── Trace emission (D-97 guarded): zero work on the Noop path ────────────

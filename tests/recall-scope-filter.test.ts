@@ -20,7 +20,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { initSchema } from '../src/db/schema';
 import { FakeClock } from '../src/lib/clock';
@@ -382,8 +381,6 @@ describe('RecallEngine scope filter (RECALL-01 / D-01 / D-S1)', () => {
   // (D-S1: scope NEVER enters the CandidateRetriever / ranking path).
 
   it('Test 5 (D-S1 source guard): topk.ts contains no scope filtering reference', () => {
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
     const topkPath = path.join(__dirname, '..', 'src', 'retrieval', 'topk.ts');
     const topkSource = fs.readFileSync(topkPath, 'utf-8');
 
