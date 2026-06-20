@@ -14,7 +14,10 @@
  * RUN (founder, subscription-billed — experiment design is human-owned per CLAUDE.md / D-02):
  *   RECENSE_LOCK_PATH=/tmp/recense-spike.lock \
  *   RECENSE_EXTRACTOR_PROVIDER=claude-headless RECENSE_JUDGE_PROVIDER=claude-headless \
- *   npx tsx scripts/spike/survey-feeder.ts --db /tmp/recense-spike.db
+ *   $RECENSE_NODE_BIN node_modules/.bin/tsx scripts/spike/survey-feeder.ts --db /tmp/recense-spike.db
+ *   (RECENSE_NODE_BIN = the node better-sqlite3 was compiled against, e.g.
+ *    /Users/vtx/.nvm/versions/node/v25.5.0/bin/node — a plain `npx tsx` under an
+ *    nvm-default Node 22 shell hits a NODE_MODULE_VERSION ABI mismatch.)
  *
  * ISOLATION (D-05, load-bearing):
  *  - Scratch DB only: defaults to /tmp/recense-spike.db; ABORTS if the resolved path is
@@ -249,6 +252,10 @@ async function main(): Promise<void> {
     fileLog(`done: total=${total} perArea=${JSON.stringify(perArea)}`);
   } catch (err) {
     fileLog(`error: ${err}`);
+    // Surface to stderr too — a file-only log here masks the failure as a silent
+    // exit (e.g. better-sqlite3 ABI mismatch under the wrong node), which reads
+    // as "nothing happened" in the terminal. Fail loud.
+    process.stderr.write(`survey-feeder FAILED: ${err}\nSee ${LOG_PATH}\n`);
     process.exitCode = 1;
   } finally {
     db?.close();
