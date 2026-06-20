@@ -191,6 +191,21 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // --consolidate-only: skip the (expensive, subscription-billed) survey/feed and
+  // re-run consolidation on episodes already in the scratch DB. Use after a survey
+  // succeeded but consolidation failed (e.g. missing OPENAI_API_KEY) — re-surveying
+  // would re-bill the agent runs for data we already have.
+  const consolidateOnly = argv.includes('--consolidate-only');
+
+  // Pre-flight: consolidation embeds via OpenAI. Fail loud BEFORE the long survey
+  // rather than swallowing 350+ per-episode "skipped" errors and reporting a false
+  // "Sleep pass complete" with 0 facts. (Manual runs must export OPENAI_API_KEY —
+  // it lives in ~/.config/recense/sleep.env, which the launchd pass sources.)
+  if (!process.env['OPENAI_API_KEY']) {
+    process.stderr.write('OPENAI_API_KEY is missing — consolidation embeds via OpenAI and would skip every episode.\n  Export it (e.g. from ~/.config/recense/sleep.env) before running — exiting\n');
+    process.exit(1);
+  }
+
   // RECENSE_LOCK_PATH=/tmp/recense-spike.lock is set via env at run time so getLockPath()
   // returns the spike lock and the live hourly pass is never blocked (no code change).
   if (!acquireLock()) {
@@ -217,25 +232,29 @@ async function main(): Promise<void> {
     // ── Feed: survey each area, emit one episode per belief-line ───────────────
     const perArea: Record<string, number> = {};
     let total = 0;
-    for (const area of SURVEY_AREAS) {
-      const text = await surveyArea(area, judgeConfig);
-      const observations = splitObservations(text);
-      let fed = 0;
-      for (const content of observations) {
-        pipeline.recordEvent({
-          content,
-          role: 'user',
-          origin: 'observed', // D-04: survey output is observed, NEVER asserted_by_user
-          sessionId: `project-survey:usage:${area}`,
-          source: 'project-survey',
-          externalId: contentExternalId(`usage/${area}`, content),
-          cwd: '/Users/vtx/usage', // === SURVEY_CWD; load-bearing literal drives scope='usage'
-        });
-        fed++;
+    if (consolidateOnly) {
+      fileLog('consolidate-only: skipping survey/feed, re-consolidating existing episodes');
+    } else {
+      for (const area of SURVEY_AREAS) {
+        const text = await surveyArea(area, judgeConfig);
+        const observations = splitObservations(text);
+        let fed = 0;
+        for (const content of observations) {
+          pipeline.recordEvent({
+            content,
+            role: 'user',
+            origin: 'observed', // D-04: survey output is observed, NEVER asserted_by_user
+            sessionId: `project-survey:usage:${area}`,
+            source: 'project-survey',
+            externalId: contentExternalId(`usage/${area}`, content),
+            cwd: '/Users/vtx/usage', // === SURVEY_CWD; load-bearing literal drives scope='usage'
+          });
+          fed++;
+        }
+        perArea[area] = fed;
+        total += fed;
+        fileLog(`fed: area=${area} episodes=${fed}`);
       }
-      perArea[area] = fed;
-      total += fed;
-      fileLog(`fed: area=${area} episodes=${fed}`);
     }
 
     // ── Consolidate on the scratch DB under the SAME held lock (CONSOL-03) ──────
@@ -247,7 +266,9 @@ async function main(): Promise<void> {
 
     // ── Final summary ──────────────────────────────────────────────────────────
     const areaSummary = SURVEY_AREAS.map(a => `${a}=${perArea[a] ?? 0}`).join(' ');
-    process.stdout.write(`survey-feeder done — episodes fed per area: ${areaSummary} | total=${total}\n`);
+    process.stdout.write(consolidateOnly
+      ? `survey-feeder done — consolidate-only: re-consolidated existing episodes (no survey)\n`
+      : `survey-feeder done — episodes fed per area: ${areaSummary} | total=${total}\n`);
     process.stdout.write(`scratch DB: ${dbPath} (live brain untouched) — see ${LOG_PATH}\n`);
     fileLog(`done: total=${total} perArea=${JSON.stringify(perArea)}`);
   } catch (err) {
