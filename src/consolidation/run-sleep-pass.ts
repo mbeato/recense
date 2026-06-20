@@ -25,7 +25,7 @@ import { StrengthDecayManager } from '../strength/decay';
 import { CandidateRetriever } from '../retrieval/topk';
 import { DefaultModelProvider } from '../model/provider';
 import type { ModelProvider as ModelProviderSeam } from '../model/provider';
-import { getTwoTierStats, resetTwoTierStats } from '../model/judge';
+import { getTwoTierStats } from '../model/judge';
 import type { ExtractedClaim } from '../model/claim-extractor';
 import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
@@ -380,9 +380,10 @@ export async function runConsolidation(
   // Provenance high-water mark so Phase-19 viz lighting (below) can scope exactly
   // the nodes THIS pass touches — consolidation_event.ts (ms) bounds the pass.
   const passStartTs = realClock.nowMs();
-  // EVAL-04 two-tier observability: reset the deterministic escalation counter so the
-  // log below reports THIS pass only. No-op cost when two-tier is off (counter stays 0).
-  resetTwoTierStats();
+  // EVAL-04 two-tier observability: the escalation counter is process-global. Each hourly
+  // sleep pass is a FRESH process (counter starts at 0), so the canary log below reports this
+  // pass for free — NO reset here. (A reset would corrupt the EVAL-02 harness, which drives
+  // many runConsolidation passes in one long-lived process and accumulates the counter.)
   await consolidator.consolidate();
 
   // CORPUS-06: Offline corpus doc generation — fill empty schema-anchored stub docs
