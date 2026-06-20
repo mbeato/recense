@@ -23,7 +23,7 @@ import { SQLiteConsolidationSink } from '../src/consolidation/sink';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { routeContradiction } from '../src/consolidation/update-decision';
 import { newId } from '../src/lib/hash';
-import { runRemember } from '../src/adapter/remember-cli';
+import { runRemember, parseRememberArgs } from '../src/adapter/remember-cli';
 
 // ---------------------------------------------------------------------------
 // Config and harness
@@ -418,5 +418,28 @@ describe('Test 5: idempotent re-insert — byte-identical re-remember is a no-op
     // FK integrity check
     const fkCheck = h.db.pragma('foreign_key_check') as unknown[];
     expect(fkCheck).toHaveLength(0);
+  });
+});
+
+describe('Test 6: parseRememberArgs — verbatim fact with a leading dash', () => {
+  // Regression (Phase 33 migration): memory files begin with `---` frontmatter or `- ` list
+  // items. Without `--` end-of-options handling, the leading dash made the whole fact parse as
+  // a flag → "no fact" → usage + exit 0 (silently dropping the user's content).
+  it('accepts a dash-leading fact after the `--` end-of-options separator', () => {
+    const argv = ['node', 'remember-cli.js', '--scope', 'brain-memory', '--', '---\nname: x\n- a bullet'];
+    const args = parseRememberArgs(argv);
+    expect(args).not.toBeNull();
+    expect(args!.fact).toBe('---\nname: x\n- a bullet');
+    expect(args!.scope).toBe('brain-memory');
+  });
+
+  it('still parses a plain positional fact without `--` (backward compatible)', () => {
+    const args = parseRememberArgs(['node', 'remember-cli.js', 'a plain fact', '--scope', 's']);
+    expect(args!.fact).toBe('a plain fact');
+    expect(args!.scope).toBe('s');
+  });
+
+  it('returns null when no fact is supplied', () => {
+    expect(parseRememberArgs(['node', 'remember-cli.js', '--scope', 's'])).toBeNull();
   });
 });

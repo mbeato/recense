@@ -122,7 +122,12 @@ export function parseRememberArgs(argv: string[]): RememberArgs | null {
 
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i] ?? '';
-    if (arg === '--scope' || arg === '-s') {
+    if (arg === '--') {
+      // End-of-options: the next token is the verbatim fact, even if it starts with
+      // '-' (markdown frontmatter `---`, list items `- foo`). Without this, any fact
+      // beginning with a dash is mis-parsed as a flag and dropped.
+      if (fact === undefined && argv[i + 1] !== undefined) fact = argv[++i];
+    } else if (arg === '--scope' || arg === '-s') {
       scope = argv[++i];
     } else if (arg === '--db') {
       dbPath = argv[++i];
