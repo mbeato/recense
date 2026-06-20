@@ -110,6 +110,9 @@ export function buildSurveyPrompt(area: SurveyArea): string {
     `  - config dumps or boilerplate.`,
     `Only summarized, why-level semantic knowledge belongs in the output.`,
     ``,
+    `Report ONLY the ~15 most important, highest-value beliefs for this area (hard ceiling: 20).`,
+    `Do NOT exhaustively enumerate every minor point — curate the why-level insights that matter.`,
+    ``,
     `Format: natural-language belief statements, roughly ONE belief per line, each a complete`,
     `standalone sentence. No headers, no bullets, no numbering, no preamble — just the belief`,
     `lines. If you have nothing genuine to say for this area, return an empty response.`,
@@ -148,15 +151,30 @@ export async function surveyArea(area: SurveyArea, judgeConfig: EngineConfig): P
 }
 
 /**
+ * Max episodes accepted from a single area's survey response. A compliant response is
+ * ~10-20 belief lines; this is a backstop against a non-compliant agent dumping hundreds
+ * of fragments (the gotchas area returned 407 on the first run). Filter THEN cap.
+ */
+const MAX_OBS_PER_AREA = 25;
+
+/**
  * Split a survey agent response into episode-sized records: one belief-line per record.
- * Blank lines are dropped. Chunking granularity is the spike's discretion (CONTEXT.md);
- * one-belief-per-line matches the prompt's requested shape and the claim extractor.
+ * Defensive against non-compliant responses: strips bullet/number markers, drops lines
+ * too short or too code-like to be a why-level belief, then caps per area. Chunking
+ * granularity is the spike's discretion (CONTEXT.md); the Plan-02 judge is the real gate.
  */
 export function splitObservations(text: string): string[] {
   return text
     .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0);
+    .map(line => line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim()) // strip bullet/number markers
+    .filter(line => {
+      if (line.length < 20) return false;        // too short to be a why-level belief
+      if (!line.includes(' ')) return false;     // single token = not a sentence
+      if (/[;{}]\s*$/.test(line)) return false;  // ends like a code line
+      if (/=>|\brequire\(/.test(line)) return false; // arrow fn / require() call = code
+      return true;
+    })
+    .slice(0, MAX_OBS_PER_AREA);                  // backstop a runaway response
 }
 
 // ── Task 2: episode feeder + scratch-DB consolidation under the spike lock ─────
