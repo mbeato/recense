@@ -27,6 +27,7 @@
  * Modeled on import-memory-cli.ts (WR-02: arg validation before acquireLock).
  */
 import { appendFileSync, existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
+import { spawnSync } from 'child_process';
 import { basename, join, relative, resolve, sep } from 'path';
 import { homedir } from 'os';
 import Database from 'better-sqlite3';
@@ -68,6 +69,8 @@ export interface IngestArgs {
   dryRun: boolean;
   /** --consolidate: run the sleep pass inline under the lock after feeding. */
   consolidate: boolean;
+  /** --force: re-survey even when fingerprint is unchanged (D-08). */
+  force: boolean;
   /** --db <path>: override target DB (default = live brain). */
   db?: string;
   /** --scope <slug>: override the derived scope (threaded via synthetic cwd). */
@@ -86,6 +89,7 @@ export function parseIngestArgs(argv: string[]): IngestArgs {
   const dir = argv[0] ?? '';
   const dryRun = argv.includes('--dry-run');
   const consolidate = argv.includes('--consolidate');
+  const force = argv.includes('--force');
 
   const dbIdx = argv.indexOf('--db');
   const db = dbIdx >= 0 ? argv[dbIdx + 1] : undefined;
@@ -96,7 +100,7 @@ export function parseIngestArgs(argv: string[]): IngestArgs {
   const descIdx = argv.indexOf('--desc');
   const desc = descIdx >= 0 ? argv[descIdx + 1] : undefined;
 
-  return { dir, dryRun, consolidate, ...(db ? { db } : {}), ...(scope ? { scope } : {}), ...(desc ? { desc } : {}) };
+  return { dir, dryRun, consolidate, force, ...(db ? { db } : {}), ...(scope ? { scope } : {}), ...(desc ? { desc } : {}) };
 }
 
 // ── Scope resolution ──────────────────────────────────────────────────────────
@@ -158,6 +162,70 @@ export async function deriveRepoDesc(dir: string, descOverride?: string): Promis
   }
 
   return basename(dir);
+}
+
+// ── Repo fingerprint (REINGEST-02) ────────────────────────────────────────────
+
+/**
+ * Return the git HEAD sha and dirty status for a repo directory, or null if
+ * dir is not inside a git repository.
+ *
+ * ALWAYS uses the arg-array form spawnSync('git', ['-C', dir, ...], ...)
+ * — never a shell string, never shell:true (T-31-INJECT).
+ *
+ * Error handling (T-31-GITERR):
+ *   - If `git status --porcelain` fails (non-zero exit), treat as clean to
+ *     avoid a false dirty→re-survey loop. Worst case: a genuinely-dirty tree
+ *     is skipped once; `--force` is the escape hatch.
+ */
+export function gitFingerprint(dir: string): { sha: string; dirty: boolean } | null {
+  const headResult = spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  if (headResult.status !== 0 || headResult.error) return null;
+  const sha = headResult.stdout.trim();
+  if (!sha || sha.length < 7) return null;
+
+  const statusResult = spawnSync('git', ['-C', dir, 'status', '--porcelain'], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  // non-zero = git error (not dirty); treat as clean (T-31-GITERR)
+  const dirty = statusResult.status === 0 && statusResult.stdout.trim().length > 0;
+  return { sha, dirty };
+}
+
+/**
+ * Compute a fingerprint string for a project directory.
+ *
+ * Git repo: `git:<sha>:<clean|dirty>`
+ * Non-git dir: `mtime:<maxMtimeMs>` over the provided docPaths.
+ *
+ * The fingerprint is stable for identical state and changes when:
+ * - HEAD moves (new commit), OR
+ * - Working tree goes dirty, OR
+ * - A tracked doc's mtime advances (non-git fallback).
+ *
+ * Uses path.resolve(dir) before calling gitFingerprint so the canonical
+ * absolute path is passed to `git -C` (T-31-INJECT).
+ */
+export function computeProjectFingerprint(dir: string, docPaths: string[]): string {
+  const fp = gitFingerprint(resolve(dir));
+  if (fp !== null) {
+    return `git:${fp.sha}:${fp.dirty ? 'dirty' : 'clean'}`;
+  }
+  // Mtime fallback for non-git dirs (mirrors ObsidianAdapter D-67 pattern)
+  let max = 0;
+  for (const p of docPaths) {
+    try {
+      const s = statSync(p);
+      if (s.mtimeMs > max) max = s.mtimeMs;
+    } catch {
+      // Unreadable/non-existent path — skip gracefully (no throw)
+    }
+  }
+  return `mtime:${max}`;
 }
 
 // ── DB path resolution ────────────────────────────────────────────────────────
@@ -486,7 +554,7 @@ async function main(): Promise<void> {
 
   // ── Validate <dir> BEFORE acquiring the lock (WR-02) ─────────────────────────
   if (!args.dir) {
-    process.stderr.write('Usage: recense ingest-project <dir> [--dry-run] [--consolidate] [--db <path>] [--scope <slug>] [--desc <text>]\n');
+    process.stderr.write('Usage: recense ingest-project <dir> [--dry-run] [--consolidate] [--force] [--db <path>] [--scope <slug>] [--desc <text>]\n');
     process.exit(1);
   }
   if (!existsSync(args.dir)) {
