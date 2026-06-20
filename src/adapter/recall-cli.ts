@@ -61,15 +61,30 @@ function resolveQuery(): string | undefined {
     return argv[idx + 1];
   }
   // Otherwise take the first positional arg, skipping the 'recall' subcommand token
-  // and any flag/value pairs (--db <path>, --query <text>) and bare flags.
+  // and any flag/value pairs (--db <path>, --query <text>, --scope <slug>) and bare flags.
   const start = argv[2] === 'recall' ? 3 : 2;
   for (let i = start; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--db' || a === '--query') { i++; continue; } // flag consumes its value
+    if (a === '--db' || a === '--query' || a === '--scope') { i++; continue; } // flag consumes its value
     if (a === undefined || a.startsWith('-')) continue;     // skip flags
     return a;                                               // first bare token = query
   }
   return undefined;
+}
+
+/**
+ * Resolve the optional --scope <slug> flag from argv (RECALL-01).
+ * Returns the lowercased slug, or undefined if --scope is absent or its value is empty.
+ * Validation is permissive — an empty/missing value resolves to undefined (treated as no scope).
+ * T-04-03-I: slug is used only as an equality filter in RecallEngine, never interpolated.
+ */
+function resolveScope(): string | undefined {
+  const argv = process.argv;
+  const idx = argv.indexOf('--scope');
+  if (idx === -1) return undefined;
+  const val = argv[idx + 1];
+  if (typeof val !== 'string' || val.trim() === '' || val.startsWith('-')) return undefined;
+  return val.trim().toLowerCase(); // lowercase to match cwdToScope slug convention
 }
 
 const SAFE_NULL_RESULT = JSON.stringify({ inference: null, episodeId: null, origin: 'inferred' });
@@ -93,6 +108,13 @@ async function main(): Promise<void> {
     log('No --query supplied — exiting');
     process.stdout.write(SAFE_NULL_RESULT);
     process.exit(0);
+  }
+
+  // Resolve optional --scope flag BEFORE acquiring lock (WR-02).
+  // An absent or empty --scope resolves to undefined → no scope filter.
+  const scope = resolveScope();
+  if (scope) {
+    log('scope filter: ' + scope); // log scope NAME only (never a secret — T-04-03-K)
   }
 
   // ── 2. Lock guard (single-writer for episode append, D-43) ──────────────
@@ -145,7 +167,8 @@ async function main(): Promise<void> {
     );
 
     // ── 5. Run recall and emit JSON to stdout ─────────────────────────────
-    const result = await engine.recall(query, 'recall-session');
+    // Thread scope (undefined = no filter; string = post-resolution member filter per D-01).
+    const result = await engine.recall(query, 'recall-session', scope);
     process.stdout.write(JSON.stringify(result));
 
     db.close();
