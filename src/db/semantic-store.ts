@@ -47,6 +47,8 @@ export class SemanticStore {
   private readonly stmtUpdateContradictions: Database.Statement;
   private readonly stmtGetMeta: Database.Statement;
   private readonly stmtSetMeta: Database.Statement;
+  /** deleteMeta: DELETE FROM meta WHERE key = ? — used by the sleep-pass marker-consume (Plan 32-03). */
+  private readonly stmtDeleteMeta: Database.Statement;
   private readonly stmtUpsertEdge: Database.Statement;
   private readonly stmtGetOutEdges: Database.Statement;
   private readonly stmtGetInEdges: Database.Statement;
@@ -130,6 +132,9 @@ export class SemanticStore {
 
     this.stmtGetMeta = db.prepare('SELECT value FROM meta WHERE key = ?');
     this.stmtSetMeta = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
+    // deleteMeta: removes a meta row by key (Plan 32-03 marker-consume — crash-safe clear).
+    // T-01-SQL: bound ? param, no string interpolation.
+    this.stmtDeleteMeta = db.prepare('DELETE FROM meta WHERE key = ?');
 
     this.stmtUpsertEdge = db.prepare(`
       INSERT INTO edge (src, dst, rel, w, last_access, kind)
@@ -437,6 +442,19 @@ export class SemanticStore {
   /** Write or overwrite a meta key/value pair. */
   setMeta(key: string, value: string): void {
     this.stmtSetMeta.run(key, value);
+  }
+
+  /**
+   * Delete a meta key/value pair (Plan 32-03 — marker-consume crash-safe clear).
+   *
+   * Used to CLEAR a pending-corpus-promotion:<scope> marker AFTER a successful
+   * promoteScope call. If promoteScope throws, deleteMeta is NOT called — the marker
+   * survives for the next sleep pass to retry (crash-safe order, T-32-MARK).
+   *
+   * T-01-SQL: bound ? param, no string interpolation.
+   */
+  deleteMeta(key: string): void {
+    this.stmtDeleteMeta.run(key);
   }
 
   /**

@@ -46,6 +46,9 @@ import { acquireLock, releaseLock } from './lockfile';
 import { resolveDbPath, resolveDirtySentinelPath } from './runtime-config';
 import { createClaudeHeadlessSurveyClient } from '../model/claude-headless-client';
 import { runConsolidation, resolveProviderOverlay } from '../consolidation/run-sleep-pass';
+import { CorpusPromoter } from '../consolidation/corpus-promoter';
+import { generateCorpusDocs } from '../consolidation/corpus-generator';
+import { DefaultModelProvider } from '../model/provider';
 import {
   SURVEY_AREAS,
   type SurveyArea,
@@ -564,6 +567,37 @@ export async function emitDocEpisodes(opts: {
   return { docCount: docPaths.length, episodeCount };
 }
 
+// ── Corpus pending marker (Plan 32-03, D-05) ─────────────────────────────────
+
+/**
+ * Write a pending-corpus-promotion:<scope> marker to SemanticStore meta (D-05).
+ *
+ * Called by the deferred default path AFTER feeding episodes and committing the cursor.
+ * The marker tells the next sleep pass to force-promote this scope's corpus (landing +
+ * chapter stubs) BEFORE running generateCorpusDocs.
+ *
+ * Crash-safe semantics:
+ *  - Written BEFORE the deferred return → if the process crashes between write and the
+ *    sleep-pass consume, the marker is present → the next pass retries.
+ *  - The value is the project fingerprint (already computed) — re-ingest overwrites
+ *    the same key idempotently; the sleep-pass consume is idempotent (promoteScope
+ *    reuses existing stubs by slug).
+ *
+ * NOT called from the inline --consolidate path (corpus is done inline under the lock).
+ * NOT called from the --dry-run path (no writes on dry-run).
+ *
+ * @param store      SemanticStore instance (already open in the caller's try block).
+ * @param scope      The resolved project scope slug (e.g. 'usage', 'brain-memory').
+ * @param fingerprint The computed project fingerprint — used as the marker value.
+ */
+export function writeCorpusPendingMarker(
+  store: SemanticStore,
+  scope: string,
+  fingerprint: string,
+): void {
+  store.setMeta(`pending-corpus-promotion:${scope}`, fingerprint);
+}
+
 // ── main() ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -728,6 +762,50 @@ async function main(): Promise<void> {
       await runConsolidation(db, dbPath, process.env, fileLog);
       fileLog('consolidation: complete');
 
+      // D-03 / Plan 32-03: Inline corpus promote + generate under the ALREADY-HELD lock.
+      // T-32-LOCK: no second acquireLock — the existing finally at the end releases it.
+      // Best-effort (try/catch): a corpus generation failure must NOT abort the completed
+      // consolidation. Mirror the best-effort posture from run-sleep-pass.ts CORPUS-06 block.
+      if (process.env['RECENSE_CORPUS_GEN'] !== '0') {
+        try {
+          const inlineJudgeConfig: EngineConfig = {
+            ...config,
+            ...resolveProviderOverlay(process.env, 'RECENSE_JUDGE_PROVIDER'),
+          };
+          // Set timeout for the inline corpus generation step (mirror generate-doc-cli.ts:128-130)
+          if (!process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS']) {
+            process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS'] = '600000';
+          }
+          const corpusProvider = new DefaultModelProvider({
+            generateConfig: inlineJudgeConfig,
+            judgeConfig: inlineJudgeConfig,
+            embedConfig: config,
+          });
+          const inlinePromoter = new CorpusPromoter(db, semanticStore, realClock, {
+            highMass: 10,
+            lowMass: 7,
+            noiseCap: 0.5,
+            corpusCosineThreshold: 0.55,
+            massGapMin: 2,
+            minMembers: 4,
+          });
+          const promoteResult = await inlinePromoter.promoteScope(scope);
+          fileLog(`corpus: promoteScope scope=${scope} promoted=${promoteResult.promoted.length} containment=${promoteResult.containment}`);
+          // generateCorpusDocs fills the stubs created by promoteScope
+          const maxDocs = parseInt(process.env['RECENSE_CORPUS_GEN_MAX'] ?? '25', 10) || 25;
+          const corpusResult = await generateCorpusDocs(
+            { db, store: semanticStore, provider: corpusProvider },
+            { maxDocs, log: fileLog, now: realClock.nowMs() },
+          );
+          fileLog(`corpus: generated=${corpusResult.generated} failed=${corpusResult.failed} deferred=${corpusResult.deferred}`);
+          process.stdout.write(`corpus: promoted scope '${scope}', generated ${corpusResult.generated} doc(s)\n`);
+        } catch (corpusErr) {
+          // Best-effort: corpus failure does not fail a successful consolidation.
+          fileLog(`corpus: inline corpus step threw (non-fatal): ${corpusErr}`);
+          process.stderr.write(`[warn] corpus generation failed (non-fatal): ${corpusErr}\n`);
+        }
+      }
+
       process.stdout.write(`\ningest-project complete: ${total} episodes fed, consolidation done${surveySkipped ? ' (survey skipped)' : ''}\n`);
       if (skippedAreas.length > 0) {
         process.stdout.write(`skipped areas (refusal): ${skippedAreas.join(', ')}\n`);
@@ -800,10 +878,20 @@ async function main(): Promise<void> {
         }
       }
 
+      // D-05 (Plan 32-03): Write the pending-corpus-promotion marker BEFORE returning.
+      // The sleep pass will see this marker and force-promote the scope's corpus (landing
+      // + chapter stubs via promoteScope) BEFORE running generateCorpusDocs. Crash-safe:
+      // the marker is written here; cleared only AFTER a successful promoteScope in the
+      // sleep pass. If this process crashes after writing and before the sleep pass runs,
+      // the next pass picks it up and retries. Not written on dry-run (returned early above).
+      writeCorpusPendingMarker(semanticStore, scope, fingerprint);
+      fileLog(`default: pending-corpus-promotion marker written scope=${scope}`);
+
       process.stdout.write(`\ningest-project complete: ${total} episodes fed${surveySkipped ? ' (survey skipped)' : ''}\n`);
       if (!surveySkipped) {
         process.stdout.write(`Consolidation deferred to the scheduled sleep pass.\n`);
       }
+      process.stdout.write(`Corpus will be auto-promoted on the next sleep pass (pending-corpus-promotion:${scope}).\n`);
       if (skippedAreas.length > 0) {
         process.stdout.write(`skipped areas (refusal): ${skippedAreas.join(', ')}\n`);
       }
