@@ -25,6 +25,7 @@ import { StrengthDecayManager } from '../strength/decay';
 import { CandidateRetriever } from '../retrieval/topk';
 import { DefaultModelProvider } from '../model/provider';
 import type { ModelProvider as ModelProviderSeam } from '../model/provider';
+import { getTwoTierStats, resetTwoTierStats } from '../model/judge';
 import type { ExtractedClaim } from '../model/claim-extractor';
 import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
@@ -379,6 +380,9 @@ export async function runConsolidation(
   // Provenance high-water mark so Phase-19 viz lighting (below) can scope exactly
   // the nodes THIS pass touches — consolidation_event.ts (ms) bounds the pass.
   const passStartTs = realClock.nowMs();
+  // EVAL-04 two-tier observability: reset the deterministic escalation counter so the
+  // log below reports THIS pass only. No-op cost when two-tier is off (counter stays 0).
+  resetTwoTierStats();
   await consolidator.consolidate();
 
   // CORPUS-06: Offline corpus doc generation — fill empty schema-anchored stub docs
@@ -423,6 +427,15 @@ export async function runConsolidation(
   if (evtSummary.length > 0) {
     const summary = evtSummary.map(r => `${r.event_type}:${r.c}`).join(' ');
     log(`SEAM-02 events: ${summary}`);
+  }
+
+  // EVAL-04 two-tier judge canary: log the real escalation rate this pass saw, so production
+  // confirms the cost projection and surfaces any drift (e.g. Haiku over-flagging → escalation
+  // spikes → savings erode). Only logs when the lever is active.
+  if (config.twoTierJudge) {
+    const tt = getTwoTierStats();
+    const rate = tt.cheap_calls > 0 ? Math.round((100 * tt.escalations) / tt.cheap_calls) : 0;
+    log(`two-tier judge: ${tt.cheap_calls} claims triaged, ${tt.escalations} escalated to Sonnet (${rate}% escalation)`);
   }
 
   log('Sleep pass complete');
