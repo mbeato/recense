@@ -41,7 +41,13 @@ vi.mock('node:child_process', () => ({
   }),
 }));
 
-import { createClaudeHeadlessClient, setHeadlessUsageSink } from '../src/model/claude-headless-client';
+import {
+  createClaudeHeadlessClient,
+  createClaudeHeadlessSurveyClient,
+  buildSurveyHeadlessArgs,
+  SURVEY_SYSTEM,
+  setHeadlessUsageSink,
+} from '../src/model/claude-headless-client';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 
 function cfg(overrides: Record<string, unknown> = {}) {
@@ -245,5 +251,293 @@ describe('createClaudeHeadlessClient', () => {
 
     // Sink was cleared — never called.
     expect(captured).toHaveLength(0);
+  });
+});
+
+// ── Survey transport: buildSurveyHeadlessArgs ───────────────────────────────
+
+describe('buildSurveyHeadlessArgs', () => {
+  it('includes -p and --output-format json', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'a system prompt', '/some/dir');
+    expect(args).toContain('-p');
+    expect(args).toContain('--output-format');
+    expect(args[args.indexOf('--output-format') + 1]).toBe('json');
+  });
+
+  it('includes the model flag', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'system', '/some/dir');
+    const modelIdx = args.indexOf('--model');
+    expect(modelIdx).toBeGreaterThanOrEqual(0);
+    expect(args[modelIdx + 1]).toBe('claude-sonnet-4-6');
+  });
+
+  it('includes the system prompt flag', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'my survey system', '/some/dir');
+    const sysIdx = args.indexOf('--system-prompt');
+    expect(sysIdx).toBeGreaterThanOrEqual(0);
+    expect(args[sysIdx + 1]).toBe('my survey system');
+  });
+
+  it('includes --setting-sources project (self-ingestion guard)', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'system', '/some/dir');
+    const ssIdx = args.indexOf('--setting-sources');
+    expect(ssIdx).toBeGreaterThanOrEqual(0);
+    expect(args[ssIdx + 1]).toBe('project');
+  });
+
+  it('includes --strict-mcp-config', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'system', '/some/dir');
+    expect(args).toContain('--strict-mcp-config');
+  });
+
+  it('includes --exclude-dynamic-system-prompt-sections', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'system', '/some/dir');
+    expect(args).toContain('--exclude-dynamic-system-prompt-sections');
+  });
+
+  it('includes --tools Read Grep Glob (read-only tool set, NOT none)', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'system', '/some/dir');
+    const toolsIdx = args.indexOf('--tools');
+    expect(toolsIdx).toBeGreaterThanOrEqual(0);
+    expect(args[toolsIdx + 1]).toBe('Read');
+    expect(args[toolsIdx + 2]).toBe('Grep');
+    expect(args[toolsIdx + 3]).toBe('Glob');
+    // CRITICAL: must NOT contain '--tools' 'none' (Pitfall 1)
+    const toolsNoneIdx = args.indexOf('none');
+    expect(toolsNoneIdx).toBe(-1);
+  });
+
+  it('includes --add-dir with the survey directory', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'system', '/some/dir');
+    const addDirIdx = args.indexOf('--add-dir');
+    expect(addDirIdx).toBeGreaterThanOrEqual(0);
+    expect(args[addDirIdx + 1]).toBe('/some/dir');
+  });
+
+  it('includes --permission-mode bypassPermissions', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'system', '/some/dir');
+    const pmIdx = args.indexOf('--permission-mode');
+    expect(pmIdx).toBeGreaterThanOrEqual(0);
+    expect(args[pmIdx + 1]).toBe('bypassPermissions');
+  });
+
+  it('does NOT contain --tools none', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'system', '/some/dir');
+    // Find all '--tools' occurrences and assert none is followed by 'none'
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--tools') {
+        expect(args[i + 1]).not.toBe('none');
+      }
+    }
+  });
+
+  it('uses the supplied surveyDir as the --add-dir value', () => {
+    const args = buildSurveyHeadlessArgs('claude-sonnet-4-6', 'system', '/Users/vtx/my-project');
+    expect(args).toContain('/Users/vtx/my-project');
+    const addDirIdx = args.indexOf('--add-dir');
+    expect(args[addDirIdx + 1]).toBe('/Users/vtx/my-project');
+  });
+});
+
+// ── SURVEY_SYSTEM ────────────────────────────────────────────────────────────
+
+describe('SURVEY_SYSTEM', () => {
+  it('is a non-empty string', () => {
+    expect(typeof SURVEY_SYSTEM).toBe('string');
+    expect(SURVEY_SYSTEM.length).toBeGreaterThan(0);
+  });
+
+  it('does NOT contain "no tool use" (NEUTRAL_SYSTEM forbidden phrase — tools must be permitted)', () => {
+    // NEUTRAL_SYSTEM says "No preamble, no commentary, no tool use, no markdown fences..."
+    // SURVEY_SYSTEM must NOT reuse that text or tools would be suppressed
+    expect(SURVEY_SYSTEM.toLowerCase()).not.toContain('no tool use');
+  });
+});
+
+// ── createClaudeHeadlessSurveyClient ─────────────────────────────────────────
+
+describe('createClaudeHeadlessSurveyClient', () => {
+  beforeEach(() => {
+    spawnCalls.length = 0;
+    nextClose = { code: 0, stdout: '' };
+    setHeadlessUsageSink(null);
+  });
+
+  afterEach(() => {
+    setHeadlessUsageSink(null);
+  });
+
+  it('spawns with cwd === os.tmpdir() (neutral cwd — Pitfall 4 defensive choice)', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'ok' }) };
+    const { client } = createClaudeHeadlessSurveyClient(
+      cfg({ claudeHeadlessModel: 'claude-sonnet-4-6' }),
+      '/some/survey/dir',
+    );
+    await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'survey prompt' }],
+    } as any);
+
+    const call = spawnCalls[0]!;
+    expect(call.opts.cwd).toBe(os.tmpdir());
+  });
+
+  it('passes --add-dir with the survey dir', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'ok' }) };
+    const { client } = createClaudeHeadlessSurveyClient(cfg(), '/some/survey/dir');
+    await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'survey prompt' }],
+    } as any);
+
+    const call = spawnCalls[0]!;
+    const addDirIdx = call.args.indexOf('--add-dir');
+    expect(addDirIdx).toBeGreaterThanOrEqual(0);
+    expect(call.args[addDirIdx + 1]).toBe('/some/survey/dir');
+  });
+
+  it('passes --tools Read Grep Glob (not none)', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'ok' }) };
+    const { client } = createClaudeHeadlessSurveyClient(cfg(), '/some/dir');
+    await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+
+    const call = spawnCalls[0]!;
+    const toolsIdx = call.args.indexOf('--tools');
+    expect(toolsIdx).toBeGreaterThanOrEqual(0);
+    expect(call.args[toolsIdx + 1]).toBe('Read');
+    expect(call.args[toolsIdx + 2]).toBe('Grep');
+    expect(call.args[toolsIdx + 3]).toBe('Glob');
+    expect(call.args).not.toContain('none');
+  });
+
+  it('passes --permission-mode bypassPermissions', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'ok' }) };
+    const { client } = createClaudeHeadlessSurveyClient(cfg(), '/some/dir');
+    await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+
+    const call = spawnCalls[0]!;
+    const pmIdx = call.args.indexOf('--permission-mode');
+    expect(pmIdx).toBeGreaterThanOrEqual(0);
+    expect(call.args[pmIdx + 1]).toBe('bypassPermissions');
+  });
+
+  it('strips ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (billing guard preserved)', async () => {
+    process.env['ANTHROPIC_API_KEY'] = 'sk-should-not-leak';
+    process.env['ANTHROPIC_AUTH_TOKEN'] = 'tok-should-not-leak';
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'ok' }) };
+
+    const { client } = createClaudeHeadlessSurveyClient(cfg(), '/some/dir');
+    await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+
+    const call = spawnCalls[0]!;
+    expect(call.opts.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(call.opts.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+
+    delete process.env['ANTHROPIC_API_KEY'];
+    delete process.env['ANTHROPIC_AUTH_TOKEN'];
+  });
+
+  it('passes --setting-sources project (self-ingestion guard preserved)', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'ok' }) };
+    const { client } = createClaudeHeadlessSurveyClient(cfg(), '/some/dir');
+    await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+
+    const call = spawnCalls[0]!;
+    const ssIdx = call.args.indexOf('--setting-sources');
+    expect(ssIdx).toBeGreaterThanOrEqual(0);
+    expect(call.args[ssIdx + 1]).toBe('project');
+  });
+
+  it('uses a non-empty system prompt that is NOT NEUTRAL_SYSTEM (NEUTRAL_SYSTEM forbids tool use)', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'ok' }) };
+    const { client } = createClaudeHeadlessSurveyClient(cfg(), '/some/dir');
+    await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+
+    const call = spawnCalls[0]!;
+    const sysIdx = call.args.indexOf('--system-prompt');
+    expect(sysIdx).toBeGreaterThanOrEqual(0);
+    const systemPrompt = call.args[sysIdx + 1]!;
+    expect(systemPrompt.length).toBeGreaterThan(0);
+    // Must NOT be NEUTRAL_SYSTEM (which says "no tool use")
+    expect(systemPrompt).not.toContain('no tool use');
+  });
+
+  it('parses the JSON envelope result correctly', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'survey observations here' }) };
+    const { client } = createClaudeHeadlessSurveyClient(cfg(), '/some/dir');
+    const msg = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: 'survey this' }],
+    } as any);
+    expect(msg.content).toEqual([{ type: 'text', text: 'survey observations here' }]);
+  });
+
+  it('returns empty text on non-zero exit (fail-safe preserved)', async () => {
+    nextClose = { code: 1, stdout: 'irrelevant' };
+    const { client } = createClaudeHeadlessSurveyClient(cfg(), '/some/dir');
+    const msg = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+    expect(msg.content).toEqual([{ type: 'text', text: '' }]);
+  });
+});
+
+// ── Regression guard: existing default path is UNCHANGED ─────────────────────
+
+describe('existing default path regression (createClaudeHeadlessClient unchanged)', () => {
+  beforeEach(() => {
+    spawnCalls.length = 0;
+    nextClose = { code: 0, stdout: '' };
+  });
+
+  it('still carries --tools none on the default path (MUST stay green)', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: '{"relation":"unrelated"}' }) };
+    const { client } = createClaudeHeadlessClient(cfg({ claudeHeadlessModel: 'claude-sonnet-4-6' }));
+    await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'judge prompt here' }],
+    } as any);
+
+    const call = spawnCalls[0]!;
+    expect(call.args).toContain('--tools');
+    const toolsIdx = call.args.indexOf('--tools');
+    expect(call.args[toolsIdx + 1]).toBe('none');
+  });
+
+  it('default path spawns cwd === os.tmpdir()', async () => {
+    nextClose = { code: 0, stdout: JSON.stringify({ result: 'ok' }) };
+    const { client } = createClaudeHeadlessClient(cfg());
+    await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'x' }],
+    } as any);
+    expect(spawnCalls[0]!.opts.cwd).toBe(os.tmpdir());
   });
 });
