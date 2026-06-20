@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
-status: executing
-stopped_at: Phase 31 context gathered
-last_updated: "2026-06-20T20:38:57.824Z"
+status: ready_to_plan
+stopped_at: Phase 32 context gathered
+last_updated: "2026-06-20T21:29:59.289Z"
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 8
+  total_plans: 13
   completed_plans: 8
   percent: 60
 ---
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 31 — doc-ingest-idempotent-re-ingest
+**Current focus:** Phase 32 — project-recall-auto-corpus
 
 ## Current Position
 
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
-Phase: 31 (doc-ingest-idempotent-re-ingest) — EXECUTING
-Plan: 2 of 2
+Phase: 32 (project-recall-auto-corpus) — EXECUTING
+Plan: 1 of 3
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
 [████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
@@ -85,7 +85,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 
 **Velocity (historical baseline):**
 
-- Total plans completed: 155 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
+- Total plans completed: 157 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
 - Average plan duration: ~20–25 min
 
 **By Milestone:**
@@ -255,9 +255,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-20T20:38:57.818Z
-Stopped at: Phase 31 context gathered
-Resume file: None
+Last session: 2026-06-20T21:13:37.162Z
+Stopped at: Phase 32 context gathered
+Resume file: .planning/phases/32-project-recall-auto-corpus/32-CONTEXT.md
 
 ## Key Decisions (Phase 28)
 

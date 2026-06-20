@@ -197,7 +197,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 29. Survey Quality Spike | v6.0 | 3/3 | Complete    | 2026-06-20 |
 | 30. Core Ingest Command | v6.0 | 3/3 | Complete   | 2026-06-20 |
 | 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 2/2 | Complete   | 2026-06-20 |
-| 32. Project Recall + Auto-Corpus | v6.0 | 0/TBD | Not started | - |
+| 32. Project Recall + Auto-Corpus | v6.0 | 2/3 | In Progress|  |
 
 ### Phase 28: Schema-Anchored Corpus
 
@@ -306,7 +306,17 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
   2. After `recense ingest-project` completes and the sleep pass runs, the project's schema-anchored corpus doc is automatically promoted and generated — the user can open it in the Reader without a separate `recense generate-doc` step
   3. The auto-generated corpus doc covers the project's induced schemas as thesis entries with cited evidence from the surveyed facts — it reads as a coherent project overview, not a raw observation list
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+- [x] 32-01-PLAN.md — `--scope <slug>` scoped recall: post-resolution {slug, global} member filter in RecallEngine, D-S1-safe (RECALL-01)
+- [x] 32-02-PLAN.md — CorpusPromoter.promoteScope (scope-anchored always-promote: landing doc + induced-schema chapters, landing→chapter doc_containment) + landing-doc generation routing (RECALL-02)
+
+**Wave 2** *(depends on 32-02 promoteScope API)*
+
+- [ ] 32-03-PLAN.md — trigger wiring: inline `--consolidate` promote+generate + deferred pending-corpus-promotion:<scope> marker + crash-safe sleep-pass consume; live SC verification on /Users/vtx/usage (RECALL-02)
+
 **UI hint**: yes
 
 ### Phase 33: Synchronous Curated Write (recense remember) — lossless single-fact write with reconsolidation; closes the replaces-MEMORY.md promise
