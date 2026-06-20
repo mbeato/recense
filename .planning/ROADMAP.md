@@ -196,7 +196,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 28. Schema-Anchored Corpus | v5.0 | 5/5 | Complete   | 2026-06-19 |
 | 29. Survey Quality Spike | v6.0 | 3/3 | Complete    | 2026-06-20 |
 | 30. Core Ingest Command | v6.0 | 3/3 | Complete   | 2026-06-20 |
-| 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 1/2 | In Progress|  |
+| 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 2/2 | Complete   | 2026-06-20 |
 | 32. Project Recall + Auto-Corpus | v6.0 | 0/TBD | Not started | - |
 
 ### Phase 28: Schema-Anchored Corpus
@@ -230,7 +230,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 - [x] **Phase 29: Survey Quality Spike** (INGEST-03) — prove agentic-survey fact/schema signal on one real project; go/no-go for the build phases (completed 2026-06-20)
 - [x] **Phase 30: Core Ingest Command** (INGEST-01/02/04) — `recense ingest-project <dir>`: survey agent → summarized episodes → scope-tagged facts + schemas via the offline pipeline — depends on 29 (completed 2026-06-20)
-- [ ] **Phase 31: Doc Ingest + Idempotent Re-ingest** (DOCING-01, REINGEST-01/02) — direct project-doc ingest + per-project cursor + in-place belief reconciliation on re-ingest — depends on 30
+- [x] **Phase 31: Doc Ingest + Idempotent Re-ingest** (DOCING-01, REINGEST-01/02) — direct project-doc ingest + per-project cursor + in-place belief reconciliation on re-ingest — depends on 30 (completed 2026-06-20)
 - [ ] **Phase 32: Project Recall + Auto-Corpus** (RECALL-01/02) — scoped project recall + auto-promoted/-generated schema-anchored corpus doc — depends on 30+31
 
 ### Phase 29: Survey Quality Spike
@@ -293,7 +293,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 **Wave 2** *(depends on Wave 1 — same file)*
 
-- [ ] 31-02-PLAN.md — per-project cursor: git HEAD/dirty + mtime fingerprint, SemanticStore `cursor:project:<scope>` skip-gate, --force/--dry-run/--db discipline, + D-07 dup-rate reconciliation gate test (REINGEST-01, REINGEST-02)
+- [x] 31-02-PLAN.md — per-project cursor: git HEAD/dirty + mtime fingerprint, SemanticStore `cursor:project:<scope>` skip-gate, --force/--dry-run/--db discipline, + D-07 dup-rate reconciliation gate test (REINGEST-01, REINGEST-02)
 
 
 ### Phase 32: Project Recall + Auto-Corpus
@@ -308,3 +308,25 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 **Plans**: TBD
 **UI hint**: yes
+
+### Phase 33: Synchronous Curated Write (recense remember) — lossless single-fact write with reconsolidation; closes the replaces-MEMORY.md promise
+
+**Goal:** Give recense a synchronous, lossless, curated WRITE path so that ALL deliberate facts/memory flow through the brain and nothing else — closing the customer-zero "replaces MEMORY.md" promise. recense already owns the READ path (session-start-cli fires recall); deliberate writes still leak to native Claude Code `.md` memory files because the only existing write paths are passive lossy turn-capture→sleep-pass (~84–90% KU, hourly delay) and batch ingest/import-memory (lossy extraction).
+
+**Requirements**: (to derive in plan) REMEMBER-01 synchronous verbatim curated write; REMEMBER-02 in-place reconsolidation on write; REMEMBER-03 native-memory cutover (directive + retire .md).
+**Depends on:** Standalone — NOT the v6.0 project-onboarding phases. Depends only on the already-live consolidation/judge/sink machinery (consolidation/update-decision.ts, sink.ts), semantic-store write primitive, and the embedder.
+
+**Scope / deliverables:**
+1. `recense remember "<fact>" [--scope <s>]` CLI subcommand (new `remember-cli.ts`, wired into `recense.ts` dispatcher). Stores text VERBATIM — no lossy extraction.
+2. Synchronous reconsolidation ("mini sleep-pass"): embed → retrieve neighbor beliefs → judge (reuse `update-decision.ts` + `sink.ts`) → update-in-place on contradiction, else insert. ~1 judge LLM call/remember (subscription-billed, ~$0 marginal, ~2–5s). This is the differentiator vs. appending to a flat file.
+3. Mark fact curated/evidence-backed: decay never kills it; sleep pass never re-extracts/mangles it. Reuse existing evidence-backed/source-type fields; add a column only if needed.
+4. Scope: default cwd-derived, `--scope` override.
+5. CLAUDE.md hard directive (additive — overrides the harness native-memory protocol per instruction-priority rules): all facts/memory → `recense remember`, never write `.md` memory files. Investigate a `settings.json` kill-switch for the native Claude Code file-based memory feature (belt-and-suspenders).
+6. One-time migration: feed the 12 existing `.md` files at `~/.claude/projects/-Users-vtx-brain-memory/memory/` through the NEW verbatim `remember` (NOT lossy import-memory), verify each landed, then delete. Order: write→verify→remove.
+
+**Correctness guards (project-critical):** never let inferred output strengthen a fact (self-confirmation); graph is source of truth; an LLM judge call is acceptable here (explicit user write, NOT the hot online hook path). Reconsolidation is eval-backed — verification must confirm in-place update vs. dup-accumulation.
+
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 33 to break down)

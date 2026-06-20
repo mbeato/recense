@@ -4,13 +4,13 @@ milestone: v6.0
 milestone_name: Project Onboarding
 status: executing
 stopped_at: Phase 31 context gathered
-last_updated: "2026-06-20T20:28:22.903Z"
+last_updated: "2026-06-20T20:38:57.824Z"
 progress:
-  total_phases: 4
-  completed_phases: 2
+  total_phases: 5
+  completed_phases: 3
   total_plans: 8
-  completed_plans: 7
-  percent: 50
+  completed_plans: 8
+  percent: 60
 ---
 
 # Project State
@@ -106,6 +106,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 
 ### Roadmap Evolution
 
+- Phase 33 added (2026-06-20): **Synchronous Curated Write (`recense remember`)** — closes the customer-zero "replaces MEMORY.md" promise on the WRITE side. recense owns read (recall at session-start) but deliberate facts still leak to native Claude Code `.md` memory because the only write paths are passive-lossy (turn-capture→sleep-pass) or batch-lossy (import-memory). Adds a synchronous, verbatim, curated single-fact write that runs in-place reconsolidation (reuses update-decision/sink/judge), plus a CLAUDE.md cutover directive and a one-time lossless migration of the 12 existing `.md` files through the new command. Standalone — depends only on the live consolidation machinery, NOT the v6.0 onboarding phases. Founder-directed 2026-06-20; design forks resolved (reconsolidate-on-write + migrate-via-remember). See memory [[graphify-is-codebase-tool-not-memory-rival]] context thread.
 - Phase 28 added (2026-06-19): **Schema-Anchored Corpus** — pivots the reader corpus from project-scope docs to the abstraction graph rendered as prose (docs anchor on schemas/entities, cite direct facts; mass-gated promotion; hierarchy mirrors the `abstracts` ladder; decide-cheap/generate-lazy; read-only projection). **Supersedes Phase 27 READER-04** (doc_link-between-projects); inherits the reader UI + flat 2D renderer + lazy-gen + /doc routes + gather + doc-writer. Origin: design discussion during Phase 27 27-05 verification (see memory [[corpus-from-schemas-design]]).
 
 ### v5.0 Dependency Chain
@@ -254,7 +255,7 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-20T20:28:22.896Z
+Last session: 2026-06-20T20:38:57.818Z
 Stopped at: Phase 31 context gathered
 Resume file: None
 

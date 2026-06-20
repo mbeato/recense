@@ -217,6 +217,12 @@ export function computeProjectFingerprint(dir: string, docPaths: string[]): stri
     return `git:${fp.sha}:${fp.dirty ? 'dirty' : 'clean'}`;
   }
   // Mtime fallback for non-git dirs (mirrors ObsidianAdapter D-67 pattern)
+  if (docPaths.length === 0) {
+    // WR-01: a non-git dir with no fingerprintable docs has no stable surface.
+    // Returning a constant (mtime:0) would pin the skip-gate forever and defeat
+    // REINGEST-02. Return a distinct value every run → survey always re-runs.
+    return `mtime:none:${Date.now()}`;
+  }
   let max = 0;
   for (const p of docPaths) {
     try {
@@ -369,26 +375,43 @@ export async function runSurveyAndFeed(opts: {
  *
  * Returns sorted paths for deterministic ordering.
  */
-export function collectDocPaths(dir: string): string[] {
-  // Use realpathSync for the project root so symlinked tmp dirs (macOS /var → /private/var)
-  // produce a canonical base that matches the realpathSync results in the walk (T-31-PATH).
-  let resolvedDir: string;
+/**
+ * Resolve the canonical project root for a dir.
+ *
+ * Single source of truth (WR-02): both collectDocPaths and emitDocEpisodes use
+ * this so the realpath base used for containment checks and relPath computation
+ * can never drift between the two.
+ *
+ * Uses realpathSync so symlinked tmp dirs (macOS /var → /private/var) produce a
+ * canonical base that matches the realpathSync results in the walk (T-31-PATH).
+ * Falls back to resolve(dir) if dir doesn't exist yet (shouldn't happen).
+ */
+export function resolveProjectRoot(dir: string): string {
   try {
-    resolvedDir = realpathSync(resolve(dir));
+    return realpathSync(resolve(dir));
   } catch {
-    resolvedDir = resolve(dir); // fall back if dir doesn't exist yet (shouldn't happen)
+    return resolve(dir);
   }
+}
+
+export function collectDocPaths(dir: string): string[] {
+  const resolvedDir = resolveProjectRoot(dir);
   const paths: string[] = [];
 
   // Project-root only files
   for (const name of ['README.md', 'CLAUDE.md']) {
     const candidate = join(resolvedDir, name);
-    if (existsSync(candidate)) {
-      // Resolve to canonical path (macOS /var → /private/var) for consistent relative paths
-      let realCandidate = candidate;
-      try { realCandidate = realpathSync(candidate); } catch { /* use unresolved */ }
-      paths.push(realCandidate);
+    if (!existsSync(candidate)) continue;
+    // Resolve to canonical path (macOS /var → /private/var) for consistent relative paths
+    let realCandidate: string;
+    try { realCandidate = realpathSync(candidate); } catch { continue; }
+    // T-31-PATH: a symlinked README/CLAUDE must not escape the project root.
+    // The realpath must equal the in-root candidate, or stay strictly inside resolvedDir.
+    if (realCandidate !== join(resolvedDir, name) &&
+        !realCandidate.startsWith(resolvedDir + sep)) {
+      continue; // symlink escape — skip
     }
+    paths.push(realCandidate);
   }
 
   // Recursive walk of docs/ if it exists
@@ -407,7 +430,11 @@ export function collectDocPaths(dir: string): string[] {
  * Recursively walk a directory collecting .md file paths.
  * Skips symlinks that resolve outside the resolved project boundary (T-31-PATH).
  */
-function walkDocDir(dirPath: string, resolvedProjectDir: string, out: string[]): void {
+function walkDocDir(dirPath: string, resolvedProjectDir: string, out: string[], depth = 0): void {
+  // WR-03: bound recursion to guard against pathologically deep trees / odd
+  // hardlink-bind-mount layouts blowing the call stack.
+  if (depth > 32) return;
+
   let entries: string[];
   try {
     entries = readdirSync(dirPath).sort();
@@ -441,7 +468,7 @@ function walkDocDir(dirPath: string, resolvedProjectDir: string, out: string[]):
     }
 
     if (stat.isDirectory()) {
-      walkDocDir(realPath, resolvedProjectDir, out);
+      walkDocDir(realPath, resolvedProjectDir, out, depth + 1);
     } else if (entry.endsWith('.md')) {
       out.push(realPath);
     }
@@ -484,16 +511,11 @@ export async function emitDocEpisodes(opts: {
   dryRun: boolean;
 }): Promise<DocEpisodeResult> {
   const { dir, scope, cwd, pipeline, dryRun } = opts;
-  const resolvedDir = resolve(dir);
 
   const docPaths = collectDocPaths(dir);
-  // Use the canonical resolved dir (same as collectDocPaths uses) for relative path computation
-  let canonicalResolvedDir: string;
-  try {
-    canonicalResolvedDir = realpathSync(resolve(dir));
-  } catch {
-    canonicalResolvedDir = resolve(dir);
-  }
+  // Single source of truth for the resolved root (WR-02): same helper collectDocPaths
+  // uses, so relPath/hash keys can never drift from the collected path list.
+  const canonicalResolvedDir = resolveProjectRoot(dir);
   let episodeCount = 0;
 
   for (const filePath of docPaths) {
@@ -690,9 +712,16 @@ async function main(): Promise<void> {
         });
         total = result.totalFed;
         skippedAreas = result.skippedAreas;
-        // Commit cursor AFTER survey succeeds, BEFORE consolidation (A3: cursor not gated on consolidation)
-        semanticStore.setMeta(`cursor:project:${scope}`, fingerprint);
-        fileLog(`consolidate: cursor committed fingerprint=${fingerprint}`);
+        // WR-04: only commit the cursor when the survey actually fed content.
+        // If EVERY area refused (totalFed=0), committing would freeze the transient
+        // failure — the next run would skip the survey. Leave the cursor so it re-surveys.
+        if (result.skippedAreas.length < SURVEY_AREAS.length) {
+          // Commit cursor AFTER survey succeeds, BEFORE consolidation (A3: cursor not gated on consolidation)
+          semanticStore.setMeta(`cursor:project:${scope}`, fingerprint);
+          fileLog(`consolidate: cursor committed fingerprint=${fingerprint}`);
+        } else {
+          fileLog('consolidate: all areas refused — cursor NOT committed (re-survey next run)');
+        }
       }
 
       fileLog(`consolidation: starting inline sleep pass`);
@@ -759,9 +788,16 @@ async function main(): Promise<void> {
         });
         total = result.totalFed;
         skippedAreas = result.skippedAreas;
-        // Commit cursor AFTER survey succeeds (deferred commit, RQ3); not on dry-run (N/A here — dry-run returned early)
-        semanticStore.setMeta(`cursor:project:${scope}`, fingerprint);
-        fileLog(`default: cursor committed fingerprint=${fingerprint}`);
+        // WR-04: only commit the cursor when the survey actually fed content.
+        // If EVERY area refused (totalFed=0), committing would freeze the transient
+        // failure — the next run would skip the survey. Leave the cursor so it re-surveys.
+        if (result.skippedAreas.length < SURVEY_AREAS.length) {
+          // Commit cursor AFTER survey succeeds (deferred commit, RQ3); not on dry-run (N/A here — dry-run returned early)
+          semanticStore.setMeta(`cursor:project:${scope}`, fingerprint);
+          fileLog(`default: cursor committed fingerprint=${fingerprint}`);
+        } else {
+          fileLog('default: all areas refused — cursor NOT committed (re-survey next run)');
+        }
       }
 
       process.stdout.write(`\ningest-project complete: ${total} episodes fed${surveySkipped ? ' (survey skipped)' : ''}\n`);

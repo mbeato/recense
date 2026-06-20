@@ -19,8 +19,8 @@
 
 ### REINGEST — Idempotent re-ingest
 
-- [ ] **REINGEST-01**: Re-running ingestion on a changed project **reconciles with existing beliefs** (updates in place via reconsolidation) rather than minting duplicates; a second run on an unchanged project is a near-no-op.
-- [ ] **REINGEST-02**: A **per-project cursor** makes re-ingest incremental — only changed/new content is re-surveyed and re-ingested, not a full re-survey each run.
+- [x] **REINGEST-01**: Re-running ingestion on a changed project **reconciles with existing beliefs** (updates in place via reconsolidation) rather than minting duplicates; a second run on an unchanged project is a near-no-op.
+- [x] **REINGEST-02**: A **per-project cursor** makes re-ingest incremental — only changed/new content is re-surveyed and re-ingested, not a full re-survey each run.
 
 ### RECALL — Project recall surface
 
@@ -50,8 +50,8 @@ Each requirement maps to exactly one phase. Filled by the roadmapper.
 | INGEST-03 | Phase 29 | Complete |
 | INGEST-04 | Phase 30 | Complete |
 | DOCING-01 | Phase 31 | Complete |
-| REINGEST-01 | Phase 31 | Pending |
-| REINGEST-02 | Phase 31 | Pending |
+| REINGEST-01 | Phase 31 | Complete |
+| REINGEST-02 | Phase 31 | Complete |
 | RECALL-01 | Phase 32 | Pending |
 | RECALL-02 | Phase 32 | Pending |
 
