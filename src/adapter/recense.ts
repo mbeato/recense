@@ -89,6 +89,10 @@ switch (cmd) {
   // import-memory-cli.ts guards execution with `require.main === module` (it exports
   // planImport/runImport for unit tests), so spawn as a subprocess so the guard fires.
   case 'import-memory': spawnScript('import-memory-cli.js', process.argv.slice(3)); break;
+  // ingest-project-cli.ts guards execution with `require.main === module` (it exports
+  // parseIngestArgs/resolveSurveyScope/resolveSurveyCwd/runSurveyAndFeed for unit tests),
+  // so spawn as a subprocess so the guard fires correctly in the child.
+  case 'ingest-project': spawnScript('ingest-project-cli.js', process.argv.slice(3)); break;
   // dedup-entities-cli.ts guards execution with `require.main === module` (it exports
   // printDryRun for unit tests), so spawn as a subprocess so the guard fires.
   case 'dedup-entities': spawnScript('dedup-entities-cli.js', process.argv.slice(3)); break;
@@ -119,7 +123,7 @@ switch (cmd) {
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, import-memory, dedup-entities, dedup-facts, generate-doc, promote-corpus, generate-corpus, snapshot, scheduler, mcp, serve\n',
+      'Commands: hook, init, doctor, recall, viz, sleep-pass, seed, ingest, import-memory, ingest-project, dedup-entities, dedup-facts, generate-doc, promote-corpus, generate-corpus, snapshot, scheduler, mcp, serve\n',
     );
     process.exit(1);
 }

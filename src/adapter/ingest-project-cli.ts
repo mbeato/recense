@@ -1,0 +1,456 @@
+/**
+ * ingest-project-cli — recense ingest-project <dir> (Phase 30 Plan 02).
+ *
+ * Surveys an unexplored repo across the 5 calibrated areas via the Plan-01
+ * tool-enabled survey transport, emits summarized why-level observations as
+ * one episode per belief-line (scope-tagged, origin='observed',
+ * source='project-survey'), and hands off to consolidation: deferred to the
+ * scheduled sleep pass by default (D-01), or inline under the lock with
+ * --consolidate (D-02).
+ *
+ * Design invariants (from CLAUDE.md / 30-02-PLAN.md threat model):
+ *  - Episodes carry origin='observed' (NEVER 'asserted_by_user' / 'inferred').
+ *    Survey output must never self-confirm a belief (T-30-06).
+ *  - isRefusalOrToolFailure areas are retried once then skipped — the apology
+ *    text is never ingested (T-30-07 / D-07).
+ *  - --dry-run runs the full survey but prints counts and writes ZERO rows
+ *    (T-30-05 / D-05).
+ *  - --scope is threaded via a synthetic home-rooted cwd so consolidation's
+ *    stampNodeScopes derives the override scope correctly (INGEST-02 / Pitfall 3).
+ *  - The live brain (~/.config/recense/recense.db) is the default write target
+ *    (D-04 — the spike's live-refuse guard is NOT carried).
+ *  - Default path holds NO write lock (deferred sentinel handoff, D-01).
+ *    --consolidate uses the real global lock intentionally (D-02).
+ *  - OPENAI_API_KEY pre-flight ONLY under --consolidate (Seam 5).
+ *  - Net-zero new runtime deps — no new packages added (T-30-SC).
+ *
+ * Modeled on import-memory-cli.ts (WR-02: arg validation before acquireLock).
+ */
+import { appendFileSync, existsSync, readFileSync } from 'fs';
+import { basename, join } from 'path';
+import { homedir } from 'os';
+import Database from 'better-sqlite3';
+import { initSchema } from '../db/schema';
+import { DEFAULT_CONFIG } from '../lib/config';
+import type { EngineConfig } from '../lib/config';
+import { realClock } from '../lib/clock';
+import { EpisodicStore } from '../db/episode-store';
+import { AllocationGate, IngestionPipeline } from '../ingest/pipeline';
+import { cwdToScope } from '../lib/scope';
+import { contentExternalId } from '../source/source-adapter';
+import { acquireLock, releaseLock } from './lockfile';
+import { resolveDbPath, resolveDirtySentinelPath } from './runtime-config';
+import { createClaudeHeadlessSurveyClient } from '../model/claude-headless-client';
+import { runConsolidation, resolveProviderOverlay } from '../consolidation/run-sleep-pass';
+import {
+  SURVEY_AREAS,
+  type SurveyArea,
+  buildSurveyPrompt,
+  splitObservations,
+  isRefusalOrToolFailure,
+} from './survey-observations';
+import type Anthropic from '@anthropic-ai/sdk';
+
+const LOG_PATH = '/tmp/recense-ingest-project.log';
+
+/** Append a timestamped line to the log file. */
+const fileLog = (msg: string): void =>
+  appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ingest-project: ${msg}\n`);
+
+// ── Parsed CLI arguments ──────────────────────────────────────────────────────
+
+export interface IngestArgs {
+  /** Positional: the repo directory to survey. */
+  dir: string;
+  /** --dry-run: run the survey but write 0 rows. */
+  dryRun: boolean;
+  /** --consolidate: run the sleep pass inline under the lock after feeding. */
+  consolidate: boolean;
+  /** --db <path>: override target DB (default = live brain). */
+  db?: string;
+  /** --scope <slug>: override the derived scope (threaded via synthetic cwd). */
+  scope?: string;
+  /** --desc <text>: override the repo description used in the survey prompt. */
+  desc?: string;
+}
+
+/**
+ * Parse the ingest-project CLI argv (the part after `recense ingest-project`).
+ *
+ * Positional arg: argv[0] = <dir>
+ * Flags: --dry-run, --consolidate, --db <path>, --scope <slug>, --desc <text>
+ */
+export function parseIngestArgs(argv: string[]): IngestArgs {
+  const dir = argv[0] ?? '';
+  const dryRun = argv.includes('--dry-run');
+  const consolidate = argv.includes('--consolidate');
+
+  const dbIdx = argv.indexOf('--db');
+  const db = dbIdx >= 0 ? argv[dbIdx + 1] : undefined;
+
+  const scopeIdx = argv.indexOf('--scope');
+  const scope = scopeIdx >= 0 ? argv[scopeIdx + 1] : undefined;
+
+  const descIdx = argv.indexOf('--desc');
+  const desc = descIdx >= 0 ? argv[descIdx + 1] : undefined;
+
+  return { dir, dryRun, consolidate, ...(db ? { db } : {}), ...(scope ? { scope } : {}), ...(desc ? { desc } : {}) };
+}
+
+// ── Scope resolution ──────────────────────────────────────────────────────────
+
+/**
+ * Resolve the scope slug for the survey.
+ *
+ * Without --scope: derive from dir via cwdToScope(dir) (works for home-rooted paths).
+ * With --scope: return the slug directly (Pitfall 3: for non-home-rooted dirs like
+ *   /tmp/checkout, cwdToScope would return 'global' — so the explicit slug wins).
+ */
+export function resolveSurveyScope(opts: { dir: string; scope?: string }): string {
+  if (opts.scope) return opts.scope;
+  return cwdToScope(opts.dir);
+}
+
+/**
+ * Resolve the cwd to pass to recordEvent so consolidation's stampNodeScopes derives
+ * the correct scope.
+ *
+ * Without --scope: use the real dir (works for home-rooted paths).
+ * With --scope: synthesize a home-rooted cwd `/Users/<user>/<scope>` (or /home on Linux)
+ *   so cwdToScope(syntheticCwd) === scope. This is the critical Pitfall-3 fix:
+ *   the synthetic cwd makes the EXISTING stampNodeScopes derive the override scope with
+ *   ZERO consolidation-engine changes.
+ */
+export function resolveSurveyCwd(opts: { dir: string; scope?: string }): string {
+  if (!opts.scope) return opts.dir;
+  // Synthesize a home-rooted path that cwdToScope will map to opts.scope
+  const home = homedir(); // e.g. /Users/vtx or /home/vtx
+  return `${home}/${opts.scope}`;
+}
+
+// ── Repo description ──────────────────────────────────────────────────────────
+
+/**
+ * Derive a one-line description of the repo for the survey prompt (D-10).
+ *
+ * Tries to read the first heading or paragraph from README.md; falls back to
+ * the dir basename when no README exists or it has no heading. A --desc override
+ * skips the README entirely.
+ */
+export async function deriveRepoDesc(dir: string, descOverride?: string): Promise<string> {
+  if (descOverride) return descOverride;
+
+  const readmePath = join(dir, 'README.md');
+  if (existsSync(readmePath)) {
+    try {
+      const content = readFileSync(readmePath, 'utf8');
+      // Extract first markdown heading (# ... or ## ...)
+      const headingMatch = /^#{1,2}\s+(.+)$/m.exec(content);
+      if (headingMatch?.[1]) return headingMatch[1].trim();
+      // Fall back to first non-empty line
+      const firstLine = content.split('\n').map(l => l.trim()).find(l => l.length > 0);
+      if (firstLine) return firstLine;
+    } catch {
+      // Fall through to basename
+    }
+  }
+
+  return basename(dir);
+}
+
+// ── DB path resolution ────────────────────────────────────────────────────────
+
+/**
+ * Resolve the target DB path.
+ *
+ * D-04: the live brain (~/.config/recense/recense.db) is the default — the spike's
+ * live-refuse guard is NOT carried here (this is the production command, not a
+ * throwaway spike). Use resolveDbPath WITH fallback-to-default.
+ *
+ * D-06: --db <path> overrides the default.
+ */
+export function resolveTargetDb(argv: string[]): string {
+  // resolveDbPath with fallback=true (default overload) returns the live brain when no --db / env
+  return resolveDbPath(argv);
+}
+
+// ── OPENAI_API_KEY pre-flight ─────────────────────────────────────────────────
+
+/**
+ * Pre-flight check for OPENAI_API_KEY — gated on --consolidate ONLY (Seam 5).
+ *
+ * The default path (deferred consolidation) does NOT embed episodes and does NOT
+ * need the key. Only --consolidate (inline sleep pass) triggers embedding.
+ * Throws if consolidate=true and the key is absent.
+ */
+export function checkOpenAiKeyIfConsolidate(
+  consolidate: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (!consolidate) return;
+  if (!env['OPENAI_API_KEY']) {
+    throw new Error(
+      'OPENAI_API_KEY is missing — --consolidate runs the sleep pass inline and requires it.\n' +
+      '  Export it (e.g. from ~/.config/recense/sleep.env) before running — exiting',
+    );
+  }
+}
+
+// ── Survey loop ───────────────────────────────────────────────────────────────
+
+/** Return type for runSurveyAndFeed. */
+export interface SurveyFeedResult {
+  /** Per-area episode count (would-be counts on --dry-run). */
+  perAreaCounts: Record<string, number>;
+  /** Total episodes fed (0 on --dry-run). */
+  totalFed: number;
+  /** Areas skipped after refusal retry (D-07). */
+  skippedAreas: string[];
+}
+
+/**
+ * Survey each area, feed one episode per belief-line, return per-area counts.
+ *
+ * Options:
+ *  - surveyArea: injectable transport function (area, repoDir, repoDesc) → text
+ *  - dryRun: run survey + count but write 0 rows (pipeline.recordEvent NOT called)
+ *
+ * Refusal handling (D-07 / T-30-07):
+ *  If isRefusalOrToolFailure(response), retry the area ONCE.
+ *  If still a refusal, skip the area (feed 0 episodes) and add to skippedAreas.
+ *  The apology text is NEVER ingested.
+ */
+export async function runSurveyAndFeed(opts: {
+  dir: string;
+  scope: string;
+  repoDesc: string;
+  pipeline: Pick<IngestionPipeline, 'recordEvent'>;
+  surveyArea: (area: string, repoDir: string, repoDesc: string) => Promise<string>;
+  dryRun: boolean;
+}): Promise<SurveyFeedResult> {
+  const { dir, scope, repoDesc, pipeline, dryRun } = opts;
+  const cwd = resolveSurveyCwd({ dir, scope });
+
+  const perAreaCounts: Record<string, number> = {};
+  let totalFed = 0;
+  const skippedAreas: string[] = [];
+
+  for (const area of SURVEY_AREAS) {
+    let text = await opts.surveyArea(area, dir, repoDesc);
+
+    // D-07: retry once on refusal / tool failure
+    if (isRefusalOrToolFailure(text)) {
+      fileLog(`refusal: area=${area} retrying once`);
+      text = await opts.surveyArea(area, dir, repoDesc);
+      if (isRefusalOrToolFailure(text)) {
+        fileLog(`refusal: area=${area} second attempt also failed — skipping`);
+        perAreaCounts[area] = 0;
+        skippedAreas.push(area);
+        process.stdout.write(`  area=${area}: SKIPPED (refusal/tool-failure after retry)\n`);
+        continue;
+      }
+    }
+
+    const observations = splitObservations(text);
+    perAreaCounts[area] = observations.length;
+
+    if (dryRun) {
+      // Dry-run: print counts + samples, write nothing
+      const samples = observations.slice(0, 2).map(l => `    • ${l}`).join('\n');
+      process.stdout.write(`  area=${area}: ${observations.length} would-be episodes\n${samples ? samples + '\n' : ''}`);
+    } else {
+      // Real run: feed episodes
+      for (const content of observations) {
+        pipeline.recordEvent({
+          content,
+          role: 'user',
+          origin: 'observed', // T-30-06: NEVER 'asserted_by_user'
+          sessionId: `project-survey:${scope}:${area}`,
+          source: 'project-survey',
+          externalId: contentExternalId(`${scope}/${area}`, content),
+          cwd,
+        });
+        totalFed++;
+      }
+      process.stdout.write(`  area=${area}: ${observations.length} episodes\n`);
+      fileLog(`fed: area=${area} episodes=${observations.length}`);
+    }
+  }
+
+  return { perAreaCounts, totalFed, skippedAreas };
+}
+
+// ── main() ────────────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  // Carry the headless timeout bump — surveys take ~90-100s/area (spike data)
+  if (!process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS']) {
+    process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS'] = '600000';
+  }
+
+  const argv = process.argv.slice(2); // slice off node + script
+  const args = parseIngestArgs(argv);
+
+  // ── Validate <dir> BEFORE acquiring the lock (WR-02) ─────────────────────────
+  if (!args.dir) {
+    process.stderr.write('Usage: recense ingest-project <dir> [--dry-run] [--consolidate] [--db <path>] [--scope <slug>] [--desc <text>]\n');
+    process.exit(1);
+  }
+  if (!existsSync(args.dir)) {
+    process.stderr.write(`ingest-project: directory not found: ${args.dir}\n`);
+    process.exit(1);
+  }
+
+  // ── OPENAI_API_KEY pre-flight (only when --consolidate) ───────────────────────
+  try {
+    checkOpenAiKeyIfConsolidate(args.consolidate, process.env);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
+
+  // ── Resolve scope + cwd ───────────────────────────────────────────────────────
+  const scope = resolveSurveyScope({ dir: args.dir, scope: args.scope });
+  const repoDesc = await deriveRepoDesc(args.dir, args.desc);
+
+  // ── Print resolved scope + target DB BEFORE any write (D-09, D-04) ──────────
+  const dbPath = resolveTargetDb(argv);
+  process.stdout.write(`recense ingest-project\n`);
+  process.stdout.write(`  dir:     ${args.dir}\n`);
+  process.stdout.write(`  scope:   ${scope}\n`);
+  process.stdout.write(`  db:      ${dbPath}\n`);
+  process.stdout.write(`  desc:    ${repoDesc}\n`);
+  process.stdout.write(`  dry-run: ${args.dryRun}\n`);
+  process.stdout.write(`\n`);
+
+  if (args.dryRun) {
+    process.stdout.write(`DRY RUN — survey running (transport called), writing ZERO rows\n\n`);
+  }
+
+  fileLog(`start: dir=${args.dir} scope=${scope} db=${dbPath} dryRun=${args.dryRun} consolidate=${args.consolidate}`);
+
+  // ── Build the survey transport ────────────────────────────────────────────────
+  const config: EngineConfig = { ...DEFAULT_CONFIG, dbPath, dirtySentinelPath: resolveDirtySentinelPath() };
+  const judgeConfig: EngineConfig = { ...config, ...resolveProviderOverlay(process.env, 'RECENSE_JUDGE_PROVIDER') };
+
+  const surveyAreaFn = async (area: string, repoDir: string, repoDescStr: string): Promise<string> => {
+    const { client, model } = createClaudeHeadlessSurveyClient(judgeConfig, repoDir);
+    const prompt = buildSurveyPrompt(area as SurveyArea, { repoDir, repoDesc: repoDescStr });
+    fileLog(`survey: area=${area} model=${model}`);
+    const response = await client.messages.create({
+      model,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+    } as Anthropic.MessageCreateParamsNonStreaming);
+    const block = response.content[0] as { text?: string } | undefined;
+    return (block?.text ?? '').trim();
+  };
+
+  if (args.dryRun) {
+    // Dry-run: run survey, print counts, write nothing
+    const dummyPipeline = { recordEvent: () => { /* never called in dryRun */ } };
+    const result = await runSurveyAndFeed({
+      dir: args.dir,
+      scope,
+      repoDesc,
+      pipeline: dummyPipeline as unknown as IngestionPipeline,
+      surveyArea: surveyAreaFn,
+      dryRun: true,
+    });
+    const total = Object.values(result.perAreaCounts).reduce((a, b) => a + b, 0);
+    process.stdout.write(`\ndry-run complete: ${total} would-be episodes across ${SURVEY_AREAS.length} areas\n`);
+    if (result.skippedAreas.length > 0) {
+      process.stdout.write(`skipped areas (refusal): ${result.skippedAreas.join(', ')}\n`);
+    }
+    return;
+  }
+
+  // ── Real run ──────────────────────────────────────────────────────────────────
+  if (args.consolidate) {
+    // --consolidate: acquire lock, feed, run inline consolidation, release (D-02)
+    if (!acquireLock()) {
+      process.stderr.write('Lock held by another process — exiting\n');
+      process.exit(0);
+    }
+
+    let db: Database.Database | undefined;
+    try {
+      db = new Database(dbPath);
+      initSchema(db);
+      const episodes = new EpisodicStore(db, realClock, config);
+      const pipeline = new IngestionPipeline(new AllocationGate(config), episodes);
+
+      const result = await runSurveyAndFeed({
+        dir: args.dir,
+        scope,
+        repoDesc,
+        pipeline,
+        surveyArea: surveyAreaFn,
+        dryRun: false,
+      });
+
+      fileLog(`consolidation: starting inline sleep pass`);
+      await runConsolidation(db, dbPath, process.env, fileLog);
+      fileLog('consolidation: complete');
+
+      const total = result.totalFed;
+      process.stdout.write(`\ningest-project complete: ${total} episodes fed, consolidation done\n`);
+      if (result.skippedAreas.length > 0) {
+        process.stdout.write(`skipped areas (refusal): ${result.skippedAreas.join(', ')}\n`);
+      }
+      fileLog(`done: totalFed=${total} skipped=${result.skippedAreas.join(',')}`);
+    } catch (err) {
+      fileLog(`error: ${err}`);
+      process.stderr.write(`ingest-project FAILED: ${err}\nSee ${LOG_PATH}\n`);
+      process.exitCode = 1;
+    } finally {
+      db?.close();
+      releaseLock();
+    }
+  } else {
+    // Default path: feed episodes and defer consolidation to the scheduled sleep pass.
+    // NO LOCK is held — the dirtySentinelPath in config makes EpisodicStore.append
+    // touch the sentinel on each observed insert, which triggers the launchd watcher (D-01).
+    let db: Database.Database | undefined;
+    try {
+      db = new Database(dbPath);
+      initSchema(db);
+      const episodes = new EpisodicStore(db, realClock, config);
+      const pipeline = new IngestionPipeline(new AllocationGate(config), episodes);
+
+      const result = await runSurveyAndFeed({
+        dir: args.dir,
+        scope,
+        repoDesc,
+        pipeline,
+        surveyArea: surveyAreaFn,
+        dryRun: false,
+      });
+
+      const total = result.totalFed;
+      process.stdout.write(`\ningest-project complete: ${total} episodes fed\n`);
+      process.stdout.write(`Consolidation deferred to the scheduled sleep pass.\n`);
+      if (result.skippedAreas.length > 0) {
+        process.stdout.write(`skipped areas (refusal): ${result.skippedAreas.join(', ')}\n`);
+      }
+      fileLog(`done: totalFed=${total} skipped=${result.skippedAreas.join(',')}`);
+    } catch (err) {
+      fileLog(`error: ${err}`);
+      process.stderr.write(`ingest-project FAILED: ${err}\nSee ${LOG_PATH}\n`);
+      process.exitCode = 1;
+    } finally {
+      db?.close();
+      // Note: NO releaseLock() here — the default path never acquires a lock (D-01)
+    }
+  }
+}
+
+// Only run when invoked as the entry point (dispatched via recense.ts subprocess),
+// NOT when imported by a unit test of the exported helpers above.
+if (require.main === module) {
+  main().catch(err => {
+    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ingest-project FATAL: ${err}\n`);
+    releaseLock();
+    process.exit(1);
+  });
+}
