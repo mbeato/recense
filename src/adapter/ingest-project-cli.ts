@@ -26,8 +26,8 @@
  *
  * Modeled on import-memory-cli.ts (WR-02: arg validation before acquireLock).
  */
-import { appendFileSync, existsSync, readFileSync } from 'fs';
-import { basename, join } from 'path';
+import { appendFileSync, existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
+import { basename, join, relative, resolve, sep } from 'path';
 import { homedir } from 'os';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
@@ -38,6 +38,8 @@ import { EpisodicStore } from '../db/episode-store';
 import { AllocationGate, IngestionPipeline } from '../ingest/pipeline';
 import { cwdToScope } from '../lib/scope';
 import { contentExternalId } from '../source/source-adapter';
+import { chunkNote, noteTitle } from '../source/obsidian-adapter';
+import { redactSecrets } from '../source/redact';
 import { acquireLock, releaseLock } from './lockfile';
 import { resolveDbPath, resolveDirtySentinelPath } from './runtime-config';
 import { createClaudeHeadlessSurveyClient } from '../model/claude-headless-client';
@@ -278,6 +280,197 @@ export async function runSurveyAndFeed(opts: {
   }
 
   return { perAreaCounts, totalFed, skippedAreas };
+}
+
+// ── Doc walk + emitDocEpisodes ────────────────────────────────────────────────
+
+/**
+ * Collect absolute paths of documentation files for a project directory.
+ *
+ * Returns:
+ *  - `<dir>/README.md`   — if it exists (project root only, NOT .claude/CLAUDE.md)
+ *  - `<dir>/CLAUDE.md`   — if it exists (project root only)
+ *  - Every `.md` file found by a recursive walk of `<dir>/docs/` (if docs/ exists)
+ *
+ * Security (T-31-PATH):
+ *  - dir is resolved to an absolute path via path.resolve.
+ *  - Symlinks that resolve outside the resolved project dir are skipped.
+ *  - README.md and CLAUDE.md are read from the project root ONLY — never from
+ *    parent dirs or sub-dirs like .claude/.
+ *
+ * Returns sorted paths for deterministic ordering.
+ */
+export function collectDocPaths(dir: string): string[] {
+  // Use realpathSync for the project root so symlinked tmp dirs (macOS /var → /private/var)
+  // produce a canonical base that matches the realpathSync results in the walk (T-31-PATH).
+  let resolvedDir: string;
+  try {
+    resolvedDir = realpathSync(resolve(dir));
+  } catch {
+    resolvedDir = resolve(dir); // fall back if dir doesn't exist yet (shouldn't happen)
+  }
+  const paths: string[] = [];
+
+  // Project-root only files
+  for (const name of ['README.md', 'CLAUDE.md']) {
+    const candidate = join(resolvedDir, name);
+    if (existsSync(candidate)) {
+      // Resolve to canonical path (macOS /var → /private/var) for consistent relative paths
+      let realCandidate = candidate;
+      try { realCandidate = realpathSync(candidate); } catch { /* use unresolved */ }
+      paths.push(realCandidate);
+    }
+  }
+
+  // Recursive walk of docs/ if it exists
+  const docsDir = join(resolvedDir, 'docs');
+  if (existsSync(docsDir)) {
+    // Resolve docsDir canonically so the containment guard matches realpathSync results
+    let realDocsDir = docsDir;
+    try { realDocsDir = realpathSync(docsDir); } catch { /* skip */ }
+    walkDocDir(realDocsDir, resolvedDir, paths);
+  }
+
+  return paths.sort();
+}
+
+/**
+ * Recursively walk a directory collecting .md file paths.
+ * Skips symlinks that resolve outside the resolved project boundary (T-31-PATH).
+ */
+function walkDocDir(dirPath: string, resolvedProjectDir: string, out: string[]): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(dirPath).sort();
+  } catch {
+    return; // not readable — skip gracefully
+  }
+
+  for (const entry of entries) {
+    const candidatePath = join(dirPath, entry);
+
+    // T-31-PATH: realpathSync resolves symlinks; verify the resolved path stays
+    // inside the project boundary (prevents symlink escape out of tree).
+    let realPath: string;
+    try {
+      realPath = realpathSync(candidatePath);
+    } catch {
+      continue; // broken symlink or inaccessible — skip
+    }
+
+    // Containment: must be strictly inside resolvedProjectDir
+    if (!realPath.startsWith(resolvedProjectDir + sep) &&
+        realPath !== resolvedProjectDir) {
+      continue; // symlink escape — skip (T-31-PATH)
+    }
+
+    let stat: import('fs').Stats;
+    try {
+      stat = statSync(realPath);
+    } catch {
+      continue;
+    }
+
+    if (stat.isDirectory()) {
+      walkDocDir(realPath, resolvedProjectDir, out);
+    } else if (entry.endsWith('.md')) {
+      out.push(realPath);
+    }
+  }
+}
+
+/** Return type for emitDocEpisodes. */
+export interface DocEpisodeResult {
+  /** Number of doc files processed. */
+  docCount: number;
+  /** Total episodes emitted (0 on dryRun). */
+  episodeCount: number;
+}
+
+/**
+ * Walk a project's own documentation files and emit one episode per chunk.
+ *
+ * For each file from collectDocPaths(opts.dir):
+ *  - Reads content (skips unreadable files).
+ *  - Chunks via chunkNote (D-58 parity).
+ *  - Per section: builds `[[title]]\n<section.text>`, applies redactSecrets (T-31-SECRET).
+ *  - Calls pipeline.recordEvent with:
+ *      origin='observed' (T-31-ORIGIN — NEVER 'asserted_by_user')
+ *      source='project-doc'
+ *      role='user'
+ *      sessionId=`project-doc:<scope>:<relPath>`
+ *      externalId=contentExternalId(relPath, redactedContent) — content-hash dedup key
+ *      cwd=opts.cwd
+ *
+ * dryRun=true: increments counters but NEVER calls pipeline.recordEvent (T-30-05 parity).
+ *
+ * relPath uses forward slashes even on Windows for cross-platform stability of the
+ * content-hash key (gotcha 7 from the plan).
+ */
+export async function emitDocEpisodes(opts: {
+  dir: string;
+  scope: string;
+  cwd: string;
+  pipeline: Pick<IngestionPipeline, 'recordEvent'>;
+  dryRun: boolean;
+}): Promise<DocEpisodeResult> {
+  const { dir, scope, cwd, pipeline, dryRun } = opts;
+  const resolvedDir = resolve(dir);
+
+  const docPaths = collectDocPaths(dir);
+  // Use the canonical resolved dir (same as collectDocPaths uses) for relative path computation
+  let canonicalResolvedDir: string;
+  try {
+    canonicalResolvedDir = realpathSync(resolve(dir));
+  } catch {
+    canonicalResolvedDir = resolve(dir);
+  }
+  let episodeCount = 0;
+
+  for (const filePath of docPaths) {
+    // Compute relPath relative to the resolved project dir
+    const rawRelPath = relative(canonicalResolvedDir, filePath);
+    // Normalize to forward slashes for cross-platform stable hashing (gotcha 7)
+    const relPath = rawRelPath.split(sep).join('/');
+
+    let content: string;
+    try {
+      content = readFileSync(filePath, 'utf8');
+    } catch {
+      fileLog(`doc-skip: unreadable file=${filePath}`);
+      continue;
+    }
+
+    const title = noteTitle(relPath);
+    const sections = chunkNote(content, DEFAULT_CONFIG.maxContentBytes);
+    let fileSectionCount = 0;
+
+    for (const section of sections) {
+      const rawContent = `[[${title}]]\n${section.text}`;
+      // T-31-SECRET: redact before the content lands on the record AND before hashing
+      const redacted = redactSecrets(rawContent);
+
+      if (!dryRun) {
+        pipeline.recordEvent({
+          content: redacted,
+          role: 'user',
+          origin: 'observed', // T-31-ORIGIN: NEVER 'asserted_by_user'
+          sessionId: `project-doc:${scope}:${relPath}`,
+          source: 'project-doc',
+          // T-31-SECRET: externalId computed from POST-redaction content
+          externalId: contentExternalId(relPath, redacted),
+          cwd,
+        });
+      }
+
+      episodeCount++;
+      fileSectionCount++;
+    }
+
+    fileLog(`doc-emit: relPath=${relPath} sections=${fileSectionCount} dryRun=${dryRun}`);
+  }
+
+  return { docCount: docPaths.length, episodeCount };
 }
 
 // ── main() ────────────────────────────────────────────────────────────────────
