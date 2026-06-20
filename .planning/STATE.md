@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: executing
-stopped_at: Phase 29 context gathered
-last_updated: "2026-06-19T21:12:56.185Z"
+stopped_at: Phase 30 context gathered
+last_updated: "2026-06-20T14:13:39.941Z"
 progress:
   total_phases: 4
-  completed_phases: 0
-  total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 6
+  completed_plans: 4
+  percent: 25
 ---
 
 # Project State
@@ -20,16 +20,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** v6.0 Project Onboarding — Phase 29 (Survey Quality Spike) next
+**Current focus:** Phase 30 — core-ingest-command
 
 ## Current Position
 
 ```
 Milestone: v6.0 Project Onboarding — ROADMAP READY
-Phase: Phase 29 ready to plan (Survey Quality Spike)
+Phase: 30 (core-ingest-command) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
 
-[██████████████████████████████████████░░░░░░░░░] v1-v5.0 SHIPPED · v6.0 roadmap written (Phases 29–32) · Phase 29 next
+[████████████████████████████████████████░░░░░░░] v1-v5.0 SHIPPED · v6.0 Phase 29: 2/3 plans done · Plan 03 paused at go/no-go checkpoint
 ```
 
 **v6.0 phases:**
@@ -84,7 +85,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 
 **Velocity (historical baseline):**
 
-- Total plans completed: 152 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
+- Total plans completed: 155 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
 - Average plan duration: ~20–25 min
 
 **By Milestone:**
@@ -99,6 +100,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 | v5.0 | 24–27 | TBD | — |
 | Phase 28-schema-anchored-corpus P01 | 12 | 2 tasks | 9 files |
 | Phase 28-schema-anchored-corpus P02 | 2026-06-19 | 4 commits (2 RED + 2 GREEN) | 4 files |
+| Phase 30 P01 | 65 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -252,9 +254,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-19T20:52:27.632Z
-Stopped at: Phase 29 context gathered
-Resume file: .planning/phases/29-survey-quality-spike/29-CONTEXT.md
+Last session: 2026-06-20T14:13:39.934Z
+Stopped at: Phase 30 context gathered
+Resume file: None
 
 ## Key Decisions (Phase 28)
 

@@ -194,8 +194,8 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 26. Retrieval-Embedding Fix | v5.0 | 5/5 | Complete   | 2026-06-18 |
 | 27. Reader Layer | v5.0 | 5/5 | Complete   | 2026-06-18 |
 | 28. Schema-Anchored Corpus | v5.0 | 5/5 | Complete   | 2026-06-19 |
-| 29. Survey Quality Spike | v6.0 | 0/3 | Not started | - |
-| 30. Core Ingest Command | v6.0 | 0/TBD | Not started | - |
+| 29. Survey Quality Spike | v6.0 | 3/3 | Complete    | 2026-06-20 |
+| 30. Core Ingest Command | v6.0 | 1/3 | In Progress|  |
 | 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 0/TBD | Not started | - |
 | 32. Project Recall + Auto-Corpus | v6.0 | 0/TBD | Not started | - |
 
@@ -228,7 +228,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 **Engine invariants across all phases:** single-tenant; graph is source of truth, vector is derived cache; online paths LLM-free (all LLM/embedding cost in the offline sleep pass); origin=`observed` for all survey/doc ingest (never `asserted_by_user`); never strengthen a fact from inferred output; net-zero new runtime deps; summarized semantic knowledge only (no raw code indexing).
 
-- [ ] **Phase 29: Survey Quality Spike** (INGEST-03) — prove agentic-survey fact/schema signal on one real project; go/no-go for the build phases
+- [x] **Phase 29: Survey Quality Spike** (INGEST-03) — prove agentic-survey fact/schema signal on one real project; go/no-go for the build phases (completed 2026-06-20)
 - [ ] **Phase 30: Core Ingest Command** (INGEST-01/02/04) — `recense ingest-project <dir>`: survey agent → summarized episodes → scope-tagged facts + schemas via the offline pipeline — depends on 29
 - [ ] **Phase 31: Doc Ingest + Idempotent Re-ingest** (DOCING-01, REINGEST-01/02) — direct project-doc ingest + per-project cursor + in-place belief reconciliation on re-ingest — depends on 30
 - [ ] **Phase 32: Project Recall + Auto-Corpus** (RECALL-01/02) — scoped project recall + auto-promoted/-generated schema-anchored corpus doc — depends on 30+31
@@ -246,9 +246,9 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 **Plans**: 3 plans
 
-- [ ] 29-01-PLAN.md — survey-feeder spike: agentic survey of ~/usage → summarized episodes (origin=observed, cwd=/Users/vtx/usage) → consolidation on a scratch DB (SC1)
-- [ ] 29-02-PLAN.md — genuine/noise judge harness: per-area tally (≥5-genuine bar) + schema-induction inspection (≥1 bar) over the scratch DB (SC2/SC3)
-- [ ] 29-03-PLAN.md — 29-CALIBRATION.md calibration notes (prompt shape, summarization level, quality gate, scope-tagging) + founder-owned go/no-go (SC4)
+- [x] 29-01-PLAN.md — survey-feeder spike: agentic survey of ~/usage → summarized episodes (origin=observed, cwd=/Users/vtx/usage) → consolidation on a scratch DB (SC1) — code complete (Tasks 1+2, `233b77e`); AWAITING founder survey run (Task 3 checkpoint:human-verify)
+- [x] 29-02-PLAN.md — genuine/noise judge harness: per-area tally (≥5-genuine bar) + schema-induction inspection (≥1 bar) over the scratch DB (SC2/SC3)
+- [x] 29-03-PLAN.md — 29-CALIBRATION.md calibration notes (prompt shape, summarization level, quality gate, scope-tagging) + founder-owned go/no-go (SC4)
 
 ### Phase 30: Core Ingest Command
 
@@ -261,7 +261,19 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
   3. The brain produces at least one schema induced from the surveyed project — the same abstraction pipeline that fires on conversation turns fires on survey episodes
   4. Raw code lines and low-value structural facts are absent from the resulting fact set — the quality gate calibrated in Phase 29 is enforced
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+- [x] 30-01-PLAN.md — opt-in tool-enabled survey transport on the headless client (NEW seam — the committed `--tools none` path can't read a repo) + carried pure helpers (splitObservations, isRefusalOrToolFailure, buildSurveyPrompt) with unit tests (INGEST-01)
+
+**Wave 2** *(depends on Wave 1)*
+
+- [ ] 30-02-PLAN.md — `recense ingest-project <dir>` standalone CLI: survey→recordEvent (scope-tagged, origin=observed), real `--scope` threading via synthetic cwd, `--dry-run`/`--db`/`--desc`, deferred-default + `--consolidate` inline, retry-then-skip, dispatcher wiring (INGEST-01/02/04)
+
+**Wave 3** *(depends on Wave 2)*
+
+- [ ] 30-03-PLAN.md — founder-supervised live SC2 re-validation on the REAL committed transport (the 82% spike number is unsound) + `[scope]` recall (SC2) + ≥1 schema (SC3); `autonomous: false` (INGEST-01/02/04)
 
 ### Phase 31: Doc Ingest + Idempotent Re-ingest
 
