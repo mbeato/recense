@@ -540,8 +540,20 @@ async function main(): Promise<void> {
   };
 
   if (args.dryRun) {
-    // Dry-run: run survey, print counts, write nothing
+    // Dry-run: run doc walk + survey, print counts, write nothing
     const dummyPipeline = { recordEvent: () => { /* never called in dryRun */ } };
+
+    // Emit doc episodes first (deterministic, cheap) — dryRun=true → no writes
+    const docResult = await emitDocEpisodes({
+      dir: args.dir,
+      scope,
+      cwd: resolveSurveyCwd({ dir: args.dir, scope: args.scope }),
+      pipeline: dummyPipeline as unknown as IngestionPipeline,
+      dryRun: true,
+    });
+    process.stdout.write(`  docs: ${docResult.episodeCount} would-be episodes from ${docResult.docCount} docs\n`);
+    fileLog(`dry-run: docs docCount=${docResult.docCount} episodeCount=${docResult.episodeCount}`);
+
     const result = await runSurveyAndFeed({
       dir: args.dir,
       scope,
@@ -572,6 +584,17 @@ async function main(): Promise<void> {
       initSchema(db);
       const episodes = new EpisodicStore(db, realClock, config);
       const pipeline = new IngestionPipeline(new AllocationGate(config), episodes);
+
+      // Emit doc episodes BEFORE the survey (docs are deterministic; survey may fail)
+      const docResult = await emitDocEpisodes({
+        dir: args.dir,
+        scope,
+        cwd: resolveSurveyCwd({ dir: args.dir, scope: args.scope }),
+        pipeline,
+        dryRun: false,
+      });
+      process.stdout.write(`  docs: ${docResult.episodeCount} doc episodes from ${docResult.docCount} docs\n`);
+      fileLog(`consolidate: docs docCount=${docResult.docCount} episodeCount=${docResult.episodeCount}`);
 
       const result = await runSurveyAndFeed({
         dir: args.dir,
@@ -610,6 +633,17 @@ async function main(): Promise<void> {
       initSchema(db);
       const episodes = new EpisodicStore(db, realClock, config);
       const pipeline = new IngestionPipeline(new AllocationGate(config), episodes);
+
+      // Emit doc episodes BEFORE the survey (docs are deterministic; survey may fail)
+      const docResult = await emitDocEpisodes({
+        dir: args.dir,
+        scope,
+        cwd: resolveSurveyCwd({ dir: args.dir, scope: args.scope }),
+        pipeline,
+        dryRun: false,
+      });
+      process.stdout.write(`  docs: ${docResult.episodeCount} doc episodes from ${docResult.docCount} docs\n`);
+      fileLog(`default: docs docCount=${docResult.docCount} episodeCount=${docResult.episodeCount}`);
 
       const result = await runSurveyAndFeed({
         dir: args.dir,
