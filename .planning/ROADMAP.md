@@ -326,7 +326,11 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 **Correctness guards (project-critical):** never let inferred output strengthen a fact (self-confirmation); graph is source of truth; an LLM judge call is acceptable here (explicit user write, NOT the hot online hook path). Reconsolidation is eval-backed — verification must confirm in-place update vs. dup-accumulation.
 
-**Plans:** 0 plans
+**Plans:** 2 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 33 to break down)
+**Wave 1**
+- [ ] 33-01-PLAN.md — `recense remember` engine + CLI: verbatim curated store + synchronous mini-pass reconsolidation (embed → top-k → judge → D-04 force-reconcile, else insert) + D-03 high-resistance seed + scope-stamp + lock + dispatcher + unit tests (REMEMBER-01, REMEMBER-02)
+
+**Wave 2** *(depends on 33-01)*
+- [ ] 33-02-PLAN.md — native-memory cutover: D-06 global CLAUDE.md directive + D-07 settings.json kill-switch investigation + founder-gated one-time verbatim migration of the 12 `.md` files (write → D-08 value_hash verify → D-09 archive); `autonomous: false` (REMEMBER-03)
