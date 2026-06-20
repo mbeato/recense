@@ -36,6 +36,7 @@ import type { Clock } from '../lib/clock';
 import type { SemanticStore } from '../db/semantic-store';
 import { cosineSimF32 } from '../retrieval/topk';
 import { newId } from '../lib/hash';
+import { GLOBAL_SCOPE } from '../lib/scope';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -132,6 +133,8 @@ export class CorpusPromoter {
   private readonly stmtWipeDocContainment: Database.Statement;
   private readonly stmtWipeDocReference: Database.Statement;
   private readonly stmtFtsDelete: Database.Statement;
+  /** For promoteScope: find schemas that have at least one gated member with node_scope = S */
+  private readonly stmtGetSchemasInScope: Database.Statement;
 
   constructor(
     db: Database.Database,
@@ -191,6 +194,18 @@ export class CorpusPromoter {
 
     // FTS suppression for new doc stubs (mirrors doc-writer.ts pattern)
     this.stmtFtsDelete = db.prepare('DELETE FROM node_fts WHERE node_id = ?');
+
+    // promoteScope: schemas where at least one D-37-gated abstracts member has node_scope = ?
+    // Same D-37 firewall: tombstoned=0, origin!='inferred', type IN ('fact','entity')
+    this.stmtGetSchemasInScope = db.prepare(
+      "SELECT DISTINCT e.src as schemaId FROM edge e " +
+      "JOIN node m ON m.id = e.dst " +
+      "JOIN node_scope ns ON ns.node_id = m.id " +
+      "WHERE e.kind = 'abstracts' " +
+      "AND m.type IN ('fact','entity') AND m.tombstoned = 0 AND m.origin != 'inferred' " +
+      "AND ns.scope = ? " +
+      "AND EXISTS (SELECT 1 FROM node s WHERE s.id = e.src AND s.type = 'schema' AND s.tombstoned = 0)"
+    );
   }
 
   // ── Public API ───────────────────────────────────────────────────────────
@@ -511,6 +526,184 @@ export class CorpusPromoter {
       containment: containmentCandidates.length,
       reference: referencePairs.length,
       tombstoned: demotedDocIds.length,
+    };
+  }
+
+  /**
+   * Scope-anchored always-promote bypass (D-04, Plan 32-02).
+   *
+   * For a given project scope S:
+   *  - Identifies all schemas whose gated abstracts members (tombstoned=0, origin!='inferred',
+   *    type IN ('fact','entity')) carry node_scope = S.
+   *  - Force-promotes those schemas' chapter-doc stubs AND a landing-doc stub (slug = S),
+   *    bypassing the mass/noise gate STRICTLY for scope S.
+   *  - Writes doc_containment edges from the landing doc (parent) to each chapter doc (child).
+   *
+   * HARD BOUNDS (D-04):
+   *  - GLOBAL_SCOPE / empty string → early return with empty result (never force-promote global).
+   *  - Global and conversation-induced schemas (scoped to 'global') are NOT included.
+   *  - Does NOT modify promote() or its mass-hysteresis gate.
+   *  - Does NOT wipe the global doc_containment cache (organic promote() owns wipe-and-rebuild).
+   *    Instead, landing→chapter edges are re-written on every promoteScope call (idempotent).
+   *
+   * D-43 self-confirmation guard: writes ONLY type='doc' nodes + doc→doc edges.
+   * T-02-ASYNC: Phase B is a single this.db.transaction().immediate() with NO await inside.
+   * Idempotent: stubs are looked up by slug before creation; existing stubs are reused.
+   *
+   * @param scope  The project scope string (e.g. 'usage', 'brain-memory').
+   * @param opts   dryRun: return counts without writing (default false).
+   */
+  async promoteScope(scope: string, opts: { dryRun?: boolean } = {}): Promise<PromoteResult> {
+    const { dryRun = false } = opts;
+
+    // D-04 bound: never force-promote GLOBAL_SCOPE or empty scope
+    if (!scope || scope === GLOBAL_SCOPE) {
+      return { promoted: [], containment: 0, reference: 0, tombstoned: 0 };
+    }
+
+    const now = this.clock.nowMs();
+
+    // ── Phase A (read-only): identify S's induced schemas ──────────────────
+    // A schema is in scope S iff at least one of its D-37-gated abstracts members
+    // (tombstoned=0, origin!='inferred', type IN ('fact','entity')) has node_scope = S.
+    const scopedSchemaRows = this.stmtGetSchemasInScope.all(scope) as { schemaId: string }[];
+    const scopedSchemaIds = scopedSchemaRows.map(r => r.schemaId);
+
+    // Look up existing chapter-doc stubs for each in-scope schema
+    const existingChapterDocIds = new Map<string, string>(); // schemaId → docId
+    for (const schemaId of scopedSchemaIds) {
+      const existing = this.stmtGetLiveDocForSlug.get(schemaId) as { id: string } | undefined;
+      if (existing) {
+        existingChapterDocIds.set(schemaId, existing.id);
+      }
+    }
+
+    // Look up existing landing-doc stub (slug = scope string)
+    const existingLandingRow = this.stmtGetLiveDocForSlug.get(scope) as { id: string } | undefined;
+    const existingLandingDocId = existingLandingRow?.id ?? null;
+
+    // promoted list = in-scope schema ids + the landing slug
+    const promotedIds = [...scopedSchemaIds, scope];
+
+    if (dryRun) {
+      return {
+        promoted: promotedIds,
+        containment: scopedSchemaIds.length, // one landing→chapter edge per in-scope schema
+        reference: 0,
+        tombstoned: 0,
+      };
+    }
+
+    // ── Phase B: atomic write (single db.transaction().immediate()) ──────────
+    // T-02-ASYNC: NO await inside — all async work is done in Phase A above.
+
+    const chapterDocIds = new Map<string, string>(); // schemaId → docId (for containment edges)
+    let landingDocId: string;
+
+    this.db.transaction(() => {
+      // 1. Create chapter-doc stubs for each in-scope schema that lacks one.
+      //    MIRROR the existing eager-stub block exactly (lines 419-461 of promote()).
+      //    D-03 / Pitfall 6: writes ONLY type='doc' nodes, never touches source schemas.
+      for (const schemaId of scopedSchemaIds) {
+        const existingId = existingChapterDocIds.get(schemaId);
+        if (existingId) {
+          // Reuse existing stub (idempotent)
+          chapterDocIds.set(schemaId, existingId);
+          continue;
+        }
+
+        const docId = newId();
+
+        this.store.upsertNode({
+          id: docId,
+          type: 'doc',
+          value: '',          // empty stub — prose filled by generateCorpusDocs
+          origin: 'inferred',
+          s: 0,               // lifecycle-exempt: no Hebbian contribution
+          c: 1.0,
+          last_access: now,
+        });
+
+        this.stmtFtsDelete.run(docId);
+
+        // node_doc: slug = schemaId (Pitfall 4 — schema chapters slug by schemaId, not label)
+        this.store.upsertNodeDoc({
+          node_id: docId,
+          slug: schemaId,
+          generated_at: now,
+          updated_at: now,
+        });
+
+        // node_scope: scope = schemaId (chapter doc provenance = its schema)
+        this.store.upsertNodeScope({
+          node_id: docId,
+          scope: schemaId,
+          updated_at: now,
+        });
+
+        chapterDocIds.set(schemaId, docId);
+      }
+
+      // 2. Create (or reuse) landing-doc stub (slug = scope string, NOT a schemaId).
+      //    Pitfall 4 distinction: the landing doc slug = the project scope string ('usage', etc.),
+      //    unlike chapter docs whose slug = schemaId.
+      if (existingLandingDocId) {
+        landingDocId = existingLandingDocId;
+      } else {
+        const newLandingId = newId();
+
+        this.store.upsertNode({
+          id: newLandingId,
+          type: 'doc',
+          value: '',          // empty stub
+          origin: 'inferred',
+          s: 0,
+          c: 1.0,
+          last_access: now,
+        });
+
+        this.stmtFtsDelete.run(newLandingId);
+
+        // node_doc: slug = scope string (the project scope is the landing doc's identifier)
+        this.store.upsertNodeDoc({
+          node_id: newLandingId,
+          slug: scope,
+          generated_at: now,
+          updated_at: now,
+        });
+
+        // node_scope: scope = scope string
+        this.store.upsertNodeScope({
+          node_id: newLandingId,
+          scope: scope,
+          updated_at: now,
+        });
+
+        landingDocId = newLandingId;
+      }
+
+      // 3. Write landing→chapter doc_containment edges.
+      //    D-03 / Pitfall 6: src = landing doc id, dst = chapter doc id (both type='doc').
+      //    promoteScope is ADDITIVE — it does NOT wipe the global doc_containment cache
+      //    (organic promote() owns wipe-and-rebuild). We re-add these edges on every call
+      //    so they survive the next organic promote() wipe-and-rebuild (idempotent, w=1.0).
+      for (const [, chapterDocId] of chapterDocIds) {
+        this.store.upsertEdge({
+          src: landingDocId,        // parent: landing doc
+          dst: chapterDocId,        // child: chapter doc
+          rel: 'doc_containment',
+          kind: 'doc_containment',
+          w: 1.0,                   // deterministic onboarding spine, not a cosine relation
+          last_access: now,
+        });
+      }
+    }).immediate();
+
+    return {
+      promoted: promotedIds,
+      containment: chapterDocIds.size, // number of landing→chapter edges written
+      reference: 0,
+      tombstoned: 0,
     };
   }
 }
