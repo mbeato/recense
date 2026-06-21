@@ -175,14 +175,16 @@ export function initCorpus(ctx) {
       // doc_reference   = faint dashed undirected cross-link (no arrow).
       // doc_link        = faint mauve solid (existing treatment, no arrow, no dash).
       .linkColor(link => {
-        // Sidebar-row highlight: amber the links whose BOTH endpoints are in the highlight set
-        // (the hovered doc + its neighbours) so the related cluster reads as one unit.
-        if (highlightSet.size) {
+        const isContain = link.kind === 'doc_containment';
+        // Sidebar-row highlight: amber only the CONTAINMENT links whose both endpoints are in
+        // the highlight set — i.e. the spine of the hovered node's subtree. Loose doc_link /
+        // doc_reference edges stay muted even if both ends happen to be highlighted.
+        if (highlightSet.size && isContain) {
           const s = typeof link.source === 'object' ? link.source.id : link.source;
           const t = typeof link.target === 'object' ? link.target.id : link.target;
           if (highlightSet.has(s) && highlightSet.has(t)) return HOVER_NODE;
         }
-        return link.kind === 'doc_containment' ? CONTAINMENT_COLOR : LINK_REST;
+        return isContain ? CONTAINMENT_COLOR : LINK_REST;
       })
       .linkWidth(link => link.kind === 'doc_containment' ? 2 : 1)
       .linkDirectionalArrowLength(link => link.kind === 'doc_containment' ? 4 : 0)
@@ -424,8 +426,10 @@ export function initCorpus(ctx) {
     return transition.isCorpus();
   };
   // highlightCorpusNode(slug|null): amber-highlight the doc node whose slug matches AND its
-  // direct graph neighbours (so hovering a project lights up its related/sub-schema docs, not
-  // just the single node — founder direction), plus the links between them. Clears on null.
+  // CONTAINMENT SUBTREE — every doc it contains, recursively, down the doc_containment spine
+  // (source=parent → target=child). doc_link / doc_reference neighbours stay muted (founder
+  // direction: highlight the hierarchy a node contains, not every loose reference). A leaf
+  // (e.g. the tonos project doc, which contains nothing) highlights just itself. Clears on null.
   // Non-fatal if the graph isn't built yet. Re-asserting the nodeCanvasObject accessor flags
   // force-graph to repaint the (otherwise static, pinned) canvas without moving the camera.
   ctx.highlightCorpusNode = function highlightCorpusNode(slug) {
@@ -437,12 +441,17 @@ export function initCorpus(ctx) {
       if (rootId) {
         next.add(rootId);
         try {
-          const gd = CorpusGraph.graphData && CorpusGraph.graphData();
-          for (const link of ((gd && gd.links) || [])) {
-            const s = typeof link.source === 'object' ? link.source.id : link.source;
-            const t = typeof link.target === 'object' ? link.target.id : link.target;
-            if (s === rootId) next.add(t);
-            else if (t === rootId) next.add(s);
+          const links = ((CorpusGraph.graphData && CorpusGraph.graphData()) || {}).links || [];
+          // BFS down the containment spine; the visited guard (next.has) also breaks any cycle.
+          const queue = [rootId];
+          while (queue.length) {
+            const cur = queue.shift();
+            for (const link of links) {
+              if (link.kind !== 'doc_containment') continue;
+              const s = typeof link.source === 'object' ? link.source.id : link.source;
+              const t = typeof link.target === 'object' ? link.target.id : link.target;
+              if (s === cur && !next.has(t)) { next.add(t); queue.push(t); }
+            }
           }
         } catch (_) { /* ignore — fall back to single-node highlight */ }
       }
