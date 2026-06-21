@@ -59,11 +59,13 @@ export function rrfFuse(
   lists: Array<Array<{ id: string }>>,
   k = 60,
   topK = 10,
+  weights?: number[],
 ): Array<{ id: string; rrfScore: number }> {
   const scores = new Map<string, number>();
-  for (const list of lists) {
-    list.forEach((hit, rank) => {
-      scores.set(hit.id, (scores.get(hit.id) ?? 0) + 1 / (k + rank + 1));
+  for (let li = 0; li < lists.length; li++) {
+    const w = weights?.[li] ?? 1;
+    lists[li]!.forEach((hit, rank) => {
+      scores.set(hit.id, (scores.get(hit.id) ?? 0) + w / (k + rank + 1));
     });
   }
   return [...scores.entries()]

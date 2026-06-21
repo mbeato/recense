@@ -126,6 +126,34 @@ describe('FTS retrieval', () => {
 
   // ── 2. rrfFuse: rank ordering ─────────────────────────────────────────────
 
+  describe('rrfFuse weighted fusion (Phase 35 RANK-01)', () => {
+    it('T1 w=0 regression: rrfFuse with weights=[1,1,0] and empty third list equals unweighted call', () => {
+      const listA = [{ id: 'a' }, { id: 'b' }];
+      const listB = [{ id: 'b' }, { id: 'c' }];
+      const noWeights = rrfFuse([listA, listB], 60, 10);
+      const withZeroWeight = rrfFuse([listA, listB, []], 60, 10, [1, 1, 0]);
+      expect(withZeroWeight.map(r => r.id)).toEqual(noWeights.map(r => r.id));
+    });
+
+    it('T2 weighted boost: strength list (w=2.0) re-orders high_strength to rank 0', () => {
+      // cosineList puts low_strength first (rank 0), high_strength second (rank 1)
+      const cosineList = [{ id: 'low_strength' }, { id: 'high_strength' }];
+      const bm25List: Array<{ id: string }> = [];
+      // strengthList puts high_strength first (rank 0), low_strength second (rank 1)
+      const strengthList = [{ id: 'high_strength' }, { id: 'low_strength' }];
+
+      const withoutStrength = rrfFuse([cosineList, bm25List], 60, 10);
+      // w=2.0: strength contributes 2·1/(k+rank+1); enough to lift high_strength above low_strength.
+      // Math: high_strength = 1/62 + 2/61 ≈ 0.04886; low_strength = 1/61 + 2/62 ≈ 0.04797 → high wins.
+      const withStrength = rrfFuse([cosineList, bm25List, strengthList], 60, 10, [1, 1, 2.0]);
+
+      // Without strength: cosine order wins → low_strength at rank 0
+      expect(withoutStrength[0]?.id).toBe('low_strength');
+      // With strength w=2.0: high_strength's boost from rank-0 in strengthList surpasses low_strength
+      expect(withStrength[0]?.id).toBe('high_strength');
+    });
+  });
+
   describe('rrfFuse rank ordering', () => {
     it('ranks a doc appearing high in both lists above a doc in only one', () => {
       // both: appears at rank 0 in list A, rank 0 in list B
