@@ -473,9 +473,17 @@ Plans:
 **Plans:** 4 plans (3 waves)
 
 Plans:
+**Wave 1**
+
 - [ ] 38-01-PLAN.md — Model/DDL foundation: type='insight' + derived_from CHECK migrations (schema v13), node_insight sidecar, eviction child-wipe, config knobs
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 38-02-PLAN.md — InsightReflector deriver: judge-tier synthesis + selection/staleness gate + single-writer write, wired into Phase C; self-confirmation sentinel
 - [ ] 38-03-PLAN.md — Recall surfacing: augment-with-fallback insight-in-place-of-neighborhood, freshness-gated, LLM-free, behind insightSurfacingEnabled dark default
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 38-04-PLAN.md — Eval: instrument the KU replay harness with compose-token measurement (off vs on), prove the no-regression token win + founder activation decision
 
 ### Phase 39: Reader Wiki-Parity — Browsable Index + Surfaced Backlinks
