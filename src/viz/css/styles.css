@@ -799,3 +799,25 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
 #corpus-graph.open {
   display: block;
 }
+
+/* ── Corpus status overlay — loading / empty / error (C2, 34-02) ─────────────
+   #corpus-graph is position:fixed;inset:0 — this establishes the containing block
+   for position:absolute children. Palette: muted mauve/slate (no amber). */
+.corpus-status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  color: #6b5f73;
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.8;
+}
+.corpus-status code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #8b7090;
+  font-style: normal;
+}

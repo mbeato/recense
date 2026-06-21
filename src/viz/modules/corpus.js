@@ -73,12 +73,18 @@ export function initCorpus(ctx) {
     const ForceGraph = window.ForceGraph;
     if (typeof ForceGraph !== 'function') return null;
 
+    // Loading indicator — shown immediately while fetch + graph init runs.
+    const statusEl = document.createElement('div');
+    statusEl.className = 'corpus-status';
+    statusEl.textContent = 'Loading corpus…';
+    container.appendChild(statusEl);
+
     let data = { nodes: [], links: [] };
     try {
       const res = await fetch('/graph?type=doc');
       if (res.ok) data = await res.json();
     } catch (_) {
-      // Non-fatal: an empty corpus graph still renders (just no nodes).
+      if (statusEl) statusEl.textContent = 'Failed to load corpus';
     }
 
     // Build the nodeId → slug map (slug is included in /graph?type=doc node records
@@ -92,6 +98,15 @@ export function initCorpus(ctx) {
       // so without this the node renders as a UUID. Click resolution still uses nodeSlugs.
       nodeLabels[node.id] = node.label || node.slug || node.id;
     }
+
+    // Empty state: no docs in corpus yet.
+    if ((data.nodes || []).length === 0) {
+      statusEl.innerHTML =
+        'No docs yet<br><code>recense generate-doc &lt;slug&gt;</code>';
+      return null; // bail — no graph to build; statusEl stays as the empty state
+    }
+    // Data present: remove loading overlay before first graph paint.
+    statusEl.remove();
 
     const G = ForceGraph()(container)
       .backgroundColor(BG)
@@ -144,6 +159,15 @@ export function initCorpus(ctx) {
       .onNodeClick((node) => {
         if (node && node.id) openDocReader(node.id);
       });
+
+    // C2: tune force params for compact corpus framing (net-zero deps — tuning internal
+    // d3-force references held by the force-graph instance, no import needed).
+    try {
+      const charge = G.d3Force('charge');
+      if (charge && typeof charge.strength === 'function') charge.strength(-80);
+      const link = G.d3Force('link');
+      if (link && typeof link.distance === 'function') link.distance(50);
+    } catch (_) { /* non-fatal if force-graph doesn't expose d3Force */ }
 
     return G;
   }
