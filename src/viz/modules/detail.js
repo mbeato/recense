@@ -217,6 +217,12 @@ export function initDetail(ctx) {
     // Title — textContent only
     titleEl.textContent = (node.value || '').slice(0, 120);
 
+    // WR-01 (39 review): remove any prior atom "Cited by" backlinks section unconditionally,
+    // BEFORE the fetchAtomBacklinks gate/early-returns — otherwise a previous fact's citing-docs
+    // list lingers on a doc/schema selection or a zero-citation fact, mis-attributing citations.
+    const priorBacklinks = detailEl.querySelector('.backlinks-section');
+    if (priorBacklinks) priorBacklinks.remove();
+
     // Metadata rows — createElement for every field (no template literals with node data)
     metaEl.innerHTML = ''; // safe: clears own DOM structure, not user data
     const fields = [

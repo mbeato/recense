@@ -240,15 +240,18 @@ export function startVizServer(dbPath: string, port: number): http.Server {
   // kinds (derived_from, abstracts, schema membership) are excluded from browsing surfaces.
   // src must be a live (tombstoned=0) doc node; dangling edges from tombstoned src excluded.
   // JOIN node_doc + LEFT JOIN schema node mirrors stmtDocNodes COALESCE label resolution.
+  // WR-04 (39 review): GROUP BY e.src so a source doc linking via >1 wiki edge kind renders
+  // ONCE (slug/label are functionally dependent on e.src; MIN(e.kind) picks one representative).
   const stmtDocBacklinks = db.prepare(`
     SELECT e.src AS srcId, nd.slug,
            COALESCE(NULLIF(sch.value, ''), nd.slug) AS label,
-           e.kind
+           MIN(e.kind) AS kind
     FROM edge e
     JOIN node src_n ON src_n.id = e.src AND src_n.type = 'doc' AND src_n.tombstoned = 0
     JOIN node_doc nd ON nd.node_id = e.src
     LEFT JOIN node sch ON sch.id = nd.slug AND sch.type = 'schema' AND sch.tombstoned = 0
     WHERE e.dst = ? AND e.kind IN ('doc_link', 'doc_reference', 'doc_containment')
+    GROUP BY e.src
   `);
 
   // Compile /doc/backlinks?fact= reverse-cites statement once (39-01, D-05 atom view).
@@ -262,6 +265,7 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     JOIN node_doc nd ON nd.node_id = e.src
     LEFT JOIN node sch ON sch.id = nd.slug AND sch.type = 'schema' AND sch.tombstoned = 0
     WHERE e.dst = ? AND e.kind = 'cites'
+    GROUP BY e.src
   `);
 
   // Compile /search BM25 prepared statement once (T-19-01 — query passes through
@@ -682,6 +686,12 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     // that cite the given fact via kind='cites'. Both paths are GET-only, read-only (WIKI-03).
     // T-39-01: slug sanitized; fact param validated to id charset; no new Database() (T-39-03).
     if (url === '/doc/backlinks') {
+      // WR-02 (39 review): enforce the documented GET-only contract (mirrors /doc/generate's guard).
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'content-type': 'text/plain' });
+        res.end('method not allowed');
+        return;
+      }
       const params = new URLSearchParams(req.url?.split('?')[1] ?? '');
       const rawFact = params.get('fact') ?? '';
 
@@ -751,6 +761,12 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     // otherwise it is project-scoped. Labels come from the COALESCE column (D-04).
     // GET-only, read-only, no params, no write/LLM — live projection (D-01/D-02/WIKI-03).
     if (url === '/index') {
+      // WR-02 (39 review): enforce the documented GET-only contract.
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'content-type': 'text/plain' });
+        res.end('method not allowed');
+        return;
+      }
       try {
         const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         const rows = stmtDocNodes.all() as Array<{
@@ -803,8 +819,10 @@ export function startVizServer(dbPath: string, port: number): http.Server {
           (typeById.get(root) === 'project' ? projects : schemas).push(entry);
         }
         // Sort each group by label for stable ordering (index.js reorders into the tree).
-        projects.sort((a, b) => a.label.localeCompare(b.label));
-        schemas.sort((a, b) => a.label.localeCompare(b.label));
+        // WR-03 (39 review): null-safe comparator (matches client) — a NULL label can't 500 /index.
+        const byLabel = (a: Entry, b: Entry) => (a.label || a.slug || '').localeCompare(b.label || b.slug || '');
+        projects.sort(byLabel);
+        schemas.sort(byLabel);
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ projects, schemas }));
       } catch (err) {

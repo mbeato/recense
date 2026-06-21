@@ -181,6 +181,11 @@ beforeEach(async () => {
 
   // Edge: B → A (doc_link) — this is the backlink we test for
   store.upsertEdge({ src: DOC_B_ID, dst: DOC_A_ID, rel: 'links', kind: 'doc_link', w: 1.0, last_access: T0 });
+  // Edges: C → A via TWO wiki edge kinds (WR-04 dedup). C's OWN incoming set stays empty (these
+  // are outgoing from C), so the "no incoming" test is unaffected; /doc/backlinks?slug=A must
+  // return C exactly once despite the two edges (GROUP BY e.src).
+  store.upsertEdge({ src: DOC_C_ID, dst: DOC_A_ID, rel: 'links', kind: 'doc_link', w: 1.0, last_access: T0 });
+  store.upsertEdge({ src: DOC_C_ID, dst: DOC_A_ID, rel: 'contains', kind: 'doc_containment', w: 1.0, last_access: T0 });
 
   // Edge: A → F (cites) — for the atom reverse-cites test
   store.upsertEdge({ src: DOC_A_ID, dst: FACT_ID, rel: 'cites', kind: 'cites', w: 1.0, last_access: T0 });
@@ -214,6 +219,15 @@ describe('GET /doc/backlinks?slug= (doc view)', () => {
     expect(entry).toBeDefined();
     expect(entry!.kind).toBe('doc_link');
     expect(entry!.slug).toBe(DOC_B_SLUG);
+  });
+
+  it('de-duplicates a source doc that links via multiple wiki edge kinds (WR-04)', async () => {
+    // C → A exists as BOTH doc_link AND doc_containment; C must appear exactly once.
+    const r = await makeRequest(port, `/doc/backlinks?slug=${DOC_A_SLUG}`);
+    expect(r.statusCode).toBe(200);
+    const json = JSON.parse(r.body) as { backlinks: Array<{ srcId: string }> };
+    const cEntries = json.backlinks.filter(b => b.srcId === DOC_C_ID);
+    expect(cEntries).toHaveLength(1);
   });
 
   it('returns 200 with backlinks:[] for a doc with no incoming wiki-meaningful edges', async () => {
