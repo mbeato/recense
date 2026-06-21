@@ -23,6 +23,13 @@
  * Obsidian-style legibility independently of the 3,500-node density anchor.
  */
 
+// ── Button icon SVGs (inline — net-zero deps, no icon lib) ──────────────────────────
+// BOOK icon: shown when brain is active (button = "go to corpus").
+const ICON_BOOK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`;
+// BRAIN icon: shown when corpus is active (button = "go back to brain").
+// Simple stylised brain outline — two lobes separated by a centre indent.
+const ICON_BRAIN = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2C7 2 5 4 5 6.5c0 1-.4 1.9-1 2.5C3.1 10 2 11.4 2 13c0 2.2 1.8 4 4 4h1"/><path d="M14.5 2C17 2 19 4 19 6.5c0 1 .4 1.9 1 2.5.9 1 2 2.4 2 4 0 2.2-1.8 4-4 4h-1"/><path d="M12 22v-5"/><path d="M9 17h6"/><path d="M12 2v4"/></svg>`;
+
 // Muted palette (founder-locked) — kept local so corpus.js has no dependency on the
 // brain's THREE-oriented numeric color constants. Hex strings for canvas fillStyle.
 const REST_NODE = '#9c7080';    // dusty rose — doc nodes at rest (muted)
@@ -238,9 +245,10 @@ export function initCorpus(ctx) {
     if (searchWrap) searchWrap.style.display = 'none';
     sizeCorpusGraph();
     corpusActive = true;
-    // C1: icon button — state via aria-label/title (no textContent).
+    // C1: icon button — aria-label/title + glyph swap (corpus active → show brain icon).
     corpusBtn.setAttribute('aria-label', 'Show brain');
     corpusBtn.setAttribute('title', 'Show brain');
+    corpusBtn.innerHTML = ICON_BRAIN;
     corpusBtn.classList.add('corpus-active');
     // Fallback fit on a fixed timeout in case onEngineStop already fired before the
     // corpus was shown (e.g. a tiny graph settles instantly), or never fires.
@@ -256,9 +264,10 @@ export function initCorpus(ctx) {
     if (topicWrap) topicWrap.style.display = '';
     if (searchWrap) searchWrap.style.display = '';
     corpusActive = false;
-    // C1: icon button — state via aria-label/title (no textContent).
+    // C1: icon button — aria-label/title + glyph swap (brain active → restore book icon).
     corpusBtn.setAttribute('aria-label', 'Corpus graph');
     corpusBtn.setAttribute('title', 'Corpus');
+    corpusBtn.innerHTML = ICON_BOOK;
     corpusBtn.classList.remove('corpus-active');
   }
 
@@ -285,9 +294,10 @@ export function initCorpus(ctx) {
     if (topicWrap) topicWrap.style.display = 'none';
     if (searchWrap) searchWrap.style.display = 'none';
     corpusActive = true;
-    // C1: icon button — state via aria-label/title (no textContent).
+    // C1: icon button — aria-label/title + glyph swap (corpus active → show brain icon).
     corpusBtn.setAttribute('aria-label', 'Show brain');
     corpusBtn.setAttribute('title', 'Show brain');
+    corpusBtn.innerHTML = ICON_BRAIN;
     corpusBtn.classList.add('corpus-active');
   };
 
