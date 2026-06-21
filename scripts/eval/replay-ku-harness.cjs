@@ -17,6 +17,19 @@
  *   node scripts/eval/replay-ku-harness.cjs --sweep-weights 0,0.25,0.5,1.0,2.0
  *   Writes scripts/eval/results/35-sweep-w<w>.json for each weight (same schema as single-weight run).
  *
+ * Insight mode (Phase 38-04, REFLECT-02): measure compose-token reduction from insight surfacing.
+ *   Consolidation runs ONCE per case (same graph, same judge-engagement). Then evaluation runs
+ *   TWICE: insight-OFF (baseline, config.insightSurfacingEnabled=false) and insight-ON.
+ *   Insight-ON checks for a live, non-stale insight anchored to the resolved schema node and
+ *   uses it as the compose payload instead of the raw K-member neighborhood.
+ *   Records per-case composeTokens (chars/4 proxy matching EVAL-03 convention), and aggregate
+ *   composeTokensOff / composeTokensOn / composeTokenReductionPct in the result meta.
+ *   Sets meta.regression=true if insight-ON KU score falls below insight-OFF by more than
+ *   TOLERANCE_BAND_PTS (2 pts) — the Phase-35 D-07 small-tolerance no-regression band.
+ *
+ *   node scripts/eval/replay-ku-harness.cjs --insight-mode --dry-run --out /tmp/replay-38-dry.json
+ *   npm run build && OPENAI_API_KEY=... node scripts/eval/replay-ku-harness.cjs --insight-mode
+ *
  * Load-bearing output: judge-engagement (tombstone count + contradict-verdict count +
  * duplicate-mint count) so 26-07's RETR-02 gate is measurable.
  * A KU-score bump alone is insufficient — belief-correction must be confirmed via the
@@ -56,6 +69,94 @@ const sweepWeightsArg = arg('--sweep-weights', null);
 const SWEEP_WEIGHTS = sweepWeightsArg
   ? sweepWeightsArg.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n))
   : null;
+
+// --insight-mode: Phase 38-04, REFLECT-02 compose-token measurement.
+// When set, each case is evaluated TWICE: insight-OFF (baseline, insightSurfacingEnabled=false)
+// and insight-ON (insightSurfacingEnabled=true). The insight-ON path checks the consolidated
+// scratch DB for a live non-stale insight anchored to the resolved schema and uses it as
+// the compose payload instead of the raw K-member neighborhood (the compose-token win).
+// Aggregate composeTokensOff / composeTokensOn / composeTokenReductionPct written to meta.
+// regression flag set if insight-ON KU score < insight-OFF by more than TOLERANCE_BAND_PTS.
+// Works with --dry-run (zero API calls, placeholder token counts).
+const INSIGHT_MODE = process.argv.includes('--insight-mode');
+
+// Phase-35 D-07 small-tolerance no-regression band (percentage points).
+// Insight-ON KU score may dip at most this many pts below insight-OFF before regression=true.
+const TOLERANCE_BAND_PTS = 2;
+
+// ---- compose-token count helper (REFLECT-02 / T-38-10) ----------------------
+// Uses chars/4 proxy — same convention as EVAL-03 injection-efficiency harness.
+// This is NOT a real tokenizer; it is consistent with the session-start-cli char cap proxy.
+// No-inflated-metrics guard (CLAUDE.md): all counts are measured from the actual payload
+// assembled at evaluation time, recorded with meta (embedder/cache/date/commit).
+function countComposeTokens(payloadText) {
+  return Math.round(payloadText.length / 4);
+}
+
+// ---- insight surfacing helper (REFLECT-02) -----------------------------------
+// Given an already-consolidated scratch DB and the top hit from retrieveRanked,
+// resolves the schema node (Case A: hit IS a schema; Case B: walk incoming 'abstracts'
+// edges) then looks for a live, non-stale insight via the reverse 'derived_from' in-edge
+// walk. Mirrors RecallEngine.recall() L306-397 logic but as a pure read on the scratch DB.
+// Returns the insight text string if a live non-stale insight is found, else null.
+//
+// T-14-DB: reads only the scratch DB; never touches the live DB path.
+// T-38-08: pure read — no upsertNode/upsertEdge/tombstone/strengthen calls.
+function findInsightForTopHit(db, store, topHit) {
+  if (!topHit) return null;
+
+  // Resolve schema node (Case A: topHit is a schema; Case B: reverse abstracts walk)
+  const topNode = store.getNode(topHit.id);
+  if (!topNode || topNode.tombstoned === 1) return null;
+
+  let schemaId = null;
+  if (topNode.type === 'schema') {
+    schemaId = topNode.id;
+  } else {
+    // Case B: walk incoming 'abstracts' edges to find the schema that abstracts this member
+    const inEdges = store.getInEdges(topHit.id);
+    for (const inEdge of inEdges) {
+      if (inEdge.kind !== 'abstracts') continue;
+      const srcNode = store.getNode(inEdge.src);
+      if (!srcNode || srcNode.tombstoned === 1 || srcNode.type !== 'schema') continue;
+      schemaId = srcNode.id;
+      break;
+    }
+  }
+
+  if (!schemaId) return null;
+
+  // Walk INCOMING 'derived_from' edges on the schema to find a live insight
+  const schemaInEdges = store.getInEdges(schemaId);
+  let liveInsightId = null;
+  for (const inEdge of schemaInEdges) {
+    if (inEdge.kind !== 'derived_from') continue;
+    const candidate = store.getNode(inEdge.src);
+    if (!candidate || candidate.tombstoned === 1 || candidate.type !== 'insight') continue;
+    liveInsightId = candidate.id;
+    break;
+  }
+
+  if (!liveInsightId) return null;
+
+  // FRESHNESS GATE: check node_insight sidecar for staleness
+  // Mirrors RecallEngine.recall() L321-350 freshness check
+  const insightMeta = store.getNodeInsight(liveInsightId);
+  if (!insightMeta) return null; // no sidecar → treat as stale (conservative)
+
+  const insightOutEdges = store.getOutEdges(liveInsightId);
+  for (const outEdge of insightOutEdges) {
+    if (outEdge.kind !== 'derived_from') continue;
+    if (outEdge.dst === schemaId) continue; // skip the anchor schema edge itself
+    const depNode = store.getNode(outEdge.dst);
+    if (!depNode || depNode.tombstoned === 1) return null; // stale
+    if (depNode.last_access > insightMeta.generated_at) return null; // stale
+  }
+
+  // Live, non-stale insight found — return its text value
+  const insightNode = store.getNode(liveInsightId);
+  return insightNode ? insightNode.value : null;
+}
 
 // ---- compiled engine modules (require npm run build first) ------------------
 // Failing requires here mean `npm run build` has not been run yet.
@@ -273,15 +374,27 @@ async function consolidateCase(kuCase, claims, embedder, anthropicClient) {
 }
 
 /**
- * Evaluate one (case, weight) pair over an already-consolidated scratch DB.
+ * Evaluate one (case, weight, insightSurfacingEnabled) triple over an already-consolidated scratch DB.
  * Builds a fresh RetrievalEngine with the given rankStrengthWeight, runs retrieveRanked,
  * generates the headless answer, scores KU correctness. Pure read on the DB.
  *
+ * REFLECT-02 instrumentation (Phase 38-04):
+ *   - Counts composeTokens for the assembled payload (chars/4 proxy, EVAL-03 convention).
+ *   - When insightSurfacingEnabled=true, attempts to find a live non-stale insight for the
+ *     resolved schema and uses it as the compose payload (one string vs K member lines).
+ *   - Returns { kuCorrect, hypothesis, composeTokens, usedInsight } for aggregate reporting.
+ *
  * MUST NOT call runConsolidation or scratch.cleanup() — those are caller's responsibility.
  */
-async function evaluateAtWeight(consolidated, w, kuCase, anthropicClient) {
+async function evaluateAtWeight(consolidated, w, kuCase, anthropicClient, insightSurfacingEnabled) {
   const { scratch, queryVec } = consolidated;
   const engine = buildEngineForWeight(scratch, w);
+
+  // Build a SemanticStore on the same scratch DB for insight lookup (insight-ON mode only).
+  // SemanticStore is a pure reader here — no writes (T-38-08).
+  const store = insightSurfacingEnabled
+    ? new SemanticStore(scratch.db, realClock, scratch.config)
+    : null;
 
   // Pass kuCase.question as queryText so retrieveRanked routes through hybridTopk
   // (Pitfall 3 fix — without this arg the pure-cosine topk branch is taken and the
@@ -293,12 +406,35 @@ async function evaluateAtWeight(consolidated, w, kuCase, anthropicClient) {
     kuCase.question,
   );
 
-  const retrievedText = results.length > 0
-    ? results.map(r => `- ${r.value}`).join('\n')
-    : '(no relevant memory entries found)';
+  let retrievedText;
+  let usedInsight = false;
+
+  // ---- REFLECT-02 insight surfacing (insightSurfacingEnabled=true) ----
+  // Mirrors RecallEngine.recall() L306-397: resolve schema from top hit → find live non-stale
+  // insight via reverse derived_from in-edge → use insight text as compose payload.
+  // On miss or stale: fall through to the K-member neighborhood (same as insight-OFF).
+  if (insightSurfacingEnabled && store !== null && results.length > 0) {
+    const insightText = findInsightForTopHit(scratch.db, store, results[0]);
+    if (insightText !== null) {
+      retrievedText = `- ${insightText}`;
+      usedInsight = true;
+    }
+  }
+
+  if (retrievedText === undefined) {
+    // No insight found or insight-OFF mode: use the raw K-member neighborhood
+    retrievedText = results.length > 0
+      ? results.map(r => `- ${r.value}`).join('\n')
+      : '(no relevant memory entries found)';
+  }
 
   // Generate answer with Haiku (cheap model; GPT-4o reserved for scorer below).
   const answerPrompt = `I will give you several memory entries from conversations between you and a user. Please answer the question based on the relevant memory entries.\n\n\nMemory Entries:\n\n${retrievedText}\nQuestion: ${kuCase.question}\nAnswer:`;
+
+  // REFLECT-02: count compose tokens for the assembled payload (chars/4 proxy, EVAL-03 convention).
+  // T-38-10 (no-inflated-metrics): measured from the actual payload at evaluation time.
+  const composeTokens = countComposeTokens(answerPrompt);
+
   const answerResponse = await anthropicClient.messages.create({
     model:      DEFAULT_CONFIG.anthropicModel,  // claude-haiku-4-5-20251001
     max_tokens: 256,
@@ -331,7 +467,7 @@ Reply with exactly one word: "correct" or "incorrect".`;
     .toLowerCase();
   const kuCorrect = verdict.includes('correct') && !verdict.includes('incorrect') ? 1 : 0;
 
-  return { kuCorrect, hypothesis };
+  return { kuCorrect, hypothesis, composeTokens, usedInsight };
 }
 
 /**
@@ -367,8 +503,8 @@ async function runRealCase(kuCase, claims, embedder, anthropicClient) {
   }
 
   try {
-    const { kuCorrect, hypothesis } = await evaluateAtWeight(
-      consolidated, STRENGTH_WEIGHT, kuCase, anthropicClient
+    const { kuCorrect, hypothesis, composeTokens, usedInsight } = await evaluateAtWeight(
+      consolidated, STRENGTH_WEIGHT, kuCase, anthropicClient, false /* insightSurfacingEnabled */
     );
     return {
       question_id:     kuCase.question_id,
@@ -377,6 +513,8 @@ async function runRealCase(kuCase, claims, embedder, anthropicClient) {
       dry_run:         false,
       ku_correct:      kuCorrect,
       hypothesis,
+      composeTokens,
+      used_insight:    usedInsight,
       tombstones:      consolidated.tombstones,
       contradicts:     consolidated.contradicts,
       duplicate_mints: consolidated.duplicateMints,
@@ -453,11 +591,14 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
 
       let kuCorrect = null;
       let hypothesis = null;
+      let composeTokens = null;
       let scoreError = null;
       try {
-        const result = await evaluateAtWeight(consolidated, w, kuCase, anthropicClient);
-        kuCorrect  = result.kuCorrect;
-        hypothesis = result.hypothesis;
+        // Sweep mode does not enable insight surfacing (Phase 35 strength-weight concern only)
+        const result = await evaluateAtWeight(consolidated, w, kuCase, anthropicClient, false);
+        kuCorrect     = result.kuCorrect;
+        hypothesis    = result.hypothesis;
+        composeTokens = result.composeTokens;
         process.stdout.write(`  [w=${w}] ${qid}: ${kuCorrect ? 'correct' : 'incorrect'}\n`);
       } catch (e) {
         scoreError = String(e.message || e).slice(0, 300);
@@ -470,6 +611,7 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
         claim_count:     attr.claims.length,
         dry_run:         false,
         ku_correct:      kuCorrect,
+        composeTokens,
         tombstones:      consolidated.tombstones,
         contradicts:     consolidated.contradicts,
         duplicate_mints: consolidated.duplicateMints,
@@ -582,6 +724,9 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
   } else {
     console.log(`Strength weight: ${STRENGTH_WEIGHT} (--strength-weight; 0 = pure cosine baseline)`);
   }
+  if (INSIGHT_MODE) {
+    console.log(`Insight mode: ON (--insight-mode; runs each case insight-OFF then insight-ON, records composeTokens)`);
+  }
   console.log(`Cache: ${CACHE_DIR}`);
   console.log(DRY_RUN
     ? 'Mode: --dry-run (ingest + scratch DB only, ZERO API calls)\n'
@@ -613,23 +758,42 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
     }
 
     // Write dry-run result skeleton to --out
+    // REFLECT-02: include composeTokens / insight-mode fields in skeleton so the schema
+    // is verifiable with --dry-run (zero API calls). Token counts are null in dry-run.
     const outDir = path.dirname(OUT);
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    // REFLECT-02: always include composeTokens field in dry-run skeleton (null = not yet measured).
+    // This satisfies the acceptance criterion: dry-run output contains the new token fields.
+    // T-38-10: null here is a schema placeholder, not an inflated metric — real run fills it.
+    const dryRunMeta = {
+      eval:            'replay-ku',
+      mode:            'dry-run',
+      cache_id:        'granite+chunk-turns-2',
+      date:            new Date().toISOString(),
+      commit,
+      embedder:        embedderModel,
+      strength_weight: STRENGTH_WEIGHT,
+      total_cases:     total,
+      total_claims:    totalClaims,
+      composeTokens:   null,  // REFLECT-02: populated by real run (chars/4 proxy)
+    };
+    if (INSIGHT_MODE) {
+      // REFLECT-02 insight-mode fields (null in dry-run; populated by real run)
+      // T-38-10: no-inflated-metrics — these are placeholders only; real run fills them
+      dryRunMeta.insight_mode             = true;
+      dryRunMeta.composeTokensOff         = null;
+      dryRunMeta.composeTokensOn          = null;
+      dryRunMeta.composeTokenReductionPct = null;
+      dryRunMeta.kuScoreOff               = null;
+      dryRunMeta.kuScoreOn                = null;
+      dryRunMeta.regression               = null;
+      dryRunMeta.tolerance_band_pts       = TOLERANCE_BAND_PTS;
+    }
     const dryRunResult = {
-      meta: {
-        eval:            'replay-ku',
-        mode:            'dry-run',
-        cache_id:        'granite+chunk-turns-2',
-        date:            new Date().toISOString(),
-        commit,
-        embedder:        embedderModel,
-        strength_weight: STRENGTH_WEIGHT,
-        total_cases:     total,
-        total_claims:    totalClaims,
-      },
-      scores: null,
+      meta:     dryRunMeta,
+      scores:   null,
       per_case: null,
-      note: 'dry-run: no API calls made; run without --dry-run for real scores',
+      note:     'dry-run: no API calls made; run without --dry-run for real scores',
     };
     fs.writeFileSync(OUT, JSON.stringify(dryRunResult, null, 2));
     console.log(`\n[dry-run] Done. ${total} cases validated. Results skeleton -> ${OUT}`);
@@ -658,6 +822,211 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
   // Embedder-agnostic: no override flag, no swap (D-01 — swap premise falsified).
   const embedder = new OpenAIEmbedder(DEFAULT_CONFIG.openaiEmbedModel, DEFAULT_CONFIG.embeddingDimensions);
 
+  // ---- insight mode (Phase 38-04, REFLECT-02): consolidate once per case, evaluate twice ------
+  // insight-OFF (insightSurfacingEnabled=false, raw K-member neighborhood) and
+  // insight-ON (insightSurfacingEnabled=true, precomputed insight payload when available).
+  // Records per-case composeTokensOff/On and aggregate composeTokenReductionPct.
+  // No-regression check: regression=true if insight-ON KU score dips > TOLERANCE_BAND_PTS below OFF.
+  //
+  // This path is MUTUALLY EXCLUSIVE with sweep mode (different phase concerns).
+  // T-38-10: all numbers are measured at evaluation time, recorded with meta — no rounded/assumed wins.
+  if (INSIGHT_MODE && !(SWEEP_WEIGHTS && SWEEP_WEIGHTS.length > 0)) {
+    console.log(`\n=== INSIGHT MODE (REFLECT-02): insight-OFF vs insight-ON compose-token measurement ===`);
+    console.log(`    Consolidation runs ONCE per case; evaluation runs twice (OFF then ON).\n`);
+
+    const perCaseOff = [];
+    const perCaseOn  = [];
+    let kuCorrectOff = 0;
+    let kuCorrectOn  = 0;
+    let totalComposeTokensOff = 0;
+    let totalComposeTokensOn  = 0;
+    let totalTombstonesI    = 0;
+    let totalContradicts    = 0;
+    let totalDuplicateMints = 0;
+
+    console.log('  case         | claims | tomb | OFF-ku | OFF-tok | ON-ku | ON-tok | insight-hit');
+    console.log('  ------------ | ------ | ---- | ------ | ------- | ----- | ------ | -----------');
+
+    for (const qid of caseIds) {
+      const attr   = attributionByQid.get(qid);
+      const kuCase = kuGoldByQid.get(qid);
+
+      process.stdout.write(`  ... consolidating ${qid}...\r`);
+
+      let consolidated;
+      let consolidateError = null;
+      try {
+        consolidated = await consolidateCase(kuCase, attr.claims, embedder, anthropicClient);
+      } catch (e) {
+        consolidateError = String(e.message || e).slice(0, 300);
+        console.error(`  [consolidate] ERROR on ${qid}: ${consolidateError}`);
+      }
+
+      if (consolidateError !== null || !consolidated) {
+        const errRow = {
+          question_id: qid, question_type: kuCase.question_type,
+          claim_count: attr.claims.length, dry_run: false, ku_correct: null,
+          composeTokens: null, used_insight: false,
+          tombstones: null, contradicts: null, duplicate_mints: null,
+          error: consolidateError,
+        };
+        perCaseOff.push(errRow);
+        perCaseOn.push({ ...errRow });
+        continue;
+      }
+
+      // insight-OFF pass
+      let offCorrect = null, offTokens = null;
+      let offError = null;
+      try {
+        const r = await evaluateAtWeight(consolidated, STRENGTH_WEIGHT, kuCase, anthropicClient, false);
+        offCorrect = r.kuCorrect;
+        offTokens  = r.composeTokens;
+        if (r.kuCorrect !== null) { kuCorrectOff += r.kuCorrect; totalComposeTokensOff += r.composeTokens; }
+        perCaseOff.push({
+          question_id: qid, question_type: kuCase.question_type,
+          claim_count: attr.claims.length, dry_run: false,
+          ku_correct: r.kuCorrect, composeTokens: r.composeTokens,
+          used_insight: false,
+          tombstones: consolidated.tombstones, contradicts: consolidated.contradicts,
+          duplicate_mints: consolidated.duplicateMints,
+        });
+      } catch (e) {
+        offError = String(e.message || e).slice(0, 300);
+        perCaseOff.push({
+          question_id: qid, question_type: kuCase.question_type,
+          claim_count: attr.claims.length, dry_run: false, ku_correct: null,
+          composeTokens: null, used_insight: false,
+          tombstones: null, contradicts: null, duplicate_mints: null, error: offError,
+        });
+      }
+
+      // insight-ON pass (same consolidated scratch DB — same graph, same judge-engagement)
+      let onCorrect = null, onTokens = null, onHit = false;
+      let onError = null;
+      try {
+        const r = await evaluateAtWeight(consolidated, STRENGTH_WEIGHT, kuCase, anthropicClient, true);
+        onCorrect = r.kuCorrect;
+        onTokens  = r.composeTokens;
+        onHit     = r.usedInsight;
+        if (r.kuCorrect !== null) { kuCorrectOn += r.kuCorrect; totalComposeTokensOn += r.composeTokens; }
+        perCaseOn.push({
+          question_id: qid, question_type: kuCase.question_type,
+          claim_count: attr.claims.length, dry_run: false,
+          ku_correct: r.kuCorrect, composeTokens: r.composeTokens,
+          used_insight: r.usedInsight,
+          tombstones: consolidated.tombstones, contradicts: consolidated.contradicts,
+          duplicate_mints: consolidated.duplicateMints,
+        });
+      } catch (e) {
+        onError = String(e.message || e).slice(0, 300);
+        perCaseOn.push({
+          question_id: qid, question_type: kuCase.question_type,
+          claim_count: attr.claims.length, dry_run: false, ku_correct: null,
+          composeTokens: null, used_insight: false,
+          tombstones: null, contradicts: null, duplicate_mints: null, error: onError,
+        });
+      }
+
+      totalTombstonesI    += consolidated.tombstones    || 0;
+      totalContradicts    += consolidated.contradicts   || 0;
+      totalDuplicateMints += consolidated.duplicateMints || 0;
+
+      const offKuStr  = offError  ? '  ERR ' : (offCorrect !== null ? (offCorrect ? '  YES ' : '  no  ') : '  n/a ');
+      const onKuStr   = onError   ? '  ERR ' : (onCorrect  !== null ? (onCorrect  ? '  YES ' : '  no  ') : '  n/a ');
+      const offTokStr = offTokens !== null ? String(offTokens).padStart(7) : '    n/a';
+      const onTokStr  = onTokens  !== null ? String(onTokens).padStart(6) : '   n/a';
+      const hitStr    = onHit ? 'YES' : 'no ';
+      console.log(`  ${qid.padEnd(12)} | ${String(attr.claims.length).padStart(6)} | ${String(consolidated.tombstones).padStart(4)} | ${offKuStr} | ${offTokStr} | ${onKuStr} | ${onTokStr} | ${hitStr}`);
+
+      consolidated.scratch.cleanup();
+    }
+
+    // ---- aggregate insight-mode scores -----------------------------------------------
+    const scoredCasesOff = perCaseOff.filter(r => r.ku_correct !== null);
+    const scoredCasesOn  = perCaseOn.filter(r => r.ku_correct !== null);
+    const kuScoreOff = scoredCasesOff.length > 0 ? +(kuCorrectOff / scoredCasesOff.length).toFixed(3) : null;
+    const kuScoreOn  = scoredCasesOn.length  > 0 ? +(kuCorrectOn  / scoredCasesOn.length).toFixed(3)  : null;
+
+    const avgComposeTokensOff = scoredCasesOff.length > 0
+      ? +(totalComposeTokensOff / scoredCasesOff.length).toFixed(1)
+      : null;
+    const avgComposeTokensOn  = scoredCasesOn.length  > 0
+      ? +(totalComposeTokensOn  / scoredCasesOn.length).toFixed(1)
+      : null;
+
+    // REFLECT-02: composeTokenReductionPct = fractional reduction in tokens (insight-ON vs OFF).
+    // Positive = fewer tokens (the desired win). T-38-10: measured number, not rounded/assumed.
+    const composeTokenReductionPct = (avgComposeTokensOff !== null && avgComposeTokensOn !== null && avgComposeTokensOff > 0)
+      ? +(((avgComposeTokensOff - avgComposeTokensOn) / avgComposeTokensOff) * 100).toFixed(2)
+      : null;
+
+    // Phase-35 D-07 no-regression check: insight-ON correctness must not fall below insight-OFF
+    // by more than TOLERANCE_BAND_PTS (2 percentage points). regression=true if it does.
+    let regression = null;
+    if (kuScoreOff !== null && kuScoreOn !== null) {
+      const offPct = kuScoreOff * 100;
+      const onPct  = kuScoreOn  * 100;
+      regression = (offPct - onPct) > TOLERANCE_BAND_PTS;
+    }
+
+    console.log('\n=== REFLECT-02 INSIGHT-MODE AGGREGATE ===');
+    console.log(`  KU score OFF: ${kuScoreOff !== null ? (kuScoreOff * 100).toFixed(1) + '%' : 'n/a'} (${kuCorrectOff}/${scoredCasesOff.length})`);
+    console.log(`  KU score ON:  ${kuScoreOn  !== null ? (kuScoreOn  * 100).toFixed(1) + '%' : 'n/a'} (${kuCorrectOn}/${scoredCasesOn.length})`);
+    console.log(`  Avg compose tokens OFF: ${avgComposeTokensOff !== null ? avgComposeTokensOff : 'n/a'}`);
+    console.log(`  Avg compose tokens ON:  ${avgComposeTokensOn  !== null ? avgComposeTokensOn  : 'n/a'}`);
+    console.log(`  Compose token reduction: ${composeTokenReductionPct !== null ? composeTokenReductionPct + '%' : 'n/a'}`);
+    console.log(`  No-regression (tolerance band: ${TOLERANCE_BAND_PTS} pts): ${regression === null ? 'n/a' : regression ? 'REGRESSION DETECTED' : 'PASS'}`);
+    console.log(`  Total tombstones: ${totalTombstonesI}  |  contradicts: ${totalContradicts}  |  dup-mints: ${totalDuplicateMints}`);
+
+    // ---- write insight-mode results -----------------------------------------------
+    const insightResultEnvelope = {
+      meta: {
+        eval:                    'replay-ku',
+        mode:                    'full',
+        insight_mode:            true,
+        cache_id:                'granite+chunk-turns-2',
+        date:                    new Date().toISOString(),
+        commit,
+        embedder:                embedderModel,
+        strength_weight:         STRENGTH_WEIGHT,
+        total_cases:             total,
+        total_claims:            totalClaims,
+        // REFLECT-02 aggregate token / quality metrics
+        composeTokensOff:        avgComposeTokensOff,
+        composeTokensOn:         avgComposeTokensOn,
+        composeTokenReductionPct,
+        kuScoreOff,
+        kuScoreOn,
+        regression,
+        tolerance_band_pts:      TOLERANCE_BAND_PTS,
+        // T-26-03: keys never written to results
+      },
+      scores: {
+        ku_score_off:              kuScoreOff,
+        ku_correct_off:            kuCorrectOff,
+        ku_scored_cases_off:       scoredCasesOff.length,
+        ku_score_on:               kuScoreOn,
+        ku_correct_on:             kuCorrectOn,
+        ku_scored_cases_on:        scoredCasesOn.length,
+        total_tombstones:          totalTombstonesI,
+        total_contradicts:         totalContradicts,
+        total_duplicate_mints:     totalDuplicateMints,
+      },
+      per_case_off: perCaseOff,
+      per_case_on:  perCaseOn,
+    };
+
+    const outDir = path.dirname(OUT);
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(OUT, JSON.stringify(insightResultEnvelope, null, 2));
+
+    const elapsedSec = ((Date.now() - tStart) / 1000).toFixed(1);
+    console.log(`\nInsight-mode results written -> ${OUT}`);
+    console.log(`Elapsed: ${elapsedSec}s`);
+    process.exit(0);
+  }
+
   // ---- sweep mode (Phase 35-02): consolidate once per case, sweep weights -----
   if (SWEEP_WEIGHTS && SWEEP_WEIGHTS.length > 0) {
     await runSweep(
@@ -676,9 +1045,11 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
   let totalContradicts   = 0;
   let totalDuplicateMints = 0;
   let kuCorrectCount     = 0;
+  let totalComposeTokens = 0;
+  let composeTokenCases  = 0;
 
-  console.log('\n  case         | claims | ku | tomb | contradict | dup-mints');
-  console.log('  ------------ | ------ | -- | ---- | ---------- | ---------');
+  console.log('\n  case         | claims | ku | tomb | contradict | dup-mints | compose-tok');
+  console.log('  ------------ | ------ | -- | ---- | ---------- | --------- | -----------');
 
   for (const qid of caseIds) {
     const attr   = attributionByQid.get(qid);
@@ -709,12 +1080,18 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
     if (result.tombstones !== null)      totalTombstones    += result.tombstones;
     if (result.contradicts !== null)     totalContradicts   += result.contradicts;
     if (result.duplicate_mints !== null) totalDuplicateMints += result.duplicate_mints;
+    if (result.composeTokens  !== null && result.composeTokens !== undefined) {
+      totalComposeTokens += result.composeTokens;
+      composeTokenCases++;
+    }
 
-    const kuStr    = result.error ? 'ERR' : result.ku_correct ? 'YES' : 'no ';
-    const tombStr  = result.tombstones  !== null ? String(result.tombstones).padStart(4)  : ' ERR';
-    const contrStr = result.contradicts !== null ? String(result.contradicts).padStart(10) : '       ERR';
-    const dupStr   = result.duplicate_mints !== null ? String(result.duplicate_mints).padStart(9) : '      ERR';
-    console.log(`  ${qid.padEnd(12)} | ${String(result.claim_count).padStart(6)} | ${kuStr} | ${tombStr} | ${contrStr} | ${dupStr}`);
+    const kuStr     = result.error ? 'ERR' : result.ku_correct ? 'YES' : 'no ';
+    const tombStr   = result.tombstones  !== null ? String(result.tombstones).padStart(4)  : ' ERR';
+    const contrStr  = result.contradicts !== null ? String(result.contradicts).padStart(10) : '       ERR';
+    const dupStr    = result.duplicate_mints !== null ? String(result.duplicate_mints).padStart(9) : '      ERR';
+    const tokStr    = result.composeTokens   !== undefined && result.composeTokens !== null
+      ? String(result.composeTokens).padStart(11) : '        n/a';
+    console.log(`  ${qid.padEnd(12)} | ${String(result.claim_count).padStart(6)} | ${kuStr} | ${tombStr} | ${contrStr} | ${dupStr} | ${tokStr}`);
   }
 
   // ---- aggregate scores -------------------------------------------------------
@@ -723,11 +1100,16 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
     ? +(kuCorrectCount / scoredCases.length).toFixed(3)
     : null;
 
+  const avgComposeTokens = composeTokenCases > 0
+    ? +(totalComposeTokens / composeTokenCases).toFixed(1)
+    : null;
+
   console.log('\n=== JUDGE-ENGAGEMENT AGGREGATE ===');
   console.log(`  KU score:            ${kuScore !== null ? (kuScore * 100).toFixed(1) + '%' : 'n/a'} (${kuCorrectCount}/${scoredCases.length})`);
   console.log(`  Total tombstones:    ${totalTombstones}`);
   console.log(`  Total contradicts:   ${totalContradicts}  (judge fired: claim contradicted existing belief)`);
   console.log(`  Total dup-mints:     ${totalDuplicateMints}  (unrelated: new node despite near-dup candidate — RETR-02 target)`);
+  console.log(`  Avg compose tokens:  ${avgComposeTokens !== null ? avgComposeTokens : 'n/a'}  (chars/4 proxy — EVAL-03 convention)`);
   console.log(`  Embedder model:      ${embedderModel}`);
 
   // ---- write results ----------------------------------------------------------
@@ -742,14 +1124,15 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
       strength_weight: STRENGTH_WEIGHT,
       total_cases:     total,
       total_claims:    totalClaims,
+      composeTokens:   avgComposeTokens,
       // T-26-03: keys never written to results
     },
     scores: {
-      ku_score:            kuScore,
-      ku_correct:          kuCorrectCount,
-      ku_scored_cases:     scoredCases.length,
-      total_tombstones:    totalTombstones,
-      total_contradicts:   totalContradicts,
+      ku_score:              kuScore,
+      ku_correct:            kuCorrectCount,
+      ku_scored_cases:       scoredCases.length,
+      total_tombstones:      totalTombstones,
+      total_contradicts:     totalContradicts,
       total_duplicate_mints: totalDuplicateMints,
     },
     per_case: perCase,
