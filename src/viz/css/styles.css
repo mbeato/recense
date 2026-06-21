@@ -799,12 +799,12 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   z-index: 5;            /* above the brain canvas (#graph), below #panel chrome (z:10) */
   display: none;
   background: #170f1d;
-  /* Transition: the corpus fades in while the brain camera pulls back behind it
-     (pullBackBrain in corpus.js). Opacity-ONLY — a CSS transform here would distort the
-     2D force-graph's getBoundingClientRect-based zoomToFit and throw the first-open
-     framing off (it landed bottom-right). The depth feel comes from the brain receding. */
+  /* Transition: the corpus fades in (controller adds .corpus-in) once it's pinned + fit,
+     ~40% into the 750ms move, while the brain recedes behind it. Opacity-ONLY — a CSS
+     transform here would distort the 2D force-graph's getBoundingClientRect-based zoomToFit
+     and throw the framing off. The depth feel comes from the brain camera receding. */
   opacity: 0;
-  transition: opacity 700ms ease;
+  transition: opacity 380ms ease;
 }
 #corpus-graph.open {
   display: block;

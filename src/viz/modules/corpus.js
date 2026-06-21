@@ -23,6 +23,8 @@
  * Obsidian-style legibility independently of the 3,500-node density anchor.
  */
 
+import { createTransition } from './transition.js';
+
 // ── Button icon SVGs (inline — net-zero deps, no icon lib) ──────────────────────────
 // BOOK icon: shown when brain is active (button = "go to corpus").
 const ICON_BOOK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`;
@@ -66,8 +68,6 @@ export function initCorpus(ctx) {
   const brainEl = document.getElementById('graph');
   if (!corpusBtn || !container) return;
 
-  // Whether the corpus graph is currently shown.
-  let corpusActive = false;
   // The lazily-built 2D ForceGraph instance (null until first open).
   let CorpusGraph = null;
   // nodeId → slug map for D-08 click resolution (built from /graph?type=doc).
@@ -285,165 +285,106 @@ export function initCorpus(ctx) {
     } catch (_) { /* ignore */ }
   }
 
-  const CAM_MS = 700;
-  // Saved brain-view camera position, captured right before pulling back, so returning
-  // restores it EXACTLY. (ctx.recenter only resets z and left the pulled-back x/y in
-  // place, so repeated brain<->corpus swaps compounded the zoom-out.) null until first open.
-  let homeCam = null;
-  // Pull the 3D brain camera back along its current view direction so the brain visibly
-  // recedes into the distance as the corpus settles in over it (the "rise up to a map"
-  // feel). Net-zero — reuses the existing 3d-force-graph cameraPosition animation.
-  function pullBackBrain() {
-    if (!ctx.Graph || typeof ctx.Graph.cameraPosition !== 'function') return;
-    // Suppress the idle camera drift (stats.js) for the transition — a button click isn't
-    // canvas activity, so after idling in corpus view the drift would fight this tween and
-    // make subsequent pull-backs snap/jerk (the first one is smooth only because you'd just
-    // been active). markActive resets the idle timer (1.2s > the 700ms move).
-    if (typeof ctx.markActive === 'function') ctx.markActive();
-    const p = ctx.Graph.cameraPosition();
-    if (!p) return;
-    homeCam = { x: p.x, y: p.y, z: p.z };
-    const K = 2.3;
-    ctx.Graph.cameraPosition({ x: p.x * K, y: p.y * K, z: p.z * K }, { x: 0, y: 0, z: 0 }, CAM_MS);
-  }
-  // Dive the camera back to the exact pre-pull-back framing (no compounding). Falls back
-  // to ctx.recenter() if we somehow never captured a home position.
-  function diveBackToBrain() {
-    if (typeof ctx.markActive === 'function') ctx.markActive(); // suppress idle drift during the dive
-    if (homeCam && ctx.Graph && typeof ctx.Graph.cameraPosition === 'function') {
-      ctx.Graph.cameraPosition({ x: homeCam.x, y: homeCam.y, z: homeCam.z }, { x: 0, y: 0, z: 0 }, CAM_MS);
-    } else if (typeof ctx.recenter === 'function') {
-      ctx.recenter(CAM_MS);
-    }
-  }
-
-  // Gated reveal: fit the settled graph ONCE, then fade it in. Guards against double
-  // reveal and against revealing after the user already toggled back to the brain.
-  let corpusRevealed = false;
-  function revealCorpus() {
-    if (corpusRevealed || !corpusActive) return;
-    corpusRevealed = true;
-    // Pin the settled layout (d3 fx/fy) so NOTHING can nudge node positions after we fit —
-    // a late sim tick or a reveal-triggered reheat is what made the FIRST open drift while
-    // cached opens (already frozen-settled) framed perfectly. Freezing makes first == cached.
-    try {
-      const gd = CorpusGraph && CorpusGraph.graphData && CorpusGraph.graphData();
-      if (gd && gd.nodes) gd.nodes.forEach((n) => { n.fx = n.x; n.fy = n.y; });
-    } catch (_) { /* ignore */ }
-    sizeCorpusGraph();
-    fitAndClamp();
-    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
+  // ── Build-once preparation ──────────────────────────────────────────────────
+  // Fetch + settle + PIN (d3 fx/fy) + fit so the corpus is a STATIC, instantly-frameable
+  // map BEFORE it is ever revealed. Fitting a live, still-cooling sim was the root of the
+  // drift/rubberband; a pinned layout frames identically on the first open and every cached
+  // one after. Resolves 'ready' | 'empty' | 'error'. Memoized on success; a non-ready
+  // outcome is NOT cached, so the next open retries (docs may appear / a fetch may recover).
+  let preparePromise = null;
+  function prepareCorpus() {
+    if (preparePromise) return preparePromise;
+    const p = (async () => {
+      if (!CorpusGraph) {
+        CorpusGraph = await buildCorpusGraph();
+        if (!CorpusGraph) {
+          // buildCorpusGraph already set the loading→empty/error status overlay.
+          const txt = container.querySelector('.corpus-status');
+          return txt && /Failed/.test(txt.textContent || '') ? 'error' : 'empty';
+        }
+        sizeCorpusGraph();
+        // Wait for the force layout to settle, then PIN it so it can never drift again.
+        await new Promise((resolve) => {
+          let done = false;
+          const finish = () => { if (!done) { done = true; resolve(); } };
+          if (typeof CorpusGraph.onEngineStop === 'function') CorpusGraph.onEngineStop(finish);
+          setTimeout(finish, 800); // fallback: instant-settle / no onEngineStop
+        });
+        try {
+          const gd = CorpusGraph.graphData && CorpusGraph.graphData();
+          if (gd && gd.nodes) gd.nodes.forEach((n) => { n.fx = n.x; n.fy = n.y; });
+        } catch (_) { /* ignore */ }
+        sizeCorpusGraph();
+        fitAndClamp();
+      } else {
+        // Cached: already built + pinned + fit. Re-fit in case the window resized meanwhile.
+        sizeCorpusGraph();
+        fitAndClamp();
+      }
+      return 'ready';
+    })();
+    preparePromise = p;
+    p.then((res) => { if (res !== 'ready') preparePromise = null; }).catch(() => { preparePromise = null; });
+    return p;
   }
 
-  async function showCorpus() {
-    // CR-02/WR-03 fix: ENTER corpus view FIRST, then build. The loading/empty/error status
-    // overlay is appended to #corpus-graph, which is display:none until `.open` — so the
-    // view MUST be active before buildCorpusGraph runs, or the status renders invisibly and
-    // the view never opens on an empty/error/first-load corpus. Opening first also gives the
-    // container real clientWidth/clientHeight before ForceGraph + the centering force init (WR-01).
-    // Transition IN: pull the brain camera back (real 3D recession) and settle the
-    // corpus in over it. Keep the brain visible during the move so it visibly recedes
-    // behind the fade; once the opaque corpus reaches opacity 1 it covers the brain.
-    pullBackBrain();
-    // Fade the brain OUT as it recedes so its motion never bleeds through the corpus.
-    if (brainEl) { brainEl.style.transition = `opacity ${CAM_MS}ms ease`; brainEl.style.visibility = ''; brainEl.style.opacity = '0'; }
-    // Mount the corpus but keep it INVISIBLE (.open = display:block, opacity 0) until its
-    // force layout has settled and been fit ONCE. Revealing mid-settle caused the
-    // rubberband — each fit re-centered on a still-drifting bounding box.
-    container.classList.add('open');
-    corpusRevealed = false;
-    // B3: hide topics/search in corpus view (mode-state visibility).
-    const topicWrap = document.getElementById('topic-wrap');
-    const searchWrap = document.getElementById('search-wrap');
-    if (topicWrap) topicWrap.style.display = 'none';
-    if (searchWrap) searchWrap.style.display = 'none';
-    corpusActive = true;
-    // C1: icon button — aria-label/title + glyph swap (corpus active → show brain icon).
+  // ── Transition controller: owns the brain⇄corpus camera move + crossfade ─────
+  const transition = createTransition(ctx, { brainEl, corpusEl: container });
+
+  function setCorpusButton() {
     corpusBtn.setAttribute('aria-label', 'Show brain');
     corpusBtn.setAttribute('title', 'Show brain');
     corpusBtn.innerHTML = ICON_BRAIN;
     corpusBtn.classList.add('corpus-active');
-
-    if (!CorpusGraph) {
-      CorpusGraph = await buildCorpusGraph();
-      if (!CorpusGraph) {
-        // empty / error / no force-graph: reveal immediately so the status overlay shows.
-        corpusRevealed = true;
-        container.classList.add('corpus-in');
-        return;
-      }
-      sizeCorpusGraph(); // size now so the sim settles against the correct bounds
-      // Reveal only once the sim has settled → one stable fit, no rubberband. The fallback
-      // covers the case where onEngineStop already fired or never fires (small corpora
-      // settle fast, so 600ms is comfortably past settle).
-      if (typeof CorpusGraph.onEngineStop === 'function') {
-        CorpusGraph.onEngineStop(revealCorpus);
-      }
-      setTimeout(revealCorpus, 600);
-    } else {
-      // Cached graph is already settled — fit + reveal right away.
-      revealCorpus();
-    }
   }
-
-  function showBrain() {
-    // Transition OUT: corpus fades back into depth; brain camera dives home.
-    container.classList.remove('corpus-in');
-    setTimeout(() => { if (!corpusActive) container.classList.remove('open'); }, CAM_MS);
-    // Fade the brain back IN as the camera dives home.
-    if (brainEl) { brainEl.style.transition = `opacity ${CAM_MS}ms ease`; brainEl.style.visibility = ''; brainEl.style.opacity = '1'; }
-    diveBackToBrain();
-    // B3: restore topics/search when returning to brain view.
-    const topicWrap = document.getElementById('topic-wrap');
-    const searchWrap = document.getElementById('search-wrap');
-    if (topicWrap) topicWrap.style.display = '';
-    if (searchWrap) searchWrap.style.display = '';
-    corpusActive = false;
-    // C1: icon button — aria-label/title + glyph swap (brain active → restore book icon).
+  function setBrainButton() {
     corpusBtn.setAttribute('aria-label', 'Corpus graph');
     corpusBtn.setAttribute('title', 'Corpus');
     corpusBtn.innerHTML = ICON_BOOK;
     corpusBtn.classList.remove('corpus-active');
   }
+  // B3: topics/search are hidden in corpus view, restored in brain view.
+  function setTopicsSearchHidden(hidden) {
+    const topicWrap = document.getElementById('topic-wrap');
+    const searchWrap = document.getElementById('search-wrap');
+    if (topicWrap) topicWrap.style.display = hidden ? 'none' : '';
+    if (searchWrap) searchWrap.style.display = hidden ? 'none' : '';
+  }
+
+  function goToCorpus() {
+    setCorpusButton();
+    setTopicsSearchHidden(true);
+    transition.toCorpus(prepareCorpus());
+  }
+  function goToBrain() {
+    setBrainButton();
+    setTopicsSearchHidden(false);
+    transition.toBrain();
+  }
 
   corpusBtn.addEventListener('click', () => {
-    if (corpusActive) showBrain();
-    else showCorpus();
+    if (transition.isCorpus()) goToBrain();
+    else goToCorpus();
   });
 
   // Keep the corpus canvas sized to the window when it's the active view.
   window.addEventListener('resize', () => {
-    if (corpusActive) sizeCorpusGraph();
+    if (transition.isCorpus()) sizeCorpusGraph();
   });
 
   // ── ctx hooks for reader.js in-place open/close (Fix B) ─────────────────────
-  // returnToCorpus(): reader.js calls this when a from:'corpus' reader closes. The
-  // corpus stayed mounted underneath the overlay, so there is nothing to rebuild —
-  // we just confirm the corpus is shown and the brain stays hidden (idempotent).
+  // returnToCorpus(): reader.js calls this when a from:'corpus' reader closes. The corpus
+  // stayed mounted underneath the overlay and the camera never left corpus framing, so we
+  // re-assert the corpus-shown state with NO camera move (idempotent).
   ctx.returnToCorpus = function returnToCorpus() {
-    // Camera is already in the pulled-back corpus framing here (reader opened OVER the
-    // corpus without moving it), so do NOT pull back again — just re-assert the overlay.
-    container.classList.add('open');
-    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
-    // Brain stays faded out — we're in corpus framing (reader closed back to the corpus).
-    if (brainEl) { brainEl.style.visibility = ''; brainEl.style.opacity = '0'; }
-    // B3: keep topics/search hidden when reader closes back to corpus.
-    const topicWrap = document.getElementById('topic-wrap');
-    const searchWrap = document.getElementById('search-wrap');
-    if (topicWrap) topicWrap.style.display = 'none';
-    if (searchWrap) searchWrap.style.display = 'none';
-    corpusActive = true;
-    // C1: icon button — aria-label/title + glyph swap (corpus active → show brain icon).
-    corpusBtn.setAttribute('aria-label', 'Show brain');
-    corpusBtn.setAttribute('title', 'Show brain');
-    corpusBtn.innerHTML = ICON_BRAIN;
-    corpusBtn.classList.add('corpus-active');
+    setCorpusButton();
+    setTopicsSearchHidden(true);
+    transition.assertCorpus();
   };
 
-  // showBrainFromCorpus(): reader.js calls this when an inline fact-ref is clicked
-  // while the reader was opened over the corpus — the explicit hero interaction
-  // deliberately drops to the brain (atom focus). Restore the 3D brain view.
+  // showBrainFromCorpus(): reader.js calls this when an inline fact-ref is clicked while the
+  // reader was opened over the corpus — the hero interaction deliberately drops to the brain.
   ctx.showBrainFromCorpus = function showBrainFromCorpus() {
-    showBrain();
+    goToBrain();
   };
 }
