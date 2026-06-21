@@ -55,7 +55,19 @@ RANK-02 demanded an eval-backed decision on whether to enable the Plan 35-01 str
 </objective_outcome>
 
 <rank02_verdict>
-## RANK-02 Verdict: NO WIN — keep `rankStrengthWeight: 0` (dark)
+## ⚠ POST-HOC CORRECTION (2026-06-21): the "NO WIN" below is CONFOUNDED — do not treat it as a verdict on strength ranking.
+
+Follow-up investigation (probes: `scripts/eval/35-candidate-probe.cjs`, `35-judge-probe.cjs`, `35-pass-proof.cjs`) found the sweep ran on a **degenerate graph**:
+- Candidate surfacing is fine (mean top-1 cosine ≈0.62; contradiction pairs co-located ≥0.85).
+- The judge is fine (headless/local/anthropic all return `contradict` correctly, single + batch).
+- **Root cause:** the replay-ku harness ingests ~2,000 claims into ONE consolidation pass. Mid-pass-minted nodes get `embedding=NULL` and are only embedded by `reembedDirty` at pass start + Phase C (AFTER the judging loop); `topk` filters `embedding IS NOT NULL`. So within that single pass NO claim can see a sibling → every claim mints `'unrelated'` (`tomb=0 contra=0 dup≈2000`). Proven: the SAME pair gives `contra=0` in one batch but `contra=1` (+ tombstone/reconcile) across two passes.
+- **Consequence:** zero merges + zero contradictions → uniform node strength → RANK-01's strength term had no gradient to rank on. The observed "regression" was noise injection into a good cosine/BM25 order.
+
+**Corrected verdict:** strength fusion is NOT shown to be bad — it was never fairly tested. `rankStrengthWeight: 0` (dark) remains correct *for now* because we have no fair eval, not because fusion was shown not to work. A fair RANK-02 re-test requires the harness to consolidate INCREMENTALLY (multi-pass) so the graph dedups/contradicts and a real strength gradient exists. Secondary finding (beyond this phase): any bulk single-pass ingest cannot self-dedup — a RETR-02-relevant production concern for large one-shot ingests (incremental production ingestion is masked by cross-pass `reembedDirty`).
+
+---
+
+## RANK-02 Verdict (ORIGINAL — now known to be confounded, see correction above): NO WIN — keep `rankStrengthWeight: 0` (dark)
 
 KU sweep — 18 cases (n20-attribution ∩ eval20-ku), headless/subscription-billed, consolidate-once, Node 25, commit a9e9edc:
 
