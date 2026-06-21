@@ -81,19 +81,9 @@
   </svg>
 </button>
 
-<!-- Index toggle — icon-only fixed button, sibling to #btn-corpus (D-08 / WIKI-01).
-     Expanded Brain Window ONLY — hidden in popover/tray (same CSS gate as #btn-corpus). -->
-<button id="btn-index" type="button" aria-label="Index" title="Index">
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
-    <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
-    <line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
-  </svg>
-</button>
-
-<!-- Index sidebar host (WIKI-01): left sidebar docked over the corpus graph.
-     Hidden by default; #btn-index opens the corpus + fades this sidebar in over it. -->
+<!-- Index sidebar host (WIKI-01): left sidebar docked over the corpus graph. Hidden by default;
+     opens by default with the corpus view (corpus.js → ctx.openIndexSidebar). No toolbar button.
+     The reopen handle (#index-reopen) is created by index.js and appended to the body. -->
 <div id="index-panel"></div>
 
 <!-- Recenter camera control (quick-260612-v79) — top-level, OUTSIDE #panel so

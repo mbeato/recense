@@ -2,47 +2,43 @@
  * @module index
  * recense viz — browsable text index of the live doc corpus (WIKI-01, 39-02).
  *
- * Provides `initIndex(ctx)` — the #btn-index toolbar toggle that opens a LEFT SIDEBAR
- * docked over the flat 2D corpus graph (the index list + corpus graph are two views of
- * the same doc set, shown side by side — founder direction, 39-02 re-verify). The list
- * is grouped into two sections:
+ * The index is a LEFT SIDEBAR docked over the flat 2D corpus graph — the index list and the
+ * corpus graph are two views of the same doc set, shown side by side (founder direction). There
+ * is NO dedicated toolbar button: the sidebar opens by default when the corpus view opens
+ * (corpus.js calls ctx.openIndexSidebar), and closes when the corpus returns to the brain
+ * (ctx.closeIndexSidebar). A ◀ collapse control hides it for more graph room; a slim reopen
+ * handle on the left edge brings it back.
+ *
+ * The list is grouped into two sections:
  *   - Projects: human-scoped docs (e.g. 'tonos')
  *   - Schemas: schema-anchored docs (UUID-scoped, labeled by human schema name)
  *
- * Toggle behaviour (#btn-index, expanded-only per D-08):
- *   - Open: ensure the corpus graph is open (ctx.openCorpus — that hides the topics/search
- *     overlay too), then fade the sidebar in over the corpus. Lazy-fetch /index on first open.
- *   - Close: fade the sidebar out. The corpus graph is left UNTOUCHED (not forced back to
- *     the brain). Returning to the brain via #btn-corpus closes the sidebar (ctx.closeIndexSidebar).
- *   - Row hover → cross-highlight the matching node in the corpus graph (ctx.highlightCorpusNode).
+ * Interactions:
+ *   - Row hover → cross-highlight the matching node + its neighbours in the corpus graph
+ *     (ctx.highlightCorpusNode).
  *   - Row click → open that doc's reader IN PLACE over the corpus (ctx.openReader from:'corpus').
  *
  * Security (T-39-08): all DB-sourced strings (label, slug) set via .textContent only;
  * slug used in navigation passed through encodeURIComponent. No innerHTML with user data.
  */
 
-// ── Button icon SVG (inline — net-zero deps, no icon lib) ───────────────────────────
-// LIST icon: the #btn-index button always shows the list glyph; the .index-active class
-// (brightened) signals the sidebar is open. (No brain-icon swap — #btn-corpus owns the brain.)
-const ICON_LIST = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`;
-// CHEVRON-LEFT icon for the in-sidebar collapse control.
-const ICON_CHEVRON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`;
+// ── Icon SVGs (inline — net-zero deps, no icon lib) ─────────────────────────────────
+const ICON_CHEVRON_LEFT = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`;
+const ICON_CHEVRON_RIGHT = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
 /**
- * Initialise the browsable doc index sidebar + #btn-index toggle.
- * Lazy: /index is only fetched on the first Index open.
+ * Initialise the browsable doc index sidebar.
+ * Lazy: /index is only fetched on the first open. No toolbar button — opened by corpus.js.
  *
  * @param {Object} ctx shared viz context
  */
 export function initIndex(ctx) {
-  const indexBtn = document.getElementById('btn-index');
   const container = document.getElementById('index-panel');
-  if (!indexBtn || !container) return;
+  if (!container) return;
 
-  // Whether the index sidebar is currently shown.
   let isSidebarOpen = false;
-  // The scrollable content host inside the sidebar (built once below).
   let contentEl = null;
+  let reopenHandle = null;
 
   // ── Static sidebar chrome: header (title + collapse) + scrollable content ────────────
   function ensureChrome() {
@@ -58,10 +54,10 @@ export function initIndex(ctx) {
     const collapse = document.createElement('button');
     collapse.type = 'button';
     collapse.className = 'index-collapse';
-    collapse.setAttribute('aria-label', 'Close index');
-    collapse.setAttribute('title', 'Close index');
-    collapse.innerHTML = ICON_CHEVRON;
-    collapse.addEventListener('click', closeSidebar);
+    collapse.setAttribute('aria-label', 'Collapse index');
+    collapse.setAttribute('title', 'Collapse index');
+    collapse.innerHTML = ICON_CHEVRON_LEFT;
+    collapse.addEventListener('click', collapseSidebar);
     header.appendChild(collapse);
 
     contentEl = document.createElement('div');
@@ -71,10 +67,22 @@ export function initIndex(ctx) {
     container.appendChild(contentEl);
   }
 
+  // Slim left-edge handle to reopen the index after it's collapsed (shown only while collapsed).
+  function ensureReopenHandle() {
+    if (reopenHandle) return;
+    reopenHandle = document.createElement('button');
+    reopenHandle.type = 'button';
+    reopenHandle.id = 'index-reopen';
+    reopenHandle.setAttribute('aria-label', 'Show index');
+    reopenHandle.setAttribute('title', 'Show index');
+    reopenHandle.innerHTML = ICON_CHEVRON_RIGHT;
+    reopenHandle.addEventListener('click', openSidebar);
+    document.body.appendChild(reopenHandle);
+  }
+
   /** Build the index list content: fetch /index, render Projects + Schemas into contentEl. */
   async function buildIndexPanel() {
     ensureChrome();
-    // Remove any previous status (retry after error)
     const stale = contentEl.querySelector('.index-status');
     if (stale) stale.remove();
 
@@ -119,7 +127,7 @@ export function initIndex(ctx) {
         a.className = 'index-entry doc-ref';
         a.setAttribute('href', '#');
         a.textContent = entry.label || entry.slug; // textContent — T-39-08
-        // Hover → cross-highlight the matching node in the corpus graph (non-fatal if absent).
+        // Hover → cross-highlight the matching node + neighbours in the corpus graph.
         a.addEventListener('mouseenter', () => {
           if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(entry.slug);
         });
@@ -147,13 +155,11 @@ export function initIndex(ctx) {
   }
 
   // ── Build-once preparation ──────────────────────────────────────────────────
-  // Fetch and render once; cached on success; retried on error/empty.
   let preparePromise = null;
   function prepareIndex() {
     if (preparePromise) return preparePromise;
     const p = (async () => {
       ensureChrome();
-      // Clear previous sections on each build (handles retry after error)
       contentEl.querySelectorAll('.index-section').forEach(s => s.remove());
       await buildIndexPanel();
       const hasError = contentEl.querySelector('.index-status');
@@ -164,29 +170,24 @@ export function initIndex(ctx) {
     return p;
   }
 
-  // ── Open / close the sidebar (fade, non-destructive to corpus/brain) ─────────────────
+  // ── Show / collapse / close (fade; non-destructive to corpus/brain) ──────────────────
+  function showReopenHandle(show) {
+    ensureReopenHandle();
+    reopenHandle.classList.toggle('shown', show);
+  }
+
   function openSidebar() {
     isSidebarOpen = true;
-    indexBtn.classList.add('index-active');
-    indexBtn.setAttribute('aria-label', 'Hide index');
-    indexBtn.setAttribute('title', 'Hide index');
-    // Ensure the corpus graph is the active view underneath (it also hides topics/search).
-    if (typeof ctx.openCorpus === 'function' &&
-        !(typeof ctx.isCorpusOpen === 'function' && ctx.isCorpusOpen())) {
-      ctx.openCorpus();
-    }
+    showReopenHandle(false);
     container.style.display = 'flex';
-    // Two rAFs so the display:flex paints before the opacity transition kicks in (fade-in).
+    // Two rAFs so display:flex paints before the opacity transition (fade-in).
     requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('shown')));
     prepareIndex();
   }
 
-  function closeSidebar() {
-    if (!isSidebarOpen) return;
+  // Internal: fade the panel out, then optionally reveal the reopen handle.
+  function hidePanel(showHandleAfter) {
     isSidebarOpen = false;
-    indexBtn.classList.remove('index-active');
-    indexBtn.setAttribute('aria-label', 'Index');
-    indexBtn.setAttribute('title', 'Index');
     if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(null);
     container.classList.remove('shown');
     const onEnd = (ev) => {
@@ -195,24 +196,22 @@ export function initIndex(ctx) {
       container.removeEventListener('transitionend', onEnd);
     };
     container.addEventListener('transitionend', onEnd);
-    // Fallback in case transitionend doesn't fire (e.g. reduced-motion / 0ms).
     setTimeout(() => { if (!isSidebarOpen) container.style.display = 'none'; }, 450);
-    // Leave the corpus graph as-is — do NOT force back to the brain.
+    showReopenHandle(showHandleAfter);
   }
 
-  indexBtn.innerHTML = ICON_LIST;
-  indexBtn.addEventListener('click', () => {
-    if (isSidebarOpen) closeSidebar();
-    else openSidebar();
-  });
+  // User collapsed the sidebar for more graph room — leave the corpus open, show reopen handle.
+  function collapseSidebar() { hidePanel(true); }
+
+  // Corpus returned to the brain — close fully, no reopen handle over the 3D view.
+  function closeIndexSidebar() { hidePanel(false); }
 
   // ── ctx hooks ────────────────────────────────────────────────────────────────
-  // openIndex(): programmatic opener. closeIndexSidebar(): corpus.js calls this when the
-  // user returns to the brain so the sidebar doesn't linger over the 3D brain.
-  ctx.openIndex = openSidebar;
-  ctx.closeIndexSidebar = closeSidebar;
+  // corpus.js drives the lifecycle: openIndexSidebar on corpus enter, closeIndexSidebar on leave.
+  ctx.openIndexSidebar = openSidebar;
+  ctx.closeIndexSidebar = closeIndexSidebar;
+  ctx.openIndex = openSidebar; // programmatic opener (kept for parity)
 
   // Eagerly prepare the list shortly after init so the first open is instant.
-  // Empty/error outcomes are swallowed here and retried on a real open.
   setTimeout(() => { prepareIndex(); }, 1200);
 }

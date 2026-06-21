@@ -872,47 +872,34 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   font-style: normal;
 }
 
-/* ── Index toggle — icon-only fixed button, bottom of the right-side column (WIKI-01, 39-02) ──
-   Expanded Brain Window ONLY — hidden in popover/tray by default.
-   Column order: collapse(10) → corpus(46) → recenter(82) → index. The recenter button
-   already sits at top:82px, so index goes BELOW it: 82 + 30 + 6 = 118px. */
-#btn-index {
-  display: none; /* hidden in popover/tray */
-}
-.mode-window #btn-index {
+/* ── Index reopen handle — slim left-edge tab shown only while the sidebar is collapsed ──
+   (created by index.js, appended to body). Brings the index sidebar back. z:8 like the panel;
+   on the left edge so it never collides with the right-side toolbar buttons. */
+#index-reopen {
   position: fixed;
-  top: 118px;    /* below #btn-recenter (82px) + 30px height + 6px gap */
-  right: 12px;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  margin: 0;
-  display: flex;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 54px;
+  display: none;          /* .shown toggles to flex */
   align-items: center;
   justify-content: center;
-  z-index: 70;
-  border-radius: 7px;
-  background: rgba(26, 18, 32, 0.7);
-  border: none;
-  color: #d9cbc0;
-  opacity: 0.65;
+  padding: 0;
+  margin: 0;
+  z-index: 8;
+  border: 1px solid rgba(139, 112, 144, 0.22);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: rgba(23, 15, 29, 0.97);
+  color: #9a8aa4;
+  opacity: 0.7;
   cursor: pointer;
-  -webkit-app-region: no-drag;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s ease, color 0.15s ease;
 }
-.mode-window #btn-index:hover { opacity: 1; }
+#index-reopen.shown { display: flex; }
+#index-reopen:hover { opacity: 1; color: #c8bcd0; }
 
-/* Active: index is shown — opacity + brightened muted slate color (no amber, founder-locked) */
-.mode-window #btn-index.index-active {
-  opacity: 1;
-  color: #c8bcd0;
-}
-
-/* ── Index panel host (WIKI-01, 39-02) ───────────────────────────────────────
-   Full-bleed scrollable panel for the browsable doc index (initIndex / index.js).
-   Hidden by default; shown by goToIndex() as display:block. Dark aubergine background
-   matches the viz. Muted rose/slate palette throughout — amber never used in rest state
-   (founder-locked: amber is activation-only). */
 /* ── Index sidebar — docks LEFT over the corpus graph (39-02 re-verify, founder direction) ──
    The index list + corpus graph are two views of the same doc set, shown side by side. The
    sidebar overlays the left edge of #corpus-graph (it does NOT reflow the canvas — reflowing
@@ -973,12 +960,23 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
 }
 .index-collapse:hover { opacity: 1; color: #c8bcd0; }
 
-/* Scrollable list host */
+/* Scrollable list host — muted rose/slate scrollbar matching #reader / .detail-page #detail */
 .index-content {
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 14px 12px 28px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(170, 150, 180, 0.28) transparent;
 }
+.index-content::-webkit-scrollbar { width: 8px; }
+.index-content::-webkit-scrollbar-track { background: transparent; }
+.index-content::-webkit-scrollbar-thumb {
+  background: rgba(170, 150, 180, 0.28);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.index-content::-webkit-scrollbar-thumb:hover { background: rgba(170, 150, 180, 0.45); background-clip: content-box; }
 
 /* Index status (loading / error) */
 .index-status {

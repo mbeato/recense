@@ -73,8 +73,11 @@ export function initCorpus(ctx) {
   // nodeId → slug map for D-08 click resolution (built from /graph?type=doc).
   let nodeSlugs = {};
   let nodeLabels = {};
-  // Currently-hovered node (for amber activation highlight).
+  // Currently-hovered node (for amber activation highlight on direct graph hover).
   let hoveredId = null;
+  // Set of node ids highlighted from a sidebar-row hover (the row's doc + its graph neighbours).
+  // Separate from hoveredId so sidebar-driven multi-node highlight and direct graph hover coexist.
+  let highlightSet = new Set();
 
   /** Build the 2D ForceGraph instance once and fetch its data. */
   async function buildCorpusGraph() {
@@ -139,7 +142,7 @@ export function initCorpus(ctx) {
       // Custom canvas paint: muted rose circle + ring + slug label (Obsidian-style).
       // Amber is reserved for the hovered node only (activation-only palette rule).
       .nodeCanvasObject((node, canvasCtx, globalScale) => {
-        const isHover = node.id === hoveredId;
+        const isHover = node.id === hoveredId || highlightSet.has(node.id);
         const r = NODE_R;
         // Circle fill
         canvasCtx.beginPath();
@@ -171,7 +174,16 @@ export function initCorpus(ctx) {
       // doc_containment = solid directed spine (heavier, arrow at child, no dash).
       // doc_reference   = faint dashed undirected cross-link (no arrow).
       // doc_link        = faint mauve solid (existing treatment, no arrow, no dash).
-      .linkColor(link => link.kind === 'doc_containment' ? CONTAINMENT_COLOR : LINK_REST)
+      .linkColor(link => {
+        // Sidebar-row highlight: amber the links whose BOTH endpoints are in the highlight set
+        // (the hovered doc + its neighbours) so the related cluster reads as one unit.
+        if (highlightSet.size) {
+          const s = typeof link.source === 'object' ? link.source.id : link.source;
+          const t = typeof link.target === 'object' ? link.target.id : link.target;
+          if (highlightSet.has(s) && highlightSet.has(t)) return HOVER_NODE;
+        }
+        return link.kind === 'doc_containment' ? CONTAINMENT_COLOR : LINK_REST;
+      })
       .linkWidth(link => link.kind === 'doc_containment' ? 2 : 1)
       .linkDirectionalArrowLength(link => link.kind === 'doc_containment' ? 4 : 0)
       .linkDirectionalArrowRelPos(1)
@@ -346,10 +358,14 @@ export function initCorpus(ctx) {
     corpusBtn.innerHTML = ICON_BOOK;
     corpusBtn.classList.remove('corpus-active');
   }
-  // B3: topics/search are hidden in corpus view, restored in brain view.
+  // B3 + 39-02 re-verify: the brain HUD — the top-left status #panel (which contains topics +
+  // search) — is hidden in corpus view so it doesn't overlap the index sidebar that now docks
+  // top-left; restored in brain view. The bottom-left .legend is separate and stays.
   function setTopicsSearchHidden(hidden) {
+    const panel = document.getElementById('panel');
     const topicWrap = document.getElementById('topic-wrap');
     const searchWrap = document.getElementById('search-wrap');
+    if (panel) panel.style.display = hidden ? 'none' : '';
     if (topicWrap) topicWrap.style.display = hidden ? 'none' : '';
     if (searchWrap) searchWrap.style.display = hidden ? 'none' : '';
   }
@@ -358,6 +374,9 @@ export function initCorpus(ctx) {
     setCorpusButton();
     setTopicsSearchHidden(true);
     transition.toCorpus(prepareCorpus());
+    // The index sidebar opens by default with the corpus view (39-02 re-verify: the dedicated
+    // #btn-index was removed — corpus IS the index entry point now).
+    if (typeof ctx.openIndexSidebar === 'function') ctx.openIndexSidebar();
   }
   function goToBrain() {
     setBrainButton();
@@ -404,18 +423,33 @@ export function initCorpus(ctx) {
   ctx.isCorpusOpen = function isCorpusOpen() {
     return transition.isCorpus();
   };
-  // highlightCorpusNode(slug|null): amber-highlight the doc node whose slug matches (or clear
-  // when null). Non-fatal if the graph isn't built yet. Re-asserting the nodeCanvasObject
-  // accessor flags force-graph to repaint the (otherwise static, pinned) canvas so the
-  // hovered amber shows without moving the camera.
+  // highlightCorpusNode(slug|null): amber-highlight the doc node whose slug matches AND its
+  // direct graph neighbours (so hovering a project lights up its related/sub-schema docs, not
+  // just the single node — founder direction), plus the links between them. Clears on null.
+  // Non-fatal if the graph isn't built yet. Re-asserting the nodeCanvasObject accessor flags
+  // force-graph to repaint the (otherwise static, pinned) canvas without moving the camera.
   ctx.highlightCorpusNode = function highlightCorpusNode(slug) {
     if (!CorpusGraph) return;
-    let nextId = null;
+    const next = new Set();
     if (slug) {
-      for (const id in nodeSlugs) { if (nodeSlugs[id] === slug) { nextId = id; break; } }
+      let rootId = null;
+      for (const id in nodeSlugs) { if (nodeSlugs[id] === slug) { rootId = id; break; } }
+      if (rootId) {
+        next.add(rootId);
+        try {
+          const gd = CorpusGraph.graphData && CorpusGraph.graphData();
+          for (const link of ((gd && gd.links) || [])) {
+            const s = typeof link.source === 'object' ? link.source.id : link.source;
+            const t = typeof link.target === 'object' ? link.target.id : link.target;
+            if (s === rootId) next.add(t);
+            else if (t === rootId) next.add(s);
+          }
+        } catch (_) { /* ignore — fall back to single-node highlight */ }
+      }
     }
-    if (nextId === hoveredId) return;
-    hoveredId = nextId;
+    // Skip the repaint if the set is unchanged (avoids thrashing on repeated mouse moves).
+    if (next.size === highlightSet.size && [...next].every(id => highlightSet.has(id))) return;
+    highlightSet = next;
     try {
       if (typeof CorpusGraph.nodeCanvasObject === 'function') {
         CorpusGraph.nodeCanvasObject(CorpusGraph.nodeCanvasObject());

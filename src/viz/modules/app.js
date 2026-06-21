@@ -232,7 +232,7 @@ initSearch(ctx);  // Plan 19-01: after initDetail — reads ctx.activate, ctx.Gr
 initTopics(ctx);  // Phase 19 exploration: topic browser — after initDetail (reads ctx.selectNode)
 initReader(ctx);  // Reader slice: doc overlay; fact-refs call ctx.selectNode (after initDetail)
 initCorpus(ctx);  // READER-04: flat 2D Obsidian corpus graph (#btn-corpus full-window toggle)
-initIndex(ctx);   // READER-WP: browsable text index (#btn-index full-window toggle, WIKI-01)
+initIndex(ctx);   // WIKI-01: browsable text index — left sidebar over the corpus (no toolbar button)
 
 // Clear bootstrap loading message now that modules are wired — but NOT when it
 // carries the load-error or empty-graph message set above (clearing those would
