@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: ready_to_plan
-stopped_at: Phase 37 context gathered
-last_updated: "2026-06-21T03:45:22.472Z"
+stopped_at: Phase 38 context gathered
+last_updated: "2026-06-21T05:17:21.444Z"
 progress:
   total_phases: 15
   completed_phases: 6
   total_plans: 22
-  completed_plans: 17
+  completed_plans: 20
   percent: 40
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 35 — recency strength retrieval ranking
+**Current focus:** Phase 37 — typed-predicate-edges-build
 
 ## Current Position
 
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
-Phase: 35
-Plan: Not started
+Phase: 37 (typed-predicate-edges-build) — EXECUTING
+Plan: 1 of 4
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
 [████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
@@ -270,9 +270,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-21T03:19:04.498Z
-Stopped at: Phase 37 context gathered
-Resume file: .planning/phases/37-typed-predicate-edges-build/37-CONTEXT.md
+Last session: 2026-06-21T05:17:21.436Z
+Stopped at: Phase 38 context gathered
+Resume file: .planning/phases/38-stored-reflections-derived-insights/38-CONTEXT.md
 
 ## Key Decisions (Phase 28)
 
