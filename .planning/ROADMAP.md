@@ -486,6 +486,16 @@ Plans:
 
 - [ ] 38-04-PLAN.md — Eval: instrument the KU replay harness with compose-token measurement (off vs on), prove the no-regression token win + founder activation decision
 
+### Phase 38.1: Consolidation intra-pass dedup fix (embed-on-mint) (INSERTED)
+
+**Goal:** Claims arriving in the SAME consolidation pass can dedup/contradict each other — a mid-pass-minted node is visible to later episodes' `topk` in that pass, instead of minting permanent duplicate islands. Fixes the bulk-ingest onboarding path (`ingest-project` into a small/empty graph) and unblocks a fair Phase 35 RANK-02 re-test.
+**Requirements**: DEDUP-01 (embed-on-mint: minted node's embedding set from the already-computed claim vector so it's `topk`-visible immediately — Option D), DEDUP-02 (no regression: incremental multi-pass path + RANK-01 dark default unchanged; `setEmbedding` stays single writer, T-01-DIRTY intact)
+**Depends on:** Inserted after Phase 38 (urgent). Independent correctness fix; gates a fair Phase 35 RANK-02 re-test, and must precede the v8.0 benchmark/gate phases (40–43) so their baselines aren't frozen on a degenerate graph. Design captured in 38.1-CONTEXT.md.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 38.1 to break down)
+
 ### Phase 39: Reader Wiki-Parity — Browsable Index + Surfaced Backlinks
 
 **Goal:** Close the two reader-layer ergonomics where recense trails Karpathy's LLM Wiki pattern (the `research-wiki` standard) — a **browsable INDEX** and **surfaced backlinks** — without touching the engine. Both reuse data that already exists (doc nodes; reverse-edge lookup via `idx_edge_dst` / `getInEdges`), so this is presentation-layer parity, not new mechanism. recense already meets-or-beats the LLM Wiki on every *mechanism* dimension (autonomous maintenance, dedup-to-canonical, PE-gated update-don't-rewrite, enforced citations, automatic staleness, self-confirmation immunity, forgetting); these are the two browsing affordances it lacks. **Markdown export (LLM-Wiki gap #3) is explicitly deferred** — recall + reader replace grep, and the queryable-DB-vs-portable-files trade is a deliberate divergence, not a deficiency.
@@ -563,13 +573,3 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
   3. The gate's baseline numbers are the v8.0-final figures, and the gate is documented so the founder can re-baseline intentionally (not by silent drift) — GATE-03
 
 **Plans:** 0 plans (run `/gsd-plan-phase 43`)
-
-### Phase 44: Consolidation intra-pass dedup fix (embed-on-mint)
-
-**Goal:** Claims arriving in the SAME consolidation pass can dedup/contradict each other — a mid-pass-minted node is visible to later episodes' `topk` in that pass, instead of minting permanent duplicate islands. Fixes the bulk-ingest onboarding path (`ingest-project` into a small/empty graph) and unblocks a fair Phase 35 RANK-02 re-test.
-**Requirements**: DEDUP-01 (embed-on-mint: minted node's embedding is set from the already-computed claim vector so it's `topk`-visible immediately — Option D), DEDUP-02 (no regression: incremental multi-pass path + RANK-01 dark default unchanged; `setEmbedding` stays single writer, T-01-DIRTY intact)
-**Depends on:** None — independent correctness fix. Gates a fair Phase 35 RANK-02 re-test (follow-on phase, not this one). Correctness bug in the v6.0 onboarding path; consider sequencing ahead of pending typed-predicate-edges phases.
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (run /gsd-plan-phase 44 to break down)
