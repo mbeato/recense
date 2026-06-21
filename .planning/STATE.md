@@ -4,7 +4,7 @@ milestone: v6.0
 milestone_name: Project Onboarding
 status: ready_to_plan
 stopped_at: Phase 38 context gathered
-last_updated: "2026-06-21T05:41:29.447Z"
+last_updated: "2026-06-21T05:42:46.572Z"
 progress:
   total_phases: 15
   completed_phases: 6
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 37 — typed-predicate-edges-build
+**Current focus:** Phase 38 — stored-reflections-derived-insights
 
 ## Current Position
 
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
-Phase: 37 (typed-predicate-edges-build) — EXECUTING
+Phase: 38 (stored-reflections-derived-insights) — EXECUTING
 Plan: 1 of 4
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 

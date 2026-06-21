@@ -470,7 +470,7 @@ Plans:
   2. Recall surfaces a relevant stored insight in place of (or ahead of) raw member facts where it answers the query, measurably reducing compose-time tokens on the harness with no quality regression — REFLECT-02
   3. Insights are regenerable/evictable like docs; a falsified or tombstoned underlying fact invalidates or flags the dependent insight (no stale-insight self-confirmation)
 
-**Plans:** 4 plans (3 waves)
+**Plans:** 0/4 plans executed
 
 Plans:
 **Wave 1**
