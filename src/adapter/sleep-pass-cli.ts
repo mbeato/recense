@@ -44,6 +44,19 @@ function resolveDbPath(): string | undefined {
 }
 
 async function main(): Promise<void> {
+  // ── 0. Raise the headless `claude -p` timeout for this pass ──────────────────
+  // The headless transport defaults to 120s (claude-headless-client.ts), which is
+  // fine for the short judge/extract calls but too short for corpus doc generation:
+  // landing docs (Phase 32-02) can have 100+ citations and take 200s+ to generate,
+  // so under the default they SIGKILL → empty → not persisted. Mirror the 600s
+  // default already set by the other corpus entry points (generate-doc-cli.ts,
+  // generate-corpus-cli.ts, ingest-project-cli.ts) so the scheduled deferred path
+  // (ingest-project → marker → sleep pass generateCorpusDocs) fills large stubs.
+  // Conditional: an explicit env override still wins.
+  if (!process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS']) {
+    process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS'] = '600000';
+  }
+
   // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──
   // process.exit() inside a try/finally does NOT unwind the stack, so exiting
   // while the lock is held leaks it for up to LOCK_STALE_MS (5 min). Validate
