@@ -111,6 +111,33 @@ describe('parseMergedExtraction: merged {facts, triples} response', () => {
     expect(triples[1]).toMatchObject({ subject: 'Max', predicate: 'works_on', object: 'recense' });
   });
 
+  it('parses a {facts, triples} object wrapped in ```json fences (the live Haiku bug)', () => {
+    // Haiku reliably wraps its merged output in markdown fences despite the prompt.
+    // The original parser bailed on `!trimmed.startsWith('{')` BEFORE locating the
+    // object span, silently dropping every fact AND triple — so the live typed
+    // extraction minted zero edges (Phase 37 calibration finding, 2026-06-21).
+    const inner = JSON.stringify({
+      facts: [{ type: 'entity', value: 'recense', links: [] }],
+      triples: [{ subject: 'judge', predicate: 'uses', object: 'haiku' }],
+    });
+    const fenced = '```json\n' + inner + '\n```';
+    const { claims, triples } = parseMergedExtraction(fenced);
+    expect(claims).toHaveLength(1);
+    expect(triples).toHaveLength(1);
+    expect(triples[0]).toMatchObject({ subject: 'judge', predicate: 'uses', object: 'haiku' });
+  });
+
+  it('parses a {facts, triples} object with a leading prose preamble', () => {
+    const inner = JSON.stringify({
+      facts: [],
+      triples: [{ subject: 'recense', predicate: 'runs_on', object: 'node' }],
+    });
+    const withPreamble = 'Here is the extraction:\n' + inner;
+    const { triples } = parseMergedExtraction(withPreamble);
+    expect(triples).toHaveLength(1);
+    expect(triples[0]).toMatchObject({ subject: 'recense', predicate: 'runs_on', object: 'node' });
+  });
+
   it('returns {claims:[], triples:[]} on a bare-array input — object shape required (Pitfall 3)', () => {
     // A bare array must NOT be silently misrouted — parseMergedExtraction requires { } shape.
     const bareArray = JSON.stringify([{ type: 'fact', value: 'some claim' }]);

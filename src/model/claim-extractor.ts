@@ -452,11 +452,14 @@ export function parseClaims(text: string): ExtractedClaim[] {
 export function parseMergedExtraction(text: string): { claims: ExtractedClaim[]; triples: Triple[] } {
   const safe = { claims: [] as ExtractedClaim[], triples: [] as Triple[] };
   const trimmed = text.trim();
-  // Must start with '{' — a bare array or any other shape is rejected (Pitfall 3 guard).
-  if (!trimmed.startsWith('{')) return safe;
   let obj: unknown;
   try {
-    // Locate the outermost object span (models may add prose/fences despite instructions).
+    // Locate the outermost object span (models may add prose/```json fences despite
+    // instructions — Haiku reliably fences its merged output). Do NOT pre-guard on
+    // `startsWith('{')`: that rejected every fenced response BEFORE this span-finder
+    // ran, silently dropping all facts AND triples (Phase 37 live-calibration bug).
+    // A bare array still parses to empty here (Pitfall 3): its slice has no
+    // facts/triples keys, so claims and triples both come back empty below.
     const start = trimmed.indexOf('{');
     const end = trimmed.lastIndexOf('}');
     if (start === -1 || end === -1 || end < start) return safe;
