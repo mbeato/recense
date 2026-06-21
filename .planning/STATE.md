@@ -4,12 +4,12 @@ milestone: v6.0
 milestone_name: Project Onboarding
 status: ready_to_plan
 stopped_at: Phase 39 context gathered
-last_updated: "2026-06-21T19:25:29.588Z"
+last_updated: "2026-06-21T20:09:15.601Z"
 progress:
   total_phases: 16
   completed_phases: 8
-  total_plans: 27
-  completed_plans: 25
+  total_plans: 29
+  completed_plans: 26
   percent: 50
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 39 — reader wiki parity index and backlinks
+**Current focus:** Phase 39 — reader-wiki-parity-index-and-backlinks
 
 ## Current Position
 
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
-Phase: 39
-Plan: Not started
+Phase: 39 (reader-wiki-parity-index-and-backlinks) — EXECUTING
+Plan: 2 of 2
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
 [████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
@@ -270,9 +270,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-21T19:25:29.579Z
+Last session: 2026-06-21T20:09:15.594Z
 Stopped at: Phase 39 context gathered
-Resume file: .planning/phases/39-reader-wiki-parity-index-and-backlinks/39-CONTEXT.md
+Resume file: None
 
 ## Key Decisions (Phase 28)
 
