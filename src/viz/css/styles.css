@@ -872,15 +872,16 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   font-style: normal;
 }
 
-/* ── Index toggle — icon-only fixed button, sibling below #btn-corpus (WIKI-01, 39-02) ──
+/* ── Index toggle — icon-only fixed button, bottom of the right-side column (WIKI-01, 39-02) ──
    Expanded Brain Window ONLY — hidden in popover/tray by default.
-   Position: top:82px places it below #btn-corpus (46px top + 30px height + 6px gap). */
+   Column order: collapse(10) → corpus(46) → recenter(82) → index. The recenter button
+   already sits at top:82px, so index goes BELOW it: 82 + 30 + 6 = 118px. */
 #btn-index {
   display: none; /* hidden in popover/tray */
 }
 .mode-window #btn-index {
   position: fixed;
-  top: 82px;    /* below #btn-corpus: 46px top + 30px height + 6px gap */
+  top: 118px;    /* below #btn-recenter (82px) + 30px height + 6px gap */
   right: 12px;
   width: 30px;
   height: 30px;
