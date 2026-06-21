@@ -4,12 +4,12 @@ milestone: v6.0
 milestone_name: Project Onboarding
 status: Phase 33 complete
 stopped_at: Phase 35 context gathered
-last_updated: "2026-06-21T01:26:10.998Z"
+last_updated: "2026-06-21T01:28:12.317Z"
 progress:
   total_phases: 15
   completed_phases: 5
   total_plans: 16
-  completed_plans: 13
+  completed_plans: 14
   percent: 33
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
 Phase: 34 (visual-polish-pass) — EXECUTING
-Plan: 1 of 3
+Plan: 2 of 3
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
 [████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
@@ -268,9 +268,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-21T01:26:10.990Z
+Last session: 2026-06-21T01:28:12.309Z
 Stopped at: Phase 35 context gathered
-Resume file: .planning/phases/35-recency-strength-retrieval-ranking/35-CONTEXT.md
+Resume file: None
 
 ## Key Decisions (Phase 28)
 
