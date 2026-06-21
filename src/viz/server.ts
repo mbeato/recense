@@ -13,6 +13,8 @@
  *   GET /doc/meta?slug= → {nodeId, generated_at, citedFactIds:[...]} (DB-backed, READER-02)
  *   POST /doc/generate?slug= → force-spawns CLI, returns 202 {status:'generating'} (READER-02)
  *   GET /doc/staleness?slug= → {generated_at, stale:[{factId,prev_value,value}], tombstoned:[id,...]} (READER-03)
+ *   GET /doc/backlinks?slug= → {backlinks:[{srcId,slug,label,kind}]} incoming doc wiki refs (WIKI-02, 39-01)
+ *   GET /doc/backlinks?fact= → {citedByDocs:[{srcId,slug,label}]} docs citing a fact (WIKI-02, 39-01)
  *
  * Security invariants (threat model T-10-07/08/09/10/11, T-27-08/09/10/11):
  *   T-10-07: path-traversal guard — resolves absolute path and asserts it stays
@@ -230,6 +232,36 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     FROM edge ce
     JOIN node n ON n.id = ce.dst
     WHERE ce.src = ? AND ce.kind = 'cites'
+  `);
+
+  // Compile /doc/backlinks incoming-edge statement once (39-01, WIKI-02 — read-only).
+  // Returns incoming doc→doc wiki-meaningful edges for a given destination doc id.
+  // Filters to kind IN ('doc_link','doc_reference','doc_containment') per D-06 — engine
+  // kinds (derived_from, abstracts, schema membership) are excluded from browsing surfaces.
+  // src must be a live (tombstoned=0) doc node; dangling edges from tombstoned src excluded.
+  // JOIN node_doc + LEFT JOIN schema node mirrors stmtDocNodes COALESCE label resolution.
+  const stmtDocBacklinks = db.prepare(`
+    SELECT e.src AS srcId, nd.slug,
+           COALESCE(NULLIF(sch.value, ''), nd.slug) AS label,
+           e.kind
+    FROM edge e
+    JOIN node src_n ON src_n.id = e.src AND src_n.type = 'doc' AND src_n.tombstoned = 0
+    JOIN node_doc nd ON nd.node_id = e.src
+    LEFT JOIN node sch ON sch.id = nd.slug AND sch.type = 'schema' AND sch.tombstoned = 0
+    WHERE e.dst = ? AND e.kind IN ('doc_link', 'doc_reference', 'doc_containment')
+  `);
+
+  // Compile /doc/backlinks?fact= reverse-cites statement once (39-01, D-05 atom view).
+  // Returns live doc nodes that cite the given fact id via kind='cites' edges.
+  // Same COALESCE label resolution as stmtDocBacklinks.
+  const stmtCitingDocs = db.prepare(`
+    SELECT e.src AS srcId, nd.slug,
+           COALESCE(NULLIF(sch.value, ''), nd.slug) AS label
+    FROM edge e
+    JOIN node src_n ON src_n.id = e.src AND src_n.type = 'doc' AND src_n.tombstoned = 0
+    JOIN node_doc nd ON nd.node_id = e.src
+    LEFT JOIN node sch ON sch.id = nd.slug AND sch.type = 'schema' AND sch.tombstoned = 0
+    WHERE e.dst = ? AND e.kind = 'cites'
   `);
 
   // Compile /search BM25 prepared statement once (T-19-01 — query passes through
@@ -635,6 +667,76 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         }
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ generated_at, stale, tombstoned }));
+      } catch (err) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── GET /doc/backlinks?slug= | ?fact= (incoming references, WIKI-02, 39-01) ─────────
+    // Doc view (?slug=): returns { backlinks: [{srcId, slug, label, kind}] } — the set
+    // of live doc nodes that link HERE via wiki-meaningful edge kinds (doc_link,
+    // doc_reference, doc_containment). Engine kinds (derived_from, abstracts) excluded (D-06).
+    // Atom view (?fact=<factId>): returns { citedByDocs: [{srcId, slug, label}] } — docs
+    // that cite the given fact via kind='cites'. Both paths are GET-only, read-only (WIKI-03).
+    // T-39-01: slug sanitized; fact param validated to id charset; no new Database() (T-39-03).
+    if (url === '/doc/backlinks') {
+      const params = new URLSearchParams(req.url?.split('?')[1] ?? '');
+      const rawFact = params.get('fact') ?? '';
+
+      // Atom/fact view — if ?fact= provided, return reverse-cites docs
+      if (rawFact) {
+        // Validate fact id to safe charset (hex + dashes, UUID-ish)
+        const factId = rawFact.toLowerCase().replace(/[^a-f0-9-]/g, '').slice(0, 64);
+        if (!factId) {
+          res.writeHead(400, { 'content-type': 'text/plain' });
+          res.end('bad fact id');
+          return;
+        }
+        try {
+          const rows = stmtCitingDocs.all(factId) as Array<{ srcId: string; slug: string; label: string }>;
+          const citedByDocs = rows.map(r => ({ srcId: r.srcId, slug: r.slug, label: r.label }));
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ citedByDocs }));
+        } catch (err) {
+          res.writeHead(500, { 'content-type': 'text/plain' });
+          res.end('internal error');
+        }
+        return;
+      }
+
+      // Doc view — resolve slug → doc row → incoming wiki edges
+      const rawId = params.get('id') ?? '';
+      let slug: string;
+      if (rawId) {
+        const resolvedSlug = resolveDocSlugById(rawId);
+        if (!resolvedSlug) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'no live doc for id' }));
+          return;
+        }
+        slug = resolvedSlug;
+      } else {
+        const rawSlug = params.get('slug') ?? '';
+        slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+        if (!slug) {
+          res.writeHead(400, { 'content-type': 'text/plain' });
+          res.end('bad slug');
+          return;
+        }
+      }
+      try {
+        const docRow = stmtGetDoc.get(slug) as { id: string; value: string; generated_at: number } | undefined;
+        if (!docRow) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'no doc for slug' }));
+          return;
+        }
+        const rows = stmtDocBacklinks.all(docRow.id) as Array<{ srcId: string; slug: string; label: string; kind: string }>;
+        const backlinks = rows.map(r => ({ srcId: r.srcId, slug: r.slug, label: r.label, kind: r.kind }));
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ backlinks }));
       } catch (err) {
         res.writeHead(500, { 'content-type': 'text/plain' });
         res.end('internal error');
