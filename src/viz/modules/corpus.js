@@ -168,33 +168,58 @@ export function initCorpus(ctx) {
         if (node && node.id) openDocReader(node.id);
       });
 
-    // C2 (34-03 fix): compact corpus clustering — light repulsion + explicit centering force.
+    // C2 (34-03 fix): compact corpus clustering — light repulsion + centering + collide.
     // Problem: charge=-80 with few/unconnected nodes scatters them to canvas edges (nothing
     // pulls them back without links), then fitAndClamp zooms out to fit the spread.
-    // Fix: reduce charge to -20 (barely pushes nodes apart) and inject a centering force
-    // that gently pulls every node toward the canvas centre (forceX/Y-style, no d3 import
-    // needed — plain JS function implementing the d3-force protocol).
+    // Round 2 (founder): the tight -20/k=0.08 cluster was a touch too close to read labels.
+    // Loosen modestly — charge -35, centering k 0.05 — and add a small collision force so
+    // node+label footprints don't overlap. Still a contained cluster, just legible spacing.
+    // All forces are plain JS objects implementing the d3-force protocol (no d3 import).
     try {
       const charge = G.d3Force('charge');
-      if (charge && typeof charge.strength === 'function') charge.strength(-20);
+      if (charge && typeof charge.strength === 'function') charge.strength(-35);
       const link = G.d3Force('link');
       if (link && typeof link.distance === 'function') link.distance(40);
-      // Minimal inline centering force (implements the d3-force function protocol).
-      // Pulls each node toward (cx, cy) with a gentle fixed strength — no d3 import needed.
+      // Inline centering force — gently pulls each node toward the canvas centre.
       const cx = (container.clientWidth || window.innerWidth) / 2;
       const cy = (container.clientHeight || window.innerHeight) / 2;
-      let _nodes = [];
+      let _cNodes = [];
       const centerForce = Object.assign(
         function(alpha) {
-          const k = 0.08 * alpha; // gentle pull — enough to cluster, not to pin
-          for (const n of _nodes) {
+          const k = 0.05 * alpha; // round 2: softer pull (was 0.08) — looser, still centred
+          for (const n of _cNodes) {
             if (n.fx == null) n.vx = (n.vx || 0) + (cx - n.x) * k;
             if (n.fy == null) n.vy = (n.vy || 0) + (cy - n.y) * k;
           }
         },
-        { initialize(nodes) { _nodes = nodes; } }
+        { initialize(nodes) { _cNodes = nodes; } }
       );
       G.d3Force('center', centerForce);
+      // Inline collision force — single-pass separation so node+label footprints don't
+      // overlap. COLLIDE_R covers the circle plus enough room for the label below it.
+      const COLLIDE_R = NODE_R * 4; // ~20 units — circle + label breathing room
+      let _kNodes = [];
+      const collideForce = Object.assign(
+        function() {
+          for (let i = 0; i < _kNodes.length; i++) {
+            const a = _kNodes[i];
+            for (let j = i + 1; j < _kNodes.length; j++) {
+              const b = _kNodes[j];
+              let dx = b.x - a.x, dy = b.y - a.y;
+              let d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+              const min = COLLIDE_R * 2;
+              if (d < min) {
+                const push = (min - d) / d * 0.5;
+                dx *= push; dy *= push;
+                if (a.fx == null) { a.x -= dx; a.y -= dy; }
+                if (b.fx == null) { b.x += dx; b.y += dy; }
+              }
+            }
+          }
+        },
+        { initialize(nodes) { _kNodes = nodes; } }
+      );
+      G.d3Force('collide', collideForce);
     } catch (_) { /* non-fatal if force-graph doesn't expose d3Force */ }
 
     return G;
