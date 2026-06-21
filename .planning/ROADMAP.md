@@ -9,6 +9,8 @@
 - ✅ **v4.0 Proactive Memory** — Phases 20–23 (shipped 2026-06-17) — full detail: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 - ✅ **v5.0 Foundational Memory Store + Reader Layer** — Phases 24–28 (shipped 2026-06-19) — full detail: [milestones/v5.0-ROADMAP.md](milestones/v5.0-ROADMAP.md)
 - 🔲 **v6.0 Project Onboarding** — Phases 29–32 (active)
+- 🔲 **v7.0 Retrieval & Reasoning Depth** — Phases 35–39 (planned) — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections, reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export both explicitly deferred.
+- 🔲 **v8.0 Performance, Efficiency & Competitive Parity** — Phases 40–43 (planned, starts after v7.0) — prove at-or-above competitors (mem0/Zep) on accuracy + latency + token via LOCOMO baseline, build the vector index (kill brute-force cosine at 7000+ nodes), token-cost audit, then lock it all behind regression gates. Hard rule: every competitive number reproducible or cited — no inflated metrics.
 
 ## Phases
 
@@ -368,9 +370,140 @@ Plans:
   2. Every async/interactive surface has explicit loading, empty, and error states (no blank or abrupt gaps), and interactive elements have visible hover/focus feedback with smooth transitions — VIZ-POLISH-02
   3. No amber is introduced for non-activation states (rest stays muted rose/slate/mauve; amber reserved for activation/hover) — verified by grep + visual; the 3D brain density anchor is visually unchanged; the diff is CSS + state-handling only (no structural/composition change); `package.json` runtime deps unchanged — VIZ-POLISH-03
 
-**Plans:** 0 plans (run `/gsd-ui-phase 34` to generate the UI design contract, then plan)
+**Plans:** 3 plans (3 waves — sequential file-ownership of styles.css/index.html/corpus.js)
 
 **UI hint**: yes
 
 Plans:
-- [ ] TBD (run /gsd-ui-phase 34 for the design contract, then /gsd-plan-phase 34)
+**Wave 1**
+- [ ] 34-01-PLAN.md — R1 sticky reader close + B2 HUD declutter + detail-spacing normalization (styles.css, index.html)
+**Wave 2** *(depends on 34-01 — shares styles.css/index.html)*
+- [ ] 34-02-PLAN.md — corpus surface: B3 topics-hide + C1 icon button + C2 force tuning + loading/empty/error states (corpus.js, styles.css, index.html)
+**Wave 3** *(depends on 34-01 + 34-02)*
+- [ ] 34-03-PLAN.md — dist rebuild + VIZ-POLISH-03 guard greps + founder visual checkpoint (autonomous: false)
+
+## Phase Details — v7.0 Retrieval & Reasoning Depth
+
+recense deepens the two weakest edges of the engine — *how it ranks what it retrieves* and *how much it reasons over what it stores* — without touching the core learning loop. The unifying bet is recense's own architecture principle: **pay LLM/embedding cost at sleep, save it at recall.** All three build phases serve token-efficiency *and* use-quality (better ranking → fewer tokens for equal answer; typed paths → precise retrieval instead of neighborhood dumps; stored insights → recall returns a precomputed answer instead of re-synthesizing at compose-time). Bi-temporal validity (Zep/Graphiti-style validity intervals) was evaluated and **deferred** — it adds storage + complexity while serving a "what did I believe in March" question customer-zero rarely asks.
+
+**Engine invariants across all phases:** single-tenant; graph is source of truth, vector is derived cache; online paths stay LLM-free (all LLM/embedding cost in the offline sleep pass); never strengthen a fact from inferred output (self-confirmation guard); never resurface a tombstoned node; net-zero new runtime deps.
+
+**Dependency shape:** 35 and 36 are independent and can run in either order. 37 is **gated** on the 36 spike go/no-go (it does not start on a no-go). 38 is sequenced last (typed edges enrich reflection inputs but are not required).
+
+### Phase 35: Recency/Strength-Weighted Retrieval Ranking
+
+**Goal:** Recall ranks by belief strength and recency blended with semantic similarity, instead of cosine+BM25 alone — so a strongly-reinforced recent belief outranks a stale weak one at equal similarity, improving quality-per-injected-token with zero added online LLM cost. Today `effective_s` (strength-decay) is computed but used only for eviction; it never enters ranking (`src/retrieval/topk.ts`, `src/recall/index.ts`).
+**Requirements**: RANK-01 (strength/recency term fused into ranking, tunable, LLM-free), RANK-02 (eval-backed: no regression + a token or precision win)
+**Depends on:** Standalone within v7.0 — builds on the live retrieval/recall engine (Phases 3/17/18)
+**Success Criteria** (what must be TRUE):
+  1. Recall fuses a strength/recency signal (`effective_s` + `last_access`) with the existing cosine+BM25 RRF behind a tunable weight; the online path stays LLM-free — RANK-01
+  2. On the existing KU/LongMemEval replay harness, blended ranking shows no regression vs. the cosine+BM25 baseline and delivers at least one of: higher top-k precision, or equal quality at a smaller inject budget (genuine token saving) — RANK-02
+  3. The strength/recency term never overrides scope rules and never resurfaces tombstoned nodes (RET-02 invariant holds)
+
+**Plans:** 0 plans (run `/gsd-plan-phase 35`)
+
+### Phase 36: Typed Predicate Edges — Spike
+
+**Goal:** Before committing a build, prove that extracting *typed* relations (predicates like `works_at` / `prefers` / `located_in`) instead of generic weighted `relation` edges produces a measurable lift in multi-hop recall on a real query set — a founder-owned go/no-go plus calibration notes (predicate vocabulary, extraction prompt shape). Mirrors the Phase 29 spike-first discipline. **Off-distribution architecture work — the spike de-risks the "right approach" call before any engine change.**
+**Requirements**: TYPED-SPIKE-01 (typed extraction measurably lifts multi-hop recall, or is honestly shown not to)
+**Depends on:** Standalone within v7.0 — runs against a scratch DB, no change to the live graph
+**Success Criteria** (what must be TRUE):
+  1. A spike extracts typed predicates from a sample of real episodes on a scratch DB — no new runtime deps, the live graph untouched
+  2. A held-out multi-hop query set (e.g. "where is X" requiring entity→entity→attribute hops) is answered measurably better with typed edges than with the current untyped `relation` edges — or shown not to, with numbers
+  3. Written calibration notes: predicate vocabulary (closed set vs open), extraction prompt shape, recall-traversal sketch, and a **founder-owned go/no-go** for Phase 37
+
+**Plans:** 0 plans (run `/gsd-spike 36` or `/gsd-plan-phase 36`)
+
+### Phase 37: Typed Predicate Edges — Build (gated on Phase 36)
+
+**Goal:** If Phase 36 is a go, promote typed predicate extraction into the live consolidation pipeline and recall path: edges carry a predicate type, offline extraction emits them, and recall traverses a typed relational *path* instead of dumping an untyped neighborhood — enabling durable multi-hop reasoning and a smaller, more precise recall payload.
+**Requirements**: TYPED-01 (typed edge model + offline typed extraction), TYPED-02 (typed-path recall, fewer tokens at equal/better quality)
+**Depends on:** **Phase 36 go/no-go — this phase does not start on a no-go.** Builds on the live consolidation extraction + edge model.
+**Success Criteria** (what must be TRUE):
+  1. The schema + `edge` model carry predicate types; consolidation extraction emits typed edges through the offline pipeline (all LLM cost at sleep); graph stays source of truth — TYPED-01
+  2. Recall assembles a typed relational path; multi-hop queries return a precise path with fewer tokens than the untyped-neighborhood baseline at equal-or-better answer quality on the harness — TYPED-02
+  3. Self-confirmation guard intact: inferred output never mints or strengthens a typed edge
+
+**Plans:** 0 plans (gated — plan only after the Phase 36 go decision)
+
+### Phase 38: Stored Reflections / Derived Insights
+
+**Goal:** The sleep pass periodically reflects over schema clusters and stores higher-order derived insights as first-class nodes (`origin=inferred`, non-strengthening, confidence-capped), so recall can return one precomputed insight instead of forcing the online LLM to re-synthesize N raw facts at compose-time — making the "reasons over schemas to handle novel situations" claim a durable engine mechanism, not a recall-time-only effect.
+**Requirements**: REFLECT-01 (offline reflection → inferred non-strengthening insight nodes), REFLECT-02 (recall surfaces insights, reducing compose tokens; falsified facts invalidate dependent insights)
+**Depends on:** Live schema induction (Phases 4/18); sequenced after Phase 37 (typed edges enrich reflection inputs but are not required)
+**Success Criteria** (what must be TRUE):
+  1. The offline pass generates derived-insight nodes from schema clusters, stored with `origin=inferred`, `training_eligible=0`, and a confidence ceiling; they decay and never strengthen the facts they summarize (self-confirmation guard) — REFLECT-01
+  2. Recall surfaces a relevant stored insight in place of (or ahead of) raw member facts where it answers the query, measurably reducing compose-time tokens on the harness with no quality regression — REFLECT-02
+  3. Insights are regenerable/evictable like docs; a falsified or tombstoned underlying fact invalidates or flags the dependent insight (no stale-insight self-confirmation)
+
+**Plans:** 0 plans (run `/gsd-plan-phase 38`)
+
+### Phase 39: Reader Wiki-Parity — Browsable Index + Surfaced Backlinks
+
+**Goal:** Close the two reader-layer ergonomics where recense trails Karpathy's LLM Wiki pattern (the `research-wiki` standard) — a **browsable INDEX** and **surfaced backlinks** — without touching the engine. Both reuse data that already exists (doc nodes; reverse-edge lookup via `idx_edge_dst` / `getInEdges`), so this is presentation-layer parity, not new mechanism. recense already meets-or-beats the LLM Wiki on every *mechanism* dimension (autonomous maintenance, dedup-to-canonical, PE-gated update-don't-rewrite, enforced citations, automatic staleness, self-confirmation immunity, forgetting); these are the two browsing affordances it lacks. **Markdown export (LLM-Wiki gap #3) is explicitly deferred** — recall + reader replace grep, and the queryable-DB-vs-portable-files trade is a deliberate divergence, not a deficiency.
+**Requirements**: WIKI-01 (browsable index over existing doc nodes), WIKI-02 (backlinks / "what links here" surfaced in the reader)
+**Depends on:** Phase 27/28 reader + corpus layer (live). Independent of 35–38 — can land in any order within v7.0; sequenced last only by convention. Pairs naturally with Phase 34 polish.
+**Success Criteria** (what must be TRUE):
+  1. The reader exposes a browsable INDEX — a generated index doc and/or `/index` route that lists and links the live doc/landing nodes as a navigable entry point (the `research-wiki` "unindexed content doesn't compound" rule) — built over existing doc nodes, no new engine state — WIKI-01
+  2. Viewing a doc (or atom) surfaces its **incoming** references ("referenced by" / what-links-here), not just outgoing cites — reusing the existing reverse-edge lookup (`idx_edge_dst`, `getInEdges`); the panel is read-only and adds no online LLM cost — WIKI-02
+  3. No engine change: no new node/edge types required, no write-path mutation; the diff is reader/viz + a generated index doc. Self-confirmation guard untouched (index/backlink surfaces are read-only projections) — WIKI-03
+
+**Plans:** 0 plans (run `/gsd-plan-phase 39`)
+
+## Phase Details — v8.0 Performance, Efficiency & Competitive Parity
+
+recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphiti, Letta) on the three axes those systems publish on — **accuracy, latency, and token/cost** — and then locks those numbers behind regression gates so they can't silently rot. This milestone *measures and optimizes*; it does not change the memory model. It starts only after v7.0 (35–39) lands, so the system under test is the final one, not a moving target.
+
+**Load-bearing discipline (founder hard-rule — no inflated metrics):** every "at or above competitors" claim must be reproducible — a benchmark recense ran itself, or a published competitor number cited with its source. No rounded-up or vibe figures. Baseline-before-optimize is therefore mandatory: Phase 40 records honest starting numbers and gates the rest; an optimization counts only if the harness shows it.
+
+**Engine invariants across all phases:** online paths stay LLM-free and fast (the SessionStart hook blocks the user); graph is source of truth, vector is derived cache; the vector index is a *derived rebuildable cache*, never authoritative; no accuracy regression is an acceptable price for latency/token wins (all three axes move together or the trade is rejected).
+
+**Dependency shape:** strict-ish chain 40 → {41, 42} → 43. Phase 40 (baseline + harness) gates everything. 41 (latency) and 42 (token) are independent of each other and can run in parallel once 40 lands. 43 (regression gates) comes last — it freezes whatever 40–42 achieved.
+
+### Phase 40: Competitive Benchmark Baseline
+
+**Goal:** Stand up an apples-to-apples competitive benchmark and record honest baselines on all three axes, so "at or above competitors" becomes a falsifiable target instead of a slogan. Adds LOCOMO (the bench mem0/Zep actually cite) alongside the existing LongMemEval + KU replay harness; captures recense's current accuracy, retrieval latency (p50/p95), and token cost per write+recall; and pins the specific competitor numbers to beat with their sources.
+**Requirements**: BENCH-01 (LOCOMO harness runs reproducibly on recense), BENCH-02 (baseline accuracy/latency/token recorded), BENCH-03 (competitor targets cited with sources — no inflated/unsourced numbers)
+**Depends on:** v7.0 complete (system under test is final). Gates Phases 41–43.
+**Success Criteria** (what must be TRUE):
+  1. LOCOMO runs against recense reproducibly (scripted, re-runnable) and produces an accuracy score alongside the existing LongMemEval + KU harness — BENCH-01
+  2. A written baseline records recense's current accuracy, retrieval latency (p50/p95 on the live ~7000-node brain), and token cost per write and per recall — BENCH-02
+  3. The competitor numbers to beat (mem0, Zep/Graphiti on LOCOMO/DMR/LongMemEval) are documented with their published sources; every recense number is reproducible from a committed script — no unsourced or rounded-up figures (founder no-inflated-metrics rule) — BENCH-03
+
+**Plans:** 0 plans (run `/gsd-plan-phase 40`)
+
+### Phase 41: Vector Index + Hot-Path Latency
+
+**Goal:** Replace brute-force O(N) cosine on the hot recall path with the unbuilt `sqlite-vec`/HNSW vector-index seam, and profile/optimize the latency-critical surfaces (recall, SessionStart inject). The live brain is already 7000+ nodes — past the stated ~5K comfort zone for brute-force scan — so this is the headline latency lever. The index is a derived, rebuildable cache (graph stays source of truth); the online path stays LLM-free.
+**Requirements**: PERF-01 (vector index replaces brute-force cosine, derived/rebuildable), PERF-02 (recall + SessionStart inject latency profiled and measurably improved vs the Phase 40 baseline), PERF-03 (no accuracy regression on the harness)
+**Depends on:** Phase 40 (baseline to measure against). Independent of Phase 42 — can run in parallel.
+**Success Criteria** (what must be TRUE):
+  1. Recall nomination uses an ANN/vector index (`sqlite-vec` or HNSW) instead of brute-force cosine; the index is derived from node embeddings and rebuildable from the graph (never authoritative) — PERF-01
+  2. Retrieval p50/p95 and SessionStart inject latency improve measurably vs the Phase 40 baseline on the live-scale brain; the online path remains LLM-free — PERF-02
+  3. Accuracy on LOCOMO/LongMemEval/KU shows no regression vs baseline — a latency win that costs accuracy is rejected — PERF-03
+
+**Plans:** 0 plans (run `/gsd-plan-phase 41`)
+
+### Phase 42: Token / Cost Efficiency Audit
+
+**Goal:** Measure recense's token/cost profile end-to-end and tune it, then quantify the savings vs competitors defensibly. recense's "pay at sleep, save at recall" architecture is a token-efficiency bet that has never been measured against a competitor; v7.0's ranking + reflections promised recall-token savings — this phase proves whether they paid off. Measures write cost (Haiku extract / Sonnet judge), recall inject cost, and tunes the levers (`consolSkipThreshold`, inject/neighborhood budget).
+**Requirements**: COST-01 (per-write + per-recall token cost measured against baseline), COST-02 (levers tuned for a measured net reduction with no accuracy regression), COST-03 (savings vs competitors stated defensibly with sources)
+**Depends on:** Phase 40 (baseline). Independent of Phase 41 — can run in parallel.
+**Success Criteria** (what must be TRUE):
+  1. Token cost is measured per write (extract+judge) and per recall (inject), broken down by lever, against the Phase 40 baseline — COST-01
+  2. Levers (`consolSkipThreshold`, inject budget, recall caps, v7.0 ranking/reflection wins) are tuned to a measured net token reduction with no accuracy regression on the harness — COST-02
+  3. The token-efficiency claim vs competitors (e.g. mem0's published savings) is stated with both recense's reproduced number and the cited competitor figure — no inflated comparison — COST-03
+
+**Plans:** 0 plans (run `/gsd-plan-phase 42`)
+
+### Phase 43: Eval Regression Gates
+
+**Goal:** Turn the benchmark harness into a CI gate so the accuracy/latency/token numbers won earned in 40–42 can't silently regress. "Lock down performance" means continuous, not one-shot — a PR that drops accuracy, inflates latency, or balloons token cost past a threshold fails the gate.
+**Requirements**: GATE-01 (harness runs as an automated gate), GATE-02 (thresholds on all three axes block regressions)
+**Depends on:** Phases 40–42 (gates freeze whatever they achieved). Comes last.
+**Success Criteria** (what must be TRUE):
+  1. The LOCOMO/LongMemEval/KU + latency + token harness runs as a scripted, automatable gate (CI or pre-merge), reproducibly — GATE-01
+  2. The gate enforces thresholds on accuracy, latency (p50/p95), and token cost; a change that regresses any axis past its threshold fails visibly — GATE-02
+  3. The gate's baseline numbers are the v8.0-final figures, and the gate is documented so the founder can re-baseline intentionally (not by silent drift) — GATE-03
+
+**Plans:** 0 plans (run `/gsd-plan-phase 43`)
