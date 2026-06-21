@@ -744,6 +744,42 @@ export function startVizServer(dbPath: string, port: number): http.Server {
       return;
     }
 
+    // ── GET /index (live doc corpus index, WIKI-01, 39-02) ─────────────────────
+    // Returns { projects: [{slug,label,id},...], schemas: [{slug,label,id},...] }.
+    // Reuses the already-compiled stmtDocNodes (no new DB, no new prepare — T-39-07).
+    // Grouping: a row is "schema-anchored" when its slug matches a UUID regex (D-03);
+    // otherwise it is project-scoped. Labels come from the COALESCE column (D-04).
+    // GET-only, read-only, no params, no write/LLM — live projection (D-01/D-02/WIKI-03).
+    if (url === '/index') {
+      try {
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const rows = stmtDocNodes.all() as Array<{
+          id: string; slug: string; label: string;
+          type: string; value: string; s: number; c: number;
+          origin: string; tombstoned: number;
+        }>;
+        const projects: Array<{ slug: string; label: string; id: string }> = [];
+        const schemas: Array<{ slug: string; label: string; id: string }> = [];
+        for (const row of rows) {
+          const entry = { slug: row.slug, label: row.label, id: row.id };
+          if (UUID_RE.test(row.slug)) {
+            schemas.push(entry);
+          } else {
+            projects.push(entry);
+          }
+        }
+        // Sort each group by label for stable ordering
+        projects.sort((a, b) => a.label.localeCompare(b.label));
+        schemas.sort((a, b) => a.label.localeCompare(b.label));
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ projects, schemas }));
+      } catch (err) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
     // ── POST /doc/generate?slug= (force-spawn generate-doc CLI, READER-02) ───
     // Triggers doc generation/regeneration for the given slug. Returns 202 immediately.
     // Used by the reader's regenerate button (27-04) and explicit regen.
