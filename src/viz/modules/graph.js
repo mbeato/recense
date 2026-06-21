@@ -904,5 +904,17 @@ export function initGraph(ctx) {
     };
 
     ctx.clearHazeFocus = _clearHazeFocus;
+
+    // Collapse an expanded schema (re-haze its revealed members). Exposed so dismissing the
+    // detail panel (×, backdrop, Esc) re-hazes the same way a re-click on the schema does:
+    // clearSelection only drops the haze-FOCUS promotion, never the schema EXPAND membership,
+    // so without this an expanded schema's entity/fact members stayed unhazed after close.
+    ctx.collapseSchema = function collapseSchema(id) {
+      if (!ctx.expanded || !ctx.expanded.has(id)) return false;
+      ctx.expanded.delete(id);
+      Graph.graphData({ nodes: getVisibleNodes(), links: getVisibleLinks() });
+      if (ctx.refreshVisibility) ctx.refreshVisibility();
+      return true;
+    };
   }
 }

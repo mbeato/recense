@@ -512,7 +512,12 @@ export function initDetail(ctx) {
   // ── Public API: closeDetail ────────────────────────────────────────────────
 
   function closeDetail() {
+    // If a schema was focused, collapse it so its revealed entity/fact members re-haze.
+    // clearSelection only drops the haze-FOCUS promotion, not the schema EXPAND membership,
+    // so without this the neighbor nodes stayed unhazed after closing via × / backdrop / Esc.
+    const schemaId = (selectedNode && selectedNode.__cat === 'schema') ? selectedNode.id : null;
     clearSelection();
+    if (schemaId && ctx.collapseSchema) ctx.collapseSchema(schemaId);
     clearFocusDim();
     hidePanel();
     // Closing a focused node also unframes it: fly the camera back to the
