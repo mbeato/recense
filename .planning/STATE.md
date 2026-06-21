@@ -4,12 +4,12 @@ milestone: v6.0
 milestone_name: Project Onboarding
 status: Phase 33 complete
 stopped_at: Phase 35 context gathered
-last_updated: "2026-06-21T01:28:12.317Z"
+last_updated: "2026-06-21T01:35:34.794Z"
 progress:
   total_phases: 15
   completed_phases: 5
   total_plans: 16
-  completed_plans: 14
+  completed_plans: 15
   percent: 33
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
 Phase: 34 (visual-polish-pass) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
 [████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
@@ -101,6 +101,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 | Phase 28-schema-anchored-corpus P01 | 12 | 2 tasks | 9 files |
 | Phase 28-schema-anchored-corpus P02 | 2026-06-19 | 4 commits (2 RED + 2 GREEN) | 4 files |
 | Phase 30 P01 | 65 | 2 tasks | 4 files |
+| Phase 34 P02 | 5 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -268,7 +269,7 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-21T01:28:12.309Z
+Last session: 2026-06-21T01:35:34.784Z
 Stopped at: Phase 35 context gathered
 Resume file: None
 

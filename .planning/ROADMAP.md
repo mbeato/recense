@@ -370,7 +370,7 @@ Plans:
   2. Every async/interactive surface has explicit loading, empty, and error states (no blank or abrupt gaps), and interactive elements have visible hover/focus feedback with smooth transitions — VIZ-POLISH-02
   3. No amber is introduced for non-activation states (rest stays muted rose/slate/mauve; amber reserved for activation/hover) — verified by grep + visual; the 3D brain density anchor is visually unchanged; the diff is CSS + state-handling only (no structural/composition change); `package.json` runtime deps unchanged — VIZ-POLISH-03
 
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 
 **UI hint**: yes
 
@@ -378,7 +378,7 @@ Plans:
 **Wave 1**
 - [x] 34-01-PLAN.md — R1 sticky reader close + B2 HUD declutter + detail-spacing normalization (styles.css, index.html)
 **Wave 2** *(depends on 34-01 — shares styles.css/index.html)*
-- [ ] 34-02-PLAN.md — corpus surface: B3 topics-hide + C1 icon button + C2 force tuning + loading/empty/error states (corpus.js, styles.css, index.html)
+- [x] 34-02-PLAN.md — corpus surface: B3 topics-hide + C1 icon button + C2 force tuning + loading/empty/error states (corpus.js, styles.css, index.html)
 **Wave 3** *(depends on 34-01 + 34-02)*
 - [ ] 34-03-PLAN.md — dist rebuild + VIZ-POLISH-03 guard greps + founder visual checkpoint (autonomous: false)
 
