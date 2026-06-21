@@ -285,14 +285,32 @@ export function initCorpus(ctx) {
     } catch (_) { /* ignore */ }
   }
 
+  const CAM_MS = 700;
+  // Pull the 3D brain camera back along its current view direction so the brain visibly
+  // recedes into the distance as the corpus settles in over it (the "rise up to a map"
+  // feel). ctx.recenter() dives it back home on return. Net-zero — reuses the existing
+  // 3d-force-graph cameraPosition animation.
+  function pullBackBrain() {
+    if (!ctx.Graph || typeof ctx.Graph.cameraPosition !== 'function') return;
+    const p = ctx.Graph.cameraPosition();
+    if (!p) return;
+    const K = 2.3;
+    ctx.Graph.cameraPosition({ x: p.x * K, y: p.y * K, z: p.z * K }, { x: 0, y: 0, z: 0 }, CAM_MS);
+  }
+
   async function showCorpus() {
     // CR-02/WR-03 fix: ENTER corpus view FIRST, then build. The loading/empty/error status
     // overlay is appended to #corpus-graph, which is display:none until `.open` — so the
     // view MUST be active before buildCorpusGraph runs, or the status renders invisibly and
     // the view never opens on an empty/error/first-load corpus. Opening first also gives the
     // container real clientWidth/clientHeight before ForceGraph + the centering force init (WR-01).
+    // Transition IN: pull the brain camera back (real 3D recession) and settle the
+    // corpus in over it. Keep the brain visible during the move so it visibly recedes
+    // behind the fade; once the opaque corpus reaches opacity 1 it covers the brain.
+    pullBackBrain();
     container.classList.add('open');
-    if (brainEl) brainEl.style.visibility = 'hidden';
+    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
+    if (brainEl) brainEl.style.visibility = '';
     // B3: hide topics/search in corpus view (mode-state visibility).
     const topicWrap = document.getElementById('topic-wrap');
     const searchWrap = document.getElementById('search-wrap');
@@ -325,8 +343,11 @@ export function initCorpus(ctx) {
   }
 
   function showBrain() {
-    container.classList.remove('open');
+    // Transition OUT: corpus fades back into depth; brain camera dives home.
+    container.classList.remove('corpus-in');
+    setTimeout(() => { if (!corpusActive) container.classList.remove('open'); }, CAM_MS);
     if (brainEl) brainEl.style.visibility = '';
+    if (typeof ctx.recenter === 'function') ctx.recenter(CAM_MS);
     // B3: restore topics/search when returning to brain view.
     const topicWrap = document.getElementById('topic-wrap');
     const searchWrap = document.getElementById('search-wrap');
@@ -355,8 +376,10 @@ export function initCorpus(ctx) {
   // corpus stayed mounted underneath the overlay, so there is nothing to rebuild —
   // we just confirm the corpus is shown and the brain stays hidden (idempotent).
   ctx.returnToCorpus = function returnToCorpus() {
+    pullBackBrain();
     container.classList.add('open');
-    if (brainEl) brainEl.style.visibility = 'hidden';
+    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
+    if (brainEl) brainEl.style.visibility = '';
     // B3: keep topics/search hidden when reader closes back to corpus.
     const topicWrap = document.getElementById('topic-wrap');
     const searchWrap = document.getElementById('search-wrap');

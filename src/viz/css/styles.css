@@ -799,9 +799,19 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   z-index: 5;            /* above the brain canvas (#graph), below #panel chrome (z:10) */
   display: none;
   background: #170f1d;
+  /* Transition: the corpus settles in from a slight depth while the brain camera
+     pulls back behind it (pullBackBrain in corpus.js). The opaque bg means that once
+     settled (opacity 1) it covers the receded brain. */
+  opacity: 0;
+  transform: scale(1.06);
+  transition: opacity 700ms ease, transform 700ms ease;
 }
 #corpus-graph.open {
   display: block;
+}
+#corpus-graph.corpus-in {
+  opacity: 1;
+  transform: none;
 }
 
 /* ── Corpus status overlay — loading / empty / error (C2, 34-02) ─────────────
