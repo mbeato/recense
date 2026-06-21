@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: ready_to_plan
-stopped_at: Phase 38.1 complete (1/1) — ready to discuss Phase 39
-last_updated: 2026-06-21T19:19:34.644Z
+stopped_at: Phase 39 context gathered
+last_updated: "2026-06-21T19:25:29.588Z"
 progress:
   total_phases: 16
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 27
-  completed_plans: 45
-  percent: 44
+  completed_plans: 25
+  percent: 50
 ---
 
 # Project State
@@ -270,9 +270,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-21T05:17:21.436Z
-Stopped at: Phase 38 context gathered
-Resume file: .planning/phases/38-stored-reflections-derived-insights/38-CONTEXT.md
+Last session: 2026-06-21T19:25:29.579Z
+Stopped at: Phase 39 context gathered
+Resume file: .planning/phases/39-reader-wiki-parity-index-and-backlinks/39-CONTEXT.md
 
 ## Key Decisions (Phase 28)
 
