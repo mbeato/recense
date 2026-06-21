@@ -253,6 +253,67 @@ describe('FTS retrieval', () => {
     });
   });
 
+  // ── 3b. hybridTopk strength fusion (Phase 35 RANK-01) ────────────────────
+
+  describe('hybridTopk strengthWeight (Phase 35 RANK-01)', () => {
+    it('T4 w=0 hybridTopk regression: strengthWeight=0 output deep-equals unweighted call', () => {
+      store.upsertNode({ id: 'node1', type: 'fact', value: 'test fact alpha', origin: 'observed' });
+      store.setEmbedding('node1', basisVec(0));
+      store.upsertNode({ id: 'node2', type: 'fact', value: 'test fact beta', origin: 'observed' });
+      store.setEmbedding('node2', basisVec(1));
+
+      const queryVec = basisVec(0);
+      const baseline = retriever.hybridTopk(queryVec, 'test', 5);
+      const withZeroWeight = retriever.hybridTopk(queryVec, 'test', 5, undefined, 0);
+      expect(withZeroWeight.map(r => r.id)).toEqual(baseline.map(r => r.id));
+    });
+
+    it('T3 D-02 pool enforcement: off-pool high-strength node does not appear at strengthWeight=2.0', () => {
+      // node A: in cosine pool (basisVec(0)), low s=0.1
+      store.upsertNode({ id: 'in_pool', type: 'fact', value: 'relevant fact', origin: 'observed' });
+      store.setEmbedding('in_pool', basisVec(0));
+      db.prepare('UPDATE node SET s = 0.1 WHERE id = ?').run('in_pool');
+
+      // node B: NOT in cosine pool (basisVec(3) is far from query basisVec(0)), high s=1.0
+      store.upsertNode({ id: 'off_pool', type: 'fact', value: 'off topic strong belief', origin: 'observed' });
+      store.setEmbedding('off_pool', basisVec(3));
+      db.prepare('UPDATE node SET s = 1.0, last_access = 0 WHERE id = ?').run('off_pool');
+
+      // preK=1 means only the top-1 cosine match (in_pool) enters the pool; off_pool excluded
+      const queryVec = basisVec(0);
+      const results = retriever.hybridTopk(queryVec, 'notoken', 1, 1, 2.0, Date.now(), 0.05);
+      expect(results.map(r => r.id)).not.toContain('off_pool');
+    });
+
+    it('T5 tombstone D-10: tombstoned high-strength node never surfaces via strength list', () => {
+      store.upsertNode({ id: 'live_node', type: 'fact', value: 'live data fact', origin: 'observed' });
+      store.setEmbedding('live_node', basisVec(0));
+      db.prepare('UPDATE node SET s = 0.1 WHERE id = ?').run('live_node');
+
+      // Tombstoned node with high strength — should never surface
+      store.upsertNode({ id: 'tomb_node', type: 'fact', value: 'tombstoned strong belief', origin: 'observed' });
+      store.setEmbedding('tomb_node', basisVec(0));
+      db.prepare('UPDATE node SET s = 1.0 WHERE id = ?').run('tomb_node');
+      store.tombstone('tomb_node');
+
+      const queryVec = basisVec(0);
+      const results = retriever.hybridTopk(queryVec, 'fact', 5, 15, 2.0, Date.now(), 0.05);
+      expect(results.map(r => r.id)).not.toContain('tomb_node');
+    });
+
+    it('no-self-strengthen: s and last_access unchanged after hybridTopk with strengthWeight>0', () => {
+      store.upsertNode({ id: 'checked_node', type: 'fact', value: 'check me', origin: 'observed' });
+      store.setEmbedding('checked_node', basisVec(0));
+      const beforeRow = db.prepare('SELECT s, last_access FROM node WHERE id = ?').get('checked_node') as { s: number; last_access: number };
+
+      retriever.hybridTopk(basisVec(0), 'check', 5, 15, 2.0, Date.now(), 0.05);
+
+      const afterRow = db.prepare('SELECT s, last_access FROM node WHERE id = ?').get('checked_node') as { s: number; last_access: number };
+      expect(afterRow.s).toBe(beforeRow.s);
+      expect(afterRow.last_access).toBe(beforeRow.last_access);
+    });
+  });
+
   // ── 4. Drift-check invariant ──────────────────────────────────────────────
 
   describe('drift-check invariant (T-17-02-I)', () => {
