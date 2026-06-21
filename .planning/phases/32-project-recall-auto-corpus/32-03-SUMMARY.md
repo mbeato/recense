@@ -138,3 +138,15 @@ None. The corpus stubs created by `promoteScope` are intentionally empty (prose 
 ## Self-Check
 
 PASSED — verified below.
+
+## Task 3 — Live Verification (orchestrator-run, 2026-06-20)
+
+Verified end-to-end against a WAL-safe `/tmp` copy of the live brain (~/.config/recense/recense.db), isolated lock, this repo's freshly-built dist. All three SCs pass.
+
+- **SC1 (scoped recall):** `recall --scope usage` parses, threads to `engine.recall`, runs end-to-end, returns a well-formed envelope. `recall` is null-dominant by design (proactive-inference path + tight cosine gate + D-05 empty-after-filter → NULL_RESULT), so the scope-discrimination is proven by the 5 unit tests in `tests/recall-scope-filter.test.ts`; live run confirms the wiring + graceful null. `node_scope` table holds 355 `usage` + 1086 `global` scoped nodes.
+- **SC2 (deferred auto-corpus):** `ingest-project /Users/vtx/usage` fed 81 episodes and wrote `pending-corpus-promotion:usage = git:<fp>:clean` after cursor commit (deferred-default path, D-03). Sleep pass consolidated the backlog (0 unconsolidated), then `consumePendingCorpusMarkers` ran `promoteScope('usage')` and **cleared the marker** (crash-safe order confirmed) and promoted the `usage` landing-doc stub.
+- **SC3 (coherent overview):** `usage` landing doc (`a85c801c…`) generated to **24,064 chars / 148 citations** — sectioned project overview (Architecture / Data Pipeline / Cost Calculation / Inventory), synthesized prose with per-claim `recense://fact/…` citations, anchored on induced schemas via `recense://doc/…` deep-dive links. Cleanly usage-scoped, no cross-project bleed.
+
+**Operational note (not a phase-32 defect):** the full sleep pass and `generate-doc` both committed their doc writes correctly but then **lingered on process exit** after printing the result JSON (open headless-client handle keeping the node process alive at 0% CPU). The DB writes landed regardless; the standalone `generate-doc usage --force` produced the 24KB doc above. Worth a follow-up to ensure `generateDoc`/the headless client closes handles so the sleep pass exits promptly — pre-existing (affects all 18 corpus stubs / the Phase-28 `generateCorpusDocs` path), independent of this phase's wiring.
+
+**Verdict:** RECALL-01 (SC1) + RECALL-02 (SC2/SC3) satisfied. Task 3 APPROVED.

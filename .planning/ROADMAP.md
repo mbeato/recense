@@ -197,7 +197,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 29. Survey Quality Spike | v6.0 | 3/3 | Complete    | 2026-06-20 |
 | 30. Core Ingest Command | v6.0 | 3/3 | Complete   | 2026-06-20 |
 | 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 2/2 | Complete   | 2026-06-20 |
-| 32. Project Recall + Auto-Corpus | v6.0 | 2/3 | In Progress|  |
+| 32. Project Recall + Auto-Corpus | v6.0 | 3/3 | Complete   | 2026-06-21 |
 
 ### Phase 28: Schema-Anchored Corpus
 
@@ -231,7 +231,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 - [x] **Phase 29: Survey Quality Spike** (INGEST-03) — prove agentic-survey fact/schema signal on one real project; go/no-go for the build phases (completed 2026-06-20)
 - [x] **Phase 30: Core Ingest Command** (INGEST-01/02/04) — `recense ingest-project <dir>`: survey agent → summarized episodes → scope-tagged facts + schemas via the offline pipeline — depends on 29 (completed 2026-06-20)
 - [x] **Phase 31: Doc Ingest + Idempotent Re-ingest** (DOCING-01, REINGEST-01/02) — direct project-doc ingest + per-project cursor + in-place belief reconciliation on re-ingest — depends on 30 (completed 2026-06-20)
-- [ ] **Phase 32: Project Recall + Auto-Corpus** (RECALL-01/02) — scoped project recall + auto-promoted/-generated schema-anchored corpus doc — depends on 30+31
+- [x] **Phase 32: Project Recall + Auto-Corpus** (RECALL-01/02) — scoped project recall + auto-promoted/-generated schema-anchored corpus doc — depends on 30+31 (completed 2026-06-21)
 
 ### Phase 29: Survey Quality Spike
 
@@ -315,7 +315,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 **Wave 2** *(depends on 32-02 promoteScope API)*
 
-- [ ] 32-03-PLAN.md — trigger wiring: inline `--consolidate` promote+generate + deferred pending-corpus-promotion:<scope> marker + crash-safe sleep-pass consume; live SC verification on /Users/vtx/usage (RECALL-02)
+- [x] 32-03-PLAN.md — trigger wiring: inline `--consolidate` promote+generate + deferred pending-corpus-promotion:<scope> marker + crash-safe sleep-pass consume; live SC verification on /Users/vtx/usage (RECALL-02)
 
 **UI hint**: yes
 
@@ -336,11 +336,41 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 **Correctness guards (project-critical):** never let inferred output strengthen a fact (self-confirmation); graph is source of truth; an LLM judge call is acceptable here (explicit user write, NOT the hot online hook path). Reconsolidation is eval-backed — verification must confirm in-place update vs. dup-accumulation.
 
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 **Wave 1**
-- [ ] 33-01-PLAN.md — `recense remember` engine + CLI: verbatim curated store + synchronous mini-pass reconsolidation (embed → top-k → judge → D-04 force-reconcile, else insert) + D-03 high-resistance seed + scope-stamp + lock + dispatcher + unit tests (REMEMBER-01, REMEMBER-02)
+- [x] 33-01-PLAN.md — `recense remember` engine + CLI: verbatim curated store + synchronous mini-pass reconsolidation (embed → top-k → judge → D-04 force-reconcile, else insert) + D-03 high-resistance seed + scope-stamp + lock + dispatcher + unit tests (REMEMBER-01, REMEMBER-02)
 
 **Wave 2** *(depends on 33-01)*
-- [ ] 33-02-PLAN.md — native-memory cutover: D-06 global CLAUDE.md directive + D-07 settings.json kill-switch investigation + founder-gated one-time verbatim migration of the 12 `.md` files (write → D-08 value_hash verify → D-09 archive); `autonomous: false` (REMEMBER-03)
+- [x] 33-02-PLAN.md — native-memory cutover: D-06 global CLAUDE.md directive + D-07 settings.json kill-switch investigation + founder-gated one-time verbatim migration of the 12 `.md` files (write → D-08 value_hash verify → D-09 archive); `autonomous: false` (REMEMBER-03)
+
+### Phase 34: Visual Polish Pass
+
+**Goal:** The four live viz surfaces — Reader (prose docs), Corpus 2D graph, Detail panel/page, and the Brain HUD/controls (search/stats/topics/trace/buttons) — are cleaned of rough edges along two axes only: **spacing/alignment consistency** and **states & transitions** (loading/empty/error states, hover/focus feedback, smooth transitions). This is a polish pass, NOT a redesign — composition/structure is untouched; the diff is CSS + state-handling, not layout re-architecture.
+
+**Scope (cross-surface, all four):**
+- **Spacing/alignment** — consistent padding/margin scale, no cramped/misaligned/uneven elements on the flagged surfaces.
+- **States & transitions** — every async surface has explicit loading/empty/error states (no blank or janky gaps); interactive elements (buttons, fact-refs, graph nodes, list rows) have hover/focus feedback and smooth transitions.
+
+**Out of scope:** structural/composition changes, redesign, new screens, new features, any change to graph data/semantics.
+
+**Load-bearing constraints (founder-locked):**
+- **Palette** — muted rose/slate/mauve at rest; **amber reserved for activation/hover ONLY**. Do not reintroduce amber for non-activation states (ref the 27-04 staleness palette violation — `.fact-stale` had to be re-toned off amber).
+- **Density anchor** — the 3D brain overview density is founder-locked; no regression.
+- **Net-zero new runtime dependencies.**
+
+**Requirements**: VIZ-POLISH-01 (spacing/alignment consistency across all four surfaces), VIZ-POLISH-02 (complete loading/empty/error state coverage + hover/focus feedback + smooth transitions), VIZ-POLISH-03 (palette + density + no-structural-change guard holds) — to be locked at plan time.
+**Depends on:** Standalone — all four surfaces already exist and are live (Phases 10/15/19 brain+HUD, 27 reader, 27-05/28 corpus, detail panel). Polishes existing surfaces; builds nothing new.
+**Success Criteria** (what must be TRUE):
+
+  1. Across all four surfaces, spacing/alignment follows a consistent scale — the cramped/misaligned/uneven elements the founder flagged are resolved, verified by a per-surface before/after visual review — VIZ-POLISH-01
+  2. Every async/interactive surface has explicit loading, empty, and error states (no blank or abrupt gaps), and interactive elements have visible hover/focus feedback with smooth transitions — VIZ-POLISH-02
+  3. No amber is introduced for non-activation states (rest stays muted rose/slate/mauve; amber reserved for activation/hover) — verified by grep + visual; the 3D brain density anchor is visually unchanged; the diff is CSS + state-handling only (no structural/composition change); `package.json` runtime deps unchanged — VIZ-POLISH-03
+
+**Plans:** 0 plans (run `/gsd-ui-phase 34` to generate the UI design contract, then plan)
+
+**UI hint**: yes
+
+Plans:
+- [ ] TBD (run /gsd-ui-phase 34 for the design contract, then /gsd-plan-phase 34)
