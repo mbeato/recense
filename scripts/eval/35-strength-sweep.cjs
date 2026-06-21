@@ -24,6 +24,16 @@
  *   # Dry-run: validate harness wiring without API calls (KU path only):
  *   node scripts/eval/35-strength-sweep.cjs --dry-run
  *
+ *   # Headless sweep (subscription-billed, ~$0 marginal cost):
+ *   node scripts/eval/35-strength-sweep.cjs --headless
+ *   # Equivalent to: RECENSE_MODEL_PROVIDER=claude-headless node scripts/eval/35-strength-sweep.cjs
+ *   # When --headless is active:
+ *   #   - Extraction, judge (sleep-pass): use claude-headless (RECENSE_MODEL_PROVIDER)
+ *   #   - Answer/rewrite generation (harness): uses RECENSE_ANSWER_PROVIDER → claude-headless
+ *   #   - LME scorer judge: uses RECENSE_SCORER_PROVIDER → claude-headless
+ *   #   - OPENAI_API_KEY is still required for question embeddings.
+ *   #   - ANTHROPIC_API_KEY is NOT required (stripped by the headless transport).
+ *
  * Sanity check (Pitfall 3): w values must NOT all produce the same ku_score.
  * Uniform scores mean the queryText fix is not in effect — stop and debug.
  *
@@ -44,6 +54,11 @@ const arg  = (k, d) => { const i = argv.indexOf(k); return i !== -1 ? argv[i + 1
 
 const IS_LME      = argv.includes('--lme');
 const IS_DRY_RUN  = argv.includes('--dry-run');
+// --headless: inject RECENSE_MODEL_PROVIDER=claude-headless into child env so the
+// entire sweep (extraction, judge, answer-gen, scorer) is subscription-billed.
+// Equivalent to exporting RECENSE_MODEL_PROVIDER=claude-headless before running.
+// OPENAI_API_KEY is still required for embeddings; ANTHROPIC_API_KEY is not needed.
+const IS_HEADLESS = argv.includes('--headless');
 
 // Default w grid (D-05 range). Override with --weights 0,0.25,0.5,1.0,2.0
 const weightsArg = arg('--weights', '0,0.25,0.5,1.0,2.0');
@@ -52,15 +67,23 @@ const W_GRID     = weightsArg.split(',').map(s => parseFloat(s.trim())).filter(n
 const RESULTS_DIR = path.resolve(__dirname, 'results');
 
 // ---- API key guard ----------------------------------------------------------
+// When --headless is active (or RECENSE_MODEL_PROVIDER=claude-headless is set),
+// ANTHROPIC_API_KEY is not required — the headless transport strips it and bills
+// the Max subscription instead. OPENAI_API_KEY is always required for embeddings.
+
+const effectiveHeadless = IS_HEADLESS || process.env.RECENSE_MODEL_PROVIDER === 'claude-headless';
 
 if (!IS_DRY_RUN) {
   const missing = [];
-  if (!process.env.OPENAI_API_KEY)    missing.push('OPENAI_API_KEY');
-  if (!process.env.ANTHROPIC_API_KEY) missing.push('ANTHROPIC_API_KEY');
+  if (!process.env.OPENAI_API_KEY)                         missing.push('OPENAI_API_KEY');
+  if (!effectiveHeadless && !process.env.ANTHROPIC_API_KEY) missing.push('ANTHROPIC_API_KEY');
   if (missing.length > 0) {
     console.error(`\nERROR: missing environment variable(s): ${missing.join(', ')}`);
     console.error('Export them before running the sweep, or use --dry-run to validate wiring only.');
     console.error('Keys are read from the environment and NEVER written to any output file.');
+    if (!effectiveHeadless) {
+      console.error('TIP: use --headless to route all LLM calls through the subscription-billed transport (no ANTHROPIC_API_KEY needed).');
+    }
     process.exit(1);
   }
 }
@@ -104,6 +127,19 @@ function extractKuSub(result, isLme) {
   return result?.scores?.by_category?.['knowledge-update'] ?? null;
 }
 
+// ---- child env: inherit parent env; inject RECENSE_MODEL_PROVIDER when --headless ----
+
+function buildChildEnv() {
+  const env = { ...process.env };
+  if (IS_HEADLESS) {
+    // --headless: ensure all role-key resolvers see claude-headless as the base provider.
+    // Individual harnesses then resolve RECENSE_ANSWER_PROVIDER / RECENSE_SCORER_PROVIDER
+    // through resolveProviderOverlay → RECENSE_MODEL_PROVIDER → claude-headless.
+    env['RECENSE_MODEL_PROVIDER'] = 'claude-headless';
+  }
+  return env;
+}
+
 // ---- KU sweep: spawns replay-ku-harness.cjs per w --------------------------
 
 function runKuHarness(w, outFile) {
@@ -118,7 +154,7 @@ function runKuHarness(w, outFile) {
   console.log(`  [w=${w}] running KU harness...`);
   const result = spawnSync(process.execPath, args, {
     stdio: 'inherit',
-    env:   process.env,
+    env:   buildChildEnv(),
     cwd:   path.resolve(__dirname, '../..'),
   });
   if (result.status !== 0) {
@@ -143,7 +179,7 @@ function runLmeHarness(w, hypothesesFile) {
   console.log(`  [w=${w}] running LME harness (--hybrid --strength-weight ${w})...`);
   const result = spawnSync(process.execPath, args, {
     stdio: 'inherit',
-    env:   process.env,
+    env:   buildChildEnv(),
     cwd:   path.resolve(__dirname, '../..'),
   });
   if (result.status !== 0) {
@@ -166,7 +202,7 @@ function runLmeScorer(hypothesesFile, outFile) {
   console.log(`  scoring LME hypotheses...`);
   const result = spawnSync(process.execPath, args, {
     stdio: 'inherit',
-    env:   process.env,
+    env:   buildChildEnv(),
     cwd:   path.resolve(__dirname, '../..'),
   });
   if (result.status !== 0) {
@@ -192,6 +228,7 @@ function runLmeScorer(hypothesesFile, outFile) {
   console.log(`W grid:   [${W_GRID.join(', ')}]`);
   console.log(`Commit:   ${commit}`);
   console.log(`Dry-run:  ${IS_DRY_RUN}`);
+  console.log(`Headless: ${effectiveHeadless} (subscription-billed via claude -p; OPENAI_API_KEY still needed for embeddings)`);
   console.log(`Out dir:  ${RESULTS_DIR}\n`);
 
   if (IS_DRY_RUN) {

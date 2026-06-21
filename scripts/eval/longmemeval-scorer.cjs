@@ -34,6 +34,13 @@ const path          = require('path');
 const childProcess  = require('child_process');
 const OpenAI        = require('openai');
 
+// Engine dist modules for the optional headless Anthropic judge path.
+// Loaded eagerly so node --check catches require errors at startup.
+const DIST = path.resolve(__dirname, '../../dist/src');
+const { resolveProviderOverlay }     = require(DIST + '/consolidation/run-sleep-pass');
+const { createClaudeHeadlessClient } = require(DIST + '/model/claude-headless-client');
+const { DEFAULT_CONFIG }             = require(DIST + '/lib/config');
+
 // ---- arg parsing ------------------------------------------------------------
 
 const arg = (k, d) => {
@@ -47,7 +54,16 @@ const HYPOTHESES_FILE = arg('--hypotheses', 'scripts/eval/results/longmemeval-hy
 const EVAL_FILE       = arg('--eval',        'scripts/eval/longmemeval-s.jsonl');
 const OUT_FILE        = arg('--out',         'scripts/eval/results/longmemeval-PENDING.json');
 
-const JUDGE_MODEL     = 'gpt-4o-2024-08-06';
+// Resolve scorer transport at startup (before any key guards).
+// RECENSE_SCORER_PROVIDER (or RECENSE_MODEL_PROVIDER) = claude-headless →
+//   judge via the headless claude -p transport (subscription-billed, ~$0 marginal cost).
+// Default: GPT-4o-2024-08-06 via the direct OpenAI API (back-compat, unchanged).
+const _scorerOverlay   = resolveProviderOverlay(process.env, 'RECENSE_SCORER_PROVIDER');
+const IS_HEADLESS_JUDGE = !IS_MOCK && _scorerOverlay.modelProvider === 'claude-headless';
+
+const GPT4O_JUDGE_MODEL = 'gpt-4o-2024-08-06';
+// JUDGE_MODEL is what appears in the output meta.judge_model field.
+const JUDGE_MODEL = IS_HEADLESS_JUDGE ? (_scorerOverlay.claudeHeadlessModel || DEFAULT_CONFIG.claudeHeadlessJudgeModel) : GPT4O_JUDGE_MODEL;
 
 // The 7 canonical LongMemEval question types (used for by_category aggregation)
 const QUESTION_TYPES = [
@@ -206,6 +222,38 @@ async function judgeWithGpt4o(client, questionType, question, goldAnswer, hypoth
 }
 
 /**
+ * Calls the headless claude -p transport to judge whether hypothesis is correct.
+ * Reuses the SAME buildJudgePrompt content as judgeWithGpt4o — the prompt is sent
+ * as a single user message (no system field) because the headless client ignores
+ * system and reads only messages[0].content (see claude-headless-client.ts).
+ * The GPT-4o judge expects "yes"/"no" — the Anthropic model will also produce that
+ * since the prompt ends with "Answer yes or no only." The existing parseJudgeVerdict
+ * already handles "yes"/"no" patterns, so no parser changes are needed.
+ * Returns autoeval_label: 1 (correct) or 0 (incorrect).
+ */
+async function judgeWithHeadless(client, questionType, question, goldAnswer, hypothesis, isAbstention) {
+  const prompt = buildJudgePrompt(questionType, question, goldAnswer, hypothesis, isAbstention);
+  try {
+    // Single user message — headless client reads only messages[0].content.
+    // model/max_tokens/temperature are accepted and ignored by the headless transport.
+    const response = await client.messages.create({
+      model:      JUDGE_MODEL,
+      max_tokens: 16,
+      messages:   [{ role: 'user', content: prompt }],
+    });
+    const text = (response.content || [])
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('')
+      .trim();
+    const { label, parseOk } = parseJudgeVerdict(text);
+    return { label, raw: text.slice(0, 100), parseOk };
+  } catch (e) {
+    return { label: 0, raw: '', parseOk: false, error: String(e.message || e).slice(0, 200) };
+  }
+}
+
+/**
  * Mock judge: for abstention questions, correct iff hypothesis contains no-information
  * language. For all other types, uses case-insensitive substring match of goldAnswer
  * in hypothesis. Zero API calls — used in CI / --mock mode.
@@ -297,12 +345,25 @@ function judgeWithMock(questionType, goldAnswer, hypothesis, isAbstention) {
   }
 
   // ---- key guard (real mode only) ------------------------------------------
-  if (!IS_MOCK && !process.env.OPENAI_API_KEY) {
+  // IS_HEADLESS_JUDGE = true → OPENAI_API_KEY not required (subscription-billed transport).
+  // IS_MOCK = true         → no judge client needed at all.
+  if (!IS_MOCK && !IS_HEADLESS_JUDGE && !process.env.OPENAI_API_KEY) {
     console.error('OPENAI_API_KEY not set — required for GPT-4o judging (use --mock for zero-API mode)');
+    console.error('TIP: set RECENSE_MODEL_PROVIDER=claude-headless to use the subscription-billed Anthropic judge (no OpenAI key needed).');
     process.exit(1);
   }
 
-  const openaiClient = IS_MOCK ? null : new OpenAI();
+  // Build the appropriate judge client.
+  let openaiClient   = null;
+  let headlessClient = null;
+  if (!IS_MOCK) {
+    if (IS_HEADLESS_JUDGE) {
+      headlessClient = createClaudeHeadlessClient({ ...DEFAULT_CONFIG, ..._scorerOverlay }).client;
+      console.log(`[transport] Scorer judge: claude-headless (${JUDGE_MODEL}, subscription-billed via claude -p)`);
+    } else {
+      openaiClient = new OpenAI();
+    }
+  }
 
   console.log(`Scoring ${pairs.length} question(s) via ${IS_MOCK ? 'mock (substring match)' : JUDGE_MODEL}`);
 
@@ -321,6 +382,8 @@ function judgeWithMock(questionType, goldAnswer, hypothesis, isAbstention) {
     let result;
     if (IS_MOCK) {
       result = judgeWithMock(questionType, goldAnswer, hypothesis, isAbstention);
+    } else if (IS_HEADLESS_JUDGE) {
+      result = await judgeWithHeadless(headlessClient, questionType, question, goldAnswer, hypothesis, isAbstention);
     } else {
       result = await judgeWithGpt4o(openaiClient, questionType, question, goldAnswer, hypothesis, isAbstention);
     }

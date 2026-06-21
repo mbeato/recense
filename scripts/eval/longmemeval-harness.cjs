@@ -48,7 +48,8 @@ const path = require('path');
 const os   = require('os');
 
 // npm packages (already in package.json)
-const Anthropic = require('@anthropic-ai/sdk');
+// NOTE: Anthropic SDK is required lazily inside the real-run block below so we
+// can choose between the direct SDK path and the headless transport at runtime.
 
 // ---- SDK retry budget (must be set BEFORE loading dist modules) -------------
 // anthropic-client.ts reads RECENSE_SDK_MAX_RETRIES at module-load time.
@@ -66,7 +67,8 @@ const { initSchema }            = require(DIST + '/db/schema');
 const { EpisodicStore }         = require(DIST + '/db/episode-store');
 const { realClock }             = require(DIST + '/lib/clock');
 const { DEFAULT_CONFIG }        = require(DIST + '/lib/config');
-const { runConsolidation }      = require(DIST + '/consolidation/run-sleep-pass');
+const { runConsolidation, resolveProviderOverlay } = require(DIST + '/consolidation/run-sleep-pass');
+const { createClaudeHeadlessClient } = require(DIST + '/model/claude-headless-client');
 const { RetrievalEngine }       = require(DIST + '/retrieval/engine');
 const { CandidateRetriever }    = require(DIST + '/retrieval/topk');
 const { SemanticStore }         = require(DIST + '/db/semantic-store');
@@ -305,9 +307,15 @@ async function runBoundedPool(items, concurrency, fn) {
   const tStart = Date.now();
 
   // ---- key guards (non-dry-run only) ----------------------------------------
+  // RECENSE_ANSWER_PROVIDER (or RECENSE_MODEL_PROVIDER) = claude-headless →
+  //   skip ANTHROPIC_API_KEY for answer/rewrite calls (subscription-billed transport).
+  // OPENAI_API_KEY is always required for question embedding (not headless).
   if (!IS_DRY_RUN) {
-    if (!process.env.ANTHROPIC_API_KEY) {
+    const answerOverlay = resolveProviderOverlay(process.env, 'RECENSE_ANSWER_PROVIDER');
+    const isAnswerHeadless = answerOverlay.modelProvider === 'claude-headless';
+    if (!isAnswerHeadless && !process.env.ANTHROPIC_API_KEY) {
       console.error('ANTHROPIC_API_KEY not set — required for answer generation (use --dry-run for zero-API mode)');
+      console.error('TIP: set RECENSE_MODEL_PROVIDER=claude-headless to use the subscription-billed transport (no API key needed for answer calls).');
       process.exit(1);
     }
     if (!process.env.OPENAI_API_KEY) {
@@ -422,12 +430,30 @@ async function runBoundedPool(items, concurrency, fn) {
     : new OpenAIEmbedder(DEFAULT_CONFIG.openaiEmbedModel, DEFAULT_CONFIG.embeddingDimensions);
 
   // ---- anthropic client (real mode only) ------------------------------------
-  // Pass maxRetries explicitly so the answer-gen client also benefits from the
-  // higher retry budget set above (SDK reads env at construction time only for
-  // the Anthropic SDK default, but we pass it here to be explicit and consistent
-  // with what the dist modules use via SDK_MAX_RETRIES).
-  const harnessMaxRetries = Math.max(1, parseInt(process.env.RECENSE_SDK_MAX_RETRIES || '10', 10) || 10);
-  const anthropicClient = IS_DRY_RUN ? null : new Anthropic({ maxRetries: harnessMaxRetries });
+  // Route answer/rewrite calls through the headless claude -p transport
+  // (subscription-billed, ~$0 marginal cost) when RECENSE_ANSWER_PROVIDER or
+  // RECENSE_MODEL_PROVIDER is set to 'claude-headless'; otherwise use the direct
+  // Anthropic SDK (preserves maxRetries for 429 self-throttle on the API path).
+  // Headless client limitations (from claude-headless-client.ts):
+  //   - reads only messages[0].content; ignores system, max_tokens, temperature
+  //   - single user message only (all call sites below already satisfy this)
+  let anthropicClient = null;
+  if (!IS_DRY_RUN) {
+    const answerOverlay = resolveProviderOverlay(process.env, 'RECENSE_ANSWER_PROVIDER');
+    if (answerOverlay.modelProvider === 'claude-headless') {
+      const { client } = createClaudeHeadlessClient({ ...DEFAULT_CONFIG, ...answerOverlay });
+      anthropicClient = client;
+      console.log('[transport] Answer/rewrite: claude-headless (subscription-billed via claude -p)');
+    } else {
+      const Anthropic = require('@anthropic-ai/sdk');
+      // Pass maxRetries explicitly so the answer-gen client also benefits from the
+      // higher retry budget set above (SDK reads env at construction time only for
+      // the Anthropic SDK default, but we pass it here to be explicit and consistent
+      // with what the dist modules use via SDK_MAX_RETRIES).
+      const harnessMaxRetries = Math.max(1, parseInt(process.env.RECENSE_SDK_MAX_RETRIES || '10', 10) || 10);
+      anthropicClient = new Anthropic({ maxRetries: harnessMaxRetries });
+    }
+  }
 
   // ---- telemetry state (shared across workers, safe: += after await) --------
   let completedCount = 0;

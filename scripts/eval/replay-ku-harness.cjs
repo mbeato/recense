@@ -58,17 +58,25 @@ const { AllocationGate }          = require('../../dist/src/gate/allocation-gate
 const { RetrievalEngine }         = require('../../dist/src/retrieval/engine');
 const { NoopActivationTraceSink } = require('../../dist/src/viz/activation-sink');
 // runConsolidation and OpenAIEmbedder are only invoked in non-dry-run paths
-const { runConsolidation }        = require('../../dist/src/consolidation/run-sleep-pass');
+const { runConsolidation, resolveProviderOverlay } = require('../../dist/src/consolidation/run-sleep-pass');
 const { OpenAIEmbedder }          = require('../../dist/src/model/embedder');
+const { createClaudeHeadlessClient } = require('../../dist/src/model/claude-headless-client');
 
 // ---- API key guard (real runs only) -----------------------------------------
+// RECENSE_ANSWER_PROVIDER (or RECENSE_MODEL_PROVIDER) = claude-headless → skip ANTHROPIC_API_KEY.
+// OPENAI_API_KEY is always required for embeddings (not covered by headless).
 if (!DRY_RUN) {
+  const answerOverlay = resolveProviderOverlay(process.env, 'RECENSE_ANSWER_PROVIDER');
+  const isHeadless = answerOverlay.modelProvider === 'claude-headless';
   const missing = [];
-  if (!process.env.OPENAI_API_KEY)    missing.push('OPENAI_API_KEY');
-  if (!process.env.ANTHROPIC_API_KEY) missing.push('ANTHROPIC_API_KEY');
+  if (!process.env.OPENAI_API_KEY)                      missing.push('OPENAI_API_KEY');
+  if (!isHeadless && !process.env.ANTHROPIC_API_KEY)    missing.push('ANTHROPIC_API_KEY');
   if (missing.length > 0) {
     console.error(`\nERROR: missing keys for a real run: ${missing.join(', ')}`);
     console.error('Pass --dry-run to validate cache parsing + scratch DB with zero API calls.');
+    if (!isHeadless) {
+      console.error('TIP: set RECENSE_MODEL_PROVIDER=claude-headless to use the subscription-billed transport (no API key needed for answer/score calls).');
+    }
     process.exit(1);
   }
 }
@@ -400,9 +408,21 @@ Reply with exactly one word: "correct" or "incorrect".`;
   }
 
   // ---- real run ---------------------------------------------------------------
-  const Anthropic = require('@anthropic-ai/sdk');
-  const harnessMaxRetries = Math.max(1, parseInt(process.env.RECENSE_SDK_MAX_RETRIES || '10', 10) || 10);
-  const anthropicClient = new Anthropic({ maxRetries: harnessMaxRetries });
+  // Route answer + inline scorer calls through the headless claude -p transport
+  // (subscription-billed, ~$0 marginal cost) when RECENSE_ANSWER_PROVIDER or
+  // RECENSE_MODEL_PROVIDER is set to 'claude-headless'; otherwise use the direct
+  // Anthropic SDK (preserves maxRetries for 429 self-throttle on the API path).
+  const answerOverlay = resolveProviderOverlay(process.env, 'RECENSE_ANSWER_PROVIDER');
+  let anthropicClient;
+  if (answerOverlay.modelProvider === 'claude-headless') {
+    const { client } = createClaudeHeadlessClient({ ...DEFAULT_CONFIG, ...answerOverlay });
+    anthropicClient = client;
+    console.log('  Answer/scorer transport: claude-headless (subscription-billed via claude -p)');
+  } else {
+    const Anthropic = require('@anthropic-ai/sdk');
+    const harnessMaxRetries = Math.max(1, parseInt(process.env.RECENSE_SDK_MAX_RETRIES || '10', 10) || 10);
+    anthropicClient = new Anthropic({ maxRetries: harnessMaxRetries });
+  }
 
   // Embedder constructed from DEFAULT_CONFIG (openaiEmbedModel + embeddingDimensions).
   // Embedder-agnostic: no override flag, no swap (D-01 — swap premise falsified).
