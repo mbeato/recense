@@ -207,6 +207,11 @@ export function initCorpus(ctx) {
     // Show the flat corpus, hide the 3D brain (pure visibility — brain untouched).
     container.classList.add('open');
     if (brainEl) brainEl.style.visibility = 'hidden';
+    // B3: hide topics/search in corpus view (mode-state visibility).
+    const topicWrap = document.getElementById('topic-wrap');
+    const searchWrap = document.getElementById('search-wrap');
+    if (topicWrap) topicWrap.style.display = 'none';
+    if (searchWrap) searchWrap.style.display = 'none';
     sizeCorpusGraph();
     corpusActive = true;
     corpusBtn.textContent = 'Brain';
@@ -219,6 +224,11 @@ export function initCorpus(ctx) {
   function showBrain() {
     container.classList.remove('open');
     if (brainEl) brainEl.style.visibility = '';
+    // B3: restore topics/search when returning to brain view.
+    const topicWrap = document.getElementById('topic-wrap');
+    const searchWrap = document.getElementById('search-wrap');
+    if (topicWrap) topicWrap.style.display = '';
+    if (searchWrap) searchWrap.style.display = '';
     corpusActive = false;
     corpusBtn.textContent = 'Corpus';
     corpusBtn.classList.remove('corpus-active');
@@ -241,6 +251,11 @@ export function initCorpus(ctx) {
   ctx.returnToCorpus = function returnToCorpus() {
     container.classList.add('open');
     if (brainEl) brainEl.style.visibility = 'hidden';
+    // B3: keep topics/search hidden when reader closes back to corpus.
+    const topicWrap = document.getElementById('topic-wrap');
+    const searchWrap = document.getElementById('search-wrap');
+    if (topicWrap) topicWrap.style.display = 'none';
+    if (searchWrap) searchWrap.style.display = 'none';
     corpusActive = true;
     corpusBtn.textContent = 'Brain';
     corpusBtn.classList.add('corpus-active');
