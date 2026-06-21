@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
-status: Phase 33 complete
-stopped_at: Phase 35 context gathered
-last_updated: "2026-06-21T01:59:23.733Z"
+status: ready_to_plan
+stopped_at: Phase 37 context gathered
+last_updated: "2026-06-21T03:19:04.507Z"
 progress:
   total_phases: 15
   completed_phases: 6
   total_plans: 18
-  completed_plans: 16
+  completed_plans: 17
   percent: 40
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 35 — recency-strength-retrieval-ranking
+**Current focus:** Phase 35 — recency strength retrieval ranking
 
 ## Current Position
 
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
-Phase: 35 (recency-strength-retrieval-ranking) — EXECUTING
-Plan: 1 of 2
+Phase: 35
+Plan: Not started
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
 [████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
@@ -85,7 +85,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 
 **Velocity (historical baseline):**
 
-- Total plans completed: 157 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
+- Total plans completed: 160 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
 - Average plan duration: ~20–25 min
 
 **By Milestone:**
@@ -117,6 +117,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
   - Phase 41 — **Vector Index + Hot-Path Latency** (PERF-01/02/03): build sqlite-vec/HNSW (derived/rebuildable cache, graph stays source of truth), kill brute-force cosine, profile recall + SessionStart inject; no accuracy regression. Independent of 42.
   - Phase 42 — **Token/Cost Efficiency Audit** (COST-01/02/03): measure write (Haiku/Sonnet) + recall token cost, tune consolSkipThreshold/inject budget, verify v7.0 ranking+reflection token savings paid off; defensible vs-competitor claim. Independent of 41.
   - Phase 43 — **Eval Regression Gates** (GATE-01/02/03): turn harness into a CI/pre-merge gate with thresholds on all three axes; freezes v8.0-final numbers. Comes last. Founder-directed 2026-06-20 (placement: new milestone after v7.0; ambition: full incl. vector index).
+- **Competitor audit (2026-06-20, source-verified): claude-mem + MemPalace.** claude-mem (83k★, Apache-2.0, the direct CC-memory incumbent) = capture-and-compress, **append-only with exact-hash dedup, NO belief correction / NO decay / NO schema graph**; matches recense on hooks+inject+hybrid-retrieval+provenance+scoping. MemPalace (56k★, MIT, viral but contested) = verbatim ChromaDB + SQLite KG (triples w/ temporal-validity windows); spatial "palace" is a **metadata-computed veneer, not a real graph**; **README "contradiction detection" is NOT in the code** (per independent teardown + arXiv critique); benchmark 96.6% LongMemEval R@5 is "raw mode" = measures the embedder, not the architecture. **Net: recense's moat (PE-gated reconsolidation + schema abstraction) confirmed — both competitors punt on exactly that.** Three roadmap-relevant findings: (1) **progressive-disclosure retrieval** (compact index → fetch detail on demand) is a concrete token technique BOTH use and recense likely lacks → Phase 42 input / pending founder decision; (2) competitor benchmark numbers are gameable → folded into Phase 40 BENCH-03 (understand-methodology, not just cite) + concrete targets added to ROADMAP Phase 40; (3) **temporal validity** kept deferred but now documented as a deliberate *competitive-positioning* stance (recense reconsolidation > MemPalace validity-windows for stale-info correctness), not an oversight.
   - Phase 39 — **Reader Wiki-Parity: Index + Backlinks** (WIKI-01/02/03): added 2026-06-20 after a feature-by-feature LLM-Wiki audit vs the `research-wiki` standard. Verdict: recense meets-or-beats the LLM Wiki on every *mechanism* (autonomous maintenance, dedup-to-canonical, PE-gated update-don't-rewrite, enforced citations, auto-staleness, self-confirmation immunity, forgetting) — behind only on two reader ergonomics: a browsable INDEX and surfaced backlinks ("what links here"). Both reuse data that already exists (doc nodes; `idx_edge_dst`/`getInEdges` reverse lookup) → presentation-layer parity, no engine change. **Markdown export deferred** (recall+reader replace grep; queryable-DB-vs-portable-files is a deliberate divergence). Engine-internal data for both already present; gap was purely UI. Independent of 35–38. Founder-directed 2026-06-20.
 - Phase 34 added (2026-06-20): **Visual Polish Pass** — cross-surface UI cleanup of the four live viz surfaces (Reader, Corpus 2D graph, Detail panel/page, Brain HUD/controls) along two axes only: spacing/alignment consistency + states & transitions (loading/empty/error, hover/focus, smooth transitions). Polish only — no structural/composition change, no redesign. Founder-locked guards: palette (amber=activation/hover only, ref 27-04 violation), 3D density anchor (no regress), net-zero deps. Standalone (all surfaces exist + live). UI hint: yes — route through `/gsd-ui-phase 34` at plan time. Founder-directed 2026-06-20.
 - Phase 33 added (2026-06-20): **Synchronous Curated Write (`recense remember`)** — closes the customer-zero "replaces MEMORY.md" promise on the WRITE side. recense owns read (recall at session-start) but deliberate facts still leak to native Claude Code `.md` memory because the only write paths are passive-lossy (turn-capture→sleep-pass) or batch-lossy (import-memory). Adds a synchronous, verbatim, curated single-fact write that runs in-place reconsolidation (reuses update-decision/sink/judge), plus a CLAUDE.md cutover directive and a one-time lossless migration of the 12 existing `.md` files through the new command. Standalone — depends only on the live consolidation machinery, NOT the v6.0 onboarding phases. Founder-directed 2026-06-20; design forks resolved (reconsolidate-on-write + migrate-via-remember). See memory [[graphify-is-codebase-tool-not-memory-rival]] context thread.
@@ -269,9 +270,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-21T01:35:34.784Z
-Stopped at: Phase 35 context gathered
-Resume file: None
+Last session: 2026-06-21T03:19:04.498Z
+Stopped at: Phase 37 context gathered
+Resume file: .planning/phases/37-typed-predicate-edges-build/37-CONTEXT.md
 
 ## Key Decisions (Phase 28)
 
