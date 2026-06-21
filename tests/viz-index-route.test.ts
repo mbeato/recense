@@ -112,6 +112,14 @@ const SCHEMA_UUID_2    = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
 const SCHEMA_DOC_ID_2  = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
 // (no schema node created for SCHEMA_UUID_2)
 
+// Hybrid placement (39-02): a 2nd project ('atlas') that CONTAINS a schema chapter doc.
+// The chapter's tree root is a project, so it must land in the Projects section (nested), not Schemas.
+const PROJECT_DOC_ID_2 = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+const PROJECT_DOC_SLUG_2 = 'atlas';
+const SCHEMA_UUID_3    = '11111111-1111-1111-1111-111111111111';
+const SCHEMA_DOC_ID_3  = '22222222-2222-2222-2222-222222222222';
+const SCHEMA_LABEL_3   = 'deployment topology';
+
 let server: http.Server;
 let port: number;
 let tmpDbPath: string;
@@ -181,6 +189,17 @@ beforeEach(async () => {
   // doc_containment is directed source=parent → dst=child, so this makes doc 2 a depth-1
   // child of doc 1 (a depth-0 root). Drives the /index parentId/depth fields + tree render.
   store.upsertEdge({ src: SCHEMA_DOC_ID_1, dst: SCHEMA_DOC_ID_2, rel: 'contains', kind: 'doc_containment', w: 1.0, last_access: T0 });
+
+  // ── 2nd project 'atlas' that CONTAINS a schema chapter (hybrid placement) ────────
+  store.upsertNode({ id: PROJECT_DOC_ID_2, type: 'doc', value: '# Atlas', origin: 'inferred', s: 0, c: 1.0, last_access: T0 });
+  store.upsertNodeDoc({ node_id: PROJECT_DOC_ID_2, slug: PROJECT_DOC_SLUG_2, generated_at: T0, updated_at: T0 });
+  store.upsertNodeScope({ node_id: PROJECT_DOC_ID_2, scope: PROJECT_DOC_SLUG_2, updated_at: T0 });
+  store.upsertNode({ id: SCHEMA_UUID_3, type: 'schema', value: SCHEMA_LABEL_3, origin: 'observed', s: 0.5, c: 0.8, last_access: T0 });
+  store.upsertNode({ id: SCHEMA_DOC_ID_3, type: 'doc', value: '# Deployment', origin: 'inferred', s: 0, c: 1.0, last_access: T0 });
+  store.upsertNodeDoc({ node_id: SCHEMA_DOC_ID_3, slug: SCHEMA_UUID_3, generated_at: T0, updated_at: T0 });
+  store.upsertNodeScope({ node_id: SCHEMA_DOC_ID_3, scope: SCHEMA_UUID_3, updated_at: T0 });
+  // atlas (project) CONTAINS the schema chapter doc → chapter's tree root is a project.
+  store.upsertEdge({ src: PROJECT_DOC_ID_2, dst: SCHEMA_DOC_ID_3, rel: 'contains', kind: 'doc_containment', w: 1.0, last_access: T0 });
 
   writeDb.close();
 
@@ -310,6 +329,23 @@ describe('GET /index', () => {
     expect(parent!.depth).toBe(0);
     expect(child!.parentId).toBe(parent!.id);
     expect(child!.depth).toBe(1);
+  });
+
+  it('nests a schema chapter under its project (hybrid: tree-root type decides the section)', async () => {
+    const r = await makeRequest(port, '/index');
+    const json = JSON.parse(r.body) as {
+      projects: Array<{ slug: string; id: string; parentId: string | null; depth: number }>;
+      schemas: Array<{ slug: string; id: string; parentId: string | null; depth: number }>;
+    };
+    const atlas = json.projects.find(e => e.slug === PROJECT_DOC_SLUG_2);
+    const chapter = json.projects.find(e => e.slug === SCHEMA_UUID_3);
+    expect(atlas).toBeDefined();
+    expect(atlas!.parentId).toBeNull();
+    // The schema chapter lands in PROJECTS (its tree root is a project), not Schemas
+    expect(chapter).toBeDefined();
+    expect(chapter!.parentId).toBe(PROJECT_DOC_ID_2);
+    expect(chapter!.depth).toBe(1);
+    expect(json.schemas.some(e => e.slug === SCHEMA_UUID_3)).toBe(false);
   });
 
   it('returns 403 for mismatched Host header (loopback guard inherited)', async () => {

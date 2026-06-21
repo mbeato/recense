@@ -144,20 +144,10 @@ export function initIndex(ctx) {
       return list;
     }
 
-    // Flat section (Projects).
-    function renderFlatSection(title, entries) {
-      if (!entries || entries.length === 0) return;
-      const list = makeSection(title);
-      for (const entry of entries) {
-        const li = document.createElement('li');
-        li.appendChild(makeEntryAnchor(entry));
-        list.appendChild(li);
-      }
-    }
-
-    // Nested tree section (Schemas) — children indented under their doc_containment parent.
-    // The corpus is a clean forest (server guarantees no multi-parent via parentId/depth); roots
-    // are entries whose parentId is null or points outside this set. Siblings sorted by label.
+    // Nested tree section (Projects + Schemas) — children indented under their doc_containment
+    // parent. The server partitions each doc into the section of its tree ROOT's type (hybrid:
+    // a project's chapter docs land in Projects nested under it). Roots are entries whose parentId
+    // is null or points outside this section's set. Siblings sorted by label.
     function renderTreeSection(title, entries) {
       if (!entries || entries.length === 0) return;
       const byId = new Map();
@@ -188,7 +178,7 @@ export function initIndex(ctx) {
       for (const r of roots.slice().sort(byLabel)) emit(r, 0);
     }
 
-    renderFlatSection('Projects', data.projects);
+    renderTreeSection('Projects', data.projects);
     renderTreeSection('Schemas', data.schemas);
   }
 

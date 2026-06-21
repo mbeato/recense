@@ -760,34 +760,49 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         }>;
         // Containment hierarchy (WIKI-01, 39-02 re-verify): reuse stmtDocLinks (already compiled,
         // no new statement / no new Database — T-39-07) and keep only doc_containment edges.
-        // doc_containment is directed source=parent → dst=child, so dst→src is child→parent.
-        const childToParent = new Map<string, string>();
+        // doc_containment is directed source=parent → dst=child.
+        const typeById = new Map<string, 'project' | 'schema'>();
+        for (const r of rows) typeById.set(r.id, UUID_RE.test(r.slug) ? 'schema' : 'project');
+        // A child may gain >1 containment parent once Phase 32 promoteScope adds project-landing →
+        // chapter edges atop the organic schema ladder. Prefer the PROJECT parent so chapter docs
+        // nest under their project (hybrid index — founder direction). Today there is no multi-parent.
+        const parentsByChild = new Map<string, string[]>();
         for (const e of stmtDocLinks.all() as Array<{ src: string; dst: string; kind: string }>) {
-          if (e.kind === 'doc_containment') childToParent.set(e.dst, e.src);
+          if (e.kind !== 'doc_containment') continue;
+          if (!parentsByChild.has(e.dst)) parentsByChild.set(e.dst, []);
+          parentsByChild.get(e.dst)!.push(e.src);
         }
-        // Min-depth from a containment root (ancestor count). The corpus is a clean forest
-        // (no multi-parent), so this is unambiguous; the visited guard also breaks any cycle.
-        const depthOf = (id: string): number => {
-          let d = 0;
-          let cur = childToParent.get(id);
+        const childToParent = new Map<string, string>();
+        for (const [child, parents] of parentsByChild) {
+          if (parents.length === 0) continue; // never happens (only pushed entries), satisfies types
+          const projParent = parents.find(p => typeById.get(p) === 'project');
+          childToParent.set(child, projParent ?? parents[0]!);
+        }
+        // Walk to the tree root (cycle-guarded) → {root, depth-from-root}.
+        const rootAndDepth = (id: string): { root: string; depth: number } => {
+          let cur = id, depth = 0;
           const seen = new Set<string>([id]);
-          while (cur && !seen.has(cur)) { d++; seen.add(cur); cur = childToParent.get(cur); }
-          return d;
-        };
-        const projects: Array<{ slug: string; label: string; id: string }> = [];
-        const schemas: Array<{ slug: string; label: string; id: string; parentId: string | null; depth: number }> = [];
-        for (const row of rows) {
-          if (UUID_RE.test(row.slug)) {
-            schemas.push({
-              slug: row.slug, label: row.label, id: row.id,
-              parentId: childToParent.get(row.id) ?? null,
-              depth: depthOf(row.id),
-            });
-          } else {
-            projects.push({ slug: row.slug, label: row.label, id: row.id });
+          while (childToParent.has(cur)) {
+            const p = childToParent.get(cur)!;
+            if (seen.has(p)) break;
+            seen.add(p); cur = p; depth++;
           }
+          return { root: cur, depth };
+        };
+        // Partition each doc into the section of ITS TREE ROOT's type (hybrid): a schema whose
+        // root is a project lands in Projects (nested under it); schema-rooted trees stay in Schemas.
+        type Entry = { slug: string; label: string; id: string; parentId: string | null; depth: number };
+        const projects: Entry[] = [];
+        const schemas: Entry[] = [];
+        for (const row of rows) {
+          const { root, depth } = rootAndDepth(row.id);
+          const entry: Entry = {
+            slug: row.slug, label: row.label, id: row.id,
+            parentId: childToParent.get(row.id) ?? null, depth,
+          };
+          (typeById.get(root) === 'project' ? projects : schemas).push(entry);
         }
-        // Sort each group by label for stable ordering (index.js reorders schemas into the tree).
+        // Sort each group by label for stable ordering (index.js reorders into the tree).
         projects.sort((a, b) => a.label.localeCompare(b.label));
         schemas.sort((a, b) => a.label.localeCompare(b.label));
         res.writeHead(200, { 'content-type': 'application/json' });
