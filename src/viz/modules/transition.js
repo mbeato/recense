@@ -28,9 +28,11 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * @param {Object} ctx shared viz context (ctx.Graph = the 3D brain instance; ctx.markActive;
  *   ctx.recenter as a fallback home).
- * @param {{brainEl: HTMLElement, corpusEl: HTMLElement}} els
+ * @param {{brainEl: HTMLElement, corpusEl: HTMLElement, onBeforeReveal?: Function}} els
+ *   onBeforeReveal runs once the corpus is mounted+ready and about to fade in, while the
+ *   container is display:block (real dimensions) — the caller fits the pinned graph here.
  */
-export function createTransition(ctx, { brainEl, corpusEl }) {
+export function createTransition(ctx, { brainEl, corpusEl, onBeforeReveal }) {
   // 'brain' | 'toCorpus' | 'corpus' | 'toBrain'
   let state = 'brain';
   let homeCam = null; // exact brain-view camera captured right before the pull-back
@@ -75,7 +77,9 @@ export function createTransition(ctx, { brainEl, corpusEl }) {
     corpusEl.classList.add('open'); // mount the corpus (display:block, opacity 0)
     try { await Promise.all([Promise.resolve(ready), delay(Math.round(DUR * REVEAL_AT))]); } catch (_) { /* reveal anyway */ }
     if (state !== 'toCorpus') return;   // interrupted by toBrain()
-    corpusEl.classList.add('corpus-in'); // CSS fades the (pinned, pre-fit) map in
+    // Fit the pinned graph now — container is display:block (real rect), positions frozen.
+    if (typeof onBeforeReveal === 'function') { try { onBeforeReveal(); } catch (_) { /* ignore */ } }
+    corpusEl.classList.add('corpus-in'); // CSS fades the (pinned, settled, just-fit) map in
     await delay(DUR);
     if (state === 'toCorpus') state = 'corpus';
   }

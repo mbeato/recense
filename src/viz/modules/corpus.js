@@ -314,13 +314,10 @@ export function initCorpus(ctx) {
           const gd = CorpusGraph.graphData && CorpusGraph.graphData();
           if (gd && gd.nodes) gd.nodes.forEach((n) => { n.fx = n.x; n.fy = n.y; });
         } catch (_) { /* ignore */ }
-        sizeCorpusGraph();
-        fitAndClamp();
-      } else {
-        // Cached: already built + pinned + fit. Re-fit in case the window resized meanwhile.
-        sizeCorpusGraph();
-        fitAndClamp();
+        // No fit here — fitting happens at reveal (onBeforeReveal) when the container is
+        // display:block with real dimensions; a hidden/eager-built fit would mis-frame.
       }
+      // else: already prepared (built + pinned) — reveal re-fits the frozen layout.
       return 'ready';
     })();
     preparePromise = p;
@@ -329,7 +326,13 @@ export function initCorpus(ctx) {
   }
 
   // ── Transition controller: owns the brain⇄corpus camera move + crossfade ─────
-  const transition = createTransition(ctx, { brainEl, corpusEl: container });
+  // onBeforeReveal fits the pinned graph at reveal time, when the container is display:block
+  // (real rect) — fitting a hidden/eager-prepared graph would mis-frame it.
+  const transition = createTransition(ctx, {
+    brainEl,
+    corpusEl: container,
+    onBeforeReveal: () => { sizeCorpusGraph(); fitAndClamp(); },
+  });
 
   function setCorpusButton() {
     corpusBtn.setAttribute('aria-label', 'Show brain');
@@ -387,4 +390,10 @@ export function initCorpus(ctx) {
   ctx.showBrainFromCorpus = function showBrainFromCorpus() {
     goToBrain();
   };
+
+  // Eagerly prepare the corpus shortly after init (independent of the brain load) so the
+  // FIRST open is instant-ready like cached opens — no build/settle delay or empty gap after
+  // the brain recedes. Builds in the hidden container (sized to the window via fallback); the
+  // fit is deferred to reveal. Empty/error outcomes are swallowed here and retried on a real open.
+  setTimeout(() => { prepareCorpus(); }, 1200);
 }
