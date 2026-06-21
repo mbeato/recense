@@ -353,6 +353,9 @@ export function initCorpus(ctx) {
     // Fallback fit on a fixed timeout in case onEngineStop already fired before the
     // corpus was shown (e.g. a tiny graph settles instantly), or never fires.
     setTimeout(() => { if (corpusActive) fitAndClamp(); }, 350);
+    // Definitive re-fit once the fade transition has fully settled (container static,
+    // no transform/opacity in flight) — guarantees correct centering on first open.
+    setTimeout(() => { if (corpusActive) fitAndClamp(); }, CAM_MS + 60);
   }
 
   function showBrain() {
