@@ -44,8 +44,8 @@ function insertEdge(db: Database.Database, src: string, dst: string, kind: strin
 // ── (a)/(b) Fresh DB — CHECK constraints ──────────────────────────────────
 
 describe('schema v12 fresh DB — edge.kind CHECK', () => {
-  test('SCHEMA_VERSION constant is 12', () => {
-    expect(SCHEMA_VERSION).toBe(12);
+  test('SCHEMA_VERSION constant is 13 (v13: insight + derived_from + node_insight)', () => {
+    expect(SCHEMA_VERSION).toBe(13);
   });
 
   test("edge kind='doc_containment' insert succeeds on fresh DB", () => {
@@ -237,13 +237,13 @@ describe('schema v12 migration from pre-v12 (v11-shaped) DB', () => {
     expect(violations).toHaveLength(0);
   });
 
-  test("(f) meta.schema_version == '12' after migration", () => {
+  test("(f) meta.schema_version == '13' after migration (v13: insight + derived_from)", () => {
     const db = buildPreV12Db();
     initSchema(db);
 
     const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
       { value: string } | undefined;
-    expect(row?.value).toBe('12');
+    expect(row?.value).toBe('13');
   });
 
   test('(e) idempotency: second initSchema call on v12 DB is a no-op', () => {
@@ -277,11 +277,11 @@ describe('schema v12 migration from pre-v12 (v11-shaped) DB', () => {
 // ── version stamp guard ────────────────────────────────────────────────────
 
 describe('schema v12 version stamp', () => {
-  test('fresh DB is stamped v12', () => {
+  test('fresh DB is stamped v13 (v13: insight + derived_from + node_insight sidecar)', () => {
     const db = freshDb();
     const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
       { value: string } | undefined;
-    expect(row?.value).toBe('12');
+    expect(row?.value).toBe('13');
   });
 
   test('downgrade guard: stored > SCHEMA_VERSION still throws', () => {

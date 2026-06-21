@@ -65,10 +65,15 @@ export class StrengthDecayManager {
   private readonly stmtDeleteEdgesForNode: Database.Statement;
   // FK-02 child-wipe (mirrors schema-relations.ts FK-02 fix): node_scope.node_id and
   // node_temporal.node_id both REFERENCES node(id) — must be cleaned before the node row.
-  // Delete order: edges → node_scope → node_temporal → node (matches FK dependency graph).
+  // Delete order: edges → node_scope → node_temporal → node_insight → node (matches FK dependency graph).
   // D-08: surfaced_event is intentionally NOT cleaned here; the sleep pass must not touch it.
   private readonly stmtDeleteScopeForNode: Database.Statement;
   private readonly stmtDeleteTemporalForNode: Database.Statement;
+  // T-38-01 FK landmine fix: node_insight.node_id REFERENCES node(id).
+  // An insight node's eviction MUST delete its node_insight sidecar row BEFORE DELETE FROM node,
+  // or the eviction transaction throws SQLITE_CONSTRAINT_FOREIGNKEY — same FK class as FK-01/FK-02.
+  // D-08: surfaced_event intentionally excluded.
+  private readonly stmtDeleteInsightForNode: Database.Statement;
 
   constructor(db: Database.Database, clock: Clock, config: EngineConfig) {
     this.db = db;
@@ -101,6 +106,10 @@ export class StrengthDecayManager {
     // only — surfaced_event is intentionally excluded per D-08).
     this.stmtDeleteScopeForNode = db.prepare('DELETE FROM node_scope WHERE node_id = ?');
     this.stmtDeleteTemporalForNode = db.prepare('DELETE FROM node_temporal WHERE node_id = ?');
+    // T-38-01 FK landmine fix: node_insight.node_id REFERENCES node(id).
+    // Must run BEFORE stmtDeleteNode — otherwise the FK constraint throws SQLITE_CONSTRAINT_FOREIGNKEY.
+    // This is the single easiest-to-miss FK landmine in Phase 38 (PATTERNS.md §"Eviction").
+    this.stmtDeleteInsightForNode = db.prepare('DELETE FROM node_insight WHERE node_id = ?');
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -213,6 +222,10 @@ export class StrengthDecayManager {
             this.stmtDeleteEdgesForNode.run(row.id, row.id);
             this.stmtDeleteScopeForNode.run(row.id);
             this.stmtDeleteTemporalForNode.run(row.id);
+            // T-38-01: delete node_insight sidecar BEFORE node (FK-safe child-wipe).
+            // node_insight.node_id REFERENCES node(id) — omitting this throws SQLITE_CONSTRAINT_FOREIGNKEY
+            // when evicting any insight node. Non-insight nodes have no row; DELETE is a no-op.
+            this.stmtDeleteInsightForNode.run(row.id);
             this.stmtDeleteNode.run(row.id);
           }).immediate();
           evicted.push(row.id);

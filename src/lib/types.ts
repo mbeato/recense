@@ -17,14 +17,25 @@ export interface PendingContradiction {
   origin: Origin;
 }
 
-/** Semantic node classification (spec §1). */
-export type NodeType = 'entity' | 'fact' | 'schema' | 'doc';
+/**
+ * Semantic node classification (spec §1).
+ * Phase 38 (REFLECT-01 D-01): 'insight' added for derived higher-order nodes synthesized by
+ * InsightReflector. Insight nodes are origin='inferred', confidence-capped, non-strengthening,
+ * decaying — they are NOT doc nodes (different lifecycle: recall artifact vs. reader prose).
+ */
+export type NodeType = 'entity' | 'fact' | 'schema' | 'doc' | 'insight';
 
 /** Role of a conversation episode (D-10). */
 export type EpisodeRole = 'user' | 'assistant' | 'tool';
 
-/** Graph edge classification — typed relation or schema-evidence provenance (spec §1). */
-export type EdgeKind = 'relation' | 'abstracts' | 'schema_rel' | 'cites' | 'doc_link' | 'doc_containment' | 'doc_reference';
+/**
+ * Graph edge classification — typed relation or schema-evidence provenance (spec §1).
+ * Phase 38 (REFLECT-01 D-02): 'derived_from' added for edges connecting an insight node to its
+ * anchor schema + cited member fact/entity nodes. Single kind serves both recall discovery
+ * (getInEdges(schemaId) filtered to kind='derived_from') and invalidation walks
+ * (getInEdges(memberId) filtered to kind='derived_from' → dependent insights).
+ */
+export type EdgeKind = 'relation' | 'abstracts' | 'schema_rel' | 'cites' | 'doc_link' | 'doc_containment' | 'doc_reference' | 'derived_from';
 
 /**
  * Full SQLite row shape for the node table (spec §1).
@@ -172,6 +183,34 @@ export interface NodeDocRow {
   node_id: string;
   slug: string;
   generated_at: number;   // epoch ms — NOT node.last_access (CONTEXT D §generatedAt)
+  updated_at: number;
+}
+
+/**
+ * Parameters for SemanticStore.upsertNodeInsight() (REFLECT-01, Plan 38-01).
+ * generated_at is a DEDICATED insight field — NOT node.last_access — so the staleness
+ * predicate (member.last_access > insight.generated_at) cannot be corrupted when the
+ * insight node is accessed. Mirrors node_doc's generated_at write-once convention (D-01).
+ * Written exclusively by the InsightReflector path (CONSOL-03 discipline, single writer).
+ *
+ * Upsert semantics: generated_at is write-once (preserved on conflict — set only on first insert);
+ * anchor_schema_id and updated_at are always updated.
+ */
+export interface UpsertNodeInsightParams {
+  node_id: string;
+  anchor_schema_id: string;   // schema node id this insight was derived from (D-02)
+  generated_at: number;       // epoch ms — set once on first generate, NOT updated on conflict
+  updated_at: number;         // epoch ms — always updated
+}
+
+/**
+ * Row shape returned by SemanticStore.getNodeInsight() (REFLECT-01, Plan 38-01).
+ * Mirrors the node_insight sidecar table columns.
+ */
+export interface NodeInsightRow {
+  node_id: string;
+  anchor_schema_id: string;   // schema node id this insight was derived from
+  generated_at: number;       // epoch ms — NOT node.last_access (write-once staleness anchor)
   updated_at: number;
 }
 
