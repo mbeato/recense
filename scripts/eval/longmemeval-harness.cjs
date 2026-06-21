@@ -149,6 +149,11 @@ const CONCURRENCY = Math.max(1, parseInt(arg('--concurrency', '4'), 10) || 4);
 // Here we use CandidateRetriever.topk directly so every question gets up to K candidates.
 const TOP_K = Math.max(1, parseInt(arg('--topk', '10'), 10) || 10);
 
+// --strength-weight <w>: RRF strength weight threaded into the direct hybridTopk call (Phase 35
+// RANK-02). Only active when --hybrid is also set (the non-hybrid topk branch is unchanged).
+// Default 0 (dark) — identical to current behaviour. Sweepable via 35-strength-sweep.cjs.
+const STRENGTH_WEIGHT = parseFloat(arg('--strength-weight', '0')) || 0;
+
 // --dry-run defaults to the committed mini fixture; normal/probe default to the downloaded dataset
 const EVAL_DEFAULT = IS_DRY_RUN
   ? 'scripts/eval/fixtures/longmemeval-mini.jsonl'
@@ -681,8 +686,11 @@ async function runBoundedPool(items, concurrency, fn) {
           // LEVER 1: route through hybridTopk when --hybrid is set.
           // ftsQueryFromText sanitisation is handled inside hybridTopk (same as product path).
           // When --rewrite is also set, pass questionForEmbed so FTS uses the declarative form.
+          // Phase 35 RANK-02: when --strength-weight w is set (and --hybrid active), pass w as
+          // the 5th positional arg so hybridTopk fuses the RRF strength list at weight w.
+          // Args: (queryVec, queryText, k, preK=undefined, strengthWeight, nowMs, lambda).
           const topkResults = IS_HYBRID
-            ? evalRetriever.hybridTopk(queryVec, questionForEmbed, TOP_K)
+            ? evalRetriever.hybridTopk(queryVec, questionForEmbed, TOP_K, undefined, STRENGTH_WEIGHT, Date.now(), DEFAULT_CONFIG.lambda)
             : evalRetriever.topk(queryVec, TOP_K);
           // Expose to instrumentation taps (tap 3: retrieved top-k with scores and values).
           instrumentEvalStore    = evalStore;

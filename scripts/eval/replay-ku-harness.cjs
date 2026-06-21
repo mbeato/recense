@@ -40,6 +40,10 @@ const ATTRIBUTION_FILE = arg('--attribution', path.join(CACHE_DIR, 'n20-attribut
 const KU_FILE          = arg('--ku', path.join(CACHE_DIR, 'eval20-ku.jsonl'));
 const OUT              = arg('--out', 'scripts/eval/results/replay-ku-PENDING.json');
 
+// --strength-weight <w>: RRF strength weight passed to retrieveRanked → hybridTopk (Phase 35 RANK-02).
+// Default 0 (dark) — identical to current behaviour. Sweepable via 35-strength-sweep.cjs.
+const STRENGTH_WEIGHT = parseFloat(arg('--strength-weight', '0')) || 0;
+
 // ---- compiled engine modules (require npm run build first) ------------------
 // Failing requires here mean `npm run build` has not been run yet.
 const Database                    = require('better-sqlite3');
@@ -94,7 +98,8 @@ function makeScratchDb() {
   );
   const db = new Database(dbPath);
   initSchema(db);
-  const config = { ...DEFAULT_CONFIG, dbPath };
+  // rankStrengthWeight: inject --strength-weight so engine.retrieveRanked → hybridTopk reads it.
+  const config = { ...DEFAULT_CONFIG, dbPath, rankStrengthWeight: STRENGTH_WEIGHT };
   const episodes = new EpisodicStore(db, realClock, config);
   return {
     db,
@@ -236,7 +241,10 @@ async function runRealCase(kuCase, claims, embedder, anthropicClient) {
     const traceSink  = new NoopActivationTraceSink();
     const engine     = new RetrievalEngine(scratch.db, realClock, scratch.config, retriever, store, strength, gate, traceSink);
 
-    const results = engine.retrieveRanked(queryVec, scratch.config.rankedRetrievalK, scratch.config.rankedRetrievalFloor);
+    // Pass kuCase.question as queryText so retrieveRanked routes through hybridTopk
+    // (Pitfall 3 fix — without this arg the pure-cosine topk branch is taken and the
+    // strength fusion from rankStrengthWeight / RANK-02 is never exercised).
+    const results = engine.retrieveRanked(queryVec, scratch.config.rankedRetrievalK, scratch.config.rankedRetrievalFloor, kuCase.question);
 
     const retrievedText = results.length > 0
       ? results.map(r => `- ${r.value}`).join('\n')
@@ -336,6 +344,7 @@ Reply with exactly one word: "correct" or "incorrect".`;
   console.log('\nReplay-KU Harness (RETR-02 validation, Plan 26-05)');
   console.log(`Cases: ${total} (from n20-attribution.jsonl ∩ eval20-ku.jsonl)`);
   console.log(`Embedder: ${embedderModel} (from DEFAULT_CONFIG — no swap, D-01)`);
+  console.log(`Strength weight: ${STRENGTH_WEIGHT} (--strength-weight; 0 = pure cosine baseline)`);
   console.log(`Cache: ${CACHE_DIR}`);
   console.log(DRY_RUN
     ? 'Mode: --dry-run (ingest + scratch DB only, ZERO API calls)\n'
@@ -370,14 +379,15 @@ Reply with exactly one word: "correct" or "incorrect".`;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const dryRunResult = {
       meta: {
-        eval:         'replay-ku',
-        mode:         'dry-run',
-        cache_id:     'granite+chunk-turns-2',
-        date:         new Date().toISOString(),
+        eval:            'replay-ku',
+        mode:            'dry-run',
+        cache_id:        'granite+chunk-turns-2',
+        date:            new Date().toISOString(),
         commit,
-        embedder:     embedderModel,
-        total_cases:  total,
-        total_claims: totalClaims,
+        embedder:        embedderModel,
+        strength_weight: STRENGTH_WEIGHT,
+        total_cases:     total,
+        total_claims:    totalClaims,
       },
       scores: null,
       per_case: null,
@@ -460,14 +470,15 @@ Reply with exactly one word: "correct" or "incorrect".`;
   // ---- write results ----------------------------------------------------------
   const resultEnvelope = {
     meta: {
-      eval:         'replay-ku',
-      mode:         'full',
-      cache_id:     'granite+chunk-turns-2',
-      date:         new Date().toISOString(),
+      eval:            'replay-ku',
+      mode:            'full',
+      cache_id:        'granite+chunk-turns-2',
+      date:            new Date().toISOString(),
       commit,
-      embedder:     embedderModel,
-      total_cases:  total,
-      total_claims: totalClaims,
+      embedder:        embedderModel,
+      strength_weight: STRENGTH_WEIGHT,
+      total_cases:     total,
+      total_claims:    totalClaims,
       // T-26-03: keys never written to results
     },
     scores: {
