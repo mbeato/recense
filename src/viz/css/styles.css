@@ -787,19 +787,41 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   color: #c8bcd0;
 }
 
-/* Corpus state overlay (loading / empty / error) — centered over the brain canvas.
-   Muted mauve/slate, never amber. Used by corpus3d.js (fixed to viewport). */
-.corpus-status {
+/* ── Flat 2D corpus graph host (READER-04) ────────────────────────────────
+   Full-bleed canvas host for the vendored 2D force-graph instance (corpus.js).
+   Hidden by default; .open shows it full-window (the toggle hides #graph at the
+   same time, so the corpus REPLACES the 3D brain rather than overlaying it).
+   Dark aubergine background matches the viz; force-graph paints its own canvas
+   background on top, this is the fallback while the instance initialises. */
+#corpus-graph {
   position: fixed;
-  top: 50%; left: 50%;
+  inset: 0;
+  z-index: 5;            /* above the brain canvas (#graph), below #panel chrome (z:10) */
+  display: none;
+  background: #170f1d;
+}
+#corpus-graph.open {
+  display: block;
+}
+
+/* ── Corpus status overlay — loading / empty / error (C2, 34-02) ─────────────
+   #corpus-graph is position:fixed;inset:0 — this establishes the containing block
+   for position:absolute children. Palette: muted mauve/slate (no amber). */
+.corpus-status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 6;
   text-align: center;
+  pointer-events: none;
   color: #6b5f73;
   font-size: 13px;
-  line-height: 1.5;
-  pointer-events: none;
-  display: none;
+  font-style: italic;
+  line-height: 1.8;
 }
-.corpus-status code { color: #8b7090; font-size: 12px; }
-
+.corpus-status code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #8b7090;
+  font-style: normal;
+}

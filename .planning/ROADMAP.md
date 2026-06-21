@@ -443,12 +443,12 @@ recense deepens the two weakest edges of the engine — *how it ranks what it re
   2. Recall assembles a typed relational path; multi-hop queries return a precise path with fewer tokens than the untyped-neighborhood baseline at equal-or-better answer quality on the harness — TYPED-02
   3. Self-confirmation guard intact: inferred output never mints or strengthens a typed edge
 
-**Plans:** 4 plans
+**Plans:** 1/4 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 37-01-PLAN.md — Wave 0 primitives: predicate vocab + parseTriples, getOutEdgesWithRel, predicateGlossThreshold config, offline gloss embeddings
+- [x] 37-01-PLAN.md — Wave 0 primitives: predicate vocab + parseTriples, getOutEdgesWithRel, predicateGlossThreshold config, offline gloss embeddings
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

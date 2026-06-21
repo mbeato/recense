@@ -301,49 +301,63 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).toContain("'doc_reference'");
   });
 
-  it('source: corpus3d.js renders the corpus as a THREE group in the brain scene', () => {
+  it('source: corpus.js owns #btn-corpus + 2D force-graph + /graph?type=doc fetch', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, '../src/viz/modules/corpus3d.js'),
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
       'utf8',
     );
-    expect(src).toContain('ctx.Graph.scene().add(corpusGroup)');
-    expect(src).toContain('cameraPosition');
-    expect(src).not.toContain('window.ForceGraph');
-  });
-
-  it('source: corpus3d.js fetches /graph?type=doc and handles error/empty distinctly', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../src/viz/modules/corpus3d.js'),
-      'utf8',
-    );
+    // Corpus toggle button is owned here (moved out of reader.js)
+    expect(src).toContain('btn-corpus');
+    // Fetches the corpus data from the doc-only endpoint
     expect(src).toContain('/graph?type=doc');
-    expect(src).toContain('Failed to load corpus');
-    expect(src).toContain('No docs yet');
-    expect(src).toMatch(/errored[\s\S]*Failed to load corpus[\s\S]*return/);
+    // Uses the vendored 2D force-graph library (NOT the 3D brain instance)
+    expect(src).toContain('window.ForceGraph');
+    // Has its own separate container (does NOT swap the 3D brain's #graph)
+    expect(src).toContain('corpus-graph');
   });
 
-  it('source: corpus layout is a pure module (no DOM/THREE) reused by corpus3d', () => {
-    const layout = fs.readFileSync(
-      path.resolve(__dirname, '../src/viz/modules/corpus-layout.js'),
-      'utf8',
-    );
-    // Strip comment header before checking — the comment literally says "no DOM, no THREE"
-    const layoutCode = layout
-      .replace(/\/\/[^\n]*/g, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
-    expect(layoutCode).not.toMatch(/document\.(getElementById|createElement)/);
-    expect(layoutCode).not.toContain('new THREE');
-    expect(layoutCode).not.toContain('ctx.THREE');
+  it('source: corpus.js does NOT swap data into the 3D brain (no ctx.Graph.graphData swap)', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, '../src/viz/modules/corpus3d.js'),
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
       'utf8',
     );
-    expect(src).toContain("from './corpus-layout.js'");
+    // The flat-graph approach uses its own ForceGraph() instance, never the brain's.
+    // Guard against a regression to the 3D-data-swap approach.
+    expect(src).not.toContain('ctx.Graph.graphData');
   });
 
-  it('source: corpus3d.js registers ctx.returnToCorpus + ctx.showBrainFromCorpus hooks', () => {
+  // Fix A — corpus zoom clamp
+  it('source: corpus.js clamps zoom (MAX_ZOOM) after fit + fits on onEngineStop', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, '../src/viz/modules/corpus3d.js'),
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+      'utf8',
+    );
+    // A max-zoom ceiling exists so a tiny graph does not blow up
+    expect(src).toContain('MAX_ZOOM');
+    // Clamp applied via .zoom(k, ms)
+    expect(src).toMatch(/\.zoom\(/);
+    // Fit fires on layout settle, not only a fixed timeout
+    expect(src).toContain('onEngineStop');
+    // zoomToFit still used as the fit primitive
+    expect(src).toContain('zoomToFit');
+  });
+
+  // Fix B — corpus doc-node click opens the reader IN PLACE (no page navigation)
+  it('source: corpus.js onNodeClick calls ctx.openReader (NOT window.location)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+      'utf8',
+    );
+    // Opens the reader in-place via the ctx opener with from:'corpus'
+    expect(src).toContain('ctx.openReader');
+    expect(src).toContain("from: 'corpus'");
+    // Must NOT navigate the page (the brain-detour bug)
+    expect(src).not.toContain('window.location');
+  });
+
+  it('source: corpus.js registers ctx.returnToCorpus + ctx.showBrainFromCorpus hooks', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
       'utf8',
     );
     expect(src).toContain('ctx.returnToCorpus');
@@ -366,7 +380,7 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).not.toContain('window.location.href');
   });
 
-  it('source: reader.js no longer owns the corpus swap (moved to corpus3d.js)', () => {
+  it('source: reader.js no longer owns the corpus swap (moved to corpus.js)', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/modules/reader.js'),
       'utf8',
@@ -377,35 +391,42 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).not.toContain("getElementById('btn-corpus')");
   });
 
-  it('source: app.js imports initCorpus from corpus3d.js (not corpus.js)', () => {
+  it('source: app.js injects the vendored force-graph bundle and inits corpus', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/modules/app.js'),
       'utf8',
     );
-    expect(src).toContain("from './corpus3d.js'");
+    expect(src).toContain('./vendor/force-graph.min.js');
     expect(src).toContain('initCorpus');
-    // 2D force-graph vendor bundle is gone — only the 3D bundle remains
-    expect(src).not.toContain('./vendor/force-graph.min.js');
   });
 
-  it('source: #btn-corpus present, #corpus-graph removed', () => {
-    const html = fs.readFileSync(
+  it('source: index.html has #btn-corpus button and #corpus-graph container', () => {
+    const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/index.html'),
       'utf8',
     );
-    expect(html).toContain('id="btn-corpus"');
-    expect(html).not.toContain('id="corpus-graph"');
+    expect(src).toContain('btn-corpus');
+    expect(src).toContain('corpus-graph');
   });
 
-  it('source: styles.css has expanded-only gate for #btn-corpus (no #corpus-graph selector)', () => {
+  it('source: styles.css has expanded-only gate for #btn-corpus + corpus container', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/css/styles.css'),
       'utf8',
     );
     expect(src).toContain('#btn-corpus');
     expect(src).toContain('.mode-window #btn-corpus');
-    // 2D container is gone — the 3D corpus lives inside the brain scene, not its own element
-    expect(src).not.toContain('#corpus-graph');
+    expect(src).toContain('#corpus-graph');
+  });
+
+  it('vendored force-graph.min.js exists and is a non-empty UMD bundle exposing ForceGraph', () => {
+    const fp = path.resolve(__dirname, '../src/viz/vendor/force-graph.min.js');
+    expect(fs.existsSync(fp)).toBe(true);
+    const content = fs.readFileSync(fp, 'utf8');
+    // Non-empty
+    expect(content.length).toBeGreaterThan(10000);
+    // UMD bundle exposing the ForceGraph global
+    expect(content).toContain('ForceGraph');
   });
 });
 
@@ -606,46 +627,51 @@ describe('doc_containment/doc_reference edges in corpus endpoint and renderer (C
   );
 
   it(
-    'source: corpus3d.js renders edges as THREE.LineSegments (3D plane, no ForceGraph 2D API)',
+    'source: corpus.js linkDirectionalArrowLength is non-zero for doc_containment links ' +
+    'and zero for doc_reference links (directed vs undirected rendering)',
     () => {
       const src = fs.readFileSync(
-        path.resolve(__dirname, '../src/viz/modules/corpus3d.js'),
+        path.resolve(__dirname, '../src/viz/modules/corpus.js'),
         'utf8',
       );
-      // 3D corpus renders edges via THREE geometry, not 2D ForceGraph link callbacks
-      expect(src).toContain('THREE.LineSegments');
-      expect(src).not.toContain('linkDirectionalArrowLength');
-      expect(src).not.toContain('linkLineDash');
-      expect(src).not.toContain('window.ForceGraph');
+      expect(src).toContain('linkDirectionalArrowLength');
+      // containment gets a non-zero arrow; reference gets 0 (undirected)
+      expect(src).toMatch(/doc_containment.*?4|4.*?doc_containment/s);
     },
   );
 
   it(
-    'source: corpus3d.js uses a node-rest color that is not amber/cyan (palette guard)',
+    'source: corpus.js linkLineDash returns [2,2] for doc_reference links ' +
+    'and null for doc_containment links (solid vs dashed)',
     () => {
       const src = fs.readFileSync(
-        path.resolve(__dirname, '../src/viz/modules/corpus3d.js'),
+        path.resolve(__dirname, '../src/viz/modules/corpus.js'),
         'utf8',
       );
-      // NODE_REST and EDGE_REST must exist as color constants
-      expect(src).toContain('NODE_REST');
-      expect(src).toContain('EDGE_REST');
-      // Neither must be amber (#ff8c00/ffb866) or cyan (#00bfff) — palette rule
-      expect(src).not.toMatch(/NODE_REST\s*=\s*0x(?:ff8c00|ffb866|00bfff)/i);
-      expect(src).not.toMatch(/EDGE_REST\s*=\s*0x(?:ff8c00|ffb866|00bfff)/i);
+      expect(src).toContain('linkLineDash');
+      // reference gets a dash pattern; containment gets null (solid)
+      expect(src).toMatch(/doc_reference/);
+      expect(src).toMatch(/\[2,\s*2\]/);
     },
   );
 
   it(
-    'source: corpus3d.js uses ctx.Graph.cameraPosition to fly to the corpus plane',
+    'source: corpus.js linkColor distinguishes doc_containment from doc_reference ' +
+    '(distinct color constants in corpus.js)',
     () => {
       const src = fs.readFileSync(
-        path.resolve(__dirname, '../src/viz/modules/corpus3d.js'),
+        path.resolve(__dirname, '../src/viz/modules/corpus.js'),
         'utf8',
       );
-      expect(src).toContain('ctx.Graph.cameraPosition');
-      // Camera flies to a top-down view (y much greater than x/z)
-      expect(src).toMatch(/cameraPosition\s*\(\s*\{[^}]*y\s*:/);
+      // A dedicated containment color constant must exist
+      expect(src).toContain('CONTAINMENT_COLOR');
+      // It must be referenced in a linkColor callback
+      expect(src).toMatch(/linkColor/);
+      // CONTAINMENT_COLOR and LINK_REST must NOT be amber (#ffb866/ff8c00) or cyan (#00bfff)
+      // (amber is activation-only HOVER_NODE; the palette rule is founder-locked).
+      // Check the constant definitions directly (not comments, which may mention the word).
+      expect(src).not.toMatch(/const CONTAINMENT_COLOR\s*=\s*['"][^'"]*(?:ff8c00|ffb866|00bfff)[^'"]*['"]/i);
+      expect(src).not.toMatch(/const LINK_REST\s*=\s*['"][^'"]*(?:ff8c00|ffb866|00bfff)[^'"]*['"]/i);
     },
   );
 });
