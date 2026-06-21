@@ -441,7 +441,7 @@ describe('RecallEngine insight surfacing — Test 3: stale-skip', () => {
     });
 
     // Tombstone the member (simulates falsification via PE-gated reconcile)
-    h.store.tombstone(memberId, now);
+    h.store.tombstone(memberId);
 
     const provider = makeInsightTestProvider(TEST_DIMS, 'fallback after member tombstone');
     const engine = makeEngine(h, provider);

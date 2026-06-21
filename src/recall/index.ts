@@ -280,6 +280,129 @@ export class RecallEngine {
     // No schema reachable → no fabricated inference (D-42)
     if (!schemaNode) return NULL_RESULT;
 
+    // ── (REFLECT-02 / D-05): Insight surfacing branch — gated by insightSurfacingEnabled ──
+    //
+    // When a live, non-stale insight exists for the resolved schema, return it IN PLACE OF
+    // the K=20 member neighborhood — one mode OR the other per query, never both (D-05).
+    //
+    // MATCH GATE = SCHEMA-ANCHOR RESOLUTION (no embedding):
+    //   The insight is already anchored to the resolved schemaNode via a 'derived_from' in-edge.
+    //   The getInEdges walk filtered to kind='derived_from' + src.type='insight' selects the
+    //   insight directly — the schema IS the match key (recall already resolved it via Case A/B).
+    //   DO NOT compare the query embedding against the insight: insights have a NULL embedding
+    //   (doc-writer pattern), so any cueVec/topk comparison against the insight is dead code.
+    //
+    // FRESHNESS GATE (D-06):
+    //   An insight is stale iff ANY of its derived_from member dependencies is tombstoned OR
+    //   has last_access > insight.generated_at (found via getOutEdges(insightId) filtered to
+    //   derived_from, excluding the schema target). This is the reflector's staleness predicate
+    //   applied read-side — prevents stale-insight self-confirmation (T-38-07).
+    //
+    // INVARIANT (D-43 / L137 / T-38-08):
+    //   This branch makes NO upsertNode/upsertEdge/tombstone/strengthen calls.
+    //   The ONLY write is the existing inferred-episode append at the end.
+    //   Insights are origin='inferred' → strengthen() already no-ops on them.
+    //   Surfacing an insight never reinforces the insight or its members.
+    if (this.config.insightSurfacingEnabled) {
+      // Walk INCOMING derived_from edges on the resolved schema to find the dependent insight.
+      // Mirror of Case-B reverse-abstracts lookup above (L270-278): same in-edge walk pattern.
+      const schemaInEdges = this.store.getInEdges(schemaNode.id);
+      let liveInsightId: string | null = null;
+      for (const inEdge of schemaInEdges) {
+        if (inEdge.kind !== 'derived_from') continue;
+        const candidateInsight = this.store.getNode(inEdge.src);
+        if (!candidateInsight) continue;
+        if (candidateInsight.tombstoned === 1) continue;
+        if (candidateInsight.type !== 'insight') continue;
+        liveInsightId = candidateInsight.id;
+        break; // take the first live non-tombstoned insight anchored to this schema
+      }
+
+      if (liveInsightId !== null) {
+        // FRESHNESS GATE: load the node_insight sidecar for the generation timestamp.
+        const insightMeta = this.store.getNodeInsight(liveInsightId);
+        let isStale = false;
+
+        if (!insightMeta) {
+          // No sidecar → cannot verify freshness → treat as stale (conservative)
+          isStale = true;
+        } else {
+          // Walk this insight's OUTGOING derived_from edges to find its member dependencies.
+          // Any dependency that is tombstoned OR has last_access > generated_at marks it stale.
+          const insightOutEdges = this.store.getOutEdges(liveInsightId);
+          for (const outEdge of insightOutEdges) {
+            if (outEdge.kind !== 'derived_from') continue;
+            if (outEdge.dst === schemaNode.id) continue; // skip the anchor schema edge itself
+            const depNode = this.store.getNode(outEdge.dst);
+            if (!depNode) {
+              isStale = true;
+              break;
+            }
+            if (depNode.tombstoned === 1) {
+              isStale = true;
+              break;
+            }
+            if (depNode.last_access > insightMeta.generated_at) {
+              isStale = true;
+              break;
+            }
+          }
+        }
+
+        if (!isStale) {
+          // Live, non-stale insight found. Build a single-member compose payload from the
+          // insight string — this is the compose-token win: one precomputed string vs ~K members.
+          // Reuse the SAME compose path recall already uses (schema-prior + neighborLines).
+          const insightNode = this.store.getNode(liveInsightId)!; // already verified non-null above
+          const insightNeighborhood = [{ id: insightNode.id, value: insightNode.value }];
+
+          // Compose from single-insight payload — same prompt structure as the neighborhood path.
+          // D-43: NO upsertNode/upsertEdge/tombstone/strengthen here.
+          let insightInference: string | null = null;
+          try {
+            const insightLine = `- ${insightNode.value}`;
+            // T-04-03-I: query placed as data content, never interpolated as code
+            const prompt =
+              `You are reasoning over a memory graph using a learned schema as a prior.\n\n` +
+              `Schema (learned pattern): "${schemaNode.value}"\n\n` +
+              `Related memory nodes:\n${insightLine}\n\n` +
+              `Question: ${boundedQuery}\n\n` +
+              `Based on the schema and related memories, provide a concise factual inference. ` +
+              `If you cannot make a meaningful inference, respond with exactly: null`;
+
+            // T-05-KEY: provider.generate reads API keys from env via SDK (DefaultModelProvider)
+            const text = (await this.provider.generate(prompt, { maxTokens: 512 })).trim();
+
+            insightInference = (!text || text.toLowerCase() === 'null') ? null : text;
+          } catch {
+            // T-02-PARSE: on any error, fall through to neighborhood assembly (no throw)
+            insightInference = null;
+          }
+
+          if (insightInference) {
+            // Log as ephemeral inferred episode — the ONLY write in this branch (D-43).
+            // NEVER calls upsertNode/upsertEdge/tombstone/strengthen (T-38-08).
+            void insightNeighborhood; // satisfy lint: neighborhood built for tracing, logged below
+            const ep = this.episodes.append({
+              content: insightInference,
+              origin: 'inferred',
+              salience: 0,
+              hard_keep: 0,
+              role: 'assistant',
+              session_id: sessionId,
+              source_inference_id: null,
+            });
+            // D-05: return immediately — insight path OR neighborhood, NEVER both
+            return { inference: insightInference, episodeId: ep.id, origin: 'inferred' };
+          }
+          // insightInference was null (compose returned null/empty) → fall through to neighborhood
+        }
+        // isStale → fall through to neighborhood assembly (the fallback)
+      }
+      // liveInsightId was null (no insight on schema) → fall through to neighborhood assembly
+    }
+    // insightSurfacingEnabled=false → fall through to neighborhood assembly (byte-identical to today)
+
     // Assemble bounded 1-hop neighborhood from the RESOLVED schema's outgoing edges.
     // Using schemaNode.id (not bestMatch.id) ensures the same neighborhood whether
     // the query matched the schema itself or one of its members.
