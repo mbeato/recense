@@ -177,6 +177,11 @@ beforeEach(async () => {
   store.upsertNodeDoc({ node_id: SCHEMA_DOC_ID_2, slug: SCHEMA_UUID_2, generated_at: T0, updated_at: T0 });
   store.upsertNodeScope({ node_id: SCHEMA_DOC_ID_2, scope: SCHEMA_UUID_2, updated_at: T0 });
 
+  // ── Containment hierarchy (WIKI-01, 39-02): schema doc 1 CONTAINS schema doc 2 ──
+  // doc_containment is directed source=parent → dst=child, so this makes doc 2 a depth-1
+  // child of doc 1 (a depth-0 root). Drives the /index parentId/depth fields + tree render.
+  store.upsertEdge({ src: SCHEMA_DOC_ID_1, dst: SCHEMA_DOC_ID_2, rel: 'contains', kind: 'doc_containment', w: 1.0, last_access: T0 });
+
   writeDb.close();
 
   server = startVizServer(tmpDbPath, port);
@@ -279,6 +284,32 @@ describe('GET /index', () => {
     expect(json.projects.some(e => e.slug === PROJECT_DOC_SLUG)).toBe(true);
     expect(json.schemas.some(e => e.slug === SCHEMA_UUID_1)).toBe(true);
     expect(json.schemas.some(e => e.slug === SCHEMA_UUID_2)).toBe(true);
+  });
+
+  it('schema entries include parentId and depth fields (WIKI-01 containment, 39-02)', async () => {
+    const r = await makeRequest(port, '/index');
+    const json = JSON.parse(r.body) as {
+      schemas: Array<{ slug: string; parentId: string | null; depth: number }>;
+    };
+    for (const entry of json.schemas) {
+      expect('parentId' in entry).toBe(true);
+      expect(typeof entry.depth).toBe('number');
+    }
+  });
+
+  it('resolves a doc_containment child to its parent id at depth 1 (root at depth 0)', async () => {
+    const r = await makeRequest(port, '/index');
+    const json = JSON.parse(r.body) as {
+      schemas: Array<{ slug: string; id: string; parentId: string | null; depth: number }>;
+    };
+    const parent = json.schemas.find(e => e.slug === SCHEMA_UUID_1); // doc 1 = root (contains doc 2)
+    const child = json.schemas.find(e => e.slug === SCHEMA_UUID_2);  // doc 2 = child of doc 1
+    expect(parent).toBeDefined();
+    expect(child).toBeDefined();
+    expect(parent!.parentId).toBeNull();
+    expect(parent!.depth).toBe(0);
+    expect(child!.parentId).toBe(parent!.id);
+    expect(child!.depth).toBe(1);
   });
 
   it('returns 403 for mismatched Host header (loopback guard inherited)', async () => {

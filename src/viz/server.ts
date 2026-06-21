@@ -758,17 +758,36 @@ export function startVizServer(dbPath: string, port: number): http.Server {
           type: string; value: string; s: number; c: number;
           origin: string; tombstoned: number;
         }>;
+        // Containment hierarchy (WIKI-01, 39-02 re-verify): reuse stmtDocLinks (already compiled,
+        // no new statement / no new Database — T-39-07) and keep only doc_containment edges.
+        // doc_containment is directed source=parent → dst=child, so dst→src is child→parent.
+        const childToParent = new Map<string, string>();
+        for (const e of stmtDocLinks.all() as Array<{ src: string; dst: string; kind: string }>) {
+          if (e.kind === 'doc_containment') childToParent.set(e.dst, e.src);
+        }
+        // Min-depth from a containment root (ancestor count). The corpus is a clean forest
+        // (no multi-parent), so this is unambiguous; the visited guard also breaks any cycle.
+        const depthOf = (id: string): number => {
+          let d = 0;
+          let cur = childToParent.get(id);
+          const seen = new Set<string>([id]);
+          while (cur && !seen.has(cur)) { d++; seen.add(cur); cur = childToParent.get(cur); }
+          return d;
+        };
         const projects: Array<{ slug: string; label: string; id: string }> = [];
-        const schemas: Array<{ slug: string; label: string; id: string }> = [];
+        const schemas: Array<{ slug: string; label: string; id: string; parentId: string | null; depth: number }> = [];
         for (const row of rows) {
-          const entry = { slug: row.slug, label: row.label, id: row.id };
           if (UUID_RE.test(row.slug)) {
-            schemas.push(entry);
+            schemas.push({
+              slug: row.slug, label: row.label, id: row.id,
+              parentId: childToParent.get(row.id) ?? null,
+              depth: depthOf(row.id),
+            });
           } else {
-            projects.push(entry);
+            projects.push({ slug: row.slug, label: row.label, id: row.id });
           }
         }
-        // Sort each group by label for stable ordering
+        // Sort each group by label for stable ordering (index.js reorders schemas into the tree).
         projects.sort((a, b) => a.label.localeCompare(b.label));
         schemas.sort((a, b) => a.label.localeCompare(b.label));
         res.writeHead(200, { 'content-type': 'application/json' });

@@ -107,51 +107,89 @@ export function initIndex(ctx) {
     }
     statusEl.remove();
 
-    // Helper: render one labeled section (Projects or Schemas)
-    function renderSection(title, entries) {
-      if (!entries || entries.length === 0) return;
+    // Build one <a> row for an index entry (shared by flat + tree rendering).
+    function makeEntryAnchor(entry) {
+      const a = document.createElement('a');
+      a.className = 'index-entry doc-ref';
+      a.setAttribute('href', '#');
+      a.textContent = entry.label || entry.slug; // textContent — T-39-08
+      // Hover → cross-highlight the matching node + its containment subtree in the corpus graph.
+      a.addEventListener('mouseenter', () => {
+        if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(entry.slug);
+      });
+      a.addEventListener('mouseleave', () => {
+        if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(null);
+      });
+      // Click → open that doc's reader IN PLACE over the corpus (D-08, reuse corpus path).
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        if (typeof ctx.openReader === 'function') ctx.openReader(entry.slug, { from: 'corpus' });
+        else window.location.href = '/?doc=' + encodeURIComponent(entry.slug) + '&reader=1';
+      });
+      return a;
+    }
+
+    // Create a labeled section with an empty <ul>, return the <ul> to append rows into.
+    function makeSection(title) {
       const section = document.createElement('div');
       section.className = 'index-section';
-
       const heading = document.createElement('div');
       heading.className = 'index-heading';
       heading.textContent = title; // textContent — T-39-08
       section.appendChild(heading);
-
       const list = document.createElement('ul');
       list.className = 'index-list';
-
-      for (const entry of entries) {
-        const li = document.createElement('li');
-        const a = document.createElement('a');
-        a.className = 'index-entry doc-ref';
-        a.setAttribute('href', '#');
-        a.textContent = entry.label || entry.slug; // textContent — T-39-08
-        // Hover → cross-highlight the matching node + neighbours in the corpus graph.
-        a.addEventListener('mouseenter', () => {
-          if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(entry.slug);
-        });
-        a.addEventListener('mouseleave', () => {
-          if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(null);
-        });
-        // Click → open that doc's reader IN PLACE over the corpus (D-08, reuse corpus path).
-        a.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          if (typeof ctx.openReader === 'function') {
-            ctx.openReader(entry.slug, { from: 'corpus' });
-          } else {
-            window.location.href = '/?doc=' + encodeURIComponent(entry.slug) + '&reader=1';
-          }
-        });
-        li.appendChild(a);
-        list.appendChild(li);
-      }
       section.appendChild(list);
       contentEl.appendChild(section);
+      return list;
     }
 
-    renderSection('Projects', data.projects);
-    renderSection('Schemas', data.schemas);
+    // Flat section (Projects).
+    function renderFlatSection(title, entries) {
+      if (!entries || entries.length === 0) return;
+      const list = makeSection(title);
+      for (const entry of entries) {
+        const li = document.createElement('li');
+        li.appendChild(makeEntryAnchor(entry));
+        list.appendChild(li);
+      }
+    }
+
+    // Nested tree section (Schemas) — children indented under their doc_containment parent.
+    // The corpus is a clean forest (server guarantees no multi-parent via parentId/depth); roots
+    // are entries whose parentId is null or points outside this set. Siblings sorted by label.
+    function renderTreeSection(title, entries) {
+      if (!entries || entries.length === 0) return;
+      const byId = new Map();
+      for (const e of entries) byId.set(e.id, e);
+      const children = new Map();
+      const roots = [];
+      for (const e of entries) {
+        if (e.parentId && byId.has(e.parentId)) {
+          if (!children.has(e.parentId)) children.set(e.parentId, []);
+          children.get(e.parentId).push(e);
+        } else {
+          roots.push(e);
+        }
+      }
+      const byLabel = (a, b) => (a.label || a.slug).localeCompare(b.label || b.slug);
+      const list = makeSection(title);
+      const seen = new Set();
+      const emit = (entry, depth) => {
+        if (seen.has(entry.id)) return; // defensive: never loop on malformed data
+        seen.add(entry.id);
+        const li = document.createElement('li');
+        const a = makeEntryAnchor(entry);
+        a.style.paddingLeft = (8 + depth * 14) + 'px'; // indent by containment depth
+        li.appendChild(a);
+        list.appendChild(li);
+        for (const k of (children.get(entry.id) || []).slice().sort(byLabel)) emit(k, depth + 1);
+      };
+      for (const r of roots.slice().sort(byLabel)) emit(r, 0);
+    }
+
+    renderFlatSection('Projects', data.projects);
+    renderTreeSection('Schemas', data.schemas);
   }
 
   // ── Build-once preparation ──────────────────────────────────────────────────
