@@ -57,6 +57,10 @@ export class SemanticStore {
   // getOutEdges omits rel; use getOutEdgesWithRel for any predicate-filtered traversal.
   // Pitfall 1: never use getOutEdges for typed traversal — rel is absent, predicate filter silently drops all edges.
   private readonly stmtGetOutEdgesWithRel: Database.Statement;
+  // Phase 37 Fix-2 — ranked typed-edge endpoint resolution (resolveEntityByName).
+  private readonly stmtResolveExactEntity: Database.Statement;
+  private readonly stmtResolveExactAny: Database.Statement;
+  private readonly stmtResolveContainsEntity: Database.Statement;
   private readonly stmtGetInEdges: Database.Statement;
   // entity-dedup rewire helpers (Phase 25 addition — CONSOL-03 single-writer, T-01-SQL)
   private readonly stmtDeleteEdge: Database.Statement;
@@ -173,6 +177,27 @@ export class SemanticStore {
     // T-01-SQL: bound ? param, no string interpolation.
     this.stmtGetOutEdgesWithRel = db.prepare(
       'SELECT dst, rel, w, kind FROM edge WHERE src = ?'
+    );
+
+    // Phase 37 Fix-2 — ranked typed-edge endpoint resolution (resolveEntityByName).
+    // The original consolidator resolver was `LIKE '%name%' LIMIT 1` with no ORDER BY,
+    // returning an arbitrary substring match — e.g. "OpenAI" → the node OPENAI_API_KEY
+    // rather than the clean "OpenAI" entity — minting garbage typed edges on live data
+    // (the live node table holds thousands of long fact-sentences, not clean entities).
+    // Resolution priority: exact entity → exact any-type → shortest entity-typed node
+    // containing the name, length-capped so a short name can't bind to a fact-sentence.
+    // T-01-SQL: bound params only, no string interpolation.
+    this.stmtResolveExactEntity = db.prepare(
+      `SELECT id FROM node WHERE tombstoned = 0 AND type = 'entity' AND LOWER(value) = LOWER(?) LIMIT 1`
+    );
+    this.stmtResolveExactAny = db.prepare(
+      `SELECT id FROM node WHERE tombstoned = 0 AND LOWER(value) = LOWER(?) LIMIT 1`
+    );
+    this.stmtResolveContainsEntity = db.prepare(
+      `SELECT id FROM node WHERE tombstoned = 0 AND type = 'entity'
+         AND LOWER(value) LIKE '%' || LOWER(@name) || '%'
+         AND LENGTH(value) <= LENGTH(@name) * 3
+       ORDER BY LENGTH(value) ASC LIMIT 1`
     );
 
     // Reverse-edge read for schema reverse-lookup (Phase 4 LEARN-02, Fix-2).
@@ -459,6 +484,30 @@ export class SemanticStore {
    */
   getOutEdgesWithRel(nodeId: string): Array<{ dst: string; rel: string; w: number; kind: string }> {
     return this.stmtGetOutEdgesWithRel.all(nodeId) as Array<{ dst: string; rel: string; w: number; kind: string }>;
+  }
+
+  /**
+   * Resolve a typed-triple entity NAME to a node id for typed-edge minting (Phase 37 Fix-2).
+   *
+   * Priority order, returning the first hit:
+   *   1. exact match on a `type='entity'` node (case-insensitive)
+   *   2. exact match on any node type (rare — a fact node whose value IS the name)
+   *   3. shortest `type='entity'` node CONTAINING the name, length-capped at 3× the name
+   *      so a short name cannot bind to a long fact-sentence that merely contains it
+   *
+   * Replaces the original `LIKE '%name%' LIMIT 1` (no ORDER BY) which returned an arbitrary
+   * substring match and minted garbage typed edges on the live graph. Returns null when no
+   * acceptable node exists — the caller applies the dangling-edge guard.
+   */
+  resolveEntityByName(name: string): string | null {
+    const n = name.trim();
+    if (!n) return null;
+    const exact = this.stmtResolveExactEntity.get(n) as { id: string } | undefined;
+    if (exact) return exact.id;
+    const exactAny = this.stmtResolveExactAny.get(n) as { id: string } | undefined;
+    if (exactAny) return exactAny.id;
+    const contains = this.stmtResolveContainsEntity.get({ name: n }) as { id: string } | undefined;
+    return contains?.id ?? null;
   }
 
   /**

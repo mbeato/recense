@@ -96,3 +96,70 @@ describe('SemanticStore.getOutEdgesWithRel', () => {
     expect(edge?.dst).toBe('dst-node');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 37 Fix-2: resolveEntityByName — ranked typed-edge endpoint resolution.
+// The original consolidator resolver used `LIKE '%name%' LIMIT 1` with no ordering,
+// so "OpenAI" resolved to an arbitrary substring match (the node OPENAI_API_KEY)
+// instead of the clean "OpenAI" entity — minting garbage typed edges on live data.
+// ---------------------------------------------------------------------------
+describe('SemanticStore.resolveEntityByName', () => {
+  let db: Database.Database;
+  let clock: FakeClock;
+  let store: SemanticStore;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initSchema(db);
+    clock = new FakeClock(Date.UTC(2026, 0, 1));
+    store = new SemanticStore(db, clock, testConfig);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('prefers an exact entity match over an arbitrary substring match (the OPENAI_API_KEY bug)', () => {
+    store.upsertNode({ id: 'key', type: 'entity', value: 'OPENAI_API_KEY', origin: 'observed' });
+    store.upsertNode({ id: 'clean', type: 'entity', value: 'OpenAI', origin: 'observed' });
+    // Both contain "openai"; the old LIKE-LIMIT-1 could return either. Exact must win.
+    expect(store.resolveEntityByName('OpenAI')).toBe('clean');
+  });
+
+  it('is case-insensitive on the exact match', () => {
+    store.upsertNode({ id: 'n', type: 'entity', value: 'Launchd', origin: 'observed' });
+    expect(store.resolveEntityByName('launchd')).toBe('n');
+  });
+
+  it('prefers an entity-type node over a fact-type node containing the name', () => {
+    store.upsertNode({ id: 'fact', type: 'fact', value: 'recense uses launchd for scheduling', origin: 'observed' });
+    store.upsertNode({ id: 'ent', type: 'entity', value: 'launchd', origin: 'observed' });
+    expect(store.resolveEntityByName('launchd')).toBe('ent');
+  });
+
+  it('picks the shortest containing entity, not an arbitrary one', () => {
+    store.upsertNode({ id: 'long', type: 'entity', value: 'OpenAI text-embedding-3-small embedder', origin: 'observed' });
+    store.upsertNode({ id: 'short', type: 'entity', value: 'text-embedding-3-small', origin: 'observed' });
+    expect(store.resolveEntityByName('text-embedding-3-small')).toBe('short');
+  });
+
+  it('does NOT bind a short name to a long fact-sentence node that merely contains it (length cap)', () => {
+    // A 4-char name must not resolve to a 200-char note containing "node".
+    store.upsertNode({
+      id: 'para',
+      type: 'entity',
+      value: "Node's module resolution prefers .js over .ts by default without preferTsExts, so a stale .js shadows a sibling .ts edit and breaks the build silently",
+      origin: 'observed',
+    });
+    expect(store.resolveEntityByName('node')).toBeNull();
+  });
+
+  it('returns null when no acceptable node exists', () => {
+    store.upsertNode({ id: 'x', type: 'entity', value: 'recense', origin: 'observed' });
+    expect(store.resolveEntityByName('nonexistent-entity')).toBeNull();
+  });
+
+  it('returns null for an empty/whitespace name', () => {
+    expect(store.resolveEntityByName('   ')).toBeNull();
+  });
+});

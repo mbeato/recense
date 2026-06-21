@@ -187,11 +187,10 @@ export class Consolidator {
   private readonly stmtProvenanceSiblingFacts: Statement<[string], { id: string; value: string }>;
   private readonly stmtLiveNodesForLinks: Statement<[], { id: string; value: string }>;
 
-  // Phase 37 D-02: find a live node whose value contains a given entity name string.
-  // Used in Phase B to resolve triple subject/object names → node ids without async embed.
-  // Containment match (case-insensitive via LOWER) mirrors the link-anchor expansion pattern.
-  // Returns the first (lowest-rowid) match — deterministic on stable data.
-  private readonly stmtFindNodeByName: Statement<[string], { id: string }>;
+  // Phase 37 Fix-2: typed-triple entity resolution lives in SemanticStore.resolveEntityByName
+  // (ranked exact → entity-type → shortest-containing). The old stmtFindNodeByName used
+  // `LIKE '%name%' LIMIT 1` with no ORDER BY and minted garbage edges on the live graph
+  // (e.g. "OpenAI" resolved to the node OPENAI_API_KEY). Resolution is now via this.store.
 
   constructor(
     db: Database.Database,
@@ -242,12 +241,6 @@ export class Consolidator {
       `SELECT id, value FROM node WHERE tombstoned = 0`
     );
 
-    // Phase 37 D-02: entity-name → node-id resolution for typed-triple upsertEdge.
-    // Finds the first live node whose value contains the entity name (case-insensitive).
-    // Matches the link-anchor containment discipline (T-UE6-03). LIMIT 1 for determinism.
-    this.stmtFindNodeByName = db.prepare(
-      `SELECT id FROM node WHERE tombstoned = 0 AND LOWER(value) LIKE '%' || LOWER(?) || '%' LIMIT 1`
-    );
   }
 
   // ── Private helper: prefetch claim extractions in parallel ──────────────
@@ -802,10 +795,10 @@ export class Consolidator {
         // Self-loop guard: skip when src and dst resolve to the same node.
         const resolvedTriples: Array<{ srcId: string; dstId: string; rel: string }> = [];
         for (const triple of episodeTriples) {
-          const srcRow = this.stmtFindNodeByName.get(triple.subject);
-          const dstRow = this.stmtFindNodeByName.get(triple.object);
-          if (!srcRow || !dstRow || srcRow.id === dstRow.id) continue;
-          resolvedTriples.push({ srcId: srcRow.id, dstId: dstRow.id, rel: triple.predicate });
+          const srcId = this.store.resolveEntityByName(triple.subject);
+          const dstId = this.store.resolveEntityByName(triple.object);
+          if (!srcId || !dstId || srcId === dstId) continue;
+          resolvedTriples.push({ srcId, dstId, rel: triple.predicate });
         }
 
         this.db.transaction(() => {
