@@ -17,6 +17,7 @@
 import type { NodeType, Origin } from '../lib/types';
 import type { ModelProvider } from './provider';
 import { promptForSource } from '../source/extraction-prompts';
+import { parseTriples, type Triple } from './typed-predicates';
 
 // ---------------------------------------------------------------------------
 // ActionType — closed enum with 'other' fallback (D-02, TEMP-02)
@@ -106,6 +107,78 @@ Example:
 
 Document type: `;
 
+/**
+ * Merged extraction prompt (D-02, Phase 37): one Haiku call emits facts AND typed triples.
+ *
+ * Output contract: a single JSON object { "facts": [...], "triples": [...] } — NOT a bare array.
+ * Pitfall 3: never feed the raw merged output to parseClaims (its [ ] heuristic mis-parses objects).
+ * Use parseMergedExtraction to route .facts → parseClaims logic, .triples → parseTriples.
+ *
+ * Routing (D-02 scope): default/claude-code/obsidian path ONLY.
+ * Source-specific prompts (gmail/gcal/granola/transcript/web/document/code-diff) are unchanged.
+ *
+ * Mode switch (D-03): active when RECENSE_TYPED_EXTRACTION_MODE=merged (dark-default).
+ * promptForSource routes to this prompt when merged mode is active.
+ */
+export const MERGED_EXTRACTION_PROMPT = `You are a knowledge extraction assistant. From the given memory document, extract TWO things:
+
+## Part 1 — Facts and Entities
+For each item extract:
+- "type": "entity" for named people, projects, tools, technologies, and organizations; "fact" for rules, preferences, capabilities, and factual statements
+- "value": a concise, self-contained string
+- "links": an array of OTHER item values referenced via [[WikiLink]] syntax in the document, provided WITHOUT the double brackets (omit if none)
+
+## Part 2 — Typed Relationship Triples
+Extract every clear (subject, predicate, object) relationship where predicate is EXACTLY one of:
+built_by, works_on, part_of, uses, depends_on, runs_on, located_in, integrates_with, supersedes, prefers, evaluated, configured_with
+
+Rules:
+- subject and object are short canonical entity names (e.g. "recense", "Max", "launchd"). No sentences.
+- If no predicate fits a relationship, SKIP it. Do not invent.
+- Only relationships between two named things.
+
+Return ONLY a single valid JSON object with two keys — no preamble, no markdown fences:
+{
+  "facts": [
+    {"type":"entity","value":"Jane Doe is the founder","links":["recense project"]},
+    {"type":"fact","value":"Never inflate metrics","links":[]}
+  ],
+  "triples": [
+    {"subject":"recense","predicate":"uses","object":"claude-headless"},
+    {"subject":"Max","predicate":"works_on","object":"recense"}
+  ]
+}
+
+Document type: `;
+
+/**
+ * Standalone typed-triple extraction prompt (D-03 separate-mode fallback).
+ *
+ * Used when RECENSE_TYPED_EXTRACTION_MODE=separate as a SECOND Haiku call after the
+ * baseline EXTRACTION_PROMPT facts call. Ported verbatim from spike 004 lib/vocab.ts.
+ * Output contract: bare JSON array of {subject, predicate, object} triples — fed to
+ * parseTriples (vocab-filtered + self-ref-guarded).
+ */
+export const TYPED_EXTRACTION_PROMPT = `You extract typed relationship triples from a memory note about a software founder's projects.
+
+Extract every clear (subject, predicate, object) relationship. The predicate MUST be exactly one of this closed set:
+built_by, works_on, part_of, uses, depends_on, runs_on, located_in, integrates_with, supersedes, prefers, evaluated, configured_with
+
+Rules:
+- subject and object are short canonical entity names (e.g. "recense", "Max", "claude-headless", "OpenAI", "launchd"). Reuse the SAME name for the same thing across the note. No sentences, no descriptions — just the entity name.
+- predicate MUST be one of the closed set above, verbatim. If no predicate fits a relationship, SKIP it.
+- Only extract relationships actually stated or directly implied by the note. Do not invent.
+- Prefer relationships between two named things (project<->tool, person<->project, component<->system).
+
+Return ONLY a valid JSON array, no preamble, no markdown fences:
+[
+  {"subject":"recense","predicate":"uses","object":"claude-headless"},
+  {"subject":"Max","predicate":"works_on","object":"recense"}
+]
+
+Memory note:
+`;
+
 // ---------------------------------------------------------------------------
 // Extraction tunables (named constants — never magic numbers at call sites)
 // ---------------------------------------------------------------------------
@@ -190,8 +263,11 @@ function extractJsonArray(text: string): string | null {
 /**
  * Validate and coerce one parsed JSON array into ExtractedClaim[].
  * Filters out items with missing/invalid type or value fields.
+ *
+ * Exported for reuse by parseMergedExtraction (Phase 37, D-02): routes obj.facts through
+ * the same validation logic without passing the raw merged string to parseClaims.
  */
-function parseClaimsFromArray(raw: unknown[]): ExtractedClaim[] {
+export function parseClaimsFromArray(raw: unknown[]): ExtractedClaim[] {
   return raw.flatMap((item): ExtractedClaim[] => {
     if (typeof item !== 'object' || item === null) return [];
     const obj = item as Record<string, unknown>;
@@ -352,6 +428,51 @@ export function parseClaims(text: string): ExtractedClaim[] {
 
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Merged extraction parser (Phase 37 D-02 — parseMergedExtraction)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the merged { facts, triples } JSON object emitted by MERGED_EXTRACTION_PROMPT.
+ *
+ * Safety:
+ *  - Returns { claims: [], triples: [] } on any parse failure (T-37-07 safe fallback).
+ *  - Pitfall 3: parses the response as a JSON OBJECT explicitly — never feeds raw merged
+ *    string to parseClaims (whose [ ] heuristic would mis-parse the outer object shape).
+ *  - obj.facts is routed through parseClaimsFromArray (same validation as parseClaims).
+ *  - obj.triples is routed through parseTriples (imported from typed-predicates: vocab-
+ *    filtered + self-ref-guarded). T-37-06 / T-37-07 both satisfied here.
+ *  - Bare-array input (a plain [...]) returns the safe fallback — the object shape is
+ *    required; silent misrouting is refused (acceptance criterion 3).
+ *
+ * @param text - Raw model response from a MERGED_EXTRACTION_PROMPT generate() call.
+ */
+export function parseMergedExtraction(text: string): { claims: ExtractedClaim[]; triples: Triple[] } {
+  const safe = { claims: [] as ExtractedClaim[], triples: [] as Triple[] };
+  const trimmed = text.trim();
+  // Must start with '{' — a bare array or any other shape is rejected (Pitfall 3 guard).
+  if (!trimmed.startsWith('{')) return safe;
+  let obj: unknown;
+  try {
+    // Locate the outermost object span (models may add prose/fences despite instructions).
+    const start = trimmed.indexOf('{');
+    const end = trimmed.lastIndexOf('}');
+    if (start === -1 || end === -1 || end < start) return safe;
+    obj = JSON.parse(trimmed.slice(start, end + 1));
+  } catch {
+    return safe;
+  }
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return safe;
+  const record = obj as Record<string, unknown>;
+
+  const factsRaw = record['facts'];
+  const triplesRaw = record['triples'];
+
+  const claims = Array.isArray(factsRaw) ? parseClaimsFromArray(factsRaw) : [];
+  const triples = Array.isArray(triplesRaw) ? parseTriples(JSON.stringify(triplesRaw)) : [];
+  return { claims, triples };
 }
 
 // ---------------------------------------------------------------------------
