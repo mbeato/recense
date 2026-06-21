@@ -309,6 +309,61 @@ export function initDetail(ctx) {
     if (overflow > 0) {
       connsMoreEl.textContent = '+' + overflow + ' more';
     }
+
+    // WIKI-02 (39-01): for fact/atom nodes, surface which docs cite this fact.
+    // Fire-and-forget async (populateDetail is synchronous; fetch is non-fatal).
+    if (node.type === 'fact' || (node.type !== 'doc' && node.type !== 'schema')) {
+      fetchAtomBacklinks(node.id, detailEl);
+    }
+  }
+
+  /**
+   * Async: fetch /doc/backlinks?fact=<factId> and append a muted "Cited by"
+   * section to the detail panel if any citing docs exist. Non-fatal — if the
+   * fetch fails or returns empty, nothing is rendered (no empty chrome).
+   * Security: all DB-sourced strings set via textContent only (T-10-12/T-27-08).
+   */
+  async function fetchAtomBacklinks(factId, container) {
+    try {
+      const res = await fetch('/doc/backlinks?fact=' + encodeURIComponent(factId));
+      if (!res.ok) return; // non-fatal
+      const data = await res.json();
+      const docs = Array.isArray(data.citedByDocs) ? data.citedByDocs : [];
+      if (docs.length === 0) return; // no citing docs → no chrome
+
+      // Remove any prior backlinks section for this detail panel (re-selection)
+      const prior = container.querySelector('.backlinks-section');
+      if (prior) prior.remove();
+
+      const section = document.createElement('div');
+      section.className = 'backlinks-section';
+
+      const heading = document.createElement('div');
+      heading.className = 'backlinks-heading';
+      heading.textContent = 'Cited by'; // textContent only — T-10-12
+
+      const list = document.createElement('ul');
+      list.className = 'backlinks-list';
+      for (const d of docs) {
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.className = 'doc-ref';
+        a.setAttribute('data-doc', d.srcId);
+        a.setAttribute('href', '#');
+        a.textContent = d.label || d.slug; // textContent only — T-10-12/T-27-08
+        a.addEventListener('click', ev => {
+          ev.preventDefault();
+          if (ctx.openReader) ctx.openReader(null, { from: 'detail', docId: d.srcId });
+        });
+        li.appendChild(a);
+        list.appendChild(li);
+      }
+      section.appendChild(heading);
+      section.appendChild(list);
+      container.appendChild(section); // append after connections
+    } catch (_) {
+      // Non-fatal — detail panel still renders correctly without backlinks
+    }
   }
 
   /** Show the detail panel with slide-in animation (D-15). */

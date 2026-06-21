@@ -715,6 +715,43 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   color: #c8bcd0;
 }
 
+/* Backlinks / "Referenced by" section (WIKI-02, 39-01): appended at the bottom of the
+   doc reader body and inside the atom detail panel. Muted rose/slate palette — amber is
+   reserved for activation only (founder-locked). Mirrors .staleness-banner values. */
+.backlinks-section {
+  background: rgba(139, 112, 144, 0.09);
+  border-left: 2px solid rgba(139, 112, 144, 0.4);
+  padding: 8px 12px;
+  margin-top: 20px;
+  border-radius: 0 4px 4px 0;
+}
+.backlinks-heading {
+  font-size: 11px;
+  font-weight: 600;
+  color: #c8bcd0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.backlinks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.backlinks-list li {
+  margin: 3px 0;
+}
+.backlinks-list li a {
+  font-size: 12px;
+  color: #9a8aa4;
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(139, 112, 144, 0.4);
+}
+.backlinks-list li a:hover {
+  color: #c8bcd0;
+  border-bottom-color: rgba(139, 112, 144, 0.7);
+}
+
 /* prev_value diff row in the atom panel (READER-03 D-10, T-27-12) */
 .meta-diff { margin-top: 4px; }
 .meta-diff .meta-key { color: #8b7090; }

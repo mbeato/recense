@@ -244,6 +244,8 @@ export function initReader(ctx) {
           wireFactLinks();
           // Fetch staleness data (READER-03): marks inline refs + shows banner.
           await fetchStaleness();
+          // Fetch backlinks (WIKI-02, 39-01): appends "Referenced by" section at doc bottom.
+          await fetchBacklinks();
           // Fetch /doc/meta for cited ids (graph focus).
           await fetchMeta();
           return;
@@ -401,6 +403,51 @@ export function initReader(ctx) {
       body.insertBefore(banner, body.firstChild);
     } catch (_) {
       // Staleness fetch failure is non-fatal — doc still renders correctly.
+    }
+  }
+
+  // ── Backlinks (WIKI-02, 39-01) ─────────────────────────────────────────────
+  // Appends a "Referenced by" section at the BOTTOM of the doc body listing other
+  // live docs that link here via doc_link/doc_reference/doc_containment edges.
+  // If no incoming links exist, returns silently (no empty chrome — must-have truth #2).
+  // Security: all DB-sourced strings set via textContent only (T-10-12/T-27-08).
+
+  async function fetchBacklinks() {
+    try {
+      const res = await fetch('/doc/backlinks?' + docQuery());
+      if (!res.ok) return; // non-fatal: backlinks are an enhancement, not load-critical
+      const data = await res.json();
+      const links = Array.isArray(data.backlinks) ? data.backlinks : [];
+      if (links.length === 0) return; // no incoming links → no section (must-have truth #2)
+
+      const section = document.createElement('div');
+      section.className = 'backlinks-section';
+
+      const heading = document.createElement('div');
+      heading.className = 'backlinks-heading';
+      heading.textContent = 'Referenced by'; // textContent only — T-10-12
+
+      const list = document.createElement('ul');
+      list.className = 'backlinks-list';
+      for (const bl of links) {
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.className = 'doc-ref';
+        a.setAttribute('data-doc', bl.srcId);
+        a.setAttribute('href', '#');
+        a.textContent = bl.label || bl.slug; // textContent only — T-10-12/T-27-08
+        a.addEventListener('click', ev => {
+          ev.preventDefault();
+          ctx.openReader(null, { from: openFrom, docId: bl.srcId });
+        });
+        li.appendChild(a);
+        list.appendChild(li);
+      }
+      section.appendChild(heading);
+      section.appendChild(list);
+      body.appendChild(section); // APPEND (not prepend) — staleness banner stays at top (D-07)
+    } catch (_) {
+      // Backlinks fetch failure is non-fatal — doc still renders correctly.
     }
   }
 
