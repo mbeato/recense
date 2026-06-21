@@ -311,6 +311,17 @@ export function initCorpus(ctx) {
     }
   }
 
+  // Gated reveal: fit the settled graph ONCE, then fade it in. Guards against double
+  // reveal and against revealing after the user already toggled back to the brain.
+  let corpusRevealed = false;
+  function revealCorpus() {
+    if (corpusRevealed || !corpusActive) return;
+    corpusRevealed = true;
+    sizeCorpusGraph();
+    fitAndClamp();
+    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
+  }
+
   async function showCorpus() {
     // CR-02/WR-03 fix: ENTER corpus view FIRST, then build. The loading/empty/error status
     // overlay is appended to #corpus-graph, which is display:none until `.open` — so the
@@ -321,11 +332,13 @@ export function initCorpus(ctx) {
     // corpus in over it. Keep the brain visible during the move so it visibly recedes
     // behind the fade; once the opaque corpus reaches opacity 1 it covers the brain.
     pullBackBrain();
-    // Fade the brain OUT as it recedes so its pull-back motion never bleeds through the
-    // settling corpus (that bleed-through read as the corpus "flinging" on first open).
+    // Fade the brain OUT as it recedes so its motion never bleeds through the corpus.
     if (brainEl) { brainEl.style.transition = `opacity ${CAM_MS}ms ease`; brainEl.style.visibility = ''; brainEl.style.opacity = '0'; }
+    // Mount the corpus but keep it INVISIBLE (.open = display:block, opacity 0) until its
+    // force layout has settled and been fit ONCE. Revealing mid-settle caused the
+    // rubberband — each fit re-centered on a still-drifting bounding box.
     container.classList.add('open');
-    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
+    corpusRevealed = false;
     // B3: hide topics/search in corpus view (mode-state visibility).
     const topicWrap = document.getElementById('topic-wrap');
     const searchWrap = document.getElementById('search-wrap');
@@ -338,23 +351,26 @@ export function initCorpus(ctx) {
     corpusBtn.innerHTML = ICON_BRAIN;
     corpusBtn.classList.add('corpus-active');
 
-    // Lazy-init on first open — now runs with the container already visible + sized.
     if (!CorpusGraph) {
       CorpusGraph = await buildCorpusGraph();
-      if (!CorpusGraph) return; // empty / error / no force-graph — status stays visible,
-                                // corpus view stays open; the user toggles back via the button.
-      // Fit when the force layout settles (settled positions → correct framing).
-      // onEngineStop fires once the simulation cools; this is the primary fit trigger.
-      if (typeof CorpusGraph.onEngineStop === 'function') {
-        CorpusGraph.onEngineStop(() => {
-          if (corpusActive) fitAndClamp();
-        });
+      if (!CorpusGraph) {
+        // empty / error / no force-graph: reveal immediately so the status overlay shows.
+        corpusRevealed = true;
+        container.classList.add('corpus-in');
+        return;
       }
+      sizeCorpusGraph(); // size now so the sim settles against the correct bounds
+      // Reveal only once the sim has settled → one stable fit, no rubberband. The fallback
+      // covers the case where onEngineStop already fired or never fires (small corpora
+      // settle fast, so 600ms is comfortably past settle).
+      if (typeof CorpusGraph.onEngineStop === 'function') {
+        CorpusGraph.onEngineStop(revealCorpus);
+      }
+      setTimeout(revealCorpus, 600);
+    } else {
+      // Cached graph is already settled — fit + reveal right away.
+      revealCorpus();
     }
-    sizeCorpusGraph();
-    // Fallback fit on a fixed timeout in case onEngineStop already fired before the
-    // corpus was shown (e.g. a tiny graph settles instantly), or never fires.
-    setTimeout(() => { if (corpusActive) fitAndClamp(); }, 350);
   }
 
   function showBrain() {
