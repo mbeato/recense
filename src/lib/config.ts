@@ -318,6 +318,19 @@ export interface EngineConfig {
   rankWeightR: number;
 
   /**
+   * Weight of the strength-ranked third RRF list fused into hybridTopk (Phase 35 RANK-01, D-01).
+   * Ships at 0 (dark, D-04): w=0 reproduces today's exact [cosine, bm25] ranking with no change.
+   * Raise after eval sweep (RANK-02) confirms a win on KU/LongMemEval harness.
+   *
+   * Sibling to rankWeightS and rankWeightR, but applies to the CUE-BASED path only
+   * (hybridTopk, D-08). The cue-less path (retrieveCueless/SessionStart) is unaffected.
+   *
+   * CAUTION: effective_s already folds recency via exp(−λ·Δt since last_access) — this is
+   * one signal, one knob (D-03). Do NOT add a separate last_access recency list.
+   */
+  rankStrengthWeight: number;
+
+  /**
    * Max tokens to inject at SessionStart. Default: 500.
    * Matches the existing vault-briefing hook budget (session-start-context.ts
    * TOKEN_BUDGET = 500) for comparability during dogfood. Char proxy: budget × 4.
@@ -641,6 +654,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   peAppendNewMinResistance: 0.3,
   rankWeightS: 1.0,
   rankWeightR: 0.0,
+  rankStrengthWeight: 0,  // D-04: dark default — ships w=0; no behavior change at merge
   injectionTokenBudget: 500,
   spreadDecay: 0.5,
   deletedSimilarityThreshold: 0.7,
