@@ -1,0 +1,96 @@
+{
+  "_status": "DEFERRED",
+  "_reason": "Live eval (embedding API + answer LLM) requires founder budget authorization. No consent in context at execution time (38-04 wave-3 executor).",
+  "_invocation": "npm run build && OPENAI_API_KEY=<key> RECENSE_MODEL_PROVIDER=claude-headless node scripts/eval/replay-ku-harness.cjs --insight-mode --out scripts/eval/results/38-insight-tokens.json",
+  "_env_requirements": {
+    "OPENAI_API_KEY": "required — OpenAI embedding API (only paid component; embed cost ~$0.01-0.05 for 18 KU cases * 2 modes)",
+    "RECENSE_MODEL_PROVIDER": "optional — set to claude-headless to route answer/scorer through Max subscription (no ANTHROPIC_API_KEY needed)",
+    "ANTHROPIC_API_KEY": "required only if RECENSE_MODEL_PROVIDER != claude-headless"
+  },
+  "_estimated_cost": "Embedding only (~$0.01-0.05 per 18 cases * 2 modes); answer+scorer billed to Max subscription via claude-headless (~$0 marginal, real token usage). Confirm against remaining budget at Task 3 checkpoint.",
+  "_schema": {
+    "description": "Schema for the live run output. All leaf values shown as 'DEFERRED' or null are placeholders; the real run fills them with measured numbers.",
+    "meta": {
+      "eval": "replay-ku",
+      "mode": "full",
+      "insight_mode": true,
+      "cache_id": "granite+chunk-turns-2",
+      "date": "ISO-8601 timestamp of the live run",
+      "commit": "git short hash at run time",
+      "embedder": "text-embedding-3-small (from DEFAULT_CONFIG — no swap, D-01)",
+      "strength_weight": 0,
+      "total_cases": "integer — number of KU cases joined from n20-attribution.jsonl + eval20-ku.jsonl (typically 18)",
+      "total_claims": "integer — total claims across all cases",
+      "composeTokensOff": "number — avg compose tokens per case in insight-OFF mode (chars/4 proxy, EVAL-03 convention). T-38-10: measured, not rounded/assumed.",
+      "composeTokensOn": "number — avg compose tokens per case in insight-ON mode (single insight string when found). Smaller than OFF is the compose-token win.",
+      "composeTokenReductionPct": "number — ((OFF - ON) / OFF) * 100. Positive = token reduction. The REFLECT-02 evidence number.",
+      "kuScoreOff": "number 0-1 — KU correctness score in insight-OFF mode (raw K-member neighborhood baseline)",
+      "kuScoreOn": "number 0-1 — KU correctness score in insight-ON mode (insight payload when available, else neighborhood fallback)",
+      "regression": "boolean — true if (kuScoreOff - kuScoreOn) * 100 > TOLERANCE_BAND_PTS (2). Phase-35 D-07 no-regression check.",
+      "tolerance_band_pts": 2
+    },
+    "scores": {
+      "ku_score_off": "number 0-1",
+      "ku_correct_off": "integer",
+      "ku_scored_cases_off": "integer",
+      "ku_score_on": "number 0-1",
+      "ku_correct_on": "integer",
+      "ku_scored_cases_on": "integer",
+      "total_tombstones": "integer",
+      "total_contradicts": "integer",
+      "total_duplicate_mints": "integer"
+    },
+    "per_case_off": [
+      {
+        "question_id": "string",
+        "question_type": "string",
+        "claim_count": "integer",
+        "dry_run": false,
+        "ku_correct": "0 or 1",
+        "composeTokens": "integer — payload token count for this case in OFF mode",
+        "used_insight": false,
+        "tombstones": "integer",
+        "contradicts": "integer",
+        "duplicate_mints": "integer"
+      }
+    ],
+    "per_case_on": [
+      {
+        "question_id": "string",
+        "question_type": "string",
+        "claim_count": "integer",
+        "dry_run": false,
+        "ku_correct": "0 or 1",
+        "composeTokens": "integer — payload token count for this case in ON mode (reduced when insight used)",
+        "used_insight": "boolean — true if a live non-stale insight was found and used as payload",
+        "tombstones": "integer (same as OFF — consolidation ran once)",
+        "contradicts": "integer (same as OFF)",
+        "duplicate_mints": "integer (same as OFF)"
+      }
+    ]
+  },
+  "meta": {
+    "eval": "replay-ku",
+    "mode": "DEFERRED",
+    "insight_mode": true,
+    "cache_id": "granite+chunk-turns-2",
+    "date": null,
+    "commit": "eab6ee1",
+    "embedder": "text-embedding-3-small",
+    "strength_weight": 0,
+    "total_cases": null,
+    "total_claims": null,
+    "composeTokensOff": "DEFERRED",
+    "composeTokensOn": "DEFERRED",
+    "composeTokenReductionPct": "DEFERRED",
+    "kuScoreOff": "DEFERRED",
+    "kuScoreOn": "DEFERRED",
+    "regression": null,
+    "tolerance_band_pts": 2,
+    "deferred_reason": "Live eval (embedding API + answer LLM) requires explicit founder budget authorization. Authorized at Task 3 checkpoint: select ship-on, ship-dark, or tune-ceiling and confirm paid-run budget before executing the invocation above."
+  },
+  "scores": null,
+  "per_case_off": null,
+  "per_case_on": null,
+  "note": "DEFERRED: live run awaits founder budget authorization at Task 3 checkpoint. Run the _invocation command above after authorization to fill this file with measured numbers. T-38-10: composeTokenReductionPct will be a measured percentage with meta (embedder/cache/date/commit), never rounded or assumed."
+}
