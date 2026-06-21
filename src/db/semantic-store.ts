@@ -51,6 +51,10 @@ export class SemanticStore {
   private readonly stmtDeleteMeta: Database.Statement;
   private readonly stmtUpsertEdge: Database.Statement;
   private readonly stmtGetOutEdges: Database.Statement;
+  // Phase 37 — LANDMINE 1 fix: typed-path traversal requires rel in the result.
+  // getOutEdges omits rel; use getOutEdgesWithRel for any predicate-filtered traversal.
+  // Pitfall 1: never use getOutEdges for typed traversal — rel is absent, predicate filter silently drops all edges.
+  private readonly stmtGetOutEdgesWithRel: Database.Statement;
   private readonly stmtGetInEdges: Database.Statement;
   // entity-dedup rewire helpers (Phase 25 addition — CONSOL-03 single-writer, T-01-SQL)
   private readonly stmtDeleteEdge: Database.Statement;
@@ -149,8 +153,17 @@ export class SemanticStore {
     // Excludes tombstoned neighbors at the application layer (RetrievalEngine checks
     // getNode(edge.dst)?.tombstoned — avoids JOIN complexity on a small table)
     // T-01-SQL: bound ? param, no string interpolation
+    // NOTE: omits `rel` — do NOT use for typed predicate traversal; use getOutEdgesWithRel instead (Pitfall 1).
     this.stmtGetOutEdges = db.prepare(
       'SELECT dst, w, kind FROM edge WHERE src = ?'
+    );
+
+    // Phase 37: typed-path traversal requires the `rel` field (LANDMINE 1 fix, D-01).
+    // Callers: typed-traversal only. Filter by PRED_SET.has(edge.rel) after the call
+    // to exclude `links_to` / `extends` edges (LANDMINE 2).
+    // T-01-SQL: bound ? param, no string interpolation.
+    this.stmtGetOutEdgesWithRel = db.prepare(
+      'SELECT dst, rel, w, kind FROM edge WHERE src = ?'
     );
 
     // Reverse-edge read for schema reverse-lookup (Phase 4 LEARN-02, Fix-2).
@@ -399,9 +412,28 @@ export class SemanticStore {
     });
   }
 
-  /** Read all outgoing edges from a node. Returns empty array if none. */
+  /**
+   * Read all outgoing edges from a node. Returns empty array if none.
+   * NOTE: omits the `rel` field — do NOT use for predicate-filtered typed traversal.
+   * For typed-path traversal, use getOutEdgesWithRel (Phase 37 LANDMINE 1 fix, Pitfall 1).
+   */
   getOutEdges(nodeId: string): Array<{ dst: string; w: number; kind: string }> {
     return this.stmtGetOutEdges.all(nodeId) as Array<{ dst: string; w: number; kind: string }>;
+  }
+
+  /**
+   * Read all outgoing edges from a node, INCLUDING the `rel` predicate field (Phase 37, D-01).
+   *
+   * Use this for ANY predicate-filtered typed traversal — getOutEdges omits rel, causing
+   * predicate filters to silently drop all edges (LANDMINE 1 / Pitfall 1).
+   *
+   * After calling, always filter by PRED_SET.has(edge.rel) to exclude `links_to` / `extends`
+   * edges that share kind='relation' but are NOT typed predicates (LANDMINE 2).
+   *
+   * T-01-SQL: bound ? param only — no string interpolation.
+   */
+  getOutEdgesWithRel(nodeId: string): Array<{ dst: string; rel: string; w: number; kind: string }> {
+    return this.stmtGetOutEdgesWithRel.all(nodeId) as Array<{ dst: string; rel: string; w: number; kind: string }>;
   }
 
   /**
