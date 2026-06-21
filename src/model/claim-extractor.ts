@@ -151,6 +151,34 @@ Return ONLY a single valid JSON object with two keys — no preamble, no markdow
 
 Document type: `;
 
+/**
+ * Standalone typed-triple extraction prompt (D-03 separate-mode fallback).
+ *
+ * Used when RECENSE_TYPED_EXTRACTION_MODE=separate as a SECOND Haiku call after the
+ * baseline EXTRACTION_PROMPT facts call. Ported verbatim from spike 004 lib/vocab.ts.
+ * Output contract: bare JSON array of {subject, predicate, object} triples — fed to
+ * parseTriples (vocab-filtered + self-ref-guarded).
+ */
+export const TYPED_EXTRACTION_PROMPT = `You extract typed relationship triples from a memory note about a software founder's projects.
+
+Extract every clear (subject, predicate, object) relationship. The predicate MUST be exactly one of this closed set:
+built_by, works_on, part_of, uses, depends_on, runs_on, located_in, integrates_with, supersedes, prefers, evaluated, configured_with
+
+Rules:
+- subject and object are short canonical entity names (e.g. "recense", "Max", "claude-headless", "OpenAI", "launchd"). Reuse the SAME name for the same thing across the note. No sentences, no descriptions — just the entity name.
+- predicate MUST be one of the closed set above, verbatim. If no predicate fits a relationship, SKIP it.
+- Only extract relationships actually stated or directly implied by the note. Do not invent.
+- Prefer relationships between two named things (project<->tool, person<->project, component<->system).
+
+Return ONLY a valid JSON array, no preamble, no markdown fences:
+[
+  {"subject":"recense","predicate":"uses","object":"claude-headless"},
+  {"subject":"Max","predicate":"works_on","object":"recense"}
+]
+
+Memory note:
+`;
+
 // ---------------------------------------------------------------------------
 // Extraction tunables (named constants — never magic numbers at call sites)
 // ---------------------------------------------------------------------------

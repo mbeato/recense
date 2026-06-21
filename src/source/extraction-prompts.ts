@@ -291,6 +291,37 @@ Example:
 Document type: `;
 
 /**
+ * Sources eligible for typed-triple extraction (D-02 scope).
+ * These are the sources whose prompt routes to MERGED_EXTRACTION_PROMPT in merged mode
+ * or receives a second TYPED_EXTRACTION_PROMPT call in separate mode.
+ * All other sources (gmail/gcal/granola/etc.) are out of D-02 scope — RESEARCH Open Question 2.
+ */
+const TYPED_EXTRACTION_SOURCES: ReadonlySet<string> = new Set(['obsidian', 'claude-code']);
+
+/**
+ * Return true when a source is eligible for typed-triple extraction (D-02 scope).
+ * Default/unknown sources (the else branch in promptForSource) are also eligible.
+ *
+ * @param source - Source adapter name.
+ */
+export function isTypedExtractionSource(source: string): boolean {
+  // Sources with their own specialized prompts are NOT in D-02 scope.
+  // 'gmail', 'gcal', TRANSCRIPT_SOURCES (granola/otter/zoom), 'conversation',
+  // 'web', 'document', 'code-diff' all have dedicated prompts — not eligible.
+  const outOfScope =
+    source === 'gmail' ||
+    source === 'gcal' ||
+    TRANSCRIPT_SOURCES.has(source) ||
+    source === 'conversation' ||
+    source === 'web' ||
+    source === 'document' ||
+    source === 'code-diff';
+  if (outOfScope) return false;
+  // obsidian, claude-code, and all unknown/default sources → eligible (D-02)
+  return true;
+}
+
+/**
  * Return the extraction prompt prefix for a given episode source.
  *
  * The consolidator concatenates the returned string with:
@@ -325,10 +356,10 @@ export function promptForSource(source: string): string {
   // obsidian, claude-code, and all unknown sources → conversation extractor.
   // D-02/D-03 (Phase 37): when RECENSE_TYPED_EXTRACTION_MODE=merged, route to the merged
   // {facts, triples} prompt so one Haiku call emits both facts and typed triples.
-  // Dark-default is 'merged'; set to 'separate' to fall back to single-facts extraction
-  // (the D-03 fact-quality regression fallback; consolidator handles separate-mode triple call).
+  // Default is 'separate' (backward-compatible bare-array extraction preserved);
+  // set RECENSE_TYPED_EXTRACTION_MODE=merged to activate the folded prompt path.
   // (T-06-09: unknown/spoofed source values fall back safely — no crash, no privilege gain)
-  if (process.env['RECENSE_TYPED_EXTRACTION_MODE'] !== 'separate') {
+  if (process.env['RECENSE_TYPED_EXTRACTION_MODE'] === 'merged') {
     return MERGED_EXTRACTION_PROMPT;
   }
   return EXTRACTION_PROMPT;

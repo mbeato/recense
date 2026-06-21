@@ -39,8 +39,9 @@ import { cosineSimF32 } from '../retrieval/topk';
 import type { JudgeRelation } from '../model/judge';
 import type { ModelProvider } from '../model/provider';
 import type { ExtractedClaim, ActionType } from '../model/claim-extractor';
-import { extractClaimsWithChunking } from '../model/claim-extractor';
-import { promptForSource } from '../source/extraction-prompts';
+import { extractClaimsWithChunking, parseMergedExtraction, TYPED_EXTRACTION_PROMPT, EXTRACTION_MAX_TOKENS } from '../model/claim-extractor';
+import { parseTriples, type Triple } from '../model/typed-predicates';
+import { promptForSource, isTypedExtractionSource } from '../source/extraction-prompts';
 import type { Origin, PendingContradiction, EpisodeRow, EpisodeRole } from '../lib/types';
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
@@ -183,6 +184,12 @@ export class Consolidator {
   private readonly stmtProvenanceSiblingFacts: Statement<[string], { id: string; value: string }>;
   private readonly stmtLiveNodesForLinks: Statement<[], { id: string; value: string }>;
 
+  // Phase 37 D-02: find a live node whose value contains a given entity name string.
+  // Used in Phase B to resolve triple subject/object names → node ids without async embed.
+  // Containment match (case-insensitive via LOWER) mirrors the link-anchor expansion pattern.
+  // Returns the first (lowest-rowid) match — deterministic on stable data.
+  private readonly stmtFindNodeByName: Statement<[string], { id: string }>;
+
   constructor(
     db: Database.Database,
     episodes: EpisodicStore,
@@ -229,6 +236,13 @@ export class Consolidator {
     this.stmtLiveNodesForLinks = db.prepare(
       `SELECT id, value FROM node WHERE tombstoned = 0`
     );
+
+    // Phase 37 D-02: entity-name → node-id resolution for typed-triple upsertEdge.
+    // Finds the first live node whose value contains the entity name (case-insensitive).
+    // Matches the link-anchor containment discipline (T-UE6-03). LIMIT 1 for determinism.
+    this.stmtFindNodeByName = db.prepare(
+      `SELECT id FROM node WHERE tombstoned = 0 AND LOWER(value) LIKE '%' || LOWER(?) || '%' LIMIT 1`
+    );
   }
 
   // ── Private helper: prefetch claim extractions in parallel ──────────────
@@ -247,22 +261,71 @@ export class Consolidator {
    * T-02-ASYNC and CONSOL-02 are unaffected: all writes still happen in the ordered
    * per-episode loop's synchronous Phase B transaction.
    */
-  private async prefetchExtractions(episodes: EpisodeRow[]): Promise<Map<string, ExtractedClaim[] | Error>> {
-    const results = new Map<string, ExtractedClaim[] | Error>();
+  private async prefetchExtractions(episodes: EpisodeRow[]): Promise<Map<string, { claims: ExtractedClaim[]; triples: Triple[] } | Error>> {
+    const results = new Map<string, { claims: ExtractedClaim[]; triples: Triple[] } | Error>();
     let idx = 0;
+
+    // D-02/D-03 (Phase 37): typed extraction mode for D-02-eligible sources.
+    // Activation: RECENSE_TYPED_EXTRACTION_MODE=merged OR =separate.
+    // When unset (default), typed extraction is disabled — existing behavior preserved.
+    // 'merged': MERGED_EXTRACTION_PROMPT — one provider.generate call emits {facts, triples};
+    //   parseMergedExtraction routes facts → claims, triples → typed edges.
+    // 'separate': bare-array facts via existing extractClaimsWithChunking path PLUS a
+    //   second TYPED_EXTRACTION_PROMPT generate call for triples (D-03 regression fallback).
+    // Source eligibility: obsidian/claude-code/default only (isTypedExtractionSource=true).
+    // gmail/gcal/granola/etc. always use the bare-array path — D-02 scope (RESEARCH OQ2).
+    const rawTypedMode = process.env['RECENSE_TYPED_EXTRACTION_MODE'];
+    const typedMode = rawTypedMode === 'merged' ? 'merged'
+      : rawTypedMode === 'separate' ? 'separate'
+      : 'off'; // default: typed extraction disabled (backward-compatible)
 
     const workerFn = async (): Promise<void> => {
       while (idx < episodes.length) {
         const episode = episodes[idx++]!;
         try {
-          const promptPrefix =
-            promptForSource(episode.source) + episode.role + '\n\nDocument content:\n';
-          const claims = await extractClaimsWithChunking(
-            this.provider,
-            promptPrefix,
-            episode.content,
-          );
-          results.set(episode.id, claims);
+          const promptPrefix = promptForSource(episode.source) + episode.role + '\n\nDocument content:\n';
+          // D-02 scope: only obsidian/claude-code/default sources participate in typed extraction.
+          const isTypedSource = isTypedExtractionSource(episode.source);
+
+          let claims: ExtractedClaim[];
+          let triples: Triple[];
+
+          if (isTypedSource && typedMode === 'merged') {
+            // D-02: one generate call emits {facts, triples}; route via parseMergedExtraction.
+            // extractClaimsWithChunking is intentionally bypassed: the merged JSON object must
+            // not be split across chunks. Episodes are already capped at maxContentBytes (~8 KB)
+            // by EpisodicStore, so a single generate call is safe at EXTRACTION_MAX_TOKENS.
+            const rawText = await this.provider.generate(promptPrefix + episode.content, {
+              maxTokens: EXTRACTION_MAX_TOKENS,
+            });
+            const parsed = parseMergedExtraction(rawText);
+            claims = parsed.claims;
+            triples = parsed.triples;
+          } else if (isTypedSource && typedMode === 'separate') {
+            // D-03 separate fallback: facts via existing extractClaimsWithChunking path,
+            // THEN a second dedicated TYPED_EXTRACTION_PROMPT call for triples.
+            claims = await extractClaimsWithChunking(
+              this.provider,
+              promptPrefix,
+              episode.content,
+            );
+            const tripleText = await this.provider.generate(
+              TYPED_EXTRACTION_PROMPT + episode.content,
+              { maxTokens: EXTRACTION_MAX_TOKENS },
+            );
+            triples = parseTriples(tripleText);
+          } else {
+            // typedMode === 'off' (default) OR non-typed source: bare-array path, no triples.
+            // Preserves existing behavior when RECENSE_TYPED_EXTRACTION_MODE is not set.
+            claims = await extractClaimsWithChunking(
+              this.provider,
+              promptPrefix,
+              episode.content,
+            );
+            triples = [];
+          }
+
+          results.set(episode.id, { claims, triples });
         } catch (err) {
           results.set(episode.id, err instanceof Error ? err : new Error(String(err)));
         }
@@ -471,18 +534,42 @@ export class Consolidator {
         // If extraction failed for this episode, rethrow the stored error so H-2 quarantine
         // applies. Fallback to inline extraction if not in map (defensive — should not occur
         // for eligible episodes, but guards against unexpected eligibility-predicate drift).
+        // D-02/D-03 (Phase 37): prefetched result now carries {claims, triples}.
+        const rawTypedModeInline = process.env['RECENSE_TYPED_EXTRACTION_MODE'];
+        const typedMode = rawTypedModeInline === 'merged' ? 'merged'
+          : rawTypedModeInline === 'separate' ? 'separate'
+          : 'off'; // default: typed extraction disabled (backward-compatible)
         const prefetched = prefetchedExtractions.get(episode.id);
         let claims: ExtractedClaim[];
+        let episodeTriples: Triple[];
         if (prefetched !== undefined) {
           if (prefetched instanceof Error) throw prefetched;
-          claims = prefetched;
+          claims = prefetched.claims;
+          episodeTriples = prefetched.triples;
         } else {
           // Inline fallback: prefetch skipped this episode (eligibility drift guard).
-          // extractClaimsWithChunking handles both single and multi-chunk paths,
-          // including the raised EXTRACTION_MAX_TOKENS and salvage parsing.
-          const promptPrefix =
-            promptForSource(episode.source) + episode.role + '\n\nDocument content:\n';
-          claims = await extractClaimsWithChunking(this.provider, promptPrefix, episode.content);
+          const promptPrefix = promptForSource(episode.source) + episode.role + '\n\nDocument content:\n';
+          const isTypedSource = isTypedExtractionSource(episode.source);
+
+          if (isTypedSource && typedMode === 'merged') {
+            const rawText = await this.provider.generate(promptPrefix + episode.content, {
+              maxTokens: EXTRACTION_MAX_TOKENS,
+            });
+            const parsed = parseMergedExtraction(rawText);
+            claims = parsed.claims;
+            episodeTriples = parsed.triples;
+          } else if (isTypedSource && typedMode === 'separate') {
+            claims = await extractClaimsWithChunking(this.provider, promptPrefix, episode.content);
+            const tripleText = await this.provider.generate(
+              TYPED_EXTRACTION_PROMPT + episode.content,
+              { maxTokens: EXTRACTION_MAX_TOKENS },
+            );
+            episodeTriples = parseTriples(tripleText);
+          } else {
+            // typedMode === 'off' (default) OR non-typed source: bare-array path, no triples.
+            claims = await extractClaimsWithChunking(this.provider, promptPrefix, episode.content);
+            episodeTriples = [];
+          }
         }
 
         // Batch-embed all claim query vectors in ONE call (T-02-ASYNC: Phase A, before any
@@ -700,9 +787,36 @@ export class Consolidator {
         // M-5: .immediate() — better-sqlite3 API: transaction.immediate() calls the transaction
         // in IMMEDIATE mode (acquires RESERVED lock upfront, preventing SQLITE_BUSY_SNAPSHOT
         // on upgrade race in WAL mode when a concurrent reader holds a SHARED lock).
+        // D-02 (Phase 37): resolve triple entity names → node ids BEFORE Phase B transaction.
+        // Resolution happens against the PRE-transaction graph state (nodes written by this
+        // episode in applyDecision do NOT exist yet, so dangling-edge guard is clean).
+        // D-08 guard: we only reach this point because the hard skip guard at the
+        // origin/echo/hitl check above already `continue`d for inferred/echo/hitl episodes.
+        // T-37-06: predicates are already vocab-filtered by parseTriples (PRED_SET guard).
+        // Dangling-edge guard: skip upsertEdge when either endpoint cannot be resolved.
+        // Self-loop guard: skip when src and dst resolve to the same node.
+        const resolvedTriples: Array<{ srcId: string; dstId: string; rel: string }> = [];
+        for (const triple of episodeTriples) {
+          const srcRow = this.stmtFindNodeByName.get(triple.subject);
+          const dstRow = this.stmtFindNodeByName.get(triple.object);
+          if (!srcRow || !dstRow || srcRow.id === dstRow.id) continue;
+          resolvedTriples.push({ srcId: srcRow.id, dstId: dstRow.id, rel: triple.predicate });
+        }
+
         this.db.transaction(() => {
           for (const decision of decisions) {
             this.applyDecision(decision, episodeId);
+          }
+          // D-02 (Phase 37): mint typed edges from pre-resolved triples.
+          // Triple-upsert is AFTER the line-462 hard skip guard (T-37-05 / Pitfall 6).
+          for (const t of resolvedTriples) {
+            this.store.upsertEdge({
+              src: t.srcId,
+              dst: t.dstId,
+              rel: t.rel,
+              w: 0.1,    // initial weight; mirrors the 'extends' pattern at line ~822
+              kind: 'relation',
+            });
           }
           this.episodes.markConsolidated(episodeId);
         }).immediate();
