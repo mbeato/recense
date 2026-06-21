@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -38,7 +38,7 @@ export const DDL = `
 
   CREATE TABLE IF NOT EXISTS node (
     id                     TEXT    PRIMARY KEY,
-    type                   TEXT    NOT NULL CHECK(type IN ('entity','fact','schema','doc')),
+    type                   TEXT    NOT NULL CHECK(type IN ('entity','fact','schema','doc','insight')),
     value                  TEXT    NOT NULL,
     value_hash             TEXT    NOT NULL,
     embedding              BLOB,
@@ -60,7 +60,7 @@ export const DDL = `
     rel         TEXT    NOT NULL,
     w           REAL    NOT NULL DEFAULT 0.1,
     last_access INTEGER NOT NULL,
-    kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link','doc_containment','doc_reference')),
+    kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link','doc_containment','doc_reference','derived_from')),
     PRIMARY KEY (src, dst, rel)
   );
 
@@ -153,6 +153,22 @@ export const DDL = `
     slug         TEXT    NOT NULL,      -- project slug (matches node_scope.scope)
     generated_at INTEGER NOT NULL,      -- epoch ms; set once on first generate, updated on regen
     updated_at   INTEGER NOT NULL       -- epoch ms; always updated
+  );
+
+  -- REFLECT-01: insight metadata sidecar (1:1 with type='insight' nodes, Phase 38).
+  -- anchor_schema_id: the schema cluster this insight was synthesized from (D-02).
+  -- generated_at is a DEDICATED column — NOT node.last_access — so the staleness predicate
+  -- cannot be corrupted when the insight node is accessed (mirrors node_doc D §generatedAt).
+  -- generated_at is write-once: ON CONFLICT DO UPDATE SET omits it (only anchor_schema_id + updated_at update).
+  -- Single writer: InsightReflector path only (CONSOL-03 discipline).
+  -- FK → node(id): tombstoning an insight node does NOT auto-delete node_insight;
+  -- BUT the hard-delete eviction sweep in decay.ts MUST child-wipe this table BEFORE
+  -- DELETE FROM node (FK-safe eviction — T-38-01). See decay.ts stmtDeleteInsightForNode.
+  CREATE TABLE IF NOT EXISTS node_insight (
+    node_id         TEXT    PRIMARY KEY REFERENCES node(id),
+    anchor_schema_id TEXT   NOT NULL,   -- schema node id this insight was derived from
+    generated_at    INTEGER NOT NULL,   -- epoch ms; set once on first generate, write-once (never updated on conflict)
+    updated_at      INTEGER NOT NULL    -- epoch ms; always updated
   );
 
   -- SURF-02: operational surface-outcome log (append-only, single-writer: serve path only).
@@ -469,6 +485,98 @@ export function initSchema(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_node_doc_slug
       ON node_doc(slug);
+  `);
+
+  // v13 migration: extend node.type CHECK to include 'insight' (Phase 38, REFLECT-01 D-01).
+  // SQLite cannot ALTER a CHECK constraint — table recreation required.
+  // Guard: check whether the live node DDL already includes 'insight' — idempotent re-run safe.
+  // In-memory / fresh DBs built from the updated DDL above already have the new constraint → guard skips.
+  // T-38-02 atomicity: wrapped in BEGIN/COMMIT so a crash mid-swap rolls back cleanly (mirrors v11 pattern).
+  // T-38-02 idempotency: the guard checks the live DDL string — a re-run is a no-op.
+  const nodeDdlV13 = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='node'")
+    .get() as { sql: string } | undefined)?.sql ?? '';
+  if (!nodeDdlV13.includes("'insight'")) {
+    // PRAGMA foreign_keys must be set OUTSIDE a transaction (SQLite requirement).
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      BEGIN;
+      CREATE TABLE node_v13 (
+        id                     TEXT    PRIMARY KEY,
+        type                   TEXT    NOT NULL CHECK(type IN ('entity','fact','schema','doc','insight')),
+        value                  TEXT    NOT NULL,
+        value_hash             TEXT    NOT NULL,
+        embedding              BLOB,
+        embedded_hash          TEXT,
+        origin                 TEXT    NOT NULL CHECK(origin IN ('observed','asserted_by_user','inferred')),
+        s                      REAL    NOT NULL DEFAULT 0.1,
+        c                      REAL    NOT NULL DEFAULT 0.5,
+        last_access            INTEGER NOT NULL,
+        prev_value             TEXT,
+        prev_ts                INTEGER,
+        pending_contradictions TEXT    NOT NULL DEFAULT '[]',
+        tombstoned             INTEGER NOT NULL DEFAULT 0,
+        training_eligible      INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO node_v13 SELECT * FROM node;
+      DROP TABLE node;
+      ALTER TABLE node_v13 RENAME TO node;
+      COMMIT;
+    `);
+    // Re-create node indexes (dropped with the old table).
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_node_dirty
+        ON node(embedded_hash) WHERE embedded_hash IS NULL;
+    `);
+    // Re-create node_fts virtual table (may still exist; IF NOT EXISTS is safe).
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS node_fts USING fts5(
+        node_id UNINDEXED,
+        value,
+        tokenize='unicode61 remove_diacritics 2'
+      );
+    `);
+    db.pragma('foreign_keys = ON');
+  }
+
+  // v13 migration: extend edge.kind CHECK to include 'derived_from' (Phase 38, REFLECT-01 D-02).
+  // 'derived_from' edges connect insight nodes to their anchor schema + cited member fact/entity nodes.
+  // SQLite cannot ALTER a CHECK constraint — table recreation required.
+  // Guard: check whether the live edge DDL already includes 'derived_from' — idempotent re-run safe.
+  // T-38-02: mirrors the v12 pattern exactly — foreign_keys=OFF, BEGIN/COMMIT swap, recreate idx.
+  const edgeDdlV13 = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='edge'")
+    .get() as { sql: string } | undefined)?.sql ?? '';
+  if (!edgeDdlV13.includes("'derived_from'")) {
+    // PRAGMA foreign_keys must be set OUTSIDE a transaction (SQLite requirement).
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      BEGIN;
+      CREATE TABLE edge_v13 (
+        src         TEXT    NOT NULL REFERENCES node(id),
+        dst         TEXT    NOT NULL REFERENCES node(id),
+        rel         TEXT    NOT NULL,
+        w           REAL    NOT NULL DEFAULT 0.1,
+        last_access INTEGER NOT NULL,
+        kind        TEXT    NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link','doc_containment','doc_reference','derived_from')),
+        PRIMARY KEY (src, dst, rel)
+      );
+      INSERT INTO edge_v13 SELECT * FROM edge;
+      DROP TABLE edge;
+      ALTER TABLE edge_v13 RENAME TO edge;
+      COMMIT;
+    `);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_edge_dst ON edge(dst);`);
+    db.pragma('foreign_keys = ON');
+  }
+
+  // v13 migration: add node_insight sidecar table + idx_node_insight_anchor (Phase 38, REFLECT-01).
+  // Table uses CREATE TABLE IF NOT EXISTS in DDL above → idempotent on fresh DBs.
+  // Existing v12 DBs: node_insight absent → DDL above creates it (IF NOT EXISTS catches it).
+  // No ALTER TABLE needed — the whole table is new (no column additions to existing tables).
+  // idx_node_insight_anchor: accelerates the InsightReflector's per-anchor-schema lookup
+  // and the recall staleness walk (getInEdges(schemaId) + sidecar freshness check).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_node_insight_anchor
+      ON node_insight(anchor_schema_id);
   `);
 
   // Stamp schema version — read first to guard against downgrade (M-9).

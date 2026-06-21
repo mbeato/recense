@@ -52,9 +52,9 @@ function insertEdge(
 
 // ── (a) Fresh DB — CHECK constraints ──────────────────────────────────────
 
-describe('schema v11 (now v12) fresh DB', () => {
-  test('SCHEMA_VERSION constant is 12', () => {
-    expect(SCHEMA_VERSION).toBe(12);
+describe('schema v11 (now v13) fresh DB', () => {
+  test('SCHEMA_VERSION constant is 13 (Phase 38: insight + derived_from)', () => {
+    expect(SCHEMA_VERSION).toBe(13);
   });
 
   test("node type='doc' insert succeeds on fresh DB", () => {
@@ -235,13 +235,13 @@ describe('schema v11 migration from pre-v11 DB', () => {
     expect(violations).toHaveLength(0);
   });
 
-  test("meta.schema_version = '12' after migration", () => {
+  test("meta.schema_version = '13' after migration (v13: insight + derived_from)", () => {
     const db = buildPreV11Db();
     initSchema(db);
 
     const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
       { value: string } | undefined;
-    expect(row?.value).toBe('12');
+    expect(row?.value).toBe('13');
   });
 
   test('migration is idempotent: second initSchema call leaves data intact', () => {
@@ -320,10 +320,163 @@ describe('node_doc sidecar table', () => {
 // ── (e) schema version stamp ──────────────────────────────────────────────
 
 describe('schema version stamp', () => {
-  test('fresh DB is stamped v12', () => {
+  test('fresh DB is stamped v13 (Phase 38: insight + derived_from + node_insight sidecar)', () => {
     const db = freshDb();
     const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
       { value: string } | undefined;
-    expect(row?.value).toBe('12');
+    expect(row?.value).toBe('13');
+  });
+});
+
+// ── (f) v13 migration smoke tests ────────────────────────────────────────
+// REFLECT-01: node.type='insight', edge.kind='derived_from', node_insight sidecar.
+
+describe('schema v13: insight + derived_from + node_insight sidecar (Phase 38 REFLECT-01)', () => {
+  test("node type='insight' insert succeeds on fresh DB (v13 CHECK constraint)", () => {
+    const db = freshDb();
+    expect(() => insertNode(db, 'insight-node-1', 'insight')).not.toThrow();
+  });
+
+  test("node type='insight' still rejected on pre-v13 DB before migration", () => {
+    // Simulate a pre-v13 DB (no 'insight' in CHECK)
+    const db = new Database(':memory:');
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    db.exec(`
+      CREATE TABLE node (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('entity','fact','schema','doc')),
+        value TEXT NOT NULL, value_hash TEXT NOT NULL, embedding BLOB,
+        embedded_hash TEXT, origin TEXT NOT NULL CHECK(origin IN ('observed','asserted_by_user','inferred')),
+        s REAL NOT NULL DEFAULT 0.1, c REAL NOT NULL DEFAULT 0.5,
+        last_access INTEGER NOT NULL, prev_value TEXT, prev_ts INTEGER,
+        pending_contradictions TEXT NOT NULL DEFAULT '[]',
+        tombstoned INTEGER NOT NULL DEFAULT 0, training_eligible INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE edge (src TEXT NOT NULL REFERENCES node(id), dst TEXT NOT NULL REFERENCES node(id),
+        rel TEXT NOT NULL, w REAL NOT NULL DEFAULT 0.1, last_access INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link','doc_containment','doc_reference')),
+        PRIMARY KEY (src, dst, rel));
+    `);
+    expect(() => db.prepare(`
+      INSERT INTO node (id, type, value, value_hash, embedding, embedded_hash, origin, s, c, last_access,
+        prev_value, prev_ts, pending_contradictions, tombstoned, training_eligible)
+      VALUES ('x', 'insight', 'v', 'h', NULL, NULL, 'inferred', 0.1, 0.5, 0, NULL, NULL, '[]', 0, 0)
+    `).run()).toThrow();
+    // After migration: accepted
+    initSchema(db);
+    expect(() => db.prepare(`
+      INSERT INTO node (id, type, value, value_hash, embedding, embedded_hash, origin, s, c, last_access,
+        prev_value, prev_ts, pending_contradictions, tombstoned, training_eligible)
+      VALUES ('insight-post-mig', 'insight', 'v', 'h', NULL, NULL, 'inferred', 0.1, 0.5, 0, NULL, NULL, '[]', 0, 0)
+    `).run()).not.toThrow();
+  });
+
+  test("edge kind='derived_from' insert succeeds on fresh DB", () => {
+    const db = freshDb();
+    insertNode(db, 'insight-src', 'insight');
+    insertNode(db, 'schema-dst', 'schema');
+    expect(() => insertEdge(db, 'insight-src', 'schema-dst', 'derived_from')).not.toThrow();
+  });
+
+  test("edge kind='derived_from' still rejected on pre-v13 DB before migration", () => {
+    const db = new Database(':memory:');
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    db.exec(`
+      CREATE TABLE node (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('entity','fact','schema','doc','insight')),
+        value TEXT NOT NULL, value_hash TEXT NOT NULL, embedding BLOB,
+        embedded_hash TEXT, origin TEXT NOT NULL CHECK(origin IN ('observed','asserted_by_user','inferred')),
+        s REAL NOT NULL DEFAULT 0.1, c REAL NOT NULL DEFAULT 0.5,
+        last_access INTEGER NOT NULL, prev_value TEXT, prev_ts INTEGER,
+        pending_contradictions TEXT NOT NULL DEFAULT '[]',
+        tombstoned INTEGER NOT NULL DEFAULT 0, training_eligible INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE edge (src TEXT NOT NULL REFERENCES node(id), dst TEXT NOT NULL REFERENCES node(id),
+        rel TEXT NOT NULL, w REAL NOT NULL DEFAULT 0.1, last_access INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('relation','abstracts','schema_rel','cites','doc_link','doc_containment','doc_reference')),
+        PRIMARY KEY (src, dst, rel));
+    `);
+    // Seed nodes for edge test
+    db.prepare(`
+      INSERT INTO node (id, type, value, value_hash, embedding, embedded_hash, origin, s, c, last_access,
+        prev_value, prev_ts, pending_contradictions, tombstoned, training_eligible)
+      VALUES ('n1', 'entity', 'v', 'h', NULL, NULL, 'observed', 0.1, 0.5, 0, NULL, NULL, '[]', 0, 0)
+    `).run();
+    db.prepare(`
+      INSERT INTO node (id, type, value, value_hash, embedding, embedded_hash, origin, s, c, last_access,
+        prev_value, prev_ts, pending_contradictions, tombstoned, training_eligible)
+      VALUES ('n2', 'schema', 'v', 'h2', NULL, NULL, 'inferred', 0.1, 0.5, 0, NULL, NULL, '[]', 0, 0)
+    `).run();
+    expect(() => db.prepare(
+      "INSERT INTO edge (src, dst, rel, w, last_access, kind) VALUES ('n1', 'n2', 'r1', 1.0, 0, 'derived_from')"
+    ).run()).toThrow();
+    // After migration: accepted
+    initSchema(db);
+    expect(() => db.prepare(
+      "INSERT INTO edge (src, dst, rel, w, last_access, kind) VALUES ('n1', 'n2', 'derived_from_r', 1.0, 0, 'derived_from')"
+    ).run()).not.toThrow();
+  });
+
+  test('node_insight sidecar table exists with expected columns', () => {
+    const db = freshDb();
+    const cols = (db.pragma('table_info(node_insight)') as Array<{ name: string }>).map(r => r.name);
+    expect(cols).toContain('node_id');
+    expect(cols).toContain('anchor_schema_id');
+    expect(cols).toContain('generated_at');
+    expect(cols).toContain('updated_at');
+  });
+
+  test('idx_node_insight_anchor index exists', () => {
+    const db = freshDb();
+    const indexes = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='node_insight'").all() as
+        Array<{ name: string }>
+    ).map(r => r.name);
+    expect(indexes).toContain('idx_node_insight_anchor');
+  });
+
+  test('node_insight insert + read round-trip works', () => {
+    const db = freshDb();
+    insertNode(db, 'insight-sidecar-node', 'insight');
+    db.prepare(`
+      INSERT INTO node_insight (node_id, anchor_schema_id, generated_at, updated_at)
+      VALUES (?, 'schema-anchor-id', 1000, 2000)
+    `).run('insight-sidecar-node');
+
+    const row = db.prepare('SELECT * FROM node_insight WHERE node_id = ?').get('insight-sidecar-node') as
+      { node_id: string; anchor_schema_id: string; generated_at: number; updated_at: number } | undefined;
+    expect(row?.anchor_schema_id).toBe('schema-anchor-id');
+    expect(row?.generated_at).toBe(1000);
+    expect(row?.updated_at).toBe(2000);
+  });
+
+  test('FK integrity: PRAGMA foreign_key_check returns empty after v13 migration', () => {
+    const db = freshDb();
+    insertNode(db, 'insight-fk-check', 'insight');
+    db.prepare(`
+      INSERT INTO node_insight (node_id, anchor_schema_id, generated_at, updated_at)
+      VALUES ('insight-fk-check', 'schema-x', 1000, 2000)
+    `).run();
+    const violations = db.pragma('foreign_key_check') as Array<unknown>;
+    expect(violations).toHaveLength(0);
+  });
+
+  test('upsertNode with type=insight does not throw (migration smoke test)', () => {
+    // This tests the plan acceptance criterion: opening a fresh DB and calling upsertNode
+    // with type='insight' succeeds without SQLITE_CONSTRAINT.
+    const db = freshDb();
+    expect(() => {
+      db.prepare(`
+        INSERT INTO node (id, type, value, value_hash, embedding, embedded_hash, origin, s, c, last_access,
+          prev_value, prev_ts, pending_contradictions, tombstoned, training_eligible)
+        VALUES ('insight-smoke', 'insight', 'higher-order insight', 'hash1', NULL, NULL,
+          'inferred', 0.1, 0.5, 0, NULL, NULL, '[]', 0, 0)
+      `).run();
+    }).not.toThrow();
   });
 });
