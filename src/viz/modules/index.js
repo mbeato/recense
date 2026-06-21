@@ -9,13 +9,17 @@
  * (ctx.closeIndexSidebar). A ◀ collapse control hides it for more graph room; a slim reopen
  * handle on the left edge brings it back.
  *
- * The list is grouped into two sections:
- *   - Projects: human-scoped docs (e.g. 'tonos')
- *   - Schemas: schema-anchored docs (UUID-scoped, labeled by human schema name)
+ * Sections (both rendered as nested trees, server partitions docs by tree-root type):
+ *   - Projects: human-scoped docs (e.g. 'tonos') + any schema chapters nested under a project
+ *   - Schemas: schema-anchored docs (UUID-scoped, human label), nested by doc_containment depth
+ *
+ * A search/filter box filters the list by label substring (WIKI-01 re-verify — deep-research
+ * verdict: at ~22 docs, search + the existing hierarchy beats auto-clustering, which is unstable
+ * at this scale; clustered categories are a 100+-doc follow-up). Matching rows keep their
+ * ancestors visible so tree context is preserved.
  *
  * Interactions:
- *   - Row hover → cross-highlight the matching node + its neighbours in the corpus graph
- *     (ctx.highlightCorpusNode).
+ *   - Row hover → highlight the matching node + its containment subtree in the corpus graph.
  *   - Row click → open that doc's reader IN PLACE over the corpus (ctx.openReader from:'corpus').
  *
  * Security (T-39-08): all DB-sourced strings (label, slug) set via .textContent only;
@@ -37,10 +41,13 @@ export function initIndex(ctx) {
   if (!container) return;
 
   let isSidebarOpen = false;
-  let contentEl = null;
+  let contentEl = null;       // scrollable host for the rendered sections (cleared on re-filter)
+  let searchInput = null;
   let reopenHandle = null;
+  let lastData = { projects: [], schemas: [] }; // cached /index payload for client-side filtering
+  let currentFilter = '';
 
-  // ── Static sidebar chrome: header (title + collapse) + scrollable content ────────────
+  // ── Static sidebar chrome: header (title + collapse) + search + scrollable content ──────
   function ensureChrome() {
     if (contentEl) return;
     const header = document.createElement('div');
@@ -60,10 +67,25 @@ export function initIndex(ctx) {
     collapse.addEventListener('click', collapseSidebar);
     header.appendChild(collapse);
 
+    const searchWrap = document.createElement('div');
+    searchWrap.className = 'index-search';
+    searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.className = 'index-search-input';
+    searchInput.setAttribute('placeholder', 'Filter docs…');
+    searchInput.setAttribute('aria-label', 'Filter docs');
+    searchInput.setAttribute('autocomplete', 'off');
+    searchInput.addEventListener('input', () => {
+      currentFilter = searchInput.value.trim().toLowerCase();
+      renderSections();
+    });
+    searchWrap.appendChild(searchInput);
+
     contentEl = document.createElement('div');
     contentEl.className = 'index-content';
 
     container.appendChild(header);
+    container.appendChild(searchWrap);
     container.appendChild(contentEl);
   }
 
@@ -80,12 +102,115 @@ export function initIndex(ctx) {
     document.body.appendChild(reopenHandle);
   }
 
-  /** Build the index list content: fetch /index, render Projects + Schemas into contentEl. */
+  // ── Row + section builders ───────────────────────────────────────────────────────────
+  // Build one <a> row for an index entry (shared by both section trees).
+  function makeEntryAnchor(entry) {
+    const a = document.createElement('a');
+    a.className = 'index-entry doc-ref';
+    a.setAttribute('href', '#');
+    a.textContent = entry.label || entry.slug; // textContent — T-39-08
+    a.addEventListener('mouseenter', () => {
+      if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(entry.slug);
+    });
+    a.addEventListener('mouseleave', () => {
+      if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(null);
+    });
+    a.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      if (typeof ctx.openReader === 'function') ctx.openReader(entry.slug, { from: 'corpus' });
+      else window.location.href = '/?doc=' + encodeURIComponent(entry.slug) + '&reader=1';
+    });
+    return a;
+  }
+
+  function makeSection(title) {
+    const section = document.createElement('div');
+    section.className = 'index-section';
+    const heading = document.createElement('div');
+    heading.className = 'index-heading';
+    heading.textContent = title; // textContent — T-39-08
+    section.appendChild(heading);
+    const list = document.createElement('ul');
+    list.className = 'index-list';
+    section.appendChild(list);
+    contentEl.appendChild(section);
+    return list;
+  }
+
+  // Compute the visible-id set for a filter: matching rows PLUS their ancestors (so a match keeps
+  // its tree context). Returns null when there's no filter (everything visible).
+  function computeVisible(entries, filter) {
+    if (!filter) return null;
+    const byId = new Map(entries.map(e => [e.id, e]));
+    const visible = new Set();
+    for (const e of entries) {
+      if ((e.label || e.slug || '').toLowerCase().includes(filter)) {
+        visible.add(e.id);
+        let cur = e;
+        while (cur && cur.parentId && byId.has(cur.parentId)) { visible.add(cur.parentId); cur = byId.get(cur.parentId); }
+      }
+    }
+    return visible;
+  }
+
+  // Nested tree section (Projects + Schemas) — children indented under their doc_containment
+  // parent. Roots are entries whose parentId is null or points outside this section's set.
+  // `visible` (or null) filters which rows render; siblings sorted by label.
+  function renderTreeSection(title, entries, visible) {
+    if (!entries || entries.length === 0) return false;
+    const shown = entries.filter(e => visible === null || visible.has(e.id));
+    if (shown.length === 0) return false;
+    const byId = new Map();
+    for (const e of entries) byId.set(e.id, e);
+    const children = new Map();
+    const roots = [];
+    for (const e of entries) {
+      if (e.parentId && byId.has(e.parentId)) {
+        if (!children.has(e.parentId)) children.set(e.parentId, []);
+        children.get(e.parentId).push(e);
+      } else {
+        roots.push(e);
+      }
+    }
+    const byLabel = (a, b) => (a.label || a.slug).localeCompare(b.label || b.slug);
+    const list = makeSection(title);
+    const seen = new Set();
+    const emit = (entry, depth) => {
+      if (seen.has(entry.id)) return;          // defensive: never loop on malformed data
+      seen.add(entry.id);
+      if (visible === null || visible.has(entry.id)) {
+        const li = document.createElement('li');
+        const a = makeEntryAnchor(entry);
+        a.style.paddingLeft = (8 + depth * 14) + 'px'; // indent by containment depth
+        li.appendChild(a);
+        list.appendChild(li);
+      }
+      for (const k of (children.get(entry.id) || []).slice().sort(byLabel)) emit(k, depth + 1);
+    };
+    for (const r of roots.slice().sort(byLabel)) emit(r, 0);
+    return true;
+  }
+
+  // Render both sections into contentEl applying the current filter.
+  function renderSections() {
+    if (!contentEl) return;
+    while (contentEl.firstChild) contentEl.removeChild(contentEl.firstChild);
+    const vP = computeVisible(lastData.projects || [], currentFilter);
+    const vS = computeVisible(lastData.schemas || [], currentFilter);
+    const anyP = renderTreeSection('Projects', lastData.projects || [], vP);
+    const anyS = renderTreeSection('Schemas', lastData.schemas || [], vS);
+    if (!anyP && !anyS) {
+      const empty = document.createElement('div');
+      empty.className = 'index-status';
+      empty.textContent = currentFilter ? 'No matching docs' : 'No docs yet';
+      contentEl.appendChild(empty);
+    }
+  }
+
+  /** Fetch /index, cache the payload, render the (filtered) sections. */
   async function buildIndexPanel() {
     ensureChrome();
-    const stale = contentEl.querySelector('.index-status');
-    if (stale) stale.remove();
-
+    while (contentEl.firstChild) contentEl.removeChild(contentEl.firstChild);
     const statusEl = document.createElement('div');
     statusEl.className = 'index-status';
     statusEl.textContent = 'Loading index…';
@@ -105,81 +230,8 @@ export function initIndex(ctx) {
       statusEl.textContent = 'Failed to load index';
       return; // non-fatal; status stays visible
     }
-    statusEl.remove();
-
-    // Build one <a> row for an index entry (shared by flat + tree rendering).
-    function makeEntryAnchor(entry) {
-      const a = document.createElement('a');
-      a.className = 'index-entry doc-ref';
-      a.setAttribute('href', '#');
-      a.textContent = entry.label || entry.slug; // textContent — T-39-08
-      // Hover → cross-highlight the matching node + its containment subtree in the corpus graph.
-      a.addEventListener('mouseenter', () => {
-        if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(entry.slug);
-      });
-      a.addEventListener('mouseleave', () => {
-        if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(null);
-      });
-      // Click → open that doc's reader IN PLACE over the corpus (D-08, reuse corpus path).
-      a.addEventListener('click', (ev) => {
-        ev.preventDefault();
-        if (typeof ctx.openReader === 'function') ctx.openReader(entry.slug, { from: 'corpus' });
-        else window.location.href = '/?doc=' + encodeURIComponent(entry.slug) + '&reader=1';
-      });
-      return a;
-    }
-
-    // Create a labeled section with an empty <ul>, return the <ul> to append rows into.
-    function makeSection(title) {
-      const section = document.createElement('div');
-      section.className = 'index-section';
-      const heading = document.createElement('div');
-      heading.className = 'index-heading';
-      heading.textContent = title; // textContent — T-39-08
-      section.appendChild(heading);
-      const list = document.createElement('ul');
-      list.className = 'index-list';
-      section.appendChild(list);
-      contentEl.appendChild(section);
-      return list;
-    }
-
-    // Nested tree section (Projects + Schemas) — children indented under their doc_containment
-    // parent. The server partitions each doc into the section of its tree ROOT's type (hybrid:
-    // a project's chapter docs land in Projects nested under it). Roots are entries whose parentId
-    // is null or points outside this section's set. Siblings sorted by label.
-    function renderTreeSection(title, entries) {
-      if (!entries || entries.length === 0) return;
-      const byId = new Map();
-      for (const e of entries) byId.set(e.id, e);
-      const children = new Map();
-      const roots = [];
-      for (const e of entries) {
-        if (e.parentId && byId.has(e.parentId)) {
-          if (!children.has(e.parentId)) children.set(e.parentId, []);
-          children.get(e.parentId).push(e);
-        } else {
-          roots.push(e);
-        }
-      }
-      const byLabel = (a, b) => (a.label || a.slug).localeCompare(b.label || b.slug);
-      const list = makeSection(title);
-      const seen = new Set();
-      const emit = (entry, depth) => {
-        if (seen.has(entry.id)) return; // defensive: never loop on malformed data
-        seen.add(entry.id);
-        const li = document.createElement('li');
-        const a = makeEntryAnchor(entry);
-        a.style.paddingLeft = (8 + depth * 14) + 'px'; // indent by containment depth
-        li.appendChild(a);
-        list.appendChild(li);
-        for (const k of (children.get(entry.id) || []).slice().sort(byLabel)) emit(k, depth + 1);
-      };
-      for (const r of roots.slice().sort(byLabel)) emit(r, 0);
-    }
-
-    renderTreeSection('Projects', data.projects);
-    renderTreeSection('Schemas', data.schemas);
+    lastData = { projects: data.projects || [], schemas: data.schemas || [] };
+    renderSections();
   }
 
   // ── Build-once preparation ──────────────────────────────────────────────────
@@ -188,9 +240,9 @@ export function initIndex(ctx) {
     if (preparePromise) return preparePromise;
     const p = (async () => {
       ensureChrome();
-      contentEl.querySelectorAll('.index-section').forEach(s => s.remove());
       await buildIndexPanel();
-      const hasError = contentEl.querySelector('.index-status');
+      const hasError = contentEl.querySelector('.index-status') &&
+        /Failed/.test(contentEl.querySelector('.index-status').textContent || '');
       return hasError ? 'error' : 'ready';
     })();
     preparePromise = p;
@@ -208,12 +260,10 @@ export function initIndex(ctx) {
     isSidebarOpen = true;
     showReopenHandle(false);
     container.style.display = 'flex';
-    // Two rAFs so display:flex paints before the opacity transition (fade-in).
     requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('shown')));
     prepareIndex();
   }
 
-  // Internal: fade the panel out, then optionally reveal the reopen handle.
   function hidePanel(showHandleAfter) {
     isSidebarOpen = false;
     if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(null);
@@ -228,18 +278,15 @@ export function initIndex(ctx) {
     showReopenHandle(showHandleAfter);
   }
 
-  // User collapsed the sidebar for more graph room — leave the corpus open, show reopen handle.
+  // User collapsed the sidebar for more graph room — leave corpus open, show reopen handle.
   function collapseSidebar() { hidePanel(true); }
-
   // Corpus returned to the brain — close fully, no reopen handle over the 3D view.
   function closeIndexSidebar() { hidePanel(false); }
 
   // ── ctx hooks ────────────────────────────────────────────────────────────────
-  // corpus.js drives the lifecycle: openIndexSidebar on corpus enter, closeIndexSidebar on leave.
   ctx.openIndexSidebar = openSidebar;
   ctx.closeIndexSidebar = closeIndexSidebar;
-  ctx.openIndex = openSidebar; // programmatic opener (kept for parity)
+  ctx.openIndex = openSidebar;
 
-  // Eagerly prepare the list shortly after init so the first open is instant.
   setTimeout(() => { prepareIndex(); }, 1200);
 }

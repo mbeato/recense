@@ -960,6 +960,29 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
 }
 .index-collapse:hover { opacity: 1; color: #c8bcd0; }
 
+/* Filter box — muted; the deep-research now-move (search beats clustering at this scale, WIKI-01) */
+.index-search {
+  flex: 0 0 auto;
+  padding: 10px 12px 8px;
+}
+.index-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  font-size: 12px;
+  color: #c8bcd0;
+  background: rgba(139, 112, 144, 0.08);
+  border: 1px solid rgba(139, 112, 144, 0.22);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.index-search-input::placeholder { color: #6b5f73; }
+.index-search-input:focus {
+  border-color: rgba(170, 150, 180, 0.5);
+  background: rgba(139, 112, 144, 0.12);
+}
+
 /* Scrollable list host — muted rose/slate scrollbar matching #reader / .detail-page #detail */
 .index-content {
   flex: 1 1 auto;
