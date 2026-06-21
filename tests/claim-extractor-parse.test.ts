@@ -11,7 +11,7 @@
  *     multiple generate() calls and concatenate the results
  */
 import { describe, it, expect } from 'vitest';
-import { parseClaims, extractClaimsWithChunking, EXTRACTION_CHUNK_CHARS } from '../src/model/claim-extractor';
+import { parseClaims, extractClaimsWithChunking, EXTRACTION_CHUNK_CHARS, parseMergedExtraction, MERGED_EXTRACTION_PROMPT } from '../src/model/claim-extractor';
 import { MockModelProvider } from '../src/model/provider';
 
 describe('parseClaims: real model output shapes', () => {
@@ -83,6 +83,108 @@ describe('parseClaims: truncated-array salvage (Phase 14)', () => {
   it('returns [] when no objects are parseable (completely corrupt response)', () => {
     expect(parseClaims('[{"type":"entity","val')).toEqual([]);
     expect(parseClaims('not json at all')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 37 D-02: parseMergedExtraction — merged {facts, triples} output
+// ---------------------------------------------------------------------------
+
+describe('parseMergedExtraction: merged {facts, triples} response', () => {
+  it('parses a well-formed {facts, triples} object and returns correct counts', () => {
+    const response = JSON.stringify({
+      facts: [
+        { type: 'entity', value: 'Max is the founder', links: ['recense'] },
+        { type: 'fact', value: 'Never inflate metrics', links: [] },
+      ],
+      triples: [
+        { subject: 'recense', predicate: 'uses', object: 'claude-headless' },
+        { subject: 'Max', predicate: 'works_on', object: 'recense' },
+      ],
+    });
+    const { claims, triples } = parseMergedExtraction(response);
+    expect(claims).toHaveLength(2);
+    expect(claims[0]).toMatchObject({ type: 'entity', value: 'Max is the founder' });
+    expect(claims[1]).toMatchObject({ type: 'fact', value: 'Never inflate metrics' });
+    expect(triples).toHaveLength(2);
+    expect(triples[0]).toMatchObject({ subject: 'recense', predicate: 'uses', object: 'claude-headless' });
+    expect(triples[1]).toMatchObject({ subject: 'Max', predicate: 'works_on', object: 'recense' });
+  });
+
+  it('returns {claims:[], triples:[]} on a bare-array input — object shape required (Pitfall 3)', () => {
+    // A bare array must NOT be silently misrouted — parseMergedExtraction requires { } shape.
+    const bareArray = JSON.stringify([{ type: 'fact', value: 'some claim' }]);
+    const result = parseMergedExtraction(bareArray);
+    expect(result.claims).toHaveLength(0);
+    expect(result.triples).toHaveLength(0);
+  });
+
+  it('returns safe fallback on malformed JSON', () => {
+    const result = parseMergedExtraction('{ "facts": [bad json');
+    expect(result.claims).toHaveLength(0);
+    expect(result.triples).toHaveLength(0);
+  });
+
+  it('returns safe fallback on empty string', () => {
+    const result = parseMergedExtraction('');
+    expect(result.claims).toHaveLength(0);
+    expect(result.triples).toHaveLength(0);
+  });
+
+  it('filters out-of-vocab predicates in the triples bucket (T-37-01)', () => {
+    const response = JSON.stringify({
+      facts: [{ type: 'fact', value: 'some fact' }],
+      triples: [
+        { subject: 'recense', predicate: 'invented_by', object: 'Max' }, // out-of-vocab → dropped
+        { subject: 'recense', predicate: 'built_by', object: 'Max' },   // valid
+      ],
+    });
+    const { claims, triples } = parseMergedExtraction(response);
+    expect(claims).toHaveLength(1);
+    expect(triples).toHaveLength(1);
+    expect(triples[0]!.predicate).toBe('built_by');
+  });
+
+  it('filters self-referential triples (T-37-02)', () => {
+    const response = JSON.stringify({
+      facts: [],
+      triples: [
+        { subject: 'recense', predicate: 'uses', object: 'recense' }, // self-loop → dropped
+        { subject: 'recense', predicate: 'uses', object: 'sqlite3' }, // valid
+      ],
+    });
+    const { triples } = parseMergedExtraction(response);
+    expect(triples).toHaveLength(1);
+    expect(triples[0]!.object).toBe('sqlite3');
+  });
+
+  it('handles missing triples key gracefully (facts-only response)', () => {
+    const response = JSON.stringify({
+      facts: [{ type: 'fact', value: 'a fact' }],
+    });
+    const { claims, triples } = parseMergedExtraction(response);
+    expect(claims).toHaveLength(1);
+    expect(triples).toHaveLength(0);
+  });
+
+  it('handles missing facts key gracefully (triples-only response)', () => {
+    const response = JSON.stringify({
+      triples: [{ subject: 'A', predicate: 'uses', object: 'B' }],
+    });
+    const { claims, triples } = parseMergedExtraction(response);
+    expect(claims).toHaveLength(0);
+    expect(triples).toHaveLength(1);
+  });
+
+  it('MERGED_EXTRACTION_PROMPT constant exists (source assertion)', () => {
+    expect(typeof MERGED_EXTRACTION_PROMPT).toBe('string');
+    expect(MERGED_EXTRACTION_PROMPT.length).toBeGreaterThan(100);
+    // Must contain the typed vocabulary
+    expect(MERGED_EXTRACTION_PROMPT).toContain('built_by');
+    expect(MERGED_EXTRACTION_PROMPT).toContain('configured_with');
+    // Must specify a JSON object output contract
+    expect(MERGED_EXTRACTION_PROMPT).toContain('"facts"');
+    expect(MERGED_EXTRACTION_PROMPT).toContain('"triples"');
   });
 });
 

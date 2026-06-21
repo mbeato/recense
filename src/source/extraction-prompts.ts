@@ -19,7 +19,7 @@
  * Threat mitigation (T-06-09): unknown/spoofed source values fall back to
  * EXTRACTION_PROMPT — no crash, no privilege gain.
  */
-import { EXTRACTION_PROMPT } from '../model/claim-extractor';
+import { EXTRACTION_PROMPT, MERGED_EXTRACTION_PROMPT } from '../model/claim-extractor';
 
 /** Transcript source names — speaker-attribution prompt is used for all three. */
 const TRANSCRIPT_SOURCES: ReadonlySet<string> = new Set(['granola', 'otter', 'zoom']);
@@ -322,7 +322,14 @@ export function promptForSource(source: string): string {
   if (source === 'web') return WEB_EXTRACTION_PROMPT;
   if (source === 'document') return DOCUMENT_EXTRACTION_PROMPT;
   if (source === 'code-diff') return CODE_DIFF_EXTRACTION_PROMPT;
-  // obsidian, claude-code, and all unknown sources → existing conversation extractor
+  // obsidian, claude-code, and all unknown sources → conversation extractor.
+  // D-02/D-03 (Phase 37): when RECENSE_TYPED_EXTRACTION_MODE=merged, route to the merged
+  // {facts, triples} prompt so one Haiku call emits both facts and typed triples.
+  // Dark-default is 'merged'; set to 'separate' to fall back to single-facts extraction
+  // (the D-03 fact-quality regression fallback; consolidator handles separate-mode triple call).
   // (T-06-09: unknown/spoofed source values fall back safely — no crash, no privilege gain)
+  if (process.env['RECENSE_TYPED_EXTRACTION_MODE'] !== 'separate') {
+    return MERGED_EXTRACTION_PROMPT;
+  }
   return EXTRACTION_PROMPT;
 }
