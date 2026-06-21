@@ -317,6 +317,13 @@ export function initCorpus(ctx) {
   function revealCorpus() {
     if (corpusRevealed || !corpusActive) return;
     corpusRevealed = true;
+    // Pin the settled layout (d3 fx/fy) so NOTHING can nudge node positions after we fit —
+    // a late sim tick or a reveal-triggered reheat is what made the FIRST open drift while
+    // cached opens (already frozen-settled) framed perfectly. Freezing makes first == cached.
+    try {
+      const gd = CorpusGraph && CorpusGraph.graphData && CorpusGraph.graphData();
+      if (gd && gd.nodes) gd.nodes.forEach((n) => { n.fx = n.x; n.fy = n.y; });
+    } catch (_) { /* ignore */ }
     sizeCorpusGraph();
     fitAndClamp();
     requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
