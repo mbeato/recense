@@ -563,3 +563,13 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
   3. The gate's baseline numbers are the v8.0-final figures, and the gate is documented so the founder can re-baseline intentionally (not by silent drift) — GATE-03
 
 **Plans:** 0 plans (run `/gsd-plan-phase 43`)
+
+### Phase 44: Consolidation intra-pass dedup fix (embed-on-mint)
+
+**Goal:** Claims arriving in the SAME consolidation pass can dedup/contradict each other — a mid-pass-minted node is visible to later episodes' `topk` in that pass, instead of minting permanent duplicate islands. Fixes the bulk-ingest onboarding path (`ingest-project` into a small/empty graph) and unblocks a fair Phase 35 RANK-02 re-test.
+**Requirements**: DEDUP-01 (embed-on-mint: minted node's embedding is set from the already-computed claim vector so it's `topk`-visible immediately — Option D), DEDUP-02 (no regression: incremental multi-pass path + RANK-01 dark default unchanged; `setEmbedding` stays single writer, T-01-DIRTY intact)
+**Depends on:** None — independent correctness fix. Gates a fair Phase 35 RANK-02 re-test (follow-on phase, not this one). Correctness bug in the v6.0 onboarding path; consider sequencing ahead of pending typed-predicate-edges phases.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 44 to break down)
