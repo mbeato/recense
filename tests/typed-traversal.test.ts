@@ -209,22 +209,17 @@ describe('matchPredicate', () => {
   });
 
   it('returns null when cosine is below threshold even if >0', () => {
-    const dims = 12;
+    // Use 24-dim gloss embeddings: 12 predicates each at unique dims 0-11 (i%12).
+    // cueVec has non-zero energy only at dim 12 (not used by any gloss),
+    // so all cosine similarities with gloss vectors are exactly 0.
+    // This confirms null is returned below threshold even with non-zero cueVec.
+    const dims = 24;
     const glossEmbeddings = makeMockGlossEmbeddings(dims);
 
-    // Small non-zero value in dim 0, but not enough to pass threshold
-    // cosine(cueVec, built_by_gloss) = 0.1 < 0.35
     const cueVec = new Float32Array(dims);
-    cueVec[0] = 0.1;
-    // Normalize to unit length to ensure raw cosine = component value
-    const magnitude = Math.sqrt(cueVec.reduce((sum, v) => sum + v * v, 0));
-    for (let i = 0; i < dims; i++) cueVec[i]! /= magnitude;
+    cueVec[12] = 1.0; // orthogonal to all 12 gloss vectors (they only use dims 0-11)
 
-    // built_by gloss has only dim 0 = 1.0, so cosine = cueVec[0] = 0.1
-    // Since cosine will be 0.1 < 0.35, should return null
-    // But wait — cueVec after normalization still has only one component,
-    // so cosine = 0.1 (only component). Use higher threshold:
-    const result = matchPredicate(cueVec, glossEmbeddings, 0.5);
+    const result = matchPredicate(cueVec, glossEmbeddings, 0.35);
     expect(result).toBeNull();
   });
 
