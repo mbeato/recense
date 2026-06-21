@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: ready_to_plan
-stopped_at: Phase 39 Plan 02 auto-tasks complete (Task 3 human-verify deferred to end-of-phase)
-last_updated: "2026-06-21T16:20:00.000Z"
+stopped_at: Phase 39 COMPLETE — WIKI-01/02/03 verified 3/3, code-review clean (WR-01..04 fixed), founder-approved
+last_updated: "2026-06-21T18:42:00.000Z"
 progress:
   total_phases: 16
   completed_phases: 8
   total_plans: 29
-  completed_plans: 26
+  completed_plans: 28
   percent: 50
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 39 — reader-wiki-parity-index-and-backlinks
+**Current focus:** Phase 39 COMPLETE (reader wiki-parity). Next deliberate work: resume v6.0 (Phase 31 Doc Ingest + Idempotent Re-ingest).
 
 ## Current Position
 
 ```
-Milestone: v6.0 Project Onboarding — IN PROGRESS
-Phase: 39 (reader-wiki-parity-index-and-backlinks) — EXECUTING
-Plan: 2 of 2 (auto-tasks complete)
+Milestone: v6.0 Project Onboarding — IN PROGRESS (Phase 39 of v7.0 landed early)
+Phase: 39 (reader-wiki-parity-index-and-backlinks) — ✓ COMPLETE
+Plan: 2 of 2 complete (WIKI-01 index sidebar + WIKI-02 backlinks; verified 3/3, code-review clean)
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
 [████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
@@ -273,8 +273,8 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-21T16:20:00.000Z
-Stopped at: Phase 39 Plan 02 auto-tasks complete — Task 3 human-verify deferred to end-of-phase checkpoint
+Last session: 2026-06-21T18:42:00.000Z
+Stopped at: Phase 39 COMPLETE — index sidebar (corpus-docked, hybrid nested tree + search) + backlinks shipped, verified 3/3, code-review WR-01..04 fixed, founder-approved. Backlog captured (clustering @100+ docs, promoteScope('tonos'), corpus refresh).
 Resume file: None
 
 ## Key Decisions (Phase 28)

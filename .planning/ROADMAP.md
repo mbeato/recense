@@ -507,7 +507,7 @@ Plans:
   2. Viewing a doc (or atom) surfaces its **incoming** references ("referenced by" / what-links-here), not just outgoing cites — reusing the existing reverse-edge lookup (`idx_edge_dst`, `getInEdges`); the panel is read-only and adds no online LLM cost — WIKI-02
   3. No engine change: no new node/edge types required, no write-path mutation; the diff is reader/viz + a generated index doc. Self-confirmation guard untouched (index/backlink surfaces are read-only projections) — WIKI-03
 
-**Plans:** 2/2 plans executed (auto-tasks complete; Task 3 human-verify deferred to end-of-phase checkpoint)
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 39-01-PLAN.md — Backlinks: read-only /doc/backlinks route + reader "Referenced by" section + atom "cited by" (WIKI-02, WIKI-03)
