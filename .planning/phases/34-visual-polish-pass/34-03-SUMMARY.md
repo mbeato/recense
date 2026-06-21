@@ -43,7 +43,8 @@ three founder-requested post-checkpoint fixes and present for re-verification.
 | F1b | Round 2: relocate × into the sticky kicker row | 6a65080 | src/viz/css/styles.css, src/viz/index.html |
 | F2b | Round 2: drop corpus-active border + side-view brain glyph | e6098c9 | src/viz/css/styles.css, src/viz/modules/corpus.js |
 | F3b | Round 2: loosen corpus spread for label legibility | e9bf420 | src/viz/modules/corpus.js |
-| 2 | Founder visual checkpoint | AWAITING HUMAN-VERIFY (3rd pass) | — |
+| 2 | Founder visual checkpoint | APPROVED (3rd pass, 2026-06-20) | — |
+| CR | Fix corpus empty/error/loading state coverage (CR-01, CR-02) | fa0e206 | src/viz/modules/corpus.js |
 
 ## Task 1: Guard Results (initial pass — commit 872e453)
 
@@ -181,17 +182,70 @@ now but hard to read some of the labels this close."
   with `COLLIDE_R = NODE_R * 4` (~20 units) so node+label footprints don't overlap.
 - Net-zero deps; still a centred, contained cluster — just with legible label spacing.
 
-## Re-Verified Guards (after BOTH fix rounds)
+## Post-Approval Correctness Fixes — Corpus State Coverage (CR-01, CR-02 — fa0e206)
 
-All guards re-run after the round-2 fix commits (6a65080, e6098c9, e9bf420):
+Code review found two real bugs in the corpus loading/empty/error paths (the VIZ-POLISH-02
+state coverage this phase promised). Both verified against live code; neither touches the
+founder-approved happy path (corpus-with-docs rendering). Fixed as one atomic commit.
+
+### CR-01 — error message silently overwritten
+
+`buildCorpusGraph`'s `catch` set `statusEl.textContent = 'Failed to load corpus'` but then
+execution **fell through**: `data` was still `{nodes:[],links:[]}`, so the
+`(data.nodes||[]).length === 0` empty-state check overwrote the error with "No docs yet".
+A non-ok response (`!res.ok`) fell through the same way. The error state never showed.
+
+**Fix:** Track `let errored = false` — set `true` in the `catch` AND on `!res.ok`. After the
+fetch, `if (errored) { statusEl.textContent = 'Failed to load corpus'; return null; }` runs
+**before** the empty-state check, so the error message can no longer be overwritten.
+
+### CR-02 / WR-03 — status invisible + accumulating
+
+`statusEl` is appended to `#corpus-graph`, which is `display:none` until `showCorpus` adds
+`.open`. But `showCorpus` called `await buildCorpusGraph()` and `if (!CorpusGraph) return;`
+**before** adding `.open` — so on an empty/error/first-load corpus the status sat in a hidden
+container (invisible) and the view never entered corpus mode. And since `CorpusGraph` stayed
+null on those paths, each subsequent click re-ran `buildCorpusGraph` and appended **another**
+`.corpus-status` div (accumulation).
+
+**Fix (two parts):**
+1. `showCorpus` now **enters corpus view first** — `container.classList.add('open')`, hide
+   brain, hide topics/search, `corpusActive=true`, button → ICON_BRAIN/`corpus-active` — all
+   **before** the lazy `buildCorpusGraph()` call. So loading/empty/error status renders in a
+   VISIBLE, sized container. If `CorpusGraph` is non-null afterward, `onEngineStop` +
+   `sizeCorpusGraph()` + the 350ms `fitAndClamp` fallback wire up as before; if null, the
+   status stays visible and the user toggles back via the now-active corpus button.
+   (This also fixes **WR-01**: the centering force now reads real `clientWidth/clientHeight`
+   because the container is open before ForceGraph initializes.)
+2. `buildCorpusGraph` removes any stale `.corpus-status` before appending a new one
+   (`container.querySelector('.corpus-status')?.remove()` equivalent), so repeated empty/error
+   opens don't accumulate overlays.
+
+**Happy-path unchanged:** corpus-with-docs opens, graph builds, loading status removed, fit runs.
+`returnToCorpus` (reader.js close path) is idempotent and only runs when `CorpusGraph` is
+already non-null — it re-asserts the open/active state with no double-apply.
+
+### Advisory notes (documented, NOT fixed — out of scope / theoretical)
+
+- **WR-02:** `showBrain` restores topics/search via `display = ''`, which relies on the
+  `.mode-window #topic-wrap { display: block }` / `#search-wrap { display: block }` CSS rules
+  re-applying. Works in the expanded window (the only mode where these surfaces exist); noted
+  as a latent coupling, not a live bug.
+- **IN-01:** `showCorpus`/`showBrain`/`returnToCorpus` each call `getElementById('topic-wrap')`
+  / `getElementById('search-wrap')` rather than caching the references. Micro-inefficiency on
+  an infrequent user action; no correctness impact.
+
+## Re-Verified Guards (after BOTH fix rounds + CR fix)
+
+All guards re-run after the round-2 fix commits (6a65080, e6098c9, e9bf420) and the CR fix (fa0e206):
 
 | Guard | Command | Result |
 |-------|---------|--------|
 | Net-zero deps | `git diff --stat package.json package-lock.json` | **PASS** — empty |
 | Build | `npm run build` | **PASS** — tsc exit 0, copy-viz-assets ran |
-| No amber at rest | diff grep `#d9a05c\|rgba(217` on `+` lines (styles/corpus/index) | **PASS** — zero matches |
-| 3D engine untouched | `git diff b3c2b9c HEAD --name-only \| grep -E 'brain\|haze\|graph\.js'` | **PASS** — none |
-| My-commit file scope | per-commit `git show --name-only` for all 6 fix commits | **PASS** — only styles.css, corpus.js, index.html |
+| No amber at rest | diff grep `#d9a05c\|rgba(217` on `+` lines (CR commit + styles/corpus/index) | **PASS** — zero matches |
+| 3D engine untouched | `git show fa0e206 --name-only` + per-commit checks | **PASS** — none (fa0e206 = corpus.js only) |
+| My-commit file scope | per-commit `git show --name-only` for all 7 fix commits | **PASS** — only styles.css, corpus.js, index.html |
 
 > Note: a `git diff b3c2b9c HEAD --name-only` over the whole branch lists unrelated phase-35
 > source files (config.ts, engine.ts, topk.ts, decay.ts, eval harnesses) — these landed in
@@ -230,16 +284,22 @@ attack surface. package.json unchanged confirmed.
 
 None.
 
-## Self-Check: PASSED (re-verified after both fix rounds)
+## Self-Check: PASSED (re-verified after both fix rounds + CR fix)
 
 - `npm run build` exited 0 and reported viz-asset copy to `dist/src/viz/` — confirmed.
 - `git diff --stat package.json package-lock.json` empty — confirmed.
-- Amber guard grep clean across all added lines (round-1 + round-2 changes) — confirmed.
-- Per-commit scope: all six fix commits touch only styles.css, corpus.js, index.html — confirmed.
+- Amber guard grep clean across all added lines (round-1 + round-2 + CR changes) — confirmed.
+- Per-commit scope: all seven fix commits touch only styles.css, corpus.js, index.html — confirmed.
 - No 3D engine files (brain.js/haze.js/graph.js) in any fix commit — confirmed.
-- Six fix commits exist: bdd3a17, b7467f5, 04fa578 (round 1); 6a65080, e6098c9, e9bf420 (round 2).
+- Seven fix commits exist: bdd3a17, b7467f5, 04fa578 (round 1); 6a65080, e6098c9, e9bf420 (round 2); fa0e206 (CR state-coverage).
 
-## Founder Visual Checkpoint (Task 2) — AWAITING 3RD PASS
+## Founder Visual Checkpoint (Task 2) — APPROVED (3rd pass, 2026-06-20)
 
-The founder must re-verify the three round-2 surfaces (× in kicker row, side-view brain glyph
-with no active border, looser corpus spacing). See CHECKPOINT REACHED output for exact steps.
+The founder verified all four surfaces across three review rounds and approved on the 3rd pass:
+- **Round 1 (initial):** approved all four surfaces except three items → F1 (sticky-× padding), F2 (corpus button book→brain icon swap), F3 (corpus framing too sparse).
+- **Round 2 (F1/F2/F3):** F1 padding approach rejected (relocate × into the sticky kicker row instead); F2 better but drop the active border + want a side-view brain cross-section glyph; F3 better but loosen a touch for label legibility.
+- **Round 3 (F1b/F2b/F3b):** founder typed "approved" — × now sits in the sticky "deep-dive · title" kicker row; corpus-active button shows a side-profile brain glyph with no border; corpus nodes form a legible contained cluster.
+
+Deferred (founder-directed, tracked): the corpus↔brain **full 3D camera fly-through transition** — structural (bridges the 2D-canvas corpus and 3D brain), out of scope for a polish phase. Tracked at `.planning/todos/pending/corpus-brain-3d-transition.md`.
+
+The app⟷tray collapse button is a desktop-shell control (absent by design in standalone `recense viz`) — confirmed non-issue, no change.
