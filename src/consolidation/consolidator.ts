@@ -148,6 +148,13 @@ interface ClaimDecision {
    * null for one-off gcal events and all non-gcal sources (D-04).
    */
   gcalRecurrenceRule?: string | null;
+  /**
+   * DEDUP-01: precomputed claim embedding vector for embed-on-mint.
+   * Set from claimVecs[claimIdx] at decision-fill time so applyDecision can stamp
+   * the embedding synchronously inside the Phase B transaction without an API call.
+   * Undefined for fast-path confirms (no mint) and when claimVec is absent (guard).
+   */
+  claimVec?: Float32Array;
 }
 
 /** Claim that escalated to provider.judge — carries its slot index for ordered reassembly. */
@@ -690,6 +697,7 @@ export class Consolidator {
                 claimActionType: claim.action_type, // TEMP-02
                 gcalSourceEventId,               // TEMP-02
                 gcalRecurrenceRule,              // TEMP-02
+                claimVec: queryVec,              // DEDUP-01: embed-on-mint
               };
             } else {
               // Escalate to judge — cosine candidates first (D-17 precedence), anchors appended.
@@ -767,6 +775,7 @@ export class Consolidator {
             claimActionType: pendingJudges[i]!.claimActionType,  // TEMP-02
             gcalSourceEventId,                                    // TEMP-02
             gcalRecurrenceRule,                                   // TEMP-02
+            claimVec: claimVecs[pendingJudges[i]!.slotIdx] ?? undefined, // DEDUP-01: embed-on-mint
           };
         }
 
@@ -933,6 +942,7 @@ export class Consolidator {
             value: decision.claimValue,
             origin: decision.claimOrigin,
           });
+          if (decision.claimVec) { this.store.setEmbedding(newId_, decision.claimVec); } // DEDUP-01: value==claimValue
           this.maybeWriteNodeTemporal(newId_, decision); // TEMP-02
           this.store.upsertEdge({
             src: decision.bestCandidateId,
@@ -960,6 +970,7 @@ export class Consolidator {
             value: decision.claimValue,
             origin: decision.claimOrigin,
           });
+          if (decision.claimVec) { this.store.setEmbedding(standaloneId, decision.claimVec); } // DEDUP-01: value==claimValue
           this.maybeWriteNodeTemporal(standaloneId, decision); // TEMP-02
           // SEAM-02 D-49: defensive standalone counts as extend (no candidate_id)
           this.sink.emit({
@@ -983,6 +994,7 @@ export class Consolidator {
           value: decision.claimValue,
           origin: decision.claimOrigin,
         });
+        if (decision.claimVec) { this.store.setEmbedding(unrelatedId, decision.claimVec); } // DEDUP-01: value==claimValue (root-cause site)
         this.maybeWriteNodeTemporal(unrelatedId, decision); // TEMP-02
         // SEAM-02 D-49: standalone new node
         this.sink.emit({
@@ -1037,6 +1049,7 @@ export class Consolidator {
               value: decision.claimValue,
               origin: decision.claimOrigin,
             });
+            if (decision.claimVec) { this.store.setEmbedding(oscId, decision.claimVec); } // DEDUP-01: value==claimValue
             this.maybeWriteNodeTemporal(oscId, decision); // TEMP-02
             // SEAM-02 D-49: oscillation escalated from reconcile → 'contradict_oscillation'
             this.sink.emit({
@@ -1065,6 +1078,7 @@ export class Consolidator {
               origin: decision.claimOrigin,
               prev_value: node.value, // explicit carry across tombstone-always boundary (D-20)
             });
+            if (decision.claimVec) { this.store.setEmbedding(reconciledId, decision.claimVec); } // DEDUP-01: value==claimValue
             this.maybeWriteNodeTemporal(reconciledId, decision); // TEMP-02
             // SEAM-02 D-49: tombstone-and-replace → 'contradict_reconcile'
             this.sink.emit({
@@ -1086,6 +1100,7 @@ export class Consolidator {
             value: decision.claimValue,
             origin: decision.claimOrigin,
           });
+          if (decision.claimVec) { this.store.setEmbedding(appendNewId, decision.claimVec); } // DEDUP-01: value==claimValue
           this.maybeWriteNodeTemporal(appendNewId, decision); // TEMP-02
           // SEAM-02 D-49: extreme divergence → 'contradict_append_new'
           this.sink.emit({
@@ -1133,6 +1148,7 @@ export class Consolidator {
                     value: decision.claimValue,
                     origin: decision.claimOrigin,
                   });
+                  if (decision.claimVec) { this.store.setEmbedding(fdOscId, decision.claimVec); } // DEDUP-01: value==claimValue
                   this.maybeWriteNodeTemporal(fdOscId, decision); // TEMP-02
                   // SEAM-02 D-49: force-destabilize (oscillation variant) → still 'contradict_force_destabilize'
                   this.sink.emit({
@@ -1155,6 +1171,7 @@ export class Consolidator {
                     origin: decision.claimOrigin,
                     prev_value: updatedNode.value, // carry breadcrumb (same as band reconcile)
                   });
+                  if (decision.claimVec) { this.store.setEmbedding(fdId, decision.claimVec); } // DEDUP-01: value==claimValue
                   this.maybeWriteNodeTemporal(fdId, decision); // TEMP-02
                   // SEAM-02 D-49: N-distinct force-destabilize → 'contradict_force_destabilize'
                   this.sink.emit({

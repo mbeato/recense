@@ -404,3 +404,111 @@ describe('Consolidator: typed-edge extraction (Phase 37 D-02)', () => {
     expect(currentMode).toBe('merged'); // set in beforeEach
   });
 });
+
+// ---------------------------------------------------------------------------
+// DEDUP-01: embed-on-mint intra-pass visibility (Phase 38.1)
+// ---------------------------------------------------------------------------
+//
+// Reproduces 35-pass-proof.cjs Scenario A in a SINGLE consolidate() call:
+// WITHOUT the fix, both episodes land as 'unrelated' (A's minted node has
+// embedding=NULL, invisible to B's topk) → contra=0.
+// WITH the fix, A's minted node gets setEmbedding() immediately → B's topk
+// sees it (cosine=1.0 > 0.3) → judge escalation → contradict verdict →
+// A's node tombstoned and replaced → tombstoned >= 1.
+//
+// Judge: candidate-capturing mock (subclass of MockModelProvider) that echoes
+// candidates[0].id as best_candidate_id so the T-FK-01 guard (consolidator
+// line 754) passes even though the id is generated at runtime.
+// ---------------------------------------------------------------------------
+
+/**
+ * CandidateCapturingProvider: overrides judge() to echo the first candidate's id
+ * as best_candidate_id so the T-FK-01 filter (candidateIdSet guard) passes for
+ * runtime-generated node ids. Delegates embed/generate to the base MockModelProvider.
+ */
+class CandidateCapturingProvider extends MockModelProvider {
+  /** Number of judge calls made — verified in assertions. */
+  judgeCalls = 0;
+
+  override async judge(
+    _claim: string,
+    candidates: Array<{ id: string; value: string }>,
+  ): Promise<import('../src/model/judge').JudgeVerdict> {
+    this.judgeCalls += 1;
+    // Episode A: empty graph → auto-unrelated → no judge call.
+    // Episode B: one candidate (A's minted node), which we contradict.
+    // T-FK-01 guard: best_candidate_id must be in candidateIdSet — we echo candidates[0].id.
+    return {
+      relation: 'contradict',
+      best_candidate_id: candidates[0]?.id ?? null,
+      magnitude: 0.8,
+      contradicted_ids: candidates[0]?.id ? [candidates[0].id] : [],
+    };
+  }
+}
+
+describe('DEDUP-01: embed-on-mint intra-pass visibility', () => {
+  it('same contradiction pair in ONE pass yields tombstoned>=1 after embed-on-mint fix', async () => {
+    const h = makeHarness();
+
+    // embedFn: every claim text → the SAME non-zero unit vector at dim 0.
+    // Cosine between any two such vectors = 1.0, which exceeds the 0.3
+    // unrelatedSimilarityThreshold → B's topk escalates to judge.
+    // Pass-start reembedDirty sees an empty graph and does nothing;
+    // the ONLY embeddings written in this pass come from the embed-on-mint path under test.
+    const unitVec = (dims: number): Float32Array => {
+      const v = new Float32Array(dims);
+      v[0] = 1.0;
+      return v;
+    };
+
+    const provider = new CandidateCapturingProvider({
+      embedFn: (_text: string) => unitVec(h.config.embeddingDimensions),
+      generateScript: [
+        // Episode A extraction: one fact claim
+        JSON.stringify([{ type: 'fact', value: 'Claim A: the memory learns over time' }]),
+        // Episode B extraction: one fact claim (same embedding, contradicts A)
+        JSON.stringify([{ type: 'fact', value: 'Claim B: the memory stays static' }]),
+      ],
+      // No judgeScript — we override judge() in CandidateCapturingProvider above
+      judgeScript: [],
+    });
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    // Append both episodes — they will be consolidated in a SINGLE consolidate() call
+    h.episodes.append({
+      content: 'The memory learns over time (episodeA)',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-dedup-01-A',
+    });
+    h.episodes.append({
+      content: 'The memory stays static (episodeB)',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-dedup-01-B',
+    });
+
+    await consolidator.consolidate();
+
+    // DEDUP-01 assertion: A's node must have been seen by B's topk → judge escalated →
+    // contradict verdict → A's node tombstoned and a new node minted.
+    // (The Noop sink does not write consolidation_event rows, so we use the tombstone
+    // count as the primary state assertion — mirrors 35-pass-proof.cjs "contra >= 1".)
+    const tombstoned = h.db
+      .prepare('SELECT COUNT(*) AS cnt FROM node WHERE tombstoned = 1')
+      .get() as { cnt: number };
+    expect(tombstoned.cnt).toBeGreaterThanOrEqual(1);
+
+    // Judge must have been called (Episode B escalated — not auto-unrelated)
+    expect(provider.judgeCalls).toBeGreaterThanOrEqual(1);
+  });
+});
