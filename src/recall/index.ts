@@ -44,6 +44,9 @@ import type { ActivationTraceSink } from '../viz/activation-sink';
 import { NoopActivationTraceSink } from '../viz/activation-sink';
 import { newId } from '../lib/hash';
 import { GLOBAL_SCOPE } from '../lib/scope';
+import type { Predicate } from '../model/typed-predicates';
+import { loadGlossEmbeddings } from '../consolidation/gloss-embeddings';
+import { matchPredicate, typedReach } from './typed-traversal';
 
 // T-04-03-I: bound query length to cap compose prompt size (4 KB is generous)
 const MAX_QUERY_BYTES = 4_000;
@@ -75,6 +78,13 @@ export class RecallEngine {
   private readonly traceSink: ActivationTraceSink;
   /** D-97: derived once in ctor so the Noop path pays zero per-call cost. */
   private readonly traceEnabled: boolean;
+  /**
+   * Phase 37 D-07: pre-loaded gloss embeddings for 12-way cosine predicate match.
+   * Loaded ONCE at construction (Pitfall 4: never per-recall).
+   * null when embedAndStoreGlosses has not yet been run → always falls back to neighborhood.
+   * NEVER re-embedded in recall() — glosses are offline sleep-pass artifacts (T-37-12).
+   */
+  private readonly glossEmbeddings: Record<Predicate, Float32Array> | null;
 
   constructor(
     db: Database.Database, // part of DI pattern; all reads go through store/retriever
@@ -99,6 +109,11 @@ export class RecallEngine {
     this.traceSink = traceSink;
     // D-97: derive once so the Noop hot path pays zero per-call work.
     this.traceEnabled = !(traceSink instanceof NoopActivationTraceSink);
+    // Phase 37 D-07: load gloss embeddings once at construction (Pitfall 4 — never per-recall).
+    // If null (not yet embedded by sleep pass), matchPredicate will return null on every call
+    // and recall will always fall through to the existing schema-neighborhood path.
+    // loadGlossEmbeddings is a synchronous read from the meta table — zero online LLM cost (T-37-12).
+    this.glossEmbeddings = loadGlossEmbeddings(store);
   }
 
   /**
@@ -133,6 +148,97 @@ export class RecallEngine {
     const topHits = this.retriever.topk(cueVec, this.config.candidateK);
     const bestMatch = topHits[0];
     if (!bestMatch) return NULL_RESULT;
+
+    // ── (D-06 / D-07): Typed-path branch — LLM-free 12-way cosine on pre-loaded glosses ──
+    //
+    // LANDMINE 3: cueVec is already computed above — REUSE it here. No new online embed.
+    // matchPredicate returns null when glossEmbeddings is null (not yet embedded by sleep pass)
+    // or when all 12 cosine similarities are below predicateGlossThreshold.
+    //
+    // If a predicate matches:
+    //   - typedReach follows exactly ONE hop from bestMatch.id along that predicate.
+    //   - Compose the inference from the small labeled-triple payload.
+    //   - Log as origin='inferred' episode (same as the neighborhood path below).
+    //   - RETURN immediately — D-06: typed path OR neighborhood, NEVER both.
+    //
+    // If typedReach returns empty (anchor has no matching typed edge):
+    //   - Fall through to the existing schema-neighborhood assembly (don't return NULL).
+    //
+    // If matchPredicate returns null: skip this block entirely → existing assembly unchanged.
+    //
+    // INVARIANT (D-08 / LANDMINE 4 / T-37-09):
+    //   NEVER calls store.upsertNode/upsertEdge/tombstone or strength.strengthen here.
+    //   The only write is the origin='inferred' episode append below.
+    const matchedPredicate = matchPredicate(
+      cueVec,
+      this.glossEmbeddings,
+      this.config.predicateGlossThreshold,
+    );
+
+    if (matchedPredicate !== null) {
+      // D-07: single-hop typed traversal from bestMatch anchor (v1 spec, predicatePath.length=1)
+      const typedFrontier = typedReach(
+        this.store,
+        bestMatch.id,
+        [matchedPredicate],
+        this.config.recallNeighborhoodBudget,
+      );
+
+      if (typedFrontier.length > 0) {
+        // Resolve node values for the typed frontier
+        const typedNodes: Array<{ id: string; value: string }> = [];
+        for (const nodeId of typedFrontier) {
+          const n = this.store.getNode(nodeId);
+          if (!n || n.tombstoned === 1) continue;
+          typedNodes.push({ id: n.id, value: n.value });
+        }
+
+        if (typedNodes.length > 0) {
+          // Compose inference from labeled-triple payload (anchor --predicate--> node)
+          // D-08: NEVER calls upsertNode/upsertEdge/strengthen/tombstone
+          const anchorNode = this.store.getNode(bestMatch.id);
+          const anchorLabel = anchorNode ? anchorNode.value : bestMatch.id;
+          const tripleLines = typedNodes
+            .map(n => `- ${anchorLabel} ${matchedPredicate} ${n.value}`)
+            .join('\n');
+
+          let typedInference: string | null = null;
+          try {
+            // T-04-03-I: query placed as data content, never interpolated as code
+            const prompt =
+              `You are reasoning over typed relational facts from a memory graph.\n\n` +
+              `Predicate: "${matchedPredicate}" (${anchorLabel} ${matchedPredicate} ...)\n\n` +
+              `Typed facts:\n${tripleLines}\n\n` +
+              `Question: ${boundedQuery}\n\n` +
+              `Based on these typed facts, provide a concise factual answer. ` +
+              `If you cannot make a meaningful inference, respond with exactly: null`;
+
+            const text = (await this.provider.generate(prompt, { maxTokens: 512 })).trim();
+            typedInference = (!text || text.toLowerCase() === 'null') ? null : text;
+          } catch {
+            // T-02-PARSE: on any error, return null inference rather than throwing
+            typedInference = null;
+          }
+
+          if (typedInference) {
+            // Log as ephemeral inferred episode — the ONLY write in this branch (D-43)
+            // D-08 guard: NEVER calls upsertNode/upsertEdge/tombstone/strengthen
+            const ep = this.episodes.append({
+              content: typedInference,
+              origin: 'inferred',
+              salience: 0,
+              hard_keep: 0,
+              role: 'assistant',
+              session_id: sessionId,
+              source_inference_id: null,
+            });
+            // D-06: return immediately — typed path OR neighborhood, NEVER both
+            return { inference: typedInference, episodeId: ep.id, origin: 'inferred' };
+          }
+        }
+      }
+      // typedFrontier was empty or inference failed → fall through to existing neighborhood assembly
+    }
 
     // ── (3) Identify schema and assemble bounded 1-hop neighborhood (D-42) ───
     //
