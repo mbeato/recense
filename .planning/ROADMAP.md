@@ -370,7 +370,7 @@ Plans:
   2. Every async/interactive surface has explicit loading, empty, and error states (no blank or abrupt gaps), and interactive elements have visible hover/focus feedback with smooth transitions — VIZ-POLISH-02
   3. No amber is introduced for non-activation states (rest stays muted rose/slate/mauve; amber reserved for activation/hover) — verified by grep + visual; the 3D brain density anchor is visually unchanged; the diff is CSS + state-handling only (no structural/composition change); `package.json` runtime deps unchanged — VIZ-POLISH-03
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 **UI hint**: yes
 
@@ -380,7 +380,7 @@ Plans:
 **Wave 2** *(depends on 34-01 — shares styles.css/index.html)*
 - [x] 34-02-PLAN.md — corpus surface: B3 topics-hide + C1 icon button + C2 force tuning + loading/empty/error states (corpus.js, styles.css, index.html)
 **Wave 3** *(depends on 34-01 + 34-02)*
-- [ ] 34-03-PLAN.md — dist rebuild + VIZ-POLISH-03 guard greps + founder visual checkpoint (autonomous: false)
+- [x] 34-03-PLAN.md — dist rebuild + VIZ-POLISH-03 guard greps + founder visual checkpoint (autonomous: false)
 
 ## Phase Details — v7.0 Retrieval & Reasoning Depth
 
@@ -426,7 +426,13 @@ recense deepens the two weakest edges of the engine — *how it ranks what it re
   2. Recall assembles a typed relational path; multi-hop queries return a precise path with fewer tokens than the untyped-neighborhood baseline at equal-or-better answer quality on the harness — TYPED-02
   3. Self-confirmation guard intact: inferred output never mints or strengthens a typed edge
 
-**Plans:** 0 plans (gated — plan only after the Phase 36 go decision)
+**Plans:** 4 plans
+
+Plans:
+- [ ] 37-01-PLAN.md — Wave 0 primitives: predicate vocab + parseTriples, getOutEdgesWithRel, predicateGlossThreshold config, offline gloss embeddings
+- [ ] 37-02-PLAN.md — Extraction (TYPED-01): merged {facts,triples} prompt, consolidator typed-edge upsert (origin-guarded), mode switch
+- [ ] 37-03-PLAN.md — Recall traversal (TYPED-02): typedReach + matchPredicate, D-06 typed-path-OR-fallback augment, D-08 guard
+- [ ] 37-04-PLAN.md — Build harness + gate (TYPED-02): 37-precision-harness, re-derived query set, D-05 founder sign-off, PRIMARY precision gate
 
 ### Phase 38: Stored Reflections / Derived Insights
 
@@ -465,12 +471,13 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
 ### Phase 40: Competitive Benchmark Baseline
 
 **Goal:** Stand up an apples-to-apples competitive benchmark and record honest baselines on all three axes, so "at or above competitors" becomes a falsifiable target instead of a slogan. Adds LOCOMO (the bench mem0/Zep actually cite) alongside the existing LongMemEval + KU replay harness; captures recense's current accuracy, retrieval latency (p50/p95), and token cost per write+recall; and pins the specific competitor numbers to beat with their sources.
-**Requirements**: BENCH-01 (LOCOMO harness runs reproducibly on recense), BENCH-02 (baseline accuracy/latency/token recorded), BENCH-03 (competitor targets cited with sources — no inflated/unsourced numbers)
+**Concrete competitor targets (researched 2026-06-20, treat with methodology skepticism):** MemPalace claims LongMemEval R@5 **96.6%** (BUT the independent source teardown shows this is measured in "raw mode" = ChromaDB's default embedding model with the palace structure NOT involved — it measures the embedder, not the architecture; their lossy compression drops it to 84.2%) and LoCoMo R@10 **88.9%**, ConvoMem 92.9%; mem0 markets "~26% more accurate / 91% lower latency / 90% fewer tokens vs OpenAI memory"; Zep/Graphiti publish DMR + LongMemEval. claude-mem publishes **no accuracy benchmark** — only a "~10x token savings" retrieval claim. **Lesson baked into BENCH-03: a competitor headline number must be understood (what configuration/metric/dataset slice produced it) before it counts as a target — citing it is not enough.**
+**Requirements**: BENCH-01 (LOCOMO harness runs reproducibly on recense), BENCH-02 (baseline accuracy/latency/token recorded), BENCH-03 (competitor targets cited AND methodology-understood — no inflated/unsourced/misread numbers)
 **Depends on:** v7.0 complete (system under test is final). Gates Phases 41–43.
 **Success Criteria** (what must be TRUE):
   1. LOCOMO runs against recense reproducibly (scripted, re-runnable) and produces an accuracy score alongside the existing LongMemEval + KU harness — BENCH-01
   2. A written baseline records recense's current accuracy, retrieval latency (p50/p95 on the live ~7000-node brain), and token cost per write and per recall — BENCH-02
-  3. The competitor numbers to beat (mem0, Zep/Graphiti on LOCOMO/DMR/LongMemEval) are documented with their published sources; every recense number is reproducible from a committed script — no unsourced or rounded-up figures (founder no-inflated-metrics rule) — BENCH-03
+  3. The competitor numbers to beat (mem0, Zep/Graphiti, MemPalace on LOCOMO/DMR/LongMemEval) are documented with their published sources AND with a one-line note on what each number actually measures (e.g. MemPalace's 96.6% = raw-embedder mode, not architecture); every recense number is reproducible from a committed script — no unsourced, rounded-up, or methodology-misread figures (founder no-inflated-metrics rule, applied to reading competitors too) — BENCH-03
 
 **Plans:** 0 plans (run `/gsd-plan-phase 40`)
 
@@ -489,12 +496,14 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
 ### Phase 42: Token / Cost Efficiency Audit
 
 **Goal:** Measure recense's token/cost profile end-to-end and tune it, then quantify the savings vs competitors defensibly. recense's "pay at sleep, save at recall" architecture is a token-efficiency bet that has never been measured against a competitor; v7.0's ranking + reflections promised recall-token savings — this phase proves whether they paid off. Measures write cost (Haiku extract / Sonnet judge), recall inject cost, and tunes the levers (`consolSkipThreshold`, inject/neighborhood budget).
-**Requirements**: COST-01 (per-write + per-recall token cost measured against baseline), COST-02 (levers tuned for a measured net reduction with no accuracy regression), COST-03 (savings vs competitors stated defensibly with sources)
+**Progressive-disclosure evaluation (founder-directed 2026-06-20):** both competitors lead with **progressive-disclosure retrieval** as their token mechanism — claude-mem's `search`(compact index)→`timeline`→`get_observations`(detail on demand, ~10x claim), MemPalace's L0→L3 layered load. recense uses a *different* strategy (schema-prior compression + bounded budgets). This phase **evaluates** progressive disclosure (likely in the MCP/recall surface) head-to-head against recense's current strategy and **adopts it only if the harness shows a real token win with no accuracy loss** — measured, not on faith (baseline-first discipline). Declining is a valid outcome if schema-prior compression already wins.
+**Requirements**: COST-01 (per-write + per-recall token cost measured against baseline), COST-02 (levers tuned for a measured net reduction with no accuracy regression), COST-03 (savings vs competitors stated defensibly with sources), COST-04 (progressive-disclosure evaluated vs schema-prior compression; adopted only on a measured token win)
 **Depends on:** Phase 40 (baseline). Independent of Phase 41 — can run in parallel.
 **Success Criteria** (what must be TRUE):
   1. Token cost is measured per write (extract+judge) and per recall (inject), broken down by lever, against the Phase 40 baseline — COST-01
   2. Levers (`consolSkipThreshold`, inject budget, recall caps, v7.0 ranking/reflection wins) are tuned to a measured net token reduction with no accuracy regression on the harness — COST-02
-  3. The token-efficiency claim vs competitors (e.g. mem0's published savings) is stated with both recense's reproduced number and the cited competitor figure — no inflated comparison — COST-03
+  3. The token-efficiency claim vs competitors (e.g. mem0's ~90% / claude-mem's ~10x retrieval savings) is stated with both recense's reproduced number and the cited competitor figure — no inflated comparison — COST-03
+  4. Progressive-disclosure retrieval (index-first → detail-on-demand) is benchmarked against recense's schema-prior compression on the token axis; adopted into the recall/MCP surface only if it shows a measured token win with no accuracy regression, else explicitly declined with the numbers — COST-04
 
 **Plans:** 0 plans (run `/gsd-plan-phase 42`)
 
