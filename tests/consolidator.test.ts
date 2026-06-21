@@ -458,6 +458,24 @@ class CandidateCapturingProvider extends MockModelProvider {
 }
 
 describe('DEDUP-01: embed-on-mint intra-pass visibility', () => {
+  // WR-02: pin RECENSE_TYPED_EXTRACTION_MODE so this suite's extraction path is
+  // deterministic regardless of ambient shell state or cross-suite env leakage.
+  // The generateScript provides bare-array JSON, which only parses on the
+  // non-typed-extraction path; a leaked 'merged'/'separate' value would route to
+  // parseMergedExtraction, yield zero claims, and silently break the regression guard.
+  let savedTypedMode: string | undefined;
+  beforeEach(() => {
+    savedTypedMode = process.env['RECENSE_TYPED_EXTRACTION_MODE'];
+    delete process.env['RECENSE_TYPED_EXTRACTION_MODE'];
+  });
+  afterEach(() => {
+    if (savedTypedMode === undefined) {
+      delete process.env['RECENSE_TYPED_EXTRACTION_MODE'];
+    } else {
+      process.env['RECENSE_TYPED_EXTRACTION_MODE'] = savedTypedMode;
+    }
+  });
+
   it('same contradiction pair in ONE pass yields tombstoned>=1 after embed-on-mint fix', async () => {
     const h = makeHarness();
 
