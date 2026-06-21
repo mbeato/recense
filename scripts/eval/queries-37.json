@@ -1,0 +1,227 @@
+{
+  "_meta": {
+    "note": "Phase 37 Wave 3 predicate-balanced single-hop query set (v1, D-07). Each query derived from the spike scratch.db typed edges (real edges extracted from Max's actual episodes). Anchors and golds are real node values present in the spike graph. Hi/mid queries authored blind to the graph (question-first, then reachability confirmed). Lo controls drawn from confirmed-reachable chains. Founder sign-off required before the precision gate runs (D-05).",
+    "K_source": "recallNeighborhoodBudget=20 (src/lib/config.ts) — measured from live recall, not chosen",
+    "K": 20,
+    "db_source": "spike 004 scratch.db — real typed edges from Max's episodes",
+    "predicate_version": "v1 single-hop (D-07)"
+  },
+  "queries": [
+    {
+      "id": "q01",
+      "dilution": "hi",
+      "anchor": "haiku",
+      "predicate_path": ["built_by"],
+      "gold": "anthropic",
+      "question": "Who built Haiku?",
+      "note": "hi: authored blind. Haiku is the Claude Haiku model built by Anthropic. Reachability confirmed: edge haiku|built_by|anthropic (w=1.0) in spike DB."
+    },
+    {
+      "id": "q02",
+      "dilution": "hi",
+      "anchor": "text-embedding-3-small",
+      "predicate_path": ["built_by"],
+      "gold": "openai",
+      "question": "Who built the text-embedding-3-small model?",
+      "note": "hi: authored blind. text-embedding-3-small is the OpenAI embedding model used by recense. Reachability confirmed: edge text-embedding-3-small|built_by|openai in spike DB."
+    },
+    {
+      "id": "q03",
+      "dilution": "hi",
+      "anchor": "max",
+      "predicate_path": ["works_on"],
+      "gold": "recense",
+      "question": "What project is Max currently working on?",
+      "note": "hi: authored blind. Max is the founder of recense. Reachability confirmed: edge max|works_on|recense (w=2.0) in spike DB."
+    },
+    {
+      "id": "q04",
+      "dilution": "mid",
+      "anchor": "sleep pass",
+      "predicate_path": ["works_on"],
+      "gold": "judge",
+      "question": "What does the sleep pass work on?",
+      "note": "mid: authored blind. The sleep pass (offline consolidation) works on the judge model evaluation. Reachability confirmed: edge sleep pass|works_on|judge in spike DB."
+    },
+    {
+      "id": "q05",
+      "dilution": "hi",
+      "anchor": "app.js",
+      "predicate_path": ["part_of"],
+      "gold": "viz",
+      "question": "Which project is app.js a part of?",
+      "note": "hi: authored blind. app.js is the main file of the brain-memory viz. Reachability confirmed: edge app.js|part_of|viz (w=3.0) in spike DB."
+    },
+    {
+      "id": "q06",
+      "dilution": "mid",
+      "anchor": "readme.md",
+      "predicate_path": ["part_of"],
+      "gold": "brain-memory",
+      "question": "What project does README.md belong to?",
+      "note": "mid: authored blind. README.md is part of the brain-memory project. Reachability confirmed: edge readme.md|part_of|brain-memory (w=2.0) in spike DB."
+    },
+    {
+      "id": "q07",
+      "dilution": "hi",
+      "anchor": "judge",
+      "predicate_path": ["uses"],
+      "gold": "haiku",
+      "question": "What model does the judge use?",
+      "note": "hi: authored blind. The recense judge uses Haiku (Claude Haiku 4.5). Reachability confirmed: edge judge|uses|haiku (w=4.0, highest weight) in spike DB."
+    },
+    {
+      "id": "q08",
+      "dilution": "hi",
+      "anchor": "recense",
+      "predicate_path": ["uses"],
+      "gold": "openai",
+      "question": "What embedding provider does recense use?",
+      "note": "hi: authored blind. recense uses the OpenAI API for embeddings. Reachability confirmed: edge recense|uses|openai (w=3.0) in spike DB."
+    },
+    {
+      "id": "q09",
+      "dilution": "hi",
+      "anchor": "qwen3.6:35b-a3b",
+      "predicate_path": ["depends_on"],
+      "gold": "ollama",
+      "question": "What does the Qwen 3.6 35B model depend on to run locally?",
+      "note": "hi: authored blind. The Qwen 3.6 35B MoE model runs via Ollama on the local machine. Reachability confirmed: edge qwen3.6:35b-a3b|depends_on|ollama (w=2.0) in spike DB."
+    },
+    {
+      "id": "q10",
+      "dilution": "mid",
+      "anchor": "local judge",
+      "predicate_path": ["depends_on"],
+      "gold": "modelprovider seam",
+      "question": "What interface does the local judge depend on?",
+      "note": "mid: authored blind. The local judge was wired through the ModelProvider seam in brain-memory. Reachability confirmed: edge local judge|depends_on|modelprovider seam in spike DB."
+    },
+    {
+      "id": "q11",
+      "dilution": "hi",
+      "anchor": "com.brain-memory.sleep-pass",
+      "predicate_path": ["runs_on"],
+      "gold": "launchd",
+      "question": "What process manager does the brain-memory sleep-pass service run on?",
+      "note": "hi: authored blind. The sleep pass launchd service is managed by launchd on macOS. Reachability confirmed: edge com.brain-memory.sleep-pass|runs_on|launchd (w=3.0) in spike DB."
+    },
+    {
+      "id": "q12",
+      "dilution": "mid",
+      "anchor": "brain-memory",
+      "predicate_path": ["runs_on"],
+      "gold": "node",
+      "question": "What runtime does brain-memory run on?",
+      "note": "mid: authored blind. brain-memory is a Node.js application. Reachability confirmed: edge brain-memory|runs_on|node (w=2.0) in spike DB."
+    },
+    {
+      "id": "q13",
+      "dilution": "hi",
+      "anchor": "brain-memory",
+      "predicate_path": ["located_in"],
+      "gold": "~/brain-memory",
+      "question": "Where is the brain-memory project located on the filesystem?",
+      "note": "hi: authored blind. brain-memory lives at ~/brain-memory on Max's machine. Reachability confirmed: edge brain-memory|located_in|~/brain-memory in spike DB."
+    },
+    {
+      "id": "q14",
+      "dilution": "lo",
+      "anchor": "app.vtxathlete.com",
+      "predicate_path": ["located_in"],
+      "gold": "vtxathlete.com",
+      "question": "What domain is app.vtxathlete.com located in?",
+      "note": "lo control: confirmed-reachable chain. app.vtxathlete.com is a subdomain of vtxathlete.com. Reachability confirmed: edge app.vtxathlete.com|located_in|vtxathlete.com in spike DB."
+    },
+    {
+      "id": "q15",
+      "dilution": "hi",
+      "anchor": "recense",
+      "predicate_path": ["integrates_with"],
+      "gold": "obsidian",
+      "question": "What note-taking tool does recense integrate with?",
+      "note": "hi: authored blind. recense integrates with Obsidian via the obsidian-adapter. Reachability confirmed: edge recense|integrates_with|obsidian in spike DB."
+    },
+    {
+      "id": "q16",
+      "dilution": "mid",
+      "anchor": "ptc-mcp",
+      "predicate_path": ["integrates_with"],
+      "gold": "claude code",
+      "question": "What tool does the ptc-mcp server integrate with?",
+      "note": "mid: authored blind. The ptc-mcp server is an MCP server that integrates with Claude Code. Reachability confirmed: edge ptc-mcp|integrates_with|claude code in spike DB."
+    },
+    {
+      "id": "q17",
+      "dilution": "hi",
+      "anchor": "ingest-cli",
+      "predicate_path": ["supersedes"],
+      "gold": "sleep.js",
+      "question": "What did ingest-cli replace in the brain-memory project?",
+      "note": "hi: authored blind. The ingest-cli binary superseded the older sleep.js script. Reachability confirmed: edge ingest-cli|supersedes|sleep.js in spike DB."
+    },
+    {
+      "id": "q18",
+      "dilution": "lo",
+      "anchor": "text-embedding-3-large",
+      "predicate_path": ["supersedes"],
+      "gold": "text-embedding-3-small",
+      "question": "Which embedding model does text-embedding-3-large replace?",
+      "note": "lo control: confirmed-reachable chain. text-embedding-3-large superseded text-embedding-3-small as the higher-quality OpenAI embedding model. Reachability confirmed: edge text-embedding-3-large|supersedes|text-embedding-3-small in spike DB."
+    },
+    {
+      "id": "q19",
+      "dilution": "hi",
+      "anchor": "max",
+      "predicate_path": ["prefers"],
+      "gold": "cold-dm",
+      "question": "What outreach method does Max prefer?",
+      "note": "hi: authored blind. Max prefers cold-dm as outreach (documented in CLAUDE.md voice profile). Reachability confirmed: edge max|prefers|cold-dm in spike DB."
+    },
+    {
+      "id": "q20",
+      "dilution": "mid",
+      "anchor": "max",
+      "predicate_path": ["prefers"],
+      "gold": "decisive high-leverage action",
+      "question": "What style of action does Max prefer?",
+      "note": "mid: authored blind. Max prefers decisive high-leverage action per documented working style. Reachability confirmed: edge max|prefers|decisive high-leverage action in spike DB."
+    },
+    {
+      "id": "q21",
+      "dilution": "hi",
+      "anchor": "recense",
+      "predicate_path": ["evaluated"],
+      "gold": "graphiti",
+      "question": "What competing memory system did recense evaluate?",
+      "note": "hi: authored blind. recense evaluated Graphiti as a competing graph-based memory system. Reachability confirmed: edge recense|evaluated|graphiti (w=2.0) in spike DB."
+    },
+    {
+      "id": "q22",
+      "dilution": "mid",
+      "anchor": "longmemeval",
+      "predicate_path": ["evaluated"],
+      "gold": "knowledge-update",
+      "question": "What capability dimension did LongMemEval evaluate?",
+      "note": "mid: authored blind. LongMemEval evaluated the knowledge-update dimension (KU correctness). Reachability confirmed: edge longmemeval|evaluated|knowledge-update (w=3.0) in spike DB."
+    },
+    {
+      "id": "q23",
+      "dilution": "hi",
+      "anchor": "recense",
+      "predicate_path": ["configured_with"],
+      "gold": "sleep.env",
+      "question": "What environment file configures recense?",
+      "note": "hi: authored blind. recense is configured with sleep.env for model keys and settings. Reachability confirmed: edge recense|configured_with|sleep.env (w=2.0) in spike DB."
+    },
+    {
+      "id": "q24",
+      "dilution": "mid",
+      "anchor": "config.ts",
+      "predicate_path": ["configured_with"],
+      "gold": "candidatek",
+      "question": "What retrieval parameter is config.ts configured with?",
+      "note": "mid: authored blind. config.ts defines the candidateK retrieval parameter (top-K candidates for retrieval). Reachability confirmed: edge config.ts|configured_with|candidatek (w=2.0) in spike DB."
+    }
+  ]
+}
