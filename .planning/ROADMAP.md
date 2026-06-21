@@ -241,6 +241,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 **Depends on**: Phase 28 (consolidation + corpus pipeline live)
 **Requirements**: INGEST-03
 **Success Criteria** (what must be TRUE):
+
   1. A user runs a manual spike: an agent surveys one real repo and emits summarized observations as episodes through the existing pipeline — the spike completes without new runtime deps
   2. After a sleep pass, the resulting facts are inspectable: ≥5 facts per surveyed area (architecture, conventions, decisions) are judged as genuine semantic knowledge, not raw-code noise or structural trivia like "file X imports Y"
   3. At least one schema is induced from the surveyed project's facts — the abstraction layer fires, not just fact storage
@@ -258,6 +259,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 **Depends on**: Phase 29 (spike calibration — prompt shape + quality gate proven)
 **Requirements**: INGEST-01, INGEST-02, INGEST-04
 **Success Criteria** (what must be TRUE):
+
   1. A user runs `recense ingest-project <dir>` on an unexplored repo and it completes — episodes are written to the DB; no online path is blocked; the command returns promptly (ingestion runs offline)
   2. After a sleep pass, the ingested facts are retrievable via `recense recall` and carry the correct `[scope]` attribution matching the project
   3. The brain produces at least one schema induced from the surveyed project — the same abstraction pipeline that fires on conversation turns fires on survey episodes
@@ -283,6 +285,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 **Depends on**: Phase 30 (ingest-project command exists; SourceAdapter seam extended)
 **Requirements**: DOCING-01, REINGEST-01, REINGEST-02
 **Success Criteria** (what must be TRUE):
+
   1. A user can point ingestion at a project dir and the project's README / docs/*.md / CLAUDE.md are ingested as episodes with origin=`observed` and project scope — without configuring an Obsidian vault
   2. Re-running ingestion on a project where a key fact changed results in the existing belief being updated (tombstone + new node via reconsolidation) rather than a duplicate — a second run on an unchanged project produces zero new consolidated beliefs
   3. The per-project cursor means only changed/new content triggers re-survey — a full re-survey is not triggered when the majority of project content is unchanged
@@ -297,13 +300,13 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 - [x] 31-02-PLAN.md — per-project cursor: git HEAD/dirty + mtime fingerprint, SemanticStore `cursor:project:<scope>` skip-gate, --force/--dry-run/--db discipline, + D-07 dup-rate reconciliation gate test (REINGEST-01, REINGEST-02)
 
-
 ### Phase 32: Project Recall + Auto-Corpus
 
 **Goal**: Users can surface a specific project's ingested knowledge instantly via scoped recall, and a newly-onboarded project is immediately browsable in the reader — the corpus doc is auto-promoted and generated as part of ingestion, not as a separate manual step.
 **Depends on**: Phase 30 (project facts + schemas exist), Phase 31 (corpus stays current through re-ingest)
 **Requirements**: RECALL-01, RECALL-02
 **Success Criteria** (what must be TRUE):
+
   1. A user can run scoped recall for a project and receive only facts attributed to that project — facts from other projects are excluded from the result set
   2. After `recense ingest-project` completes and the sleep pass runs, the project's schema-anchored corpus doc is automatically promoted and generated — the user can open it in the Reader without a separate `recense generate-doc` step
   3. The auto-generated corpus doc covers the project's induced schemas as thesis entries with cited evidence from the surveyed facts — it reads as a coherent project overview, not a raw observation list
@@ -329,6 +332,7 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 **Depends on:** Standalone — NOT the v6.0 project-onboarding phases. Depends only on the already-live consolidation/judge/sink machinery (consolidation/update-decision.ts, sink.ts), semantic-store write primitive, and the embedder.
 
 **Scope / deliverables:**
+
 1. `recense remember "<fact>" [--scope <s>]` CLI subcommand (new `remember-cli.ts`, wired into `recense.ts` dispatcher). Stores text VERBATIM — no lossy extraction.
 2. Synchronous reconsolidation ("mini sleep-pass"): embed → retrieve neighbor beliefs → judge (reuse `update-decision.ts` + `sink.ts`) → update-in-place on contradiction, else insert. ~1 judge LLM call/remember (subscription-billed, ~$0 marginal, ~2–5s). This is the differentiator vs. appending to a flat file.
 3. Mark fact curated/evidence-backed: decay never kills it; sleep pass never re-extracts/mangles it. Reuse existing evidence-backed/source-type fields; add a column only if needed.
@@ -342,9 +346,11 @@ recense onboards a fresh/unexplored project into the brain on demand via an agen
 
 Plans:
 **Wave 1**
+
 - [x] 33-01-PLAN.md — `recense remember` engine + CLI: verbatim curated store + synchronous mini-pass reconsolidation (embed → top-k → judge → D-04 force-reconcile, else insert) + D-03 high-resistance seed + scope-stamp + lock + dispatcher + unit tests (REMEMBER-01, REMEMBER-02)
 
 **Wave 2** *(depends on 33-01)*
+
 - [x] 33-02-PLAN.md — native-memory cutover: D-06 global CLAUDE.md directive + D-07 settings.json kill-switch investigation + founder-gated one-time verbatim migration of the 12 `.md` files (write → D-08 value_hash verify → D-09 archive); `autonomous: false` (REMEMBER-03)
 
 ### Phase 34: Visual Polish Pass
@@ -352,12 +358,14 @@ Plans:
 **Goal:** The four live viz surfaces — Reader (prose docs), Corpus 2D graph, Detail panel/page, and the Brain HUD/controls (search/stats/topics/trace/buttons) — are cleaned of rough edges along two axes only: **spacing/alignment consistency** and **states & transitions** (loading/empty/error states, hover/focus feedback, smooth transitions). This is a polish pass, NOT a redesign — composition/structure is untouched; the diff is CSS + state-handling, not layout re-architecture.
 
 **Scope (cross-surface, all four):**
+
 - **Spacing/alignment** — consistent padding/margin scale, no cramped/misaligned/uneven elements on the flagged surfaces.
 - **States & transitions** — every async surface has explicit loading/empty/error states (no blank or janky gaps); interactive elements (buttons, fact-refs, graph nodes, list rows) have hover/focus feedback and smooth transitions.
 
 **Out of scope:** structural/composition changes, redesign, new screens, new features, any change to graph data/semantics.
 
 **Load-bearing constraints (founder-locked):**
+
 - **Palette** — muted rose/slate/mauve at rest; **amber reserved for activation/hover ONLY**. Do not reintroduce amber for non-activation states (ref the 27-04 staleness palette violation — `.fact-stale` had to be re-toned off amber).
 - **Density anchor** — the 3D brain overview density is founder-locked; no regression.
 - **Net-zero new runtime dependencies.**
@@ -376,10 +384,15 @@ Plans:
 
 Plans:
 **Wave 1**
+
 - [x] 34-01-PLAN.md — R1 sticky reader close + B2 HUD declutter + detail-spacing normalization (styles.css, index.html)
+
 **Wave 2** *(depends on 34-01 — shares styles.css/index.html)*
+
 - [x] 34-02-PLAN.md — corpus surface: B3 topics-hide + C1 icon button + C2 force tuning + loading/empty/error states (corpus.js, styles.css, index.html)
+
 **Wave 3** *(depends on 34-01 + 34-02)*
+
 - [x] 34-03-PLAN.md — dist rebuild + VIZ-POLISH-03 guard greps + founder visual checkpoint (autonomous: false)
 
 ## Phase Details — v7.0 Retrieval & Reasoning Depth
@@ -396,11 +409,13 @@ recense deepens the two weakest edges of the engine — *how it ranks what it re
 **Requirements**: RANK-01 (strength/recency term fused into ranking, tunable, LLM-free), RANK-02 (eval-backed: no regression + a token or precision win)
 **Depends on:** Standalone within v7.0 — builds on the live retrieval/recall engine (Phases 3/17/18)
 **Success Criteria** (what must be TRUE):
+
   1. Recall fuses a strength/recency signal (`effective_s` + `last_access`) with the existing cosine+BM25 RRF behind a tunable weight; the online path stays LLM-free — RANK-01
   2. On the existing KU/LongMemEval replay harness, blended ranking shows no regression vs. the cosine+BM25 baseline and delivers at least one of: higher top-k precision, or equal quality at a smaller inject budget (genuine token saving) — RANK-02
   3. The strength/recency term never overrides scope rules and never resurfaces tombstoned nodes (RET-02 invariant holds)
 
 **Plans:** 1/2 plans executed
+
 - [x] 35-01-PLAN.md — Mechanism (RANK-01): weighted rrfFuse + pool-only strength list in hybridTopk + rankStrengthWeight knob (dark default), wired through retrieveRanked; T1..T5 + no-self-strengthen tests
 - [ ] 35-02-PLAN.md — Eval (RANK-02): KU harness queryText fix + --strength-weight flags + w-sweep driver; paid baseline+sweep run, winning w + D-06/D-07 verdict
 
@@ -410,6 +425,7 @@ recense deepens the two weakest edges of the engine — *how it ranks what it re
 **Requirements**: TYPED-SPIKE-01 (typed extraction measurably lifts multi-hop recall, or is honestly shown not to)
 **Depends on:** Standalone within v7.0 — runs against a scratch DB, no change to the live graph
 **Success Criteria** (what must be TRUE):
+
   1. A spike extracts typed predicates from a sample of real episodes on a scratch DB — no new runtime deps, the live graph untouched
   2. A held-out multi-hop query set (e.g. "where is X" requiring entity→entity→attribute hops) is answered measurably better with typed edges than with the current untyped `relation` edges — or shown not to, with numbers
   3. Written calibration notes: predicate vocabulary (closed set vs open), extraction prompt shape, recall-traversal sketch, and a **founder-owned go/no-go** for Phase 37
@@ -422,6 +438,7 @@ recense deepens the two weakest edges of the engine — *how it ranks what it re
 **Requirements**: TYPED-01 (typed edge model + offline typed extraction), TYPED-02 (typed-path recall, fewer tokens at equal/better quality)
 **Depends on:** **Phase 36 go/no-go — this phase does not start on a no-go.** Builds on the live consolidation extraction + edge model.
 **Success Criteria** (what must be TRUE):
+
   1. The schema + `edge` model carry predicate types; consolidation extraction emits typed edges through the offline pipeline (all LLM cost at sleep); graph stays source of truth — TYPED-01
   2. Recall assembles a typed relational path; multi-hop queries return a precise path with fewer tokens than the untyped-neighborhood baseline at equal-or-better answer quality on the harness — TYPED-02
   3. Self-confirmation guard intact: inferred output never mints or strengthens a typed edge
@@ -429,9 +446,17 @@ recense deepens the two weakest edges of the engine — *how it ranks what it re
 **Plans:** 4 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 37-01-PLAN.md — Wave 0 primitives: predicate vocab + parseTriples, getOutEdgesWithRel, predicateGlossThreshold config, offline gloss embeddings
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 37-02-PLAN.md — Extraction (TYPED-01): merged {facts,triples} prompt, consolidator typed-edge upsert (origin-guarded), mode switch
 - [ ] 37-03-PLAN.md — Recall traversal (TYPED-02): typedReach + matchPredicate, D-06 typed-path-OR-fallback augment, D-08 guard
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 37-04-PLAN.md — Build harness + gate (TYPED-02): 37-precision-harness, re-derived query set, D-05 founder sign-off, PRIMARY precision gate
 
 ### Phase 38: Stored Reflections / Derived Insights
@@ -440,6 +465,7 @@ Plans:
 **Requirements**: REFLECT-01 (offline reflection → inferred non-strengthening insight nodes), REFLECT-02 (recall surfaces insights, reducing compose tokens; falsified facts invalidate dependent insights)
 **Depends on:** Live schema induction (Phases 4/18); sequenced after Phase 37 (typed edges enrich reflection inputs but are not required)
 **Success Criteria** (what must be TRUE):
+
   1. The offline pass generates derived-insight nodes from schema clusters, stored with `origin=inferred`, `training_eligible=0`, and a confidence ceiling; they decay and never strengthen the facts they summarize (self-confirmation guard) — REFLECT-01
   2. Recall surfaces a relevant stored insight in place of (or ahead of) raw member facts where it answers the query, measurably reducing compose-time tokens on the harness with no quality regression — REFLECT-02
   3. Insights are regenerable/evictable like docs; a falsified or tombstoned underlying fact invalidates or flags the dependent insight (no stale-insight self-confirmation)
@@ -452,6 +478,7 @@ Plans:
 **Requirements**: WIKI-01 (browsable index over existing doc nodes), WIKI-02 (backlinks / "what links here" surfaced in the reader)
 **Depends on:** Phase 27/28 reader + corpus layer (live). Independent of 35–38 — can land in any order within v7.0; sequenced last only by convention. Pairs naturally with Phase 34 polish.
 **Success Criteria** (what must be TRUE):
+
   1. The reader exposes a browsable INDEX — a generated index doc and/or `/index` route that lists and links the live doc/landing nodes as a navigable entry point (the `research-wiki` "unindexed content doesn't compound" rule) — built over existing doc nodes, no new engine state — WIKI-01
   2. Viewing a doc (or atom) surfaces its **incoming** references ("referenced by" / what-links-here), not just outgoing cites — reusing the existing reverse-edge lookup (`idx_edge_dst`, `getInEdges`); the panel is read-only and adds no online LLM cost — WIKI-02
   3. No engine change: no new node/edge types required, no write-path mutation; the diff is reader/viz + a generated index doc. Self-confirmation guard untouched (index/backlink surfaces are read-only projections) — WIKI-03
@@ -475,6 +502,7 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
 **Requirements**: BENCH-01 (LOCOMO harness runs reproducibly on recense), BENCH-02 (baseline accuracy/latency/token recorded), BENCH-03 (competitor targets cited AND methodology-understood — no inflated/unsourced/misread numbers)
 **Depends on:** v7.0 complete (system under test is final). Gates Phases 41–43.
 **Success Criteria** (what must be TRUE):
+
   1. LOCOMO runs against recense reproducibly (scripted, re-runnable) and produces an accuracy score alongside the existing LongMemEval + KU harness — BENCH-01
   2. A written baseline records recense's current accuracy, retrieval latency (p50/p95 on the live ~7000-node brain), and token cost per write and per recall — BENCH-02
   3. The competitor numbers to beat (mem0, Zep/Graphiti, MemPalace on LOCOMO/DMR/LongMemEval) are documented with their published sources AND with a one-line note on what each number actually measures (e.g. MemPalace's 96.6% = raw-embedder mode, not architecture); every recense number is reproducible from a committed script — no unsourced, rounded-up, or methodology-misread figures (founder no-inflated-metrics rule, applied to reading competitors too) — BENCH-03
@@ -487,6 +515,7 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
 **Requirements**: PERF-01 (vector index replaces brute-force cosine, derived/rebuildable), PERF-02 (recall + SessionStart inject latency profiled and measurably improved vs the Phase 40 baseline), PERF-03 (no accuracy regression on the harness)
 **Depends on:** Phase 40 (baseline to measure against). Independent of Phase 42 — can run in parallel.
 **Success Criteria** (what must be TRUE):
+
   1. Recall nomination uses an ANN/vector index (`sqlite-vec` or HNSW) instead of brute-force cosine; the index is derived from node embeddings and rebuildable from the graph (never authoritative) — PERF-01
   2. Retrieval p50/p95 and SessionStart inject latency improve measurably vs the Phase 40 baseline on the live-scale brain; the online path remains LLM-free — PERF-02
   3. Accuracy on LOCOMO/LongMemEval/KU shows no regression vs baseline — a latency win that costs accuracy is rejected — PERF-03
@@ -500,6 +529,7 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
 **Requirements**: COST-01 (per-write + per-recall token cost measured against baseline), COST-02 (levers tuned for a measured net reduction with no accuracy regression), COST-03 (savings vs competitors stated defensibly with sources), COST-04 (progressive-disclosure evaluated vs schema-prior compression; adopted only on a measured token win)
 **Depends on:** Phase 40 (baseline). Independent of Phase 41 — can run in parallel.
 **Success Criteria** (what must be TRUE):
+
   1. Token cost is measured per write (extract+judge) and per recall (inject), broken down by lever, against the Phase 40 baseline — COST-01
   2. Levers (`consolSkipThreshold`, inject budget, recall caps, v7.0 ranking/reflection wins) are tuned to a measured net token reduction with no accuracy regression on the harness — COST-02
   3. The token-efficiency claim vs competitors (e.g. mem0's ~90% / claude-mem's ~10x retrieval savings) is stated with both recense's reproduced number and the cited competitor figure — no inflated comparison — COST-03
@@ -513,6 +543,7 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
 **Requirements**: GATE-01 (harness runs as an automated gate), GATE-02 (thresholds on all three axes block regressions)
 **Depends on:** Phases 40–42 (gates freeze whatever they achieved). Comes last.
 **Success Criteria** (what must be TRUE):
+
   1. The LOCOMO/LongMemEval/KU + latency + token harness runs as a scripted, automatable gate (CI or pre-merge), reproducibly — GATE-01
   2. The gate enforces thresholds on accuracy, latency (p50/p95), and token cost; a change that regresses any axis past its threshold fails visibly — GATE-02
   3. The gate's baseline numbers are the v8.0-final figures, and the gate is documented so the founder can re-baseline intentionally (not by silent drift) — GATE-03
