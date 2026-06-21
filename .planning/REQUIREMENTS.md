@@ -27,6 +27,14 @@
 - [ ] **RECALL-01**: A user can recall a specific project's ingested knowledge via **scoped recall** (`[scope]`-filtered).
 - [ ] **RECALL-02**: Onboarding **auto-promotes/generates the project's schema-anchored corpus doc** so a newly-onboarded project is immediately browsable in the reader.
 
+### VIZ-POLISH — Cross-surface visual polish (Phase 34, standalone)
+
+> Polish pass over the four live viz surfaces (Reader, Corpus 2D graph, Detail panel/page, Brain HUD/controls). Two axes only: spacing/alignment consistency and states & transitions. CSS + state-handling diff — no structural/composition redesign. Design contract: `phases/34-visual-polish-pass/34-UI-SPEC.md`.
+
+- [ ] **VIZ-POLISH-01**: Across all four surfaces, spacing/alignment follows a consistent scale — the cramped/misaligned/uneven elements the founder flagged (34-ROUGH-EDGES B2, C1, C2 + detail-spacing audit) are resolved, verified by a per-surface before/after visual review.
+- [ ] **VIZ-POLISH-02**: Every async/interactive surface has explicit loading, empty, and error states (no blank or abrupt gaps), and interactive elements have visible hover/focus feedback with smooth transitions (corpus state coverage + R1 sticky-on-scroll + B3 mode-state visibility).
+- [ ] **VIZ-POLISH-03**: No amber is introduced for non-activation states (rest stays muted rose/slate/mauve; amber reserved for activation/hover); the 3D brain density anchor is visually unchanged; the diff is CSS + state-handling only (no structural/composition change); `package.json` runtime deps unchanged.
+
 ## Future Requirements (deferred)
 
 - Continuous auto-watch re-ingest (vs manual `ingest-project` runs) — a watcher that re-surveys on project change.
@@ -54,10 +62,14 @@ Each requirement maps to exactly one phase. Filled by the roadmapper.
 | REINGEST-02 | Phase 31 | Complete |
 | RECALL-01 | Phase 32 | Pending |
 | RECALL-02 | Phase 32 | Pending |
+| VIZ-POLISH-01 | Phase 34 | Pending |
+| VIZ-POLISH-02 | Phase 34 | Pending |
+| VIZ-POLISH-03 | Phase 34 | Pending |
 
 **Coverage:**
 - v6.0 requirements: 9 total (INGEST 4 · DOCING 1 · REINGEST 2 · RECALL 2)
-- Mapped to phases: 9
+- Phase 34 (standalone polish): 3 (VIZ-POLISH)
+- Mapped to phases: 12
 - Unmapped: 0
 
 ---
