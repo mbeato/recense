@@ -16,17 +16,26 @@ const ICON_BOOK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" s
 // of internal gyri folds, and a small cerebellum/brainstem nub at the lower-back (right).
 const ICON_BRAIN = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16c-2 0-3-1.6-3-3.4 0-1.6 1-3 2.4-3.4C4.6 5.6 7.4 3 11 3c4.4 0 7.6 3.2 7.6 7 0 1 .4 1.6 1 2.2.8.8 1.2 1.6 1.2 2.6 0 1.6-1.4 3-3.2 3"/><path d="M17.6 17.8c.4 1.6-.6 3.2-2.4 3.2-1.4 0-2.4-1-2.4-2.4"/><path d="M7 10c1.2.4 1.8 1.4 1.8 2.6"/><path d="M12 8c1.4.6 2 1.8 2 3.4"/></svg>`;
 
-function makeLabelSprite(THREE, text, color) {
-  const pad = 6, font = 28;
-  const c = document.createElement('canvas');
-  const cx = c.getContext('2d');
-  cx.font = `${font}px -apple-system, system-ui, sans-serif`;
-  const w = Math.ceil(cx.measureText(text).width) + pad * 2;
-  c.width = w; c.height = font + pad * 2;
-  cx.font = `${font}px -apple-system, system-ui, sans-serif`;
+const LABEL_FONT = 'px -apple-system, system-ui, sans-serif';
+const LABEL_PAD = 6;
+const LABEL_FONT_PX = 28;
+
+// Paint `text` in `color` onto `canvas`, sizing it to fit. Shared by initial
+// creation and hover recolor so the two stay in sync. Returns the canvas.
+function paintLabelCanvas(canvas, text, color) {
+  const cx = canvas.getContext('2d');
+  cx.font = `${LABEL_FONT_PX}${LABEL_FONT}`;
+  const w = Math.ceil(cx.measureText(text).width) + LABEL_PAD * 2;
+  canvas.width = w; canvas.height = LABEL_FONT_PX + LABEL_PAD * 2;
+  cx.font = `${LABEL_FONT_PX}${LABEL_FONT}`;
   cx.fillStyle = color;
   cx.textBaseline = 'middle';
-  cx.fillText(text, pad, c.height / 2);
+  cx.fillText(text, LABEL_PAD, canvas.height / 2);
+  return canvas;
+}
+
+function makeLabelSprite(THREE, text, color) {
+  const c = paintLabelCanvas(document.createElement('canvas'), text, color);
   const tex = new THREE.CanvasTexture(c);
   tex.minFilter = THREE.LinearFilter;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
@@ -34,6 +43,15 @@ function makeLabelSprite(THREE, text, color) {
   const h = NODE_R * 1.4, aspect = c.width / c.height;
   sprite.scale.set(h * aspect, h, 1);
   return sprite;
+}
+
+// Recolor an existing label sprite by redrawing its canvas texture. Net-zero:
+// reuses the sprite's own canvas (sprite.material.map.image) and flags the
+// texture dirty so THREE re-uploads it on the next frame.
+function setSpriteColor(sprite, text, color) {
+  if (!sprite || !sprite.material || !sprite.material.map) return;
+  paintLabelCanvas(sprite.material.map.image, text, color);
+  sprite.material.map.needsUpdate = true;
 }
 
 export function initCorpus(ctx) {
@@ -88,15 +106,14 @@ export function initCorpus(ctx) {
       mesh.rotation.x = -Math.PI / 2;
       mesh.userData.corpusId = node.id;
       corpusGroup.add(mesh);
+      const spriteText = node.slug || node.label || node.id;
       const entry = {
         id: node.id,
         slug: node.slug || node.id,
-        label: node.label || node.slug || node.id,
         mesh,
-        basePos: new THREE.Vector3(p.x, PLANE_Y, p.z),
+        labelText: spriteText,
       };
       nodeMeshes.push(entry);
-      const spriteText = node.slug || node.label || node.id;
       const sprite = makeLabelSprite(THREE, spriteText, LABEL_REST);
       sprite.position.set(p.x, PLANE_Y + NODE_R * 1.6, p.z);
       corpusGroup.add(sprite);
@@ -167,9 +184,15 @@ export function initCorpus(ctx) {
   }
   function setHover(nm) {
     if (hovered === nm) return;
-    if (hovered) hovered.mesh.material.color.set(NODE_REST);
+    if (hovered) {
+      hovered.mesh.material.color.set(NODE_REST);
+      setSpriteColor(hovered.sprite, hovered.labelText, LABEL_REST);
+    }
     hovered = nm;
-    if (hovered) hovered.mesh.material.color.set(NODE_HOVER);
+    if (hovered) {
+      hovered.mesh.material.color.set(NODE_HOVER);
+      setSpriteColor(hovered.sprite, hovered.labelText, LABEL_HOVER);
+    }
     if (dom) dom.style.cursor = hovered ? 'pointer' : '';
   }
   function openDocReader(nm) {
