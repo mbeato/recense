@@ -13,6 +13,10 @@
  *   npm run build && node scripts/eval/replay-ku-harness.cjs --dry-run --out /tmp/replay-ku-dry.json
  *   npm run build && OPENAI_API_KEY=... ANTHROPIC_API_KEY=... node scripts/eval/replay-ku-harness.cjs
  *
+ * Sweep mode (Phase 35-02 perf): consolidate once per case, sweep retrieve+answer+score per weight.
+ *   node scripts/eval/replay-ku-harness.cjs --sweep-weights 0,0.25,0.5,1.0,2.0
+ *   Writes scripts/eval/results/35-sweep-w<w>.json for each weight (same schema as single-weight run).
+ *
  * Load-bearing output: judge-engagement (tombstone count + contradict-verdict count +
  * duplicate-mint count) so 26-07's RETR-02 gate is measurable.
  * A KU-score bump alone is insufficient — belief-correction must be confirmed via the
@@ -43,6 +47,15 @@ const OUT              = arg('--out', 'scripts/eval/results/replay-ku-PENDING.js
 // --strength-weight <w>: RRF strength weight passed to retrieveRanked → hybridTopk (Phase 35 RANK-02).
 // Default 0 (dark) — identical to current behaviour. Sweepable via 35-strength-sweep.cjs.
 const STRENGTH_WEIGHT = parseFloat(arg('--strength-weight', '0')) || 0;
+
+// --sweep-weights <csv>: Phase 35-02 consolidate-once sweep mode.
+// When set, consolidation runs ONCE per case; only retrieve+answer+score re-run per weight.
+// Writes one results file per weight: scripts/eval/results/35-sweep-w<w>.json
+// Ignored in --dry-run mode (dry-run uses the legacy single-weight path).
+const sweepWeightsArg = arg('--sweep-weights', null);
+const SWEEP_WEIGHTS = sweepWeightsArg
+  ? sweepWeightsArg.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n))
+  : null;
 
 // ---- compiled engine modules (require npm run build first) ------------------
 // Failing requires here mean `npm run build` has not been run yet.
@@ -98,16 +111,19 @@ function parseJsonl(filePath) {
 
 // ---- scratch DB factory (T-14-DB) -------------------------------------------
 // Creates a unique temp-file SQLite DB; never touches the live DB path (T-14-DB).
+// rankStrengthWeight in the returned config is used only when building the RetrievalEngine
+// via buildEngineForWeight(); the DB itself (nodes, edges, embeddings) is weight-independent.
 
-function makeScratchDb() {
+function makeScratchDb(rankStrengthWeight) {
+  const w = (rankStrengthWeight !== undefined) ? rankStrengthWeight : STRENGTH_WEIGHT;
   const dbPath = path.join(
     os.tmpdir(),
     `replay-ku-eval-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
   );
   const db = new Database(dbPath);
   initSchema(db);
-  // rankStrengthWeight: inject --strength-weight so engine.retrieveRanked → hybridTopk reads it.
-  const config = { ...DEFAULT_CONFIG, dbPath, rankStrengthWeight: STRENGTH_WEIGHT };
+  // rankStrengthWeight: inject so engine.retrieveRanked → hybridTopk reads it.
+  const config = { ...DEFAULT_CONFIG, dbPath, rankStrengthWeight: w };
   const episodes = new EpisodicStore(db, realClock, config);
   return {
     db,
@@ -119,6 +135,20 @@ function makeScratchDb() {
       try { fs.unlinkSync(dbPath); } catch {}
     },
   };
+}
+
+// ---- build a RetrievalEngine over an existing scratch DB at a given weight --
+// Used by the sweep path: same consolidated DB, different rankStrengthWeight per call.
+// The DB is read-only from the engine's perspective (spec §8 / retrieveRanked is pure read).
+
+function buildEngineForWeight(scratch, w) {
+  const config = { ...scratch.config, rankStrengthWeight: w };
+  const retriever = new CandidateRetriever(scratch.db);
+  const store     = new SemanticStore(scratch.db, realClock, config);
+  const strength  = new StrengthDecayManager(scratch.db, realClock, config);
+  const gate      = new AllocationGate(config);
+  const traceSink = new NoopActivationTraceSink();
+  return new RetrievalEngine(scratch.db, realClock, config, retriever, store, strength, gate, traceSink);
 }
 
 // ---- judge-engagement counters (queried from consolidation_event after pass) -
@@ -159,7 +189,7 @@ function queryJudgeEngagement(db) {
  * Returns a skeleton result with zero engagement counts.
  */
 function runDryRunCase(kuCase, claims) {
-  const scratch = makeScratchDb();
+  const scratch = makeScratchDb(STRENGTH_WEIGHT);
   try {
     for (let i = 0; i < claims.length; i++) {
       scratch.episodes.append({
@@ -188,10 +218,125 @@ function runDryRunCase(kuCase, claims) {
 }
 
 /**
- * Real run: ingest cached claims as episodes via a replayExtract seam, call
- * runConsolidation once (embed+judge for real; no granite re-extraction), then
- * embed the question and retrieve via retrieveRanked. Score KU correctness with
- * GPT-4o-2024-08-06 and capture judge-engagement.
+ * Consolidate one case: ingest claims, run runConsolidation ONCE, capture judge-engagement,
+ * embed the question. Returns the live scratch handle (NOT yet cleaned up), queryVec, and
+ * engagement counters. The caller is responsible for calling scratch.cleanup() after all
+ * weights for this case have been evaluated.
+ *
+ * This is the shared first stage for both the legacy single-weight path and the sweep path.
+ * runConsolidation is called exactly once here — it must NOT appear in evaluateAtWeight.
+ */
+async function consolidateCase(kuCase, claims, embedder, anthropicClient) {
+  const scratch = makeScratchDb(STRENGTH_WEIGHT);
+
+  // Step 1: ingest each cached claim value as its own episode.
+  // replayExtract (below) routes the extract head to return exactly this value
+  // so granite/Ollama is never called. Embed+judge run for real.
+  for (let i = 0; i < claims.length; i++) {
+    scratch.episodes.append({
+      content:    claims[i].value,
+      origin:     'observed',
+      salience:   1.0,
+      hard_keep:  1,
+      role:       'user',
+      session_id: `replay-${kuCase.question_id}-c${i}`,
+      source:     'conversation',
+    });
+  }
+
+  // Step 2: run ONE consolidation pass with the replay extract seam.
+  // Each episode's content IS its claim value — the extractor returns exactly
+  // [{type:'fact', value: content}] for each, so granite is never invoked.
+  // Embed and judge still run for real (the load-bearing RETR-02 signals).
+  // IMPORTANT: this call must not be moved inside any per-weight loop.
+  await runConsolidation(
+    scratch.db,
+    scratch.dbPath,
+    process.env,
+    () => {},  // no-op log callback
+    {
+      replayExtract(content) {
+        // content is the episode content (= the claim value we appended above).
+        // Return it as a single fact claim — no re-extraction, no LLM generate call.
+        return [{ type: 'fact', value: content }];
+      },
+    }
+  );
+
+  // Step 3: count judge-engagement AFTER the pass.
+  const { tombstones, contradicts, duplicateMints } = queryJudgeEngagement(scratch.db);
+
+  // Step 4: embed the question once (weight-independent).
+  const [queryVec] = await embedder.embed([kuCase.question]);
+
+  return { scratch, queryVec, tombstones, contradicts, duplicateMints };
+}
+
+/**
+ * Evaluate one (case, weight) pair over an already-consolidated scratch DB.
+ * Builds a fresh RetrievalEngine with the given rankStrengthWeight, runs retrieveRanked,
+ * generates the headless answer, scores KU correctness. Pure read on the DB.
+ *
+ * MUST NOT call runConsolidation or scratch.cleanup() — those are caller's responsibility.
+ */
+async function evaluateAtWeight(consolidated, w, kuCase, anthropicClient) {
+  const { scratch, queryVec } = consolidated;
+  const engine = buildEngineForWeight(scratch, w);
+
+  // Pass kuCase.question as queryText so retrieveRanked routes through hybridTopk
+  // (Pitfall 3 fix — without this arg the pure-cosine topk branch is taken and the
+  // strength fusion from rankStrengthWeight / RANK-02 is never exercised).
+  const results = engine.retrieveRanked(
+    queryVec,
+    scratch.config.rankedRetrievalK,
+    scratch.config.rankedRetrievalFloor,
+    kuCase.question,
+  );
+
+  const retrievedText = results.length > 0
+    ? results.map(r => `- ${r.value}`).join('\n')
+    : '(no relevant memory entries found)';
+
+  // Generate answer with Haiku (cheap model; GPT-4o reserved for scorer below).
+  const answerPrompt = `I will give you several memory entries from conversations between you and a user. Please answer the question based on the relevant memory entries.\n\n\nMemory Entries:\n\n${retrievedText}\nQuestion: ${kuCase.question}\nAnswer:`;
+  const answerResponse = await anthropicClient.messages.create({
+    model:      DEFAULT_CONFIG.anthropicModel,  // claude-haiku-4-5-20251001
+    max_tokens: 256,
+    messages:   [{ role: 'user', content: answerPrompt }],
+  });
+  const hypothesis = answerResponse.content
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('')
+    .trim();
+
+  // Score KU correctness with Haiku (autoeval_label 0/1).
+  const scorerPrompt = `You are evaluating whether a predicted answer is correct for a knowledge-update question.
+Question: ${kuCase.question}
+Gold answer: ${kuCase.answer}
+Predicted answer: ${hypothesis}
+Reply with exactly one word: "correct" or "incorrect".`;
+
+  const scorerResponse = await anthropicClient.messages.create({
+    model:      'claude-haiku-4-5-20251001',  // keep cheap; only used here for KU scoring
+    max_tokens: 8,
+    messages:   [{ role: 'user', content: scorerPrompt }],
+  });
+  // autoeval_label: 1 = correct, 0 = incorrect
+  const verdict = scorerResponse.content
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('')
+    .trim()
+    .toLowerCase();
+  const kuCorrect = verdict.includes('correct') && !verdict.includes('incorrect') ? 1 : 0;
+
+  return { kuCorrect, hypothesis };
+}
+
+/**
+ * Real run (legacy single-weight path): ingest cached claims, runConsolidation ONCE,
+ * embed question, evaluate at STRENGTH_WEIGHT, capture judge-engagement.
  *
  * replayExtract: each claim value is appended as its own episode (content = value).
  * runConsolidation intercepts the `generate` head to return [{type:'fact',value:content}]
@@ -200,99 +345,31 @@ function runDryRunCase(kuCase, claims) {
  * T-26-03: API keys read from env only; never logged or written to results.
  */
 async function runRealCase(kuCase, claims, embedder, anthropicClient) {
-  const scratch = makeScratchDb();
+  let consolidated;
   try {
-    // Step 1: ingest each cached claim value as its own episode.
-    // replayExtract (below) routes the extract head to return exactly this value
-    // so granite/Ollama is never called. Embed+judge run for real.
-    for (let i = 0; i < claims.length; i++) {
-      scratch.episodes.append({
-        content:    claims[i].value,
-        origin:     'observed',
-        salience:   1.0,
-        hard_keep:  1,
-        role:       'user',
-        session_id: `replay-${kuCase.question_id}-c${i}`,
-        source:     'conversation',
-      });
-    }
+    consolidated = await consolidateCase(kuCase, claims, embedder, anthropicClient);
+  } catch (e) {
+    // If consolidation itself fails, return an error result (no scratch to clean up here
+    // since consolidateCase cleans up internally only on success — but makeScratchDb is
+    // called inside consolidateCase, so a throw there leaks the scratch. Accept this as
+    // an error path: the DB file will be cleaned by OS tmpdir lifecycle).
+    return {
+      question_id:     kuCase.question_id,
+      question_type:   kuCase.question_type,
+      claim_count:     claims.length,
+      dry_run:         false,
+      ku_correct:      null,
+      tombstones:      null,
+      contradicts:     null,
+      duplicate_mints: null,
+      error:           String(e.message || e).slice(0, 300),
+    };
+  }
 
-    // Step 2: run ONE consolidation pass with the replay extract seam.
-    // Each episode's content IS its claim value — the extractor returns exactly
-    // [{type:'fact', value: content}] for each, so granite is never invoked.
-    // Embed and judge still run for real (the load-bearing RETR-02 signals).
-    await runConsolidation(
-      scratch.db,
-      scratch.dbPath,
-      process.env,
-      () => {},  // no-op log callback
-      {
-        replayExtract(content) {
-          // content is the episode content (= the claim value we appended above).
-          // Return it as a single fact claim — no re-extraction, no LLM generate call.
-          return [{ type: 'fact', value: content }];
-        },
-      }
+  try {
+    const { kuCorrect, hypothesis } = await evaluateAtWeight(
+      consolidated, STRENGTH_WEIGHT, kuCase, anthropicClient
     );
-
-    // Step 3: count judge-engagement AFTER the pass.
-    const { tombstones, contradicts, duplicateMints } = queryJudgeEngagement(scratch.db);
-
-    // Step 4: embed the question and retrieve via retrieveRanked (the product memory_ask path).
-    // NOT raw retrieve() (which has a 0.7 single-hit gate calibrated for production injection).
-    const [queryVec] = await embedder.embed([kuCase.question]);
-
-    const retriever  = new CandidateRetriever(scratch.db);
-    const store      = new SemanticStore(scratch.db, realClock, scratch.config);
-    const strength   = new StrengthDecayManager(scratch.db, realClock, scratch.config);
-    const gate       = new AllocationGate(scratch.config);
-    const traceSink  = new NoopActivationTraceSink();
-    const engine     = new RetrievalEngine(scratch.db, realClock, scratch.config, retriever, store, strength, gate, traceSink);
-
-    // Pass kuCase.question as queryText so retrieveRanked routes through hybridTopk
-    // (Pitfall 3 fix — without this arg the pure-cosine topk branch is taken and the
-    // strength fusion from rankStrengthWeight / RANK-02 is never exercised).
-    const results = engine.retrieveRanked(queryVec, scratch.config.rankedRetrievalK, scratch.config.rankedRetrievalFloor, kuCase.question);
-
-    const retrievedText = results.length > 0
-      ? results.map(r => `- ${r.value}`).join('\n')
-      : '(no relevant memory entries found)';
-
-    // Step 5: generate answer with Haiku (cheap model; GPT-4o reserved for scorer below).
-    const answerPrompt = `I will give you several memory entries from conversations between you and a user. Please answer the question based on the relevant memory entries.\n\n\nMemory Entries:\n\n${retrievedText}\nQuestion: ${kuCase.question}\nAnswer:`;
-    const answerResponse = await anthropicClient.messages.create({
-      model:      DEFAULT_CONFIG.anthropicModel,  // claude-haiku-4-5-20251001
-      max_tokens: 256,
-      messages:   [{ role: 'user', content: answerPrompt }],
-    });
-    const hypothesis = answerResponse.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join('')
-      .trim();
-
-    // Step 6: score KU correctness with GPT-4o-2024-08-06 (autoeval_label 0/1).
-    // Same scorer shape as longmemeval-harness.cjs — returns 1 if the answer is correct.
-    const scorerPrompt = `You are evaluating whether a predicted answer is correct for a knowledge-update question.
-Question: ${kuCase.question}
-Gold answer: ${kuCase.answer}
-Predicted answer: ${hypothesis}
-Reply with exactly one word: "correct" or "incorrect".`;
-
-    const scorerResponse = await anthropicClient.messages.create({
-      model:      'claude-haiku-4-5-20251001',  // keep cheap; only used here for KU scoring
-      max_tokens: 8,
-      messages:   [{ role: 'user', content: scorerPrompt }],
-    });
-    // autoeval_label: 1 = correct, 0 = incorrect
-    const verdict = scorerResponse.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join('')
-      .trim()
-      .toLowerCase();
-    const kuCorrect = verdict.includes('correct') && !verdict.includes('incorrect') ? 1 : 0;
-
     return {
       question_id:     kuCase.question_id,
       question_type:   kuCase.question_type,
@@ -300,12 +377,160 @@ Reply with exactly one word: "correct" or "incorrect".`;
       dry_run:         false,
       ku_correct:      kuCorrect,
       hypothesis,
-      tombstones,
-      contradicts,
-      duplicate_mints: duplicateMints,
+      tombstones:      consolidated.tombstones,
+      contradicts:     consolidated.contradicts,
+      duplicate_mints: consolidated.duplicateMints,
     };
   } finally {
-    scratch.cleanup();
+    consolidated.scratch.cleanup();
+  }
+}
+
+/**
+ * Sweep mode (Phase 35-02): consolidate each case ONCE, then evaluate at every weight
+ * in SWEEP_WEIGHTS over the same already-consolidated scratch DB.
+ *
+ * Per weight: builds a fresh RetrievalEngine with the new rankStrengthWeight (pure read),
+ * runs retrieveRanked → headless answer → headless score.
+ *
+ * runConsolidation is called exactly once per case (inside consolidateCase).
+ * scratch.cleanup() is called AFTER all weights for that case are done.
+ *
+ * Writes one results file per weight: scripts/eval/results/35-sweep-w<w>.json
+ * Judge-engagement values (tombstones/contradicts/duplicateMints) are identical
+ * across weights (consolidation ran once) — the same captured values are written
+ * into every weight's per-case row.
+ */
+async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthropicClient, commit, total, totalClaims, embedderModel) {
+  const weights = SWEEP_WEIGHTS;
+  const resultsDir = path.resolve(__dirname, 'results');
+  if (!fs.existsSync(resultsDir)) fs.mkdirSync(resultsDir, { recursive: true });
+
+  // Per-weight accumulators: array of per-case rows, ku_correct counts, engagement totals.
+  const perWeightRows    = weights.map(() => []);
+  const perWeightCorrect = weights.map(() => 0);
+  const perWeightTombstones    = weights.map(() => 0);
+  const perWeightContradicts   = weights.map(() => 0);
+  const perWeightDupMints      = weights.map(() => 0);
+
+  console.log(`\nSweep mode: ${weights.length} weights [${weights.join(', ')}], ${total} cases`);
+  console.log('Consolidation runs ONCE per case; retrieve+answer+score re-runs per weight.\n');
+
+  for (const qid of caseIds) {
+    const attr   = attributionByQid.get(qid);
+    const kuCase = kuGoldByQid.get(qid);
+
+    process.stdout.write(`  [consolidate] ${qid} (${attr.claims.length} claims)...\r`);
+
+    let consolidated;
+    let consolidateError = null;
+    try {
+      consolidated = await consolidateCase(kuCase, attr.claims, embedder, anthropicClient);
+      process.stdout.write(`  [consolidate] ${qid} done (tomb=${consolidated.tombstones} contra=${consolidated.contradicts} dup=${consolidated.duplicateMints})\n`);
+    } catch (e) {
+      consolidateError = String(e.message || e).slice(0, 300);
+      console.error(`  [consolidate] ERROR on ${qid}: ${consolidateError}`);
+    }
+
+    for (let wi = 0; wi < weights.length; wi++) {
+      const w = weights[wi];
+
+      if (consolidateError !== null || consolidated === undefined) {
+        // Consolidation failed — record error for all weights.
+        perWeightRows[wi].push({
+          question_id:     qid,
+          question_type:   kuCase.question_type,
+          claim_count:     attr.claims.length,
+          dry_run:         false,
+          ku_correct:      null,
+          tombstones:      null,
+          contradicts:     null,
+          duplicate_mints: null,
+          error:           consolidateError,
+        });
+        continue;
+      }
+
+      let kuCorrect = null;
+      let hypothesis = null;
+      let scoreError = null;
+      try {
+        const result = await evaluateAtWeight(consolidated, w, kuCase, anthropicClient);
+        kuCorrect  = result.kuCorrect;
+        hypothesis = result.hypothesis;
+        process.stdout.write(`  [w=${w}] ${qid}: ${kuCorrect ? 'correct' : 'incorrect'}\n`);
+      } catch (e) {
+        scoreError = String(e.message || e).slice(0, 300);
+        console.error(`  [w=${w}] ERROR scoring ${qid}: ${scoreError}`);
+      }
+
+      const row = {
+        question_id:     qid,
+        question_type:   kuCase.question_type,
+        claim_count:     attr.claims.length,
+        dry_run:         false,
+        ku_correct:      kuCorrect,
+        tombstones:      consolidated.tombstones,
+        contradicts:     consolidated.contradicts,
+        duplicate_mints: consolidated.duplicateMints,
+      };
+      if (hypothesis !== null) row.hypothesis = hypothesis;
+      if (scoreError !== null) row.error = scoreError;
+
+      perWeightRows[wi].push(row);
+      if (kuCorrect !== null) {
+        perWeightCorrect[wi] += kuCorrect;
+        perWeightTombstones[wi]  += consolidated.tombstones;
+        perWeightContradicts[wi] += consolidated.contradicts;
+        perWeightDupMints[wi]    += consolidated.duplicateMints;
+      }
+    }
+
+    // All weights for this case done — release the scratch DB now.
+    if (consolidated) {
+      consolidated.scratch.cleanup();
+      consolidated = undefined;
+    }
+  }
+
+  // Write one results file per weight (same schema + paths that 35-strength-sweep.cjs reads).
+  for (let wi = 0; wi < weights.length; wi++) {
+    const w        = weights[wi];
+    const rows     = perWeightRows[wi];
+    const scored   = rows.filter(r => r.ku_correct !== null);
+    const correct  = perWeightCorrect[wi];
+    const kuScore  = scored.length > 0 ? +(correct / scored.length).toFixed(3) : null;
+
+    const envelope = {
+      meta: {
+        eval:            'replay-ku',
+        mode:            'full',
+        cache_id:        'granite+chunk-turns-2',
+        date:            new Date().toISOString(),
+        commit,
+        embedder:        embedderModel,
+        strength_weight: w,
+        total_cases:     total,
+        total_claims:    totalClaims,
+        sweep_mode:      true,
+        sweep_weights:   weights,
+        // T-26-03: keys never written to results
+      },
+      scores: {
+        ku_score:              kuScore,
+        ku_correct:            correct,
+        ku_scored_cases:       scored.length,
+        total_tombstones:      perWeightTombstones[wi],
+        total_contradicts:     perWeightContradicts[wi],
+        total_duplicate_mints: perWeightDupMints[wi],
+      },
+      per_case: rows,
+    };
+
+    // Output path matches what 35-strength-sweep.cjs reads: results/35-sweep-w<w>.json
+    const outFile = path.join(resultsDir, `35-sweep-w${w}.json`);
+    fs.writeFileSync(outFile, JSON.stringify(envelope, null, 2));
+    console.log(`  [w=${w}] written -> ${outFile}  (ku_score: ${kuScore !== null ? (kuScore * 100).toFixed(1) + '%' : 'n/a'})`);
   }
 }
 
@@ -352,7 +577,11 @@ Reply with exactly one word: "correct" or "incorrect".`;
   console.log('\nReplay-KU Harness (RETR-02 validation, Plan 26-05)');
   console.log(`Cases: ${total} (from n20-attribution.jsonl ∩ eval20-ku.jsonl)`);
   console.log(`Embedder: ${embedderModel} (from DEFAULT_CONFIG — no swap, D-01)`);
-  console.log(`Strength weight: ${STRENGTH_WEIGHT} (--strength-weight; 0 = pure cosine baseline)`);
+  if (SWEEP_WEIGHTS) {
+    console.log(`Sweep weights: [${SWEEP_WEIGHTS.join(', ')}] (--sweep-weights; consolidate-once mode)`);
+  } else {
+    console.log(`Strength weight: ${STRENGTH_WEIGHT} (--strength-weight; 0 = pure cosine baseline)`);
+  }
   console.log(`Cache: ${CACHE_DIR}`);
   console.log(DRY_RUN
     ? 'Mode: --dry-run (ingest + scratch DB only, ZERO API calls)\n'
@@ -369,6 +598,7 @@ Reply with exactly one word: "correct" or "incorrect".`;
 
   if (DRY_RUN) {
     // Validate scratch DB lifecycle and claim ingestion with zero API calls.
+    // Always uses the legacy single-weight path regardless of --sweep-weights.
     let allOk = true;
     for (const qid of caseIds) {
       const attr    = attributionByQid.get(qid);
@@ -428,6 +658,19 @@ Reply with exactly one word: "correct" or "incorrect".`;
   // Embedder-agnostic: no override flag, no swap (D-01 — swap premise falsified).
   const embedder = new OpenAIEmbedder(DEFAULT_CONFIG.openaiEmbedModel, DEFAULT_CONFIG.embeddingDimensions);
 
+  // ---- sweep mode (Phase 35-02): consolidate once per case, sweep weights -----
+  if (SWEEP_WEIGHTS && SWEEP_WEIGHTS.length > 0) {
+    await runSweep(
+      caseIds, attributionByQid, kuGoldByQid,
+      embedder, anthropicClient,
+      commit, total, totalClaims, embedderModel,
+    );
+    const elapsedSec = ((Date.now() - tStart) / 1000).toFixed(1);
+    console.log(`\nSweep complete. Elapsed: ${elapsedSec}s`);
+    process.exit(0);
+  }
+
+  // ---- legacy single-weight real run ------------------------------------------
   const perCase = [];
   let totalTombstones    = 0;
   let totalContradicts   = 0;

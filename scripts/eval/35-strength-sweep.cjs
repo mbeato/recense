@@ -140,7 +140,36 @@ function buildChildEnv() {
   return env;
 }
 
-// ---- KU sweep: spawns replay-ku-harness.cjs per w --------------------------
+// ---- KU sweep: single harness invocation with --sweep-weights (Phase 35-02) -
+// Consolidation runs ONCE per case in the harness; only retrieve+answer+score
+// re-runs per weight. The harness writes one results/35-sweep-w<w>.json per weight.
+
+function runKuSweepHarness() {
+  const harnessPath = path.resolve(__dirname, 'replay-ku-harness.cjs');
+  const args = [
+    harnessPath,
+    '--sweep-weights', W_GRID.join(','),
+  ];
+  // --dry-run: harness uses legacy single-weight path (zero API calls) and writes --out skeleton.
+  // In dry-run the sweep output files are not written, but the comparison table still reads them
+  // (they may not exist yet — each row will show ERR). This preserves --dry-run wiring-check intent.
+  if (IS_DRY_RUN) args.push('--dry-run');
+
+  console.log(`  Running KU harness in sweep mode (consolidate-once) for weights [${W_GRID.join(', ')}]...`);
+  const result = spawnSync(process.execPath, args, {
+    stdio: 'inherit',
+    env:   buildChildEnv(),
+    cwd:   path.resolve(__dirname, '../..'),
+  });
+  if (result.status !== 0) {
+    console.error(`  KU sweep harness exited with status ${result.status}`);
+    return false;
+  }
+  return true;
+}
+
+// ---- KU single-weight harness (dry-run only, or legacy --strength-weight path) --
+// Kept for back-compat; not called by the non-dry-run KU sweep path.
 
 function runKuHarness(w, outFile) {
   const harnessPath = path.resolve(__dirname, 'replay-ku-harness.cjs');
@@ -239,33 +268,54 @@ function runLmeScorer(hypothesesFile, outFile) {
 
   const rows = [];
 
-  for (const w of W_GRID) {
-    const jsonOut = outPath(w);
-    let ok;
-
-    if (IS_LME) {
-      // LME: harness writes hypotheses JSONL; scorer converts to scores JSON.
-      const hypothesesFile = path.join(RESULTS_DIR, `35-sweep-lme-hypotheses-w${wLabel(w)}.jsonl`);
-      ok = runLmeHarness(w, hypothesesFile);
-      if (ok) {
-        ok = runLmeScorer(hypothesesFile, jsonOut);
+  if (!IS_LME && !IS_DRY_RUN) {
+    // KU non-dry-run: single sweep invocation — consolidate-once, sweep weights inside harness.
+    // The harness writes one results/35-sweep-w<w>.json per weight.
+    const sweepOk = runKuSweepHarness();
+    for (const w of W_GRID) {
+      const jsonOut = outPath(w);
+      const result   = sweepOk ? readResult(jsonOut) : null;
+      const headline = extractHeadline(result, IS_LME);
+      const kuSub    = extractKuSub(result, IS_LME);
+      rows.push({ w, ok: sweepOk && result !== null, result, headline, kuSub, outFile: jsonOut });
+      if (!sweepOk || result === null) {
+        console.error(`  [w=${w}] FAILED — see errors above.\n`);
+      } else {
+        const headlineStr = headline !== null ? (headline * 100).toFixed(1) + '%' : 'n/a';
+        console.log(`  [w=${w}] done → ${headlineStr}  (${path.basename(jsonOut)})\n`);
       }
-    } else {
-      ok = runKuHarness(w, jsonOut);
     }
+  } else {
+    // LME path or dry-run: per-weight loop (unchanged behavior).
+    for (const w of W_GRID) {
+      const jsonOut = outPath(w);
+      let ok;
 
-    const result   = ok ? readResult(jsonOut) : null;
-    const headline = extractHeadline(result, IS_LME);
-    const kuSub    = extractKuSub(result, IS_LME);
+      if (IS_LME) {
+        // LME: harness writes hypotheses JSONL; scorer converts to scores JSON.
+        const hypothesesFile = path.join(RESULTS_DIR, `35-sweep-lme-hypotheses-w${wLabel(w)}.jsonl`);
+        ok = runLmeHarness(w, hypothesesFile);
+        if (ok) {
+          ok = runLmeScorer(hypothesesFile, jsonOut);
+        }
+      } else {
+        // dry-run KU: single-weight harness call (zero API calls, validates wiring).
+        ok = runKuHarness(w, jsonOut);
+      }
 
-    rows.push({ w, ok, result, headline, kuSub, outFile: jsonOut });
+      const result   = ok ? readResult(jsonOut) : null;
+      const headline = extractHeadline(result, IS_LME);
+      const kuSub    = extractKuSub(result, IS_LME);
 
-    if (!ok) {
-      console.error(`  [w=${w}] FAILED — see errors above. Continuing sweep.\n`);
-    } else {
-      const headlineStr = headline !== null ? (headline * 100).toFixed(1) + '%' : 'n/a';
-      const kuSubStr    = IS_LME && kuSub !== null ? ` (ku-sub: ${(kuSub * 100).toFixed(1)}%)` : '';
-      console.log(`  [w=${w}] done → ${headlineStr}${kuSubStr}  (${path.basename(jsonOut)})\n`);
+      rows.push({ w, ok, result, headline, kuSub, outFile: jsonOut });
+
+      if (!ok) {
+        console.error(`  [w=${w}] FAILED — see errors above. Continuing sweep.\n`);
+      } else {
+        const headlineStr = headline !== null ? (headline * 100).toFixed(1) + '%' : 'n/a';
+        const kuSubStr    = IS_LME && kuSub !== null ? ` (ku-sub: ${(kuSub * 100).toFixed(1)}%)` : '';
+        console.log(`  [w=${w}] done → ${headlineStr}${kuSubStr}  (${path.basename(jsonOut)})\n`);
+      }
     }
   }
 
