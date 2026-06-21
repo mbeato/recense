@@ -214,7 +214,9 @@ export function initCorpus(ctx) {
     if (searchWrap) searchWrap.style.display = 'none';
     sizeCorpusGraph();
     corpusActive = true;
-    corpusBtn.textContent = 'Brain';
+    // C1: icon button — state via aria-label/title (no textContent).
+    corpusBtn.setAttribute('aria-label', 'Show brain');
+    corpusBtn.setAttribute('title', 'Show brain');
     corpusBtn.classList.add('corpus-active');
     // Fallback fit on a fixed timeout in case onEngineStop already fired before the
     // corpus was shown (e.g. a tiny graph settles instantly), or never fires.
@@ -230,7 +232,9 @@ export function initCorpus(ctx) {
     if (topicWrap) topicWrap.style.display = '';
     if (searchWrap) searchWrap.style.display = '';
     corpusActive = false;
-    corpusBtn.textContent = 'Corpus';
+    // C1: icon button — state via aria-label/title (no textContent).
+    corpusBtn.setAttribute('aria-label', 'Corpus graph');
+    corpusBtn.setAttribute('title', 'Corpus');
     corpusBtn.classList.remove('corpus-active');
   }
 
@@ -257,7 +261,9 @@ export function initCorpus(ctx) {
     if (topicWrap) topicWrap.style.display = 'none';
     if (searchWrap) searchWrap.style.display = 'none';
     corpusActive = true;
-    corpusBtn.textContent = 'Brain';
+    // C1: icon button — state via aria-label/title (no textContent).
+    corpusBtn.setAttribute('aria-label', 'Show brain');
+    corpusBtn.setAttribute('title', 'Show brain');
     corpusBtn.classList.add('corpus-active');
   };
 

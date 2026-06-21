@@ -174,10 +174,10 @@ button:hover {
   opacity: 1;
 }
 
-/* App window: align under the collapse button (top:10 + 30 + 6 gap, right:12)
-   and size up to match its slightly larger chrome (quick-260612-v79 follow-up). */
+/* App window: pushed down to accommodate corpus button above it (C1, 34-02).
+   top: 10 (collapse) + 30 + 6 (corpus) + 30 + 6 = 82px. Size up to match chrome. */
 .mode-window #btn-recenter {
-  top: 46px;
+  top: 82px; /* 10 + 30 + 6 (corpus) + 30 + 6 = 82px */
   right: 12px;
   width: 30px;
   height: 30px;
@@ -746,22 +746,41 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   letter-spacing: 0.02em;
 }
 
-/* ── Corpus graph swap button (READER-04 / D-07) ──────────────────────────
-   Expanded Brain Window ONLY — never in the tray/popover (.mode-popover).
-   The CSS gate mirrors the search/topic-wrap pattern: hidden by default,
-   shown only under .mode-window (the full expanded window class). */
+/* ── Corpus toggle — icon-only fixed button, matches recenter cluster (C1, 34-02) ──
+   Expanded Brain Window ONLY — hidden in popover/tray by default.
+   Position: top:46px places it between the collapse button (top:10+30+6) and the
+   recenter button (top:82px — pushed down to accommodate). */
 #btn-corpus {
-  display: none;
+  display: none; /* hidden in popover/tray */
 }
 .mode-window #btn-corpus {
-  display: inline-flex;
+  position: fixed;
+  top: 46px;    /* below collapse: 10px top + 30px height + 6px gap */
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 70;
+  border-radius: 7px;
+  background: rgba(26, 18, 32, 0.7);
+  border: none;
+  color: #d9cbc0;
+  opacity: 0.65;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.15s ease;
 }
-/* Active state: when the corpus graph is shown, the button reads "Brain" to signal
-   the swap-back action — styled with a faint rose border to mark active mode
-   (muted palette only; amber is activation-only and never used on static chrome). */
-#btn-corpus.corpus-active {
-  border-color: rgba(156, 112, 128, 0.55);
+.mode-window #btn-corpus:hover { opacity: 1; }
+
+/* Active: corpus is shown — muted rose border (NOT amber) */
+.mode-window #btn-corpus.corpus-active {
+  opacity: 1;
   color: #c8bcd0;
+  border: 1px solid rgba(156, 112, 128, 0.55);
 }
 
 /* ── Flat 2D corpus graph host (READER-04) ────────────────────────────────

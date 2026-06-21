@@ -39,9 +39,6 @@
   <div class="row actions-row">
     <button id="btn-tombstones">Show tombstones</button>
     <button id="btn-reader" class="btn-sm">Reader</button>
-    <!-- Corpus graph swap (READER-04 / D-07): expanded Brain Window only.
-         CSS gate: `#btn-corpus { display:none }` / `.mode-window #btn-corpus { display:inline-flex }` -->
-    <button id="btn-corpus" class="btn-sm">Corpus</button>
     <button id="btn-log" class="btn-sm">Log</button>
   </div>
   <div id="detail-loading">Initializing graph…</div>
@@ -72,6 +69,17 @@
   <span class="dot dot-fact">●</span> fact&nbsp;
   <span class="dot dot-schema">●</span> schema
 </div>
+
+<!-- Corpus toggle — icon-only fixed button (C1, 34-02): top-level sibling of #btn-recenter,
+     expanded Brain Window only (CSS gate: display:none by default, shown under .mode-window).
+     Inline book SVG: no font/icon-lib dependency (net-zero rule). -->
+<button id="btn-corpus" type="button" aria-label="Corpus graph" title="Corpus">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+  </svg>
+</button>
 
 <!-- Recenter camera control (quick-260612-v79) — top-level, OUTSIDE #panel so
      the compact `#panel { display:none }` rule never hides it. Inline crosshair
