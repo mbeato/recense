@@ -167,13 +167,33 @@ export function initCorpus(ctx) {
         if (node && node.id) openDocReader(node.id);
       });
 
-    // C2: tune force params for compact corpus framing (net-zero deps — tuning internal
-    // d3-force references held by the force-graph instance, no import needed).
+    // C2 (34-03 fix): compact corpus clustering — light repulsion + explicit centering force.
+    // Problem: charge=-80 with few/unconnected nodes scatters them to canvas edges (nothing
+    // pulls them back without links), then fitAndClamp zooms out to fit the spread.
+    // Fix: reduce charge to -20 (barely pushes nodes apart) and inject a centering force
+    // that gently pulls every node toward the canvas centre (forceX/Y-style, no d3 import
+    // needed — plain JS function implementing the d3-force protocol).
     try {
       const charge = G.d3Force('charge');
-      if (charge && typeof charge.strength === 'function') charge.strength(-80);
+      if (charge && typeof charge.strength === 'function') charge.strength(-20);
       const link = G.d3Force('link');
-      if (link && typeof link.distance === 'function') link.distance(50);
+      if (link && typeof link.distance === 'function') link.distance(40);
+      // Minimal inline centering force (implements the d3-force function protocol).
+      // Pulls each node toward (cx, cy) with a gentle fixed strength — no d3 import needed.
+      const cx = (container.clientWidth || window.innerWidth) / 2;
+      const cy = (container.clientHeight || window.innerHeight) / 2;
+      let _nodes = [];
+      const centerForce = Object.assign(
+        function(alpha) {
+          const k = 0.08 * alpha; // gentle pull — enough to cluster, not to pin
+          for (const n of _nodes) {
+            if (n.fx == null) n.vx = (n.vx || 0) + (cx - n.x) * k;
+            if (n.fy == null) n.vy = (n.vy || 0) + (cy - n.y) * k;
+          }
+        },
+        { initialize(nodes) { _nodes = nodes; } }
+      );
+      G.d3Force('center', centerForce);
     } catch (_) { /* non-fatal if force-graph doesn't expose d3Force */ }
 
     return G;
