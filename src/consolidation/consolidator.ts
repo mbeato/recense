@@ -52,6 +52,8 @@ import type { SchemaRelationDeriver } from './schema-relations';
 import { NoopConsolidationSink, type ConsolidationSink } from './sink';
 import { NoopCorpusPromoter } from './corpus-promoter';
 import type { CorpusPromoter } from './corpus-promoter';
+import { NoopInsightReflector } from './insight-reflector';
+import type { InsightReflector } from './insight-reflector';
 
 // ---------------------------------------------------------------------------
 // Module-level helpers
@@ -173,6 +175,7 @@ export class Consolidator {
   private readonly inducer: SchemaInducer;
   private readonly deriver: SchemaRelationDeriver | NoopSchemaRelationDeriver;
   private readonly corpusPromoter: CorpusPromoter | NoopCorpusPromoter;
+  private readonly insightReflector: InsightReflector | NoopInsightReflector;
   private readonly config: EngineConfig;
   private readonly clock: Clock;
   private readonly sink: ConsolidationSink;
@@ -204,6 +207,7 @@ export class Consolidator {
     log: (msg: string) => void = () => {},
     deriver: SchemaRelationDeriver | NoopSchemaRelationDeriver = new NoopSchemaRelationDeriver(),
     corpusPromoter: CorpusPromoter | NoopCorpusPromoter = new NoopCorpusPromoter(),
+    insightReflector: InsightReflector | NoopInsightReflector = new NoopInsightReflector(),
   ) {
     this.db = db;
     this.episodes = episodes;
@@ -214,6 +218,7 @@ export class Consolidator {
     this.inducer = inducer;
     this.deriver = deriver;
     this.corpusPromoter = corpusPromoter;
+    this.insightReflector = insightReflector;
     this.config = config;
     this.clock = clock;
     this.sink = sink;
@@ -843,6 +848,9 @@ export class Consolidator {
     // (needs fresh schema_rel / super-schema edges), before eviction so the new s=0 doc stubs
     // are present (eviction leaves lifecycle-exempt s=0 nodes alone). LLM-free + idempotent.
     await this.corpusPromoter.promote();
+    // D-07 (REFLECT-01, Plan 38-02): insight reflection after corpus promotion, before eviction.
+    // A dissolved-cluster tombstoned insight is collected by runEvictionSweep() in the same pass.
+    await this.insightReflector.reflect();
     this.strength.runEvictionSweep();
   }
 

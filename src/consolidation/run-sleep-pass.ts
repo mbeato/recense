@@ -31,6 +31,7 @@ import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
 import { SchemaRelationDeriver } from '../consolidation/schema-relations';
 import { CorpusPromoter } from '../consolidation/corpus-promoter';
+import { InsightReflector } from '../consolidation/insight-reflector';
 import { generateCorpusDocs } from '../consolidation/corpus-generator';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
@@ -424,6 +425,16 @@ export async function runConsolidation(
     minMembers: 4,
   });
 
+  // D-07 (REFLECT-01, Plan 38-02): InsightReflector — synthesizes one judge-tier insight node
+  // per qualifying stale schema cluster. Runs in Phase C after corpusPromoter.promote() and
+  // before runEvictionSweep() so dissolved-cluster tombstoned insights are swept the same pass.
+  // Reuses the judge-tier provider (inducerProvider) which already has generateConfig: judgeConfig.
+  const insightReflector = new InsightReflector(db, store, inducerProvider, config, realClock, {
+    massFloorHigh: config.reflectMassFloorHigh,
+    massFloorLow: config.reflectMassFloorLow,
+    confidenceCeiling: config.reflectConfidenceCeiling,
+  });
+
   const consolidator = new Consolidator(
     db,
     episodes,
@@ -438,6 +449,7 @@ export async function runConsolidation(
     log,
     deriver,
     corpusPromoter,
+    insightReflector,
   );
 
   // ── 5. Run the sleep pass ──────────────────────────────────────────────────
