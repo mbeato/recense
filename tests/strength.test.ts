@@ -433,6 +433,63 @@ describe('STR-03: AND-gated eviction sweep', () => {
     expect(evicted).not.toContain('test-t');
     expect(evicted).not.toContain('test-young');
   });
+
+  it('T-38-01: evicting a tombstoned insight node hard-deletes its node_insight sidecar row FK-safely (no SQLITE_CONSTRAINT_FOREIGNKEY)', () => {
+    // Reproduces the T-38-01 FK landmine: if stmtDeleteInsightForNode is missing from the
+    // eviction sweep, the COMMIT on stmtDeleteNode would throw SQLITE_CONSTRAINT_FOREIGNKEY
+    // because node_insight.node_id REFERENCES node(id).
+    //
+    // Arrange: seed a schema anchor node (not evicted) and an insight node (to evict)
+    store.upsertNode({ id: 'anchor-schema', type: 'schema', value: 'test schema', origin: 'inferred', s: 0.9, c: 0.8, tombstoned: false });
+    store.upsertNode({ id: 'insight-to-evict', type: 'insight', value: 'derived insight', origin: 'inferred', s: 0.001, c: 0.001, tombstoned: true });
+
+    // Seed the node_insight sidecar for the insight node (the FK row that would block deletion)
+    store.upsertNodeInsight({
+      node_id: 'insight-to-evict',
+      anchor_schema_id: 'anchor-schema',
+      generated_at: clock.nowMs(),
+      updated_at: clock.nowMs(),
+    });
+
+    // Insert a derived_from edge (insight → schema) to also exercise edge cleanup
+    const nowMs = clock.nowMs();
+    db.prepare('INSERT INTO edge (src, dst, rel, w, last_access, kind) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('insight-to-evict', 'anchor-schema', 'derived_from', 0.9, nowMs, 'derived_from');
+
+    // Advance past the 30-day age gate (strict >30d)
+    clock.advanceDays(31);
+
+    // Act: eviction sweep must NOT throw — if T-38-01 fix is absent, this throws FK error
+    let evicted: string[] = [];
+    expect(() => { evicted = manager.runEvictionSweep(); }).not.toThrow();
+
+    // Assert: insight node evicted
+    expect(evicted).toContain('insight-to-evict');
+    expect(store.getNode('insight-to-evict')).toBeNull();
+
+    // Assert: node_insight sidecar row is gone (FK child-wipe worked)
+    const sidecarRow = db.prepare('SELECT * FROM node_insight WHERE node_id = ?').get('insight-to-evict');
+    expect(sidecarRow).toBeUndefined();
+
+    // Assert: derived_from edges are gone
+    const remainingEdges = db.prepare(
+      "SELECT * FROM edge WHERE src = 'insight-to-evict' OR dst = 'insight-to-evict'"
+    ).all();
+    expect(remainingEdges).toHaveLength(0);
+
+    // Assert: anchor schema is unaffected (tombstoned=0 protects it)
+    expect(store.getNode('anchor-schema')).not.toBeNull();
+  });
+
+  it('T-38-01: evicting a non-insight node still works when node_insight row is absent (no-op DELETE)', () => {
+    // Regression guard: non-insight nodes have no node_insight row; the DELETE must be a no-op.
+    store.upsertNode({ id: 'plain-fact', type: 'fact', value: 'old fact', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
+    clock.advanceDays(31);
+    let evicted: string[] = [];
+    expect(() => { evicted = manager.runEvictionSweep(); }).not.toThrow();
+    expect(evicted).toContain('plain-fact');
+    expect(store.getNode('plain-fact')).toBeNull();
+  });
 });
 
 describe('STR-03 INVARIANT: 30-day simulated month — no evidence-backed node evicted', () => {

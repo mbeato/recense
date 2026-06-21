@@ -27,6 +27,8 @@ import type {
   UpsertNodeScopeParams,
   UpsertNodeDocParams,
   NodeDocRow,
+  UpsertNodeInsightParams,
+  NodeInsightRow,
 } from '../lib/types';
 
 export class SemanticStore {
@@ -74,6 +76,13 @@ export class SemanticStore {
   // Written exclusively by the doc-writer path (CONSOL-03 single-writer discipline).
   private readonly stmtUpsertNodeDoc: Database.Statement;
   private readonly stmtGetNodeDoc: Database.Statement;
+  // node_insight: single idempotent writer + reader (REFLECT-01, Plan 38-01).
+  // generated_at is write-once: ON CONFLICT preserves the original value; only anchor_schema_id+updated_at update.
+  // Written exclusively by the InsightReflector path (CONSOL-03 single-writer discipline).
+  // FK → node(id): the eviction sweep in decay.ts MUST child-wipe this table before DELETE FROM node
+  // (T-38-01 — the single easiest-to-miss FK landmine in Phase 38; see stmtDeleteInsightForNode in decay.ts).
+  private readonly stmtUpsertNodeInsight: Database.Statement;
+  private readonly stmtGetNodeInsight: Database.Statement;
 
   // Transaction-wrapped upsertNode body (defined in constructor, called in upsertNode)
   private readonly txUpsertNode: (params: UpsertNodeParams) => void;
@@ -231,6 +240,22 @@ export class SemanticStore {
     `);
     this.stmtGetNodeDoc = db.prepare(
       'SELECT node_id, slug, generated_at, updated_at FROM node_doc WHERE node_id = ?'
+    );
+
+    // node_insight INSERT — generated_at is write-once (REFLECT-01, Plan 38-01).
+    // ON CONFLICT(node_id) DO UPDATE: updates anchor_schema_id and updated_at but NOT generated_at —
+    // this preserves the original generation timestamp for the staleness predicate
+    // (member.last_access > insight.generated_at). Mirrors the node_doc write-once convention (D-01).
+    // T-01-SQL: named params, no string interpolation. Single-writer: InsightReflector only (CONSOL-03).
+    this.stmtUpsertNodeInsight = db.prepare(`
+      INSERT INTO node_insight (node_id, anchor_schema_id, generated_at, updated_at)
+      VALUES (@node_id, @anchor_schema_id, @generated_at, @updated_at)
+      ON CONFLICT(node_id) DO UPDATE SET
+        anchor_schema_id = excluded.anchor_schema_id,
+        updated_at       = excluded.updated_at
+    `);
+    this.stmtGetNodeInsight = db.prepare(
+      'SELECT node_id, anchor_schema_id, generated_at, updated_at FROM node_insight WHERE node_id = ?'
     );
 
     // ── Transaction — defined once, called in upsertNode ─────────────────────
@@ -615,6 +640,39 @@ export class SemanticStore {
    */
   getNodeDoc(nodeId: string): NodeDocRow | undefined {
     const row = this.stmtGetNodeDoc.get(nodeId) as NodeDocRow | undefined;
+    return row;
+  }
+
+  /**
+   * Upsert the node_insight sidecar for an insight node (REFLECT-01, Plan 38-01).
+   *
+   * generated_at is write-once: the ON CONFLICT clause updates anchor_schema_id and updated_at
+   * but NOT generated_at — preserving the original generation timestamp so the staleness predicate
+   * (member.last_access > insight.generated_at) cannot be corrupted when the insight is accessed.
+   * To reset generated_at on a full regen, delete the row first, then re-insert.
+   *
+   * IMPORTANT: this is the ONLY write path for node_insight. No raw SQL on node_insight outside
+   * SemanticStore (single-writer invariant, CONSOL-03). T-01-SQL: all params are bound.
+   *
+   * FK note: node_insight.node_id REFERENCES node(id). The eviction sweep in decay.ts MUST
+   * child-wipe node_insight BEFORE DELETE FROM node (T-38-01 FK landmine). See decay.ts
+   * stmtDeleteInsightForNode.
+   */
+  upsertNodeInsight(params: UpsertNodeInsightParams): void {
+    this.stmtUpsertNodeInsight.run({
+      node_id: params.node_id,
+      anchor_schema_id: params.anchor_schema_id,
+      generated_at: params.generated_at,
+      updated_at: params.updated_at,
+    });
+  }
+
+  /**
+   * Read the node_insight sidecar row for a given node_id.
+   * Returns undefined when no insight annotation exists for the node.
+   */
+  getNodeInsight(nodeId: string): NodeInsightRow | undefined {
+    const row = this.stmtGetNodeInsight.get(nodeId) as NodeInsightRow | undefined;
     return row;
   }
 }

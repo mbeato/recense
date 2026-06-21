@@ -480,6 +480,62 @@ export interface EngineConfig {
    */
   recallSidewaysHopBudget: number;
 
+  // --- Phase 38: derived insight (reflection) tunables (REFLECT-01/02, D-01/D-03/D-04/D-05/D-06) ---
+
+  /**
+   * Confidence ceiling for synthesized insight nodes (REFLECT-01, D-04).
+   * Insight nodes are capped at this value so they never outrank the evidence-backed
+   * schemas they were derived from. Must sit below typical schema confidence.
+   *
+   * VERIFY-WITH-FOUNDER: suggested default 0.6. Calibrate against live recense.db
+   * schema confidence distribution (schemas land ~0.6–0.9 after multiple reinforcements;
+   * 0.6 is at the low end, giving insights a weaker-than-typical-schema signal).
+   * Tune if insights surface incorrectly at recall time.
+   */
+  reflectConfidenceCeiling: number;
+
+  /**
+   * High-watermark member-mass threshold for hysteresis gate (REFLECT-01, D-03/D-06).
+   * A schema cluster qualifies for insight generation when its member count (distinct
+   * non-inferred abstracts edges) reaches at least this value.
+   * Seeded from Phase 28 CorpusPromoter's highMass:10 (run-sleep-pass.ts:419).
+   * Calibrate against live brain: the highest-mass clusters tend to be dogfooding artifacts
+   * ("Git commit hashes") — the noise filter (D-03) catches those, but the mass floor still
+   * gates against trivially small clusters.
+   */
+  reflectMassFloorHigh: number;
+
+  /**
+   * Low-watermark member-mass threshold for hysteresis gate (REFLECT-01, D-06).
+   * When a previously-qualifying cluster's mass drops below this value, the insight is
+   * tombstoned (cluster dissolution, mirrors CorpusPromoter's lowMass:7 hysteresis).
+   * Must be <= reflectMassFloorHigh. Prevents pass-to-pass thrash on borderline clusters.
+   * Seeded from Phase 28 CorpusPromoter's lowMass:7 (run-sleep-pass.ts:420).
+   */
+  reflectMassFloorLow: number;
+
+  /**
+   * Freshness / match threshold for surfacing a pre-computed insight at recall time (REFLECT-02, D-05).
+   * An insight is surfaced only when the schema-resolution confidence and the insight's
+   * freshness (generated_at vs. member last_access) both clear this threshold.
+   * Conservative default 0.7 — start high to avoid stale or marginal insights surfacing;
+   * lower after eval (38-04) confirms the compose-token win with no quality regression.
+   * Calibrate against the KU/LongMemEval harness (D-05 measurement bar).
+   */
+  reflectFreshnessThreshold: number;
+
+  /**
+   * Master activation flag for surfacing pre-computed insights at recall time (REFLECT-02, D-05).
+   * Ships DARK (false) by default — no recall behavior change until plan 38-04 eval proves
+   * the compose-token win with no quality regression. Mirrors rankStrengthWeight:0 dark posture.
+   *
+   * Set to true only after the 38-04 eval confirms the improvement. The eval flips this flag
+   * and measures the token-reduction delta on the existing KU/LongMemEval replay harness.
+   *
+   * D-05: prove-before-activate posture (mirrors Phase 35 D-04).
+   */
+  insightSurfacingEnabled: boolean;
+
   // --- Phase 6: multi-channel ingestion tunables (D-60/D-65/D-68/D-69) ---
 
   /**
@@ -690,6 +746,13 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   schemaRelSimilarityThreshold: 0.8,  // start conservative; tune against real recense.db (D-01)
   schemaClusterCutHeight: 0.35,       // 1−0.35 = 0.65 cosine floor for super-schema merge (D-03); plan 18-02 consumer
   recallSidewaysHopBudget: 3,         // max related-schema fan-out per sideways hop (D-05); plan 18-03 consumer
+
+  // Phase 38: derived insight (reflection) tunables (REFLECT-01/02, D-01/D-03/D-04/D-05/D-06)
+  reflectConfidenceCeiling: 0.6,      // VERIFY-WITH-FOUNDER: cap insight confidence below schema confidence (D-04)
+  reflectMassFloorHigh: 10,           // min cluster member mass to qualify for insight generation (D-03; seeded from Phase-28 highMass:10)
+  reflectMassFloorLow: 7,             // hysteresis low-water: dissolve insight when mass drops below this (D-06; seeded from Phase-28 lowMass:7)
+  reflectFreshnessThreshold: 0.7,     // conservative recall freshness gate; lower after 38-04 eval (D-05)
+  insightSurfacingEnabled: false,     // D-05: ship DARK — no recall behavior change until 38-04 eval proves compose-token win (mirrors rankStrengthWeight:0)
 
   // Phase 6: multi-channel ingestion (D-60/D-65/D-68/D-69)
   gmail: {
