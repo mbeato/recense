@@ -295,6 +295,11 @@ export function initCorpus(ctx) {
   // feel). Net-zero — reuses the existing 3d-force-graph cameraPosition animation.
   function pullBackBrain() {
     if (!ctx.Graph || typeof ctx.Graph.cameraPosition !== 'function') return;
+    // Suppress the idle camera drift (stats.js) for the transition — a button click isn't
+    // canvas activity, so after idling in corpus view the drift would fight this tween and
+    // make subsequent pull-backs snap/jerk (the first one is smooth only because you'd just
+    // been active). markActive resets the idle timer (1.2s > the 700ms move).
+    if (typeof ctx.markActive === 'function') ctx.markActive();
     const p = ctx.Graph.cameraPosition();
     if (!p) return;
     homeCam = { x: p.x, y: p.y, z: p.z };
@@ -304,6 +309,7 @@ export function initCorpus(ctx) {
   // Dive the camera back to the exact pre-pull-back framing (no compounding). Falls back
   // to ctx.recenter() if we somehow never captured a home position.
   function diveBackToBrain() {
+    if (typeof ctx.markActive === 'function') ctx.markActive(); // suppress idle drift during the dive
     if (homeCam && ctx.Graph && typeof ctx.Graph.cameraPosition === 'function') {
       ctx.Graph.cameraPosition({ x: homeCam.x, y: homeCam.y, z: homeCam.z }, { x: 0, y: 0, z: 0 }, CAM_MS);
     } else if (typeof ctx.recenter === 'function') {
