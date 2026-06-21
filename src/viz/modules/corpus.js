@@ -321,9 +321,11 @@ export function initCorpus(ctx) {
     // corpus in over it. Keep the brain visible during the move so it visibly recedes
     // behind the fade; once the opaque corpus reaches opacity 1 it covers the brain.
     pullBackBrain();
+    // Fade the brain OUT as it recedes so its pull-back motion never bleeds through the
+    // settling corpus (that bleed-through read as the corpus "flinging" on first open).
+    if (brainEl) { brainEl.style.transition = `opacity ${CAM_MS}ms ease`; brainEl.style.visibility = ''; brainEl.style.opacity = '0'; }
     container.classList.add('open');
     requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
-    if (brainEl) brainEl.style.visibility = '';
     // B3: hide topics/search in corpus view (mode-state visibility).
     const topicWrap = document.getElementById('topic-wrap');
     const searchWrap = document.getElementById('search-wrap');
@@ -353,16 +355,14 @@ export function initCorpus(ctx) {
     // Fallback fit on a fixed timeout in case onEngineStop already fired before the
     // corpus was shown (e.g. a tiny graph settles instantly), or never fires.
     setTimeout(() => { if (corpusActive) fitAndClamp(); }, 350);
-    // Definitive re-fit once the fade transition has fully settled (container static,
-    // no transform/opacity in flight) — guarantees correct centering on first open.
-    setTimeout(() => { if (corpusActive) fitAndClamp(); }, CAM_MS + 60);
   }
 
   function showBrain() {
     // Transition OUT: corpus fades back into depth; brain camera dives home.
     container.classList.remove('corpus-in');
     setTimeout(() => { if (!corpusActive) container.classList.remove('open'); }, CAM_MS);
-    if (brainEl) brainEl.style.visibility = '';
+    // Fade the brain back IN as the camera dives home.
+    if (brainEl) { brainEl.style.transition = `opacity ${CAM_MS}ms ease`; brainEl.style.visibility = ''; brainEl.style.opacity = '1'; }
     diveBackToBrain();
     // B3: restore topics/search when returning to brain view.
     const topicWrap = document.getElementById('topic-wrap');
@@ -396,7 +396,8 @@ export function initCorpus(ctx) {
     // corpus without moving it), so do NOT pull back again — just re-assert the overlay.
     container.classList.add('open');
     requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
-    if (brainEl) brainEl.style.visibility = '';
+    // Brain stays faded out — we're in corpus framing (reader closed back to the corpus).
+    if (brainEl) { brainEl.style.visibility = ''; brainEl.style.opacity = '0'; }
     // B3: keep topics/search hidden when reader closes back to corpus.
     const topicWrap = document.getElementById('topic-wrap');
     const searchWrap = document.getElementById('search-wrap');
