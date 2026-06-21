@@ -7,7 +7,7 @@ dependency_graph:
   requires:
     - phase: 39-01
       provides: GET /doc/backlinks route, .backlinks-* CSS, stmtDocBacklinks/stmtCitingDocs
-  provides: [GET /index read-only route, initIndex module, #btn-index toolbar button, #index-panel container]
+  provides: [GET /index read-only route (with parentId/depth containment fields), initIndex sidebar module, #index-panel left-sidebar over the corpus graph, ctx.openIndexSidebar/closeIndexSidebar/highlightCorpusNode hooks]
   affects: [src/viz/server.ts, src/viz/modules/index.js, src/viz/modules/app.js, src/viz/index.html, src/viz/css/styles.css]
 tech_stack:
   added: []
@@ -122,3 +122,39 @@ No new security-relevant surface beyond the plan's threat model. T-39-05 through
 - [x] Read-only invariant: exactly 1 `new Database` in server.ts
 
 ## Self-Check: PASSED
+
+---
+
+## Post-Checkpoint Evolution (end-of-phase founder re-verify, 2026-06-21)
+
+The Task-3 human-verify surfaced gaps and the founder iteratively reshaped the index well
+beyond the original plan. The sections above record the as-planned build; the index's FINAL
+shape is below. All changes stayed read-only (server `new Database` count remains 1) and
+amber-free; full suite green at each step.
+
+**What changed, in order:**
+1. **`#btn-index` position fix** (`c6e84d5`) — the button collided with the recenter button at `top:82px`. Moved to 118px. (Superseded by #2, which removed the button.)
+2. **Redesign: sidebar over the corpus** (`789ba19`) — `#btn-index` toggled a LEFT SIDEBAR docked over the flat 2D corpus graph instead of a full-window panel. Added `ctx.openCorpus/isCorpusOpen/highlightCorpusNode` hooks in corpus.js; row click opens the reader in place (`from:'corpus'`); row hover cross-highlights the graph node. Fades in.
+3. **Sidebar opens with corpus by default; HUD hidden; scrollbar; neighbour highlight** (`a9b6b90`) — removed the `#btn-index` toolbar button entirely; the sidebar now opens automatically when the corpus view opens (`corpus.js goToCorpus → ctx.openIndexSidebar`) and closes on return to brain. Added a ◀ collapse control + slim `#index-reopen` left-edge handle. Hid the top-left `#panel` HUD in corpus view (was overlapping the sidebar). Styled the index scrollbar to match `#reader`. 
+4. **Hover highlights the containment SUBTREE, not all neighbours** (`4fea71f`) — `highlightCorpusNode` BFS-walks `doc_containment` from the hovered doc downward; `doc_link`/`doc_reference` stay muted. (Verified live: containment is schema→schema; tonos is a leaf.)
+5. **Nested-tree index** (`7f1a933`) — `/index` now returns `parentId`+`depth` per schema (reusing `stmtDocLinks` filtered to `doc_containment`, still 1 Database); index.js renders the Schemas section as a nested tree (indent by depth).
+6. **Hybrid Projects/Schemas** (`e1dcd67`) — both sections are trees; each doc is partitioned into the section of its tree-ROOT's type, so a project's chapter docs nest under it in Projects (project-parent precedence for the future Phase-32 multi-parent case). Renders identically today (tonos standalone) until promoteScope populates landing→chapter edges.
+7. **Search/filter box** (`5ff482b`) — muted filter in the sidebar header; matches keep ancestors visible. This is the deep-research **now-move**.
+
+**Deep-research decision (categorization "best method"):** a verified multi-source report
+(NN/g IA research + BERTopic/HDBSCAN primary docs; 22 confirmed claims, 3 refuted) concluded:
+at ~22 docs, **search + the existing hierarchy beats auto-clustering** (clustering is unstable
+at this scale — no defensible `min_cluster_size` at 20–100, HDBSCAN over-fragments, re-cluster
+churn; graph-community detection over the sparse schema_rel/doc_link hairball was refuted).
+Semantic-clustering categories are deferred to ~100+ docs (k-means + LLM cluster labels from
+c-TF-IDF via headless `claude -p`, recompute on doc-count bands). Captured in STATE.md → Deferred Items.
+
+**Backlog captured (STATE.md → Deferred Items, 2026-06-21):** (a) index semantic-clustering
+categories at 100+ docs; (b) run `promoteScope('tonos')` so projects gain chapter children
+(Phase 32); (c) refresh/grow the corpus via `ingest-project` + corpus/doc-generation passes.
+
+**Final state:** index is a corpus-docked, auto-opening left sidebar with a filter box, a hybrid
+Projects/Schemas nested-containment tree, ◀ collapse + reopen handle, and hover→containment-subtree
+highlight. No `#btn-index` toolbar button. Final verification: `npx tsc --noEmit` clean; full suite
+**2059 pass** / 3 skipped; `/index` route tests **15**; server `new Database` count **1**; no amber
+in index rest-state chrome. Founder approved the live verification on a copy of the live DB.

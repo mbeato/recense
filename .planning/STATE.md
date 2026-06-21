@@ -267,6 +267,9 @@ Carried forward from v4.0 close (2026-06-17):
 | content | content-hardening-deferred.md (transcript per-speaker, Obsidian PDF) | Deferred — orthogonal to v5.0 | 2026-06-15 |
 | Lockfile | Lock-heartbeat for long backlog passes (>30min) — LOCK_STALE_MS | Low priority | 2026-06-17 |
 | Lockfile | Pathological episode b924fdfd exceeds 10-min local timeout (DeepSeek handles it) | Low priority | 2026-06-17 |
+| Viz / index | Semantic-clustering CATEGORIES for the index Schemas tree — k-means (fixed k) + LLM cluster labels from c-TF-IDF candidates (via headless `claude -p`), recompute on doc-count bands not continuously. Deep-research verdict (Phase 39): at ~22 docs search+hierarchy beats clustering (unstable — no defensible min_cluster_size at 20–100, HDBSCAN over-fragments, re-cluster churn); graph-community detection over the sparse schema_rel/doc_link hairball refuted. | Deferred — trigger not met (~100+ docs) | 2026-06-21 |
+| Corpus / Phase 32 | Run `promoteScope('tonos')` (+ other project scopes) so project landing docs gain chapter-doc children — the hybrid index already renders project→chapter nesting; tonos is currently a standalone Phase-27 generate-doc with no children. | Deferred to Phase 32 (Project Recall + Auto-Corpus) | 2026-06-21 |
+| Corpus freshness | Refresh/grow the doc corpus — it's been a while since docs were added and some schemas/projects lack docs. Run `ingest-project` on unexplored projects + corpus promotion / doc-generation passes. Also feeds the ~100-doc trigger for index categories above. | Backlog — operational | 2026-06-21 |
 
 ## Session Continuity
 
