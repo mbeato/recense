@@ -331,6 +331,20 @@ export interface EngineConfig {
   rankStrengthWeight: number;
 
   /**
+   * Phase 37: min cosine for query→predicate confident match (D-07).
+   * Below threshold → schema-neighborhood fallback (D-06); at or above → typed-path mode.
+   *
+   * Default 0.35 — follows the `rankedRetrievalFloor` calibration ("real queries score
+   * 0.4–0.6; noise < 0.3"). Ships at 0.35, NOT 0 — a 0-default would never trigger
+   * typed-path mode (unlike rankStrengthWeight which ships dark at 0).
+   *
+   * Calibration: tune against the D-05 build-harness query set. If > 30% of expected-
+   * match queries fall below 0.35, lower to 0.30. If unrelated queries trigger typed-path
+   * mode, raise toward 0.40. The +29.5pts precision win (spike) is the ceiling.
+   */
+  predicateGlossThreshold: number;
+
+  /**
    * Max tokens to inject at SessionStart. Default: 500.
    * Matches the existing vault-briefing hook budget (session-start-context.ts
    * TOKEN_BUDGET = 500) for comparability during dogfood. Char proxy: budget × 4.
@@ -655,6 +669,9 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   rankWeightS: 1.0,
   rankWeightR: 0.0,
   rankStrengthWeight: 0,  // D-04: dark default — ships w=0; no behavior change at merge
+  // Phase 37: min cosine for query→predicate confident match (D-07, RESEARCH §2).
+  // Below threshold → schema-neighborhood fallback (D-06); calibrate against D-05 harness.
+  predicateGlossThreshold: 0.35,
   injectionTokenBudget: 500,
   spreadDecay: 0.5,
   deletedSimilarityThreshold: 0.7,
