@@ -400,7 +400,9 @@ recense deepens the two weakest edges of the engine — *how it ranks what it re
   2. On the existing KU/LongMemEval replay harness, blended ranking shows no regression vs. the cosine+BM25 baseline and delivers at least one of: higher top-k precision, or equal quality at a smaller inject budget (genuine token saving) — RANK-02
   3. The strength/recency term never overrides scope rules and never resurfaces tombstoned nodes (RET-02 invariant holds)
 
-**Plans:** 0 plans (run `/gsd-plan-phase 35`)
+**Plans:** 2 plans
+- [ ] 35-01-PLAN.md — Mechanism (RANK-01): weighted rrfFuse + pool-only strength list in hybridTopk + rankStrengthWeight knob (dark default), wired through retrieveRanked; T1..T5 + no-self-strengthen tests
+- [ ] 35-02-PLAN.md — Eval (RANK-02): KU harness queryText fix + --strength-weight flags + w-sweep driver; paid baseline+sweep run, winning w + D-06/D-07 verdict
 
 ### Phase 36: Typed Predicate Edges — Spike
 
