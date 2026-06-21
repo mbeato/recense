@@ -8,6 +8,7 @@
  *  - Pitfall 5: Float32Array decoded with byteOffset + length (Buffer slices may have nonzero byteOffset).
  */
 import Database from 'better-sqlite3';
+import { effectiveStrength } from '../strength/decay';
 
 /**
  * Compute cosine similarity between two Float32Array vectors.
@@ -59,11 +60,13 @@ export function rrfFuse(
   lists: Array<Array<{ id: string }>>,
   k = 60,
   topK = 10,
+  weights?: number[],
 ): Array<{ id: string; rrfScore: number }> {
   const scores = new Map<string, number>();
-  for (const list of lists) {
-    list.forEach((hit, rank) => {
-      scores.set(hit.id, (scores.get(hit.id) ?? 0) + 1 / (k + rank + 1));
+  for (let li = 0; li < lists.length; li++) {
+    const w = weights?.[li] ?? 1;
+    lists[li]!.forEach((hit, rank) => {
+      scores.set(hit.id, (scores.get(hit.id) ?? 0) + w / (k + rank + 1));
     });
   }
   return [...scores.entries()]
@@ -91,6 +94,12 @@ export class CandidateRetriever {
   // JOIN node excludes tombstoned rows (belt-and-braces — sync in tombstone() is structural).
   // MATCH argument is NEVER raw text: callers must pass ftsQueryFromText(text) output.
   private readonly stmtBm25: Database.Statement;
+  // Phase 35 RANK-01: fetch s + last_access for a set of candidate ids (D-02 pool query).
+  // json_each pattern mirrors stmtLatestSupportTs in engine.ts.
+  // Pool ids are internal UUIDs derived from cosine+BM25 scan — never user strings (D-02).
+  // tombstoned nodes are excluded via the source queries (D-10); this stmt fetches any live
+  // node by id; the pool already excludes tombstoned ids.
+  private readonly stmtPoolStrength: Database.Statement;
 
   constructor(db: Database.Database) {
     // Select only nodes that have been embedded AND are not tombstoned (T-02-STALE)
@@ -107,6 +116,12 @@ export class CandidateRetriever {
       WHERE node_fts MATCH ?
       ORDER BY rank LIMIT ?
     `);
+    // Phase 35 RANK-01: parameterized json_each pool-strength lookup.
+    // Selects s + last_access for the given set of candidate ids.
+    // Pool ids are UUIDs from the cosine/BM25 scan — internal only, never user strings (T-35-02).
+    this.stmtPoolStrength = db.prepare(
+      'SELECT id, s, last_access FROM node WHERE id IN (SELECT value FROM json_each(?))'
+    );
   }
 
   /**
@@ -183,6 +198,9 @@ export class CandidateRetriever {
     queryText: string,
     k: number,
     preK = k * 3,
+    strengthWeight = 0,
+    nowMs?: number,
+    lambda?: number,
   ): Array<{ id: string; score: number }> {
     // Cosine list (pre-k for fusion input)
     const cosineList = this.topk(queryVec, preK);
@@ -199,10 +217,38 @@ export class CandidateRetriever {
       }
     }
 
-    // RRF fusion — rank-based, no score normalization needed
-    const fused = rrfFuse([cosineList, bm25List], 60, k);
+    // Phase 35 RANK-01: optional strength-ranked third list (D-01, D-02, D-04).
+    // Only assembled when strengthWeight > 0; pool ids are internal UUIDs only (T-35-02).
+    // Calls the shared pure effectiveStrength helper from decay.ts (T-35-01 one-place-math rule).
+    // NEVER calls materializeDecay (Pitfall 4 — that mutates s/last_access, violating D-43).
+    let fused;
+    if (strengthWeight > 0) {
+      // D-02: pool is the strict union of the cosine+BM25 candidate ids — never wider
+      const poolIds = [...new Set([...cosineList.map(h => h.id), ...bm25List.map(h => h.id)])];
+      const poolRows = this.stmtPoolStrength.all(JSON.stringify(poolIds)) as Array<{
+        id: string; s: number; last_access: number;
+      }>;
+      const strengthList = poolRows
+        .map(r => ({
+          id: r.id,
+          // Shared pure helper from decay.ts — one-place-math rule (no formula re-derivation here)
+          effS: effectiveStrength(r.s, r.last_access, nowMs ?? Date.now(), lambda ?? 0.05),
+        }))
+        .sort((a, b) => b.effS - a.effS);
 
-    // Resolve cosine score for each fused result (needed by retrieveRanked's floor gate)
+      fused = rrfFuse(
+        [cosineList, bm25List, strengthList],
+        60, k,
+        [1, 1, strengthWeight],
+      );
+    } else {
+      // D-04 dark default: strengthWeight=0 → exact current behavior, no DB strength query
+      fused = rrfFuse([cosineList, bm25List], 60, k);
+    }
+
+    // Resolve cosine score for each fused result (needed by retrieveRanked's floor gate).
+    // PRESERVE exactly: strength list changes fusion ORDER only, never the returned score (Pitfall 2).
+    // BM25-only or strength-only hits (no cosine vector) retain score=0.
     const cosineScoreMap = new Map(cosineList.map(h => [h.id, h.score]));
     return fused.map(f => ({
       id: f.id,

@@ -126,6 +126,34 @@ describe('FTS retrieval', () => {
 
   // ── 2. rrfFuse: rank ordering ─────────────────────────────────────────────
 
+  describe('rrfFuse weighted fusion (Phase 35 RANK-01)', () => {
+    it('T1 w=0 regression: rrfFuse with weights=[1,1,0] and empty third list equals unweighted call', () => {
+      const listA = [{ id: 'a' }, { id: 'b' }];
+      const listB = [{ id: 'b' }, { id: 'c' }];
+      const noWeights = rrfFuse([listA, listB], 60, 10);
+      const withZeroWeight = rrfFuse([listA, listB, []], 60, 10, [1, 1, 0]);
+      expect(withZeroWeight.map(r => r.id)).toEqual(noWeights.map(r => r.id));
+    });
+
+    it('T2 weighted boost: strength list (w=2.0) re-orders high_strength to rank 0', () => {
+      // cosineList puts low_strength first (rank 0), high_strength second (rank 1)
+      const cosineList = [{ id: 'low_strength' }, { id: 'high_strength' }];
+      const bm25List: Array<{ id: string }> = [];
+      // strengthList puts high_strength first (rank 0), low_strength second (rank 1)
+      const strengthList = [{ id: 'high_strength' }, { id: 'low_strength' }];
+
+      const withoutStrength = rrfFuse([cosineList, bm25List], 60, 10);
+      // w=2.0: strength contributes 2·1/(k+rank+1); enough to lift high_strength above low_strength.
+      // Math: high_strength = 1/62 + 2/61 ≈ 0.04886; low_strength = 1/61 + 2/62 ≈ 0.04797 → high wins.
+      const withStrength = rrfFuse([cosineList, bm25List, strengthList], 60, 10, [1, 1, 2.0]);
+
+      // Without strength: cosine order wins → low_strength at rank 0
+      expect(withoutStrength[0]?.id).toBe('low_strength');
+      // With strength w=2.0: high_strength's boost from rank-0 in strengthList surpasses low_strength
+      expect(withStrength[0]?.id).toBe('high_strength');
+    });
+  });
+
   describe('rrfFuse rank ordering', () => {
     it('ranks a doc appearing high in both lists above a doc in only one', () => {
       // both: appears at rank 0 in list A, rank 0 in list B
@@ -222,6 +250,67 @@ describe('FTS retrieval', () => {
       // The test is valid whether fts-only surfaces or not — what matters is no throw
       // and cosine-node always surfaces
       expect(hybrid.map(r => r.id)).toContain('cosine-node');
+    });
+  });
+
+  // ── 3b. hybridTopk strength fusion (Phase 35 RANK-01) ────────────────────
+
+  describe('hybridTopk strengthWeight (Phase 35 RANK-01)', () => {
+    it('T4 w=0 hybridTopk regression: strengthWeight=0 output deep-equals unweighted call', () => {
+      store.upsertNode({ id: 'node1', type: 'fact', value: 'test fact alpha', origin: 'observed' });
+      store.setEmbedding('node1', basisVec(0));
+      store.upsertNode({ id: 'node2', type: 'fact', value: 'test fact beta', origin: 'observed' });
+      store.setEmbedding('node2', basisVec(1));
+
+      const queryVec = basisVec(0);
+      const baseline = retriever.hybridTopk(queryVec, 'test', 5);
+      const withZeroWeight = retriever.hybridTopk(queryVec, 'test', 5, undefined, 0);
+      expect(withZeroWeight.map(r => r.id)).toEqual(baseline.map(r => r.id));
+    });
+
+    it('T3 D-02 pool enforcement: off-pool high-strength node does not appear at strengthWeight=2.0', () => {
+      // node A: in cosine pool (basisVec(0)), low s=0.1
+      store.upsertNode({ id: 'in_pool', type: 'fact', value: 'relevant fact', origin: 'observed' });
+      store.setEmbedding('in_pool', basisVec(0));
+      db.prepare('UPDATE node SET s = 0.1 WHERE id = ?').run('in_pool');
+
+      // node B: NOT in cosine pool (basisVec(3) is far from query basisVec(0)), high s=1.0
+      store.upsertNode({ id: 'off_pool', type: 'fact', value: 'off topic strong belief', origin: 'observed' });
+      store.setEmbedding('off_pool', basisVec(3));
+      db.prepare('UPDATE node SET s = 1.0, last_access = 0 WHERE id = ?').run('off_pool');
+
+      // preK=1 means only the top-1 cosine match (in_pool) enters the pool; off_pool excluded
+      const queryVec = basisVec(0);
+      const results = retriever.hybridTopk(queryVec, 'notoken', 1, 1, 2.0, Date.now(), 0.05);
+      expect(results.map(r => r.id)).not.toContain('off_pool');
+    });
+
+    it('T5 tombstone D-10: tombstoned high-strength node never surfaces via strength list', () => {
+      store.upsertNode({ id: 'live_node', type: 'fact', value: 'live data fact', origin: 'observed' });
+      store.setEmbedding('live_node', basisVec(0));
+      db.prepare('UPDATE node SET s = 0.1 WHERE id = ?').run('live_node');
+
+      // Tombstoned node with high strength — should never surface
+      store.upsertNode({ id: 'tomb_node', type: 'fact', value: 'tombstoned strong belief', origin: 'observed' });
+      store.setEmbedding('tomb_node', basisVec(0));
+      db.prepare('UPDATE node SET s = 1.0 WHERE id = ?').run('tomb_node');
+      store.tombstone('tomb_node');
+
+      const queryVec = basisVec(0);
+      const results = retriever.hybridTopk(queryVec, 'fact', 5, 15, 2.0, Date.now(), 0.05);
+      expect(results.map(r => r.id)).not.toContain('tomb_node');
+    });
+
+    it('no-self-strengthen: s and last_access unchanged after hybridTopk with strengthWeight>0', () => {
+      store.upsertNode({ id: 'checked_node', type: 'fact', value: 'check me', origin: 'observed' });
+      store.setEmbedding('checked_node', basisVec(0));
+      const beforeRow = db.prepare('SELECT s, last_access FROM node WHERE id = ?').get('checked_node') as { s: number; last_access: number };
+
+      retriever.hybridTopk(basisVec(0), 'check', 5, 15, 2.0, Date.now(), 0.05);
+
+      const afterRow = db.prepare('SELECT s, last_access FROM node WHERE id = ?').get('checked_node') as { s: number; last_access: number };
+      expect(afterRow.s).toBe(beforeRow.s);
+      expect(afterRow.last_access).toBe(beforeRow.last_access);
     });
   });
 

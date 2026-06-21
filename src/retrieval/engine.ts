@@ -395,8 +395,15 @@ export class RetrievalEngine {
     // LEVER 1: route through hybridTopk when queryText is supplied; else pure cosine topk.
     // hybridTopk returns results sorted by RRF rank; the cosine score component is preserved
     // in the score field (BM25-only hits get score=0) for the floor gate below.
+    // Phase 35 RANK-01: pass strength weight + clock + lambda on the hybrid branch only (D-08).
+    // The cue-less fallback (topk) is left entirely untouched — ambient-recall stays no-fusion.
     const hits = queryText
-      ? this.retriever.hybridTopk(queryVec, queryText, k)
+      ? this.retriever.hybridTopk(
+          queryVec, queryText, k, undefined,
+          this.config.rankStrengthWeight,
+          this.clock.nowMs(),
+          this.config.lambda,
+        )
       : this.retriever.topk(queryVec, k);
 
     // Apply floor to the cosine score component and resolve node values.

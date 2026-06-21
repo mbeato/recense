@@ -19,6 +19,27 @@ import type { EngineConfig } from '../lib/config';
 import type { Origin, NodeRow } from '../lib/types';
 
 /**
+ * Pure module-level helper: effective strength at a given instant.
+ * effective_s = s · exp(−λ · Δdays)  where  Δdays = (nowMs − lastAccessMs) / 86_400_000
+ *
+ * Exported for use by the retrieval layer (topk.ts) without requiring a StrengthDecayManager
+ * instance. The instance method below delegates to this function — one formula, one place
+ * (project hard-rule: no inline Math.exp(-lambda*...) re-derivation anywhere else).
+ *
+ * L-8: clamp Δt to ≥ 0 — clock rollback would produce effective_s > s; clamping treats
+ * rollback as "no time passed". Load-bearing guard — do NOT remove the Math.max(0, ...).
+ */
+export function effectiveStrength(
+  s: number,
+  lastAccessMs: number,
+  nowMs: number,
+  lambda: number,
+): number {
+  const deltaDays = Math.max(0, nowMs - lastAccessMs) / 86_400_000;
+  return s * Math.exp(-lambda * deltaDays);
+}
+
+/**
  * Minimum age (ms) a tombstoned node must sit at before eviction eligibility.
  * 30 days — gates genuine abandonment vs. recently-superseded nodes still in the graph.
  *
@@ -89,6 +110,10 @@ export class StrengthDecayManager {
    * effective_s = s · exp(−λ · Δdays)  where  Δdays = (nowMs − lastAccessMs) / 86_400_000
    *
    * No DB access. Safe to call at any time without side effects.
+   *
+   * Delegates to the module-level `effectiveStrength` pure helper — the single formula
+   * site. Do NOT inline s·exp(−λΔt) anywhere else; always call through here or the
+   * module export (one-place-math invariant, Phase 35 project hard-rule).
    */
   effectiveStrength(
     s: number,
@@ -96,11 +121,7 @@ export class StrengthDecayManager {
     nowMs: number,
     lambda: number
   ): number {
-    // L-8: clamp Δt to ≥ 0 — clock rollback (NTP correction, VM resume, FakeClock rewind)
-    // would produce negative deltaDays → exp(+λ·Δdays) → effective_s > s. Clamping to 0
-    // treats rollback as "no time passed" (s unchanged) — correct and safe.
-    const deltaDays = Math.max(0, nowMs - lastAccessMs) / 86_400_000;
-    return s * Math.exp(-lambda * deltaDays);
+    return effectiveStrength(s, lastAccessMs, nowMs, lambda);
   }
 
   /**
