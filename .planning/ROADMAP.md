@@ -491,10 +491,10 @@ Plans:
 **Goal:** Claims arriving in the SAME consolidation pass can dedup/contradict each other — a mid-pass-minted node is visible to later episodes' `topk` in that pass, instead of minting permanent duplicate islands. Fixes the bulk-ingest onboarding path (`ingest-project` into a small/empty graph) and unblocks a fair Phase 35 RANK-02 re-test.
 **Requirements**: DEDUP-01 (embed-on-mint: minted node's embedding set from the already-computed claim vector so it's `topk`-visible immediately — Option D), DEDUP-02 (no regression: incremental multi-pass path + RANK-01 dark default unchanged; `setEmbedding` stays single writer, T-01-DIRTY intact)
 **Depends on:** Inserted after Phase 38 (urgent). Independent correctness fix; gates a fair Phase 35 RANK-02 re-test, and must precede the v8.0 benchmark/gate phases (40–43) so their baselines aren't frozen on a degenerate graph. Design captured in 38.1-CONTEXT.md.
-**Plans:** 0 plans
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 38.1 to break down)
+- [x] 38.1-01-PLAN.md — invariant re-verify + thread claimVec & embed-on-mint at value==claim mint sites (per-site audit) + DEDUP-01 intra-pass regression test (DEDUP-01, DEDUP-02)
 
 ### Phase 39: Reader Wiki-Parity — Browsable Index + Surfaced Backlinks
 

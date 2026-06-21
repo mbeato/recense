@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: ready_to_plan
-stopped_at: Phase 38 context gathered
-last_updated: "2026-06-21T05:42:46.572Z"
+stopped_at: Phase 38.1 complete (1/1) — ready to discuss Phase 39
+last_updated: 2026-06-21T19:19:34.644Z
 progress:
-  total_phases: 15
-  completed_phases: 6
-  total_plans: 26
-  completed_plans: 20
-  percent: 40
+  total_phases: 16
+  completed_phases: 7
+  total_plans: 27
+  completed_plans: 45
+  percent: 44
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 38 — stored-reflections-derived-insights
+**Current focus:** Phase 39 — reader wiki parity index and backlinks
 
 ## Current Position
 
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
-Phase: 38 (stored-reflections-derived-insights) — EXECUTING
-Plan: 1 of 4
+Phase: 39
+Plan: Not started
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
 [████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
@@ -85,7 +85,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 
 **Velocity (historical baseline):**
 
-- Total plans completed: 160 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
+- Total plans completed: 161 (v1.0: 42, v2.0: 14, v3.0: 42, v3.1: 8, v4.0: 22, quick-tasks: 19)
 - Average plan duration: ~20–25 min
 
 **By Milestone:**
