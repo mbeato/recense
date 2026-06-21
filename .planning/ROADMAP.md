@@ -443,7 +443,7 @@ recense deepens the two weakest edges of the engine — *how it ranks what it re
   2. Recall assembles a typed relational path; multi-hop queries return a precise path with fewer tokens than the untyped-neighborhood baseline at equal-or-better answer quality on the harness — TYPED-02
   3. Self-confirmation guard intact: inferred output never mints or strengthens a typed edge
 
-**Plans:** 1/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 **Wave 1**
@@ -452,8 +452,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 37-02-PLAN.md — Extraction (TYPED-01): merged {facts,triples} prompt, consolidator typed-edge upsert (origin-guarded), mode switch
-- [ ] 37-03-PLAN.md — Recall traversal (TYPED-02): typedReach + matchPredicate, D-06 typed-path-OR-fallback augment, D-08 guard
+- [x] 37-02-PLAN.md — Extraction (TYPED-01): merged {facts,triples} prompt, consolidator typed-edge upsert (origin-guarded), mode switch
+- [x] 37-03-PLAN.md — Recall traversal (TYPED-02): typedReach + matchPredicate, D-06 typed-path-OR-fallback augment, D-08 guard
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -470,7 +470,13 @@ Plans:
   2. Recall surfaces a relevant stored insight in place of (or ahead of) raw member facts where it answers the query, measurably reducing compose-time tokens on the harness with no quality regression — REFLECT-02
   3. Insights are regenerable/evictable like docs; a falsified or tombstoned underlying fact invalidates or flags the dependent insight (no stale-insight self-confirmation)
 
-**Plans:** 0 plans (run `/gsd-plan-phase 38`)
+**Plans:** 4 plans (3 waves)
+
+Plans:
+- [ ] 38-01-PLAN.md — Model/DDL foundation: type='insight' + derived_from CHECK migrations (schema v13), node_insight sidecar, eviction child-wipe, config knobs
+- [ ] 38-02-PLAN.md — InsightReflector deriver: judge-tier synthesis + selection/staleness gate + single-writer write, wired into Phase C; self-confirmation sentinel
+- [ ] 38-03-PLAN.md — Recall surfacing: augment-with-fallback insight-in-place-of-neighborhood, freshness-gated, LLM-free, behind insightSurfacingEnabled dark default
+- [ ] 38-04-PLAN.md — Eval: instrument the KU replay harness with compose-token measurement (off vs on), prove the no-regression token win + founder activation decision
 
 ### Phase 39: Reader Wiki-Parity — Browsable Index + Surfaced Backlinks
 
