@@ -445,6 +445,16 @@ class CandidateCapturingProvider extends MockModelProvider {
       contradicted_ids: candidates[0]?.id ? [candidates[0].id] : [],
     };
   }
+
+  // WR-01: the consolidator's default (non-RECENSE_ENABLE_JUDGE_BATCH) path calls
+  // provider.judgeBatch([single]) per pending claim — it never calls judge() directly.
+  // Override judgeBatch so the test binds to the method actually invoked, instead of
+  // relying on MockModelProvider.judgeBatch happening to delegate to this.judge().
+  override async judgeBatch(
+    items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>,
+  ): Promise<JudgeVerdict[]> {
+    return Promise.all(items.map((i) => this.judge(i.claim, i.candidates)));
+  }
 }
 
 describe('DEDUP-01: embed-on-mint intra-pass visibility', () => {
