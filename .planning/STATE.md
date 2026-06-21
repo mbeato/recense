@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: Phase 33 complete
-stopped_at: Phase 32 context gathered
-last_updated: "2026-06-20T22:17:56.129Z"
+stopped_at: Phase 36 context gathered
+last_updated: "2026-06-21T01:25:22.787Z"
 progress:
-  total_phases: 10
-  completed_phases: 8
-  total_plans: 36
-  completed_plans: 31
-  percent: 80
+  total_phases: 15
+  completed_phases: 5
+  total_plans: 16
+  completed_plans: 13
+  percent: 33
 ---
 
 # Project State
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 32 — project-recall-auto-corpus
+**Current focus:** Phase 34 — visual-polish-pass
 
 ## Current Position
 
 ```
 Milestone: v6.0 Project Onboarding — IN PROGRESS
-Phase: 33 — COMPLETE
+Phase: 34 (visual-polish-pass) — EXECUTING
 Plan: 1 of 3
 Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
 
@@ -111,6 +111,12 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
   - Phase 36 — **Typed Predicate Edges SPIKE** (TYPED-SPIKE-01): prove typed relations (`works_at`/`prefers`/…) lift multi-hop recall on a scratch DB before committing engine change. Spike-first per Phase-29 discipline; off-distribution architecture — founder stays the architect. Standalone.
   - Phase 37 — **Typed Predicate Edges BUILD** (TYPED-01/02): **gated on Phase 36 go/no-go** — does not start on a no-go. Typed edge model + offline typed extraction + typed-path recall (precise path vs neighborhood dump).
   - Phase 38 — **Stored Reflections / Derived Insights** (REFLECT-01/02): sleep-pass reflects over schema clusters → stores insights as `origin=inferred`, non-strengthening, confidence-capped; recall returns a precomputed insight instead of re-synthesizing N facts at compose-time. Makes "reasons over schemas" a durable mechanism. Sequenced last. Founder-directed 2026-06-20 (scope: "ranking now, spike then build the rest"; new milestone).
+- Milestone **v8.0 Performance, Efficiency & Competitive Parity** added (2026-06-20): Phases 40–43, **starts after v7.0** (system under test must be final, not a moving target). Founder goal: "lock down performance and efficiency, hammer evals, be at or above competitor memory systems." Frame: competitors (mem0, Zep/Graphiti, Letta) publish on **three axes — accuracy, latency, token/cost** — and founder wants all three. **Load-bearing hard-rule: no inflated metrics** — every competitive claim must be a benchmark recense ran itself or a published competitor number cited with source; baseline-before-optimize mandatory. Grounded headline lever: recall still does **brute-force O(N) cosine** (`src/retrieval/topk.ts`) and the live brain is already **7000+ nodes** (past the ~5K comfort), with the `sqlite-vec`/HNSW seam **unbuilt** → biggest latency win. Scope: FULL (founder-chosen) — includes building the vector index, not just tuning knobs.
+  - Phase 40 — **Competitive Benchmark Baseline** (BENCH-01/02/03): add LOCOMO alongside LongMemEval + KU harness; record honest accuracy/latency(p50,p95)/token baselines; cite competitor targets with sources. **Gates 41–43.**
+  - Phase 41 — **Vector Index + Hot-Path Latency** (PERF-01/02/03): build sqlite-vec/HNSW (derived/rebuildable cache, graph stays source of truth), kill brute-force cosine, profile recall + SessionStart inject; no accuracy regression. Independent of 42.
+  - Phase 42 — **Token/Cost Efficiency Audit** (COST-01/02/03): measure write (Haiku/Sonnet) + recall token cost, tune consolSkipThreshold/inject budget, verify v7.0 ranking+reflection token savings paid off; defensible vs-competitor claim. Independent of 41.
+  - Phase 43 — **Eval Regression Gates** (GATE-01/02/03): turn harness into a CI/pre-merge gate with thresholds on all three axes; freezes v8.0-final numbers. Comes last. Founder-directed 2026-06-20 (placement: new milestone after v7.0; ambition: full incl. vector index).
+  - Phase 39 — **Reader Wiki-Parity: Index + Backlinks** (WIKI-01/02/03): added 2026-06-20 after a feature-by-feature LLM-Wiki audit vs the `research-wiki` standard. Verdict: recense meets-or-beats the LLM Wiki on every *mechanism* (autonomous maintenance, dedup-to-canonical, PE-gated update-don't-rewrite, enforced citations, auto-staleness, self-confirmation immunity, forgetting) — behind only on two reader ergonomics: a browsable INDEX and surfaced backlinks ("what links here"). Both reuse data that already exists (doc nodes; `idx_edge_dst`/`getInEdges` reverse lookup) → presentation-layer parity, no engine change. **Markdown export deferred** (recall+reader replace grep; queryable-DB-vs-portable-files is a deliberate divergence). Engine-internal data for both already present; gap was purely UI. Independent of 35–38. Founder-directed 2026-06-20.
 - Phase 34 added (2026-06-20): **Visual Polish Pass** — cross-surface UI cleanup of the four live viz surfaces (Reader, Corpus 2D graph, Detail panel/page, Brain HUD/controls) along two axes only: spacing/alignment consistency + states & transitions (loading/empty/error, hover/focus, smooth transitions). Polish only — no structural/composition change, no redesign. Founder-locked guards: palette (amber=activation/hover only, ref 27-04 violation), 3D density anchor (no regress), net-zero deps. Standalone (all surfaces exist + live). UI hint: yes — route through `/gsd-ui-phase 34` at plan time. Founder-directed 2026-06-20.
 - Phase 33 added (2026-06-20): **Synchronous Curated Write (`recense remember`)** — closes the customer-zero "replaces MEMORY.md" promise on the WRITE side. recense owns read (recall at session-start) but deliberate facts still leak to native Claude Code `.md` memory because the only write paths are passive-lossy (turn-capture→sleep-pass) or batch-lossy (import-memory). Adds a synchronous, verbatim, curated single-fact write that runs in-place reconsolidation (reuses update-decision/sink/judge), plus a CLAUDE.md cutover directive and a one-time lossless migration of the 12 existing `.md` files through the new command. Standalone — depends only on the live consolidation machinery, NOT the v6.0 onboarding phases. Founder-directed 2026-06-20; design forks resolved (reconsolidate-on-write + migrate-via-remember). See memory [[graphify-is-codebase-tool-not-memory-rival]] context thread.
 - Phase 28 added (2026-06-19): **Schema-Anchored Corpus** — pivots the reader corpus from project-scope docs to the abstraction graph rendered as prose (docs anchor on schemas/entities, cite direct facts; mass-gated promotion; hierarchy mirrors the `abstracts` ladder; decide-cheap/generate-lazy; read-only projection). **Supersedes Phase 27 READER-04** (doc_link-between-projects); inherits the reader UI + flat 2D renderer + lazy-gen + /doc routes + gather + doc-writer. Origin: design discussion during Phase 27 27-05 verification (see memory [[corpus-from-schemas-design]]).
@@ -262,9 +268,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-20T21:13:37.162Z
-Stopped at: Phase 32 context gathered
-Resume file: .planning/phases/32-project-recall-auto-corpus/32-CONTEXT.md
+Last session: 2026-06-21T01:25:22.778Z
+Stopped at: Phase 36 context gathered
+Resume file: .planning/phases/36-typed-predicate-edges-spike/36-CONTEXT.md
 
 ## Key Decisions (Phase 28)
 
