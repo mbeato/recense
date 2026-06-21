@@ -81,18 +81,35 @@ export function initCorpus(ctx) {
     const ForceGraph = window.ForceGraph;
     if (typeof ForceGraph !== 'function') return null;
 
-    // Loading indicator — shown immediately while fetch + graph init runs.
+    // CR-02 fix: remove any stale status div first so repeated empty/error opens don't
+    // accumulate overlays (CorpusGraph stays null on those paths, so each click re-runs this).
+    const stale = container.querySelector('.corpus-status');
+    if (stale) stale.remove();
+
+    // Loading indicator — shown immediately while fetch + graph init runs. The caller
+    // (showCorpus) has already opened the container, so this renders in a VISIBLE surface.
     const statusEl = document.createElement('div');
     statusEl.className = 'corpus-status';
     statusEl.textContent = 'Loading corpus…';
     container.appendChild(statusEl);
 
+    // CR-01 fix: distinguish error from empty. A thrown fetch OR a non-ok response is an
+    // ERROR — without this flag the error path falls through to the empty-state check below,
+    // which overwrites 'Failed to load corpus' with 'No docs yet'.
+    let errored = false;
     let data = { nodes: [], links: [] };
     try {
       const res = await fetch('/graph?type=doc');
       if (res.ok) data = await res.json();
+      else errored = true;
     } catch (_) {
-      if (statusEl) statusEl.textContent = 'Failed to load corpus';
+      errored = true;
+    }
+
+    // CR-01 fix: surface the error BEFORE the empty-state check so it can't be overwritten.
+    if (errored) {
+      statusEl.textContent = 'Failed to load corpus';
+      return null; // bail — error overlay stays visible; corpus view is already open
     }
 
     // Build the nodeId → slug map (slug is included in /graph?type=doc node records
@@ -107,7 +124,7 @@ export function initCorpus(ctx) {
       nodeLabels[node.id] = node.label || node.slug || node.id;
     }
 
-    // Empty state: no docs in corpus yet.
+    // Empty state: no docs in corpus yet (fetch succeeded but returned zero nodes).
     if ((data.nodes || []).length === 0) {
       statusEl.innerHTML =
         'No docs yet<br><code>recense generate-doc &lt;slug&gt;</code>';
@@ -269,10 +286,30 @@ export function initCorpus(ctx) {
   }
 
   async function showCorpus() {
-    // Lazy-init on first open.
+    // CR-02/WR-03 fix: ENTER corpus view FIRST, then build. The loading/empty/error status
+    // overlay is appended to #corpus-graph, which is display:none until `.open` — so the
+    // view MUST be active before buildCorpusGraph runs, or the status renders invisibly and
+    // the view never opens on an empty/error/first-load corpus. Opening first also gives the
+    // container real clientWidth/clientHeight before ForceGraph + the centering force init (WR-01).
+    container.classList.add('open');
+    if (brainEl) brainEl.style.visibility = 'hidden';
+    // B3: hide topics/search in corpus view (mode-state visibility).
+    const topicWrap = document.getElementById('topic-wrap');
+    const searchWrap = document.getElementById('search-wrap');
+    if (topicWrap) topicWrap.style.display = 'none';
+    if (searchWrap) searchWrap.style.display = 'none';
+    corpusActive = true;
+    // C1: icon button — aria-label/title + glyph swap (corpus active → show brain icon).
+    corpusBtn.setAttribute('aria-label', 'Show brain');
+    corpusBtn.setAttribute('title', 'Show brain');
+    corpusBtn.innerHTML = ICON_BRAIN;
+    corpusBtn.classList.add('corpus-active');
+
+    // Lazy-init on first open — now runs with the container already visible + sized.
     if (!CorpusGraph) {
       CorpusGraph = await buildCorpusGraph();
-      if (!CorpusGraph) return; // force-graph not available — bail (brain stays shown)
+      if (!CorpusGraph) return; // empty / error / no force-graph — status stays visible,
+                                // corpus view stays open; the user toggles back via the button.
       // Fit when the force layout settles (settled positions → correct framing).
       // onEngineStop fires once the simulation cools; this is the primary fit trigger.
       if (typeof CorpusGraph.onEngineStop === 'function') {
@@ -281,21 +318,7 @@ export function initCorpus(ctx) {
         });
       }
     }
-    // Show the flat corpus, hide the 3D brain (pure visibility — brain untouched).
-    container.classList.add('open');
-    if (brainEl) brainEl.style.visibility = 'hidden';
-    // B3: hide topics/search in corpus view (mode-state visibility).
-    const topicWrap = document.getElementById('topic-wrap');
-    const searchWrap = document.getElementById('search-wrap');
-    if (topicWrap) topicWrap.style.display = 'none';
-    if (searchWrap) searchWrap.style.display = 'none';
     sizeCorpusGraph();
-    corpusActive = true;
-    // C1: icon button — aria-label/title + glyph swap (corpus active → show brain icon).
-    corpusBtn.setAttribute('aria-label', 'Show brain');
-    corpusBtn.setAttribute('title', 'Show brain');
-    corpusBtn.innerHTML = ICON_BRAIN;
-    corpusBtn.classList.add('corpus-active');
     // Fallback fit on a fixed timeout in case onEngineStop already fired before the
     // corpus was shown (e.g. a tiny graph settles instantly), or never fires.
     setTimeout(() => { if (corpusActive) fitAndClamp(); }, 350);
