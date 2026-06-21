@@ -40,7 +40,10 @@ three founder-requested post-checkpoint fixes and present for re-verification.
 | F1 | Fix: sticky reader × top breathing room | bdd3a17 | src/viz/css/styles.css |
 | F2 | Fix: corpus button book→brain icon swap | b7467f5 | src/viz/modules/corpus.js |
 | F3 | Fix: compact corpus force layout | 04fa578 | src/viz/modules/corpus.js |
-| 2 | Founder visual checkpoint | AWAITING HUMAN-VERIFY (2nd pass) | — |
+| F1b | Round 2: relocate × into the sticky kicker row | 6a65080 | src/viz/css/styles.css, src/viz/index.html |
+| F2b | Round 2: drop corpus-active border + side-view brain glyph | e6098c9 | src/viz/css/styles.css, src/viz/modules/corpus.js |
+| F3b | Round 2: loosen corpus spread for label legibility | e9bf420 | src/viz/modules/corpus.js |
+| 2 | Founder visual checkpoint | AWAITING HUMAN-VERIFY (3rd pass) | — |
 
 ## Task 1: Guard Results (initial pass — commit 872e453)
 
@@ -136,16 +139,64 @@ fitAndClamp then zoomed out to fit the spread.
 - `fitAndClamp` and `MAX_ZOOM=2.5` unchanged; compact cluster means fit zooms to a legible scale,
   not a sparse edge-scatter zoom-out.
 
-## Re-Verified Guards (after founder fixes)
+## Founder Round-2 Refinements (after 2nd re-verify)
 
-All three guards re-run after the three fix commits:
+### F1b — Relocate × into the sticky kicker row (6a65080)
+
+**Problem (founder verbatim):** "just put it in the same row as the deep-dive /uuid row cause
+thats already sticky as well and the spacing is perfect." The round-1 padding bump didn't pass.
+
+**Fix in `src/viz/index.html` + `src/viz/css/styles.css`:**
+- Wrapped kicker+title in a `#reader-meta` span; moved `<button id="reader-close">` to the end
+  of `#reader-head` in DOM order.
+- `#reader-head`: `display:flex; align-items:center` — the × is pushed to the right edge via
+  `margin-left:auto`, sitting on the **same baseline** as "deep-dive · <title>".
+- Dropped `#reader-close` absolute positioning (`position:absolute; top/right`) entirely.
+- Reverted the round-1 `padding-top` bump (24px → 20px) — the × now inherits the kicker row's
+  existing (founder-approved "perfect") spacing.
+- `#reader-meta` ellipsis-truncates so a long title can't push the × off-row.
+- `#reader-head` stays sticky. Palette unchanged (muted mauve rest, slate hover, no amber).
+
+### F2b — Drop corpus-active border + side-view brain glyph (e6098c9)
+
+**(a)** Founder: "remove the border around the brain in corpus view." Deleted
+`border: 1px solid rgba(156,112,128,0.55)` from `.mode-window #btn-corpus.corpus-active`.
+Active state now = opacity 1 + brightened color `#c8bcd0` only, no border.
+
+**(b)** Founder: "i want more of a side view brain crossection glyph not head on like it is now."
+Replaced the head-on two-lobe `ICON_BRAIN` with a **sagittal side-profile cross-section**:
+cerebrum in profile facing left, two internal gyri folds, a cerebellum/brainstem nub at the
+lower-back. Same inline-SVG style (`viewBox 0 0 24 24`, stroke-width 2, round caps/joins) —
+net-zero deps. `ICON_BOOK` unchanged (brain-active state).
+
+### F3b — Loosen corpus spread for label legibility (e9bf420)
+
+**Problem (founder verbatim):** "better maybe a touch more spread out its not bad necessarily
+now but hard to read some of the labels this close."
+
+**Fix in `src/viz/modules/corpus.js`:**
+- `charge.strength`: -20 → -35 (modestly more repulsion).
+- Centering force `k`: 0.08 → 0.05 (softer centre pull — looser, still contained).
+- Added an inline **collision force** (d3-force protocol, no d3 import): single-pass separation
+  with `COLLIDE_R = NODE_R * 4` (~20 units) so node+label footprints don't overlap.
+- Net-zero deps; still a centred, contained cluster — just with legible label spacing.
+
+## Re-Verified Guards (after BOTH fix rounds)
+
+All guards re-run after the round-2 fix commits (6a65080, e6098c9, e9bf420):
 
 | Guard | Command | Result |
 |-------|---------|--------|
-| Net-zero deps | `git diff --stat package.json` | **PASS** — empty |
+| Net-zero deps | `git diff --stat package.json package-lock.json` | **PASS** — empty |
 | Build | `npm run build` | **PASS** — tsc exit 0, copy-viz-assets ran |
-| No amber at rest | diff grep `#d9a05c\|rgba(217` on `+` lines | **PASS** — zero matches |
-| Structural files only | `git diff b3c2b9c HEAD --name-only` | **PASS** — only styles.css, index.html, corpus.js |
+| No amber at rest | diff grep `#d9a05c\|rgba(217` on `+` lines (styles/corpus/index) | **PASS** — zero matches |
+| 3D engine untouched | `git diff b3c2b9c HEAD --name-only \| grep -E 'brain\|haze\|graph\.js'` | **PASS** — none |
+| My-commit file scope | per-commit `git show --name-only` for all 6 fix commits | **PASS** — only styles.css, corpus.js, index.html |
+
+> Note: a `git diff b3c2b9c HEAD --name-only` over the whole branch lists unrelated phase-35
+> source files (config.ts, engine.ts, topk.ts, decay.ts, eval harnesses) — these landed in
+> interleaved **phase-35** commits on the shared branch, NOT in any 34-03 fix commit. The
+> per-commit scope check above confirms every 34-03 fix touched only the three viz files.
 
 ## Tracked-Deferred: Corpus↔Brain Transition Animation
 
@@ -156,12 +207,19 @@ This is tracked for the follow-up phase.
 
 ## Deviations from Plan
 
-Three founder-requested post-checkpoint fixes applied (outside the original Task 1 scope):
-- **F1**: Reader × padding — minor CSS tweak (Rules 1-3 auto-fix; no architectural change)
-- **F2**: Corpus icon swap — JS inline SVG swap added to existing state transitions
-- **F3**: Corpus force layout — reduced charge + inline centering force (net-zero deps)
+Two rounds of founder-requested post-checkpoint fixes applied (outside the original Task 1 scope):
 
-No architectural changes. No new deps. Guards re-verified green after all three fixes.
+Round 1:
+- **F1**: Reader × padding bump — superseded by F1b (founder rejected the padding approach)
+- **F2**: Corpus book→brain icon swap — JS inline SVG swap on existing state transitions
+- **F3**: Corpus force layout — reduced charge + inline centering force
+
+Round 2:
+- **F1b**: Reader × relocated into the sticky kicker row (flex, same baseline) — replaces F1
+- **F2b**: Corpus-active border removed + ICON_BRAIN replaced with a side-view cross-section glyph
+- **F3b**: Corpus spread loosened (charge -35, k 0.05, inline collision force) for label legibility
+
+No architectural changes. No new deps. Guards re-verified green after both rounds.
 
 ## Threat Flags
 
@@ -172,14 +230,16 @@ attack surface. package.json unchanged confirmed.
 
 None.
 
-## Self-Check: PASSED (re-verified after founder fixes)
+## Self-Check: PASSED (re-verified after both fix rounds)
 
 - `npm run build` exited 0 and reported viz-asset copy to `dist/src/viz/` — confirmed.
-- `git diff --stat package.json` empty — confirmed.
-- Amber guard grep clean across all added lines (including F1-F3 changes) — confirmed.
-- Only `src/viz/{css/styles.css, index.html, modules/corpus.js}` in source diff — confirmed.
-- Three fix commits exist: bdd3a17, b7467f5, 04fa578.
+- `git diff --stat package.json package-lock.json` empty — confirmed.
+- Amber guard grep clean across all added lines (round-1 + round-2 changes) — confirmed.
+- Per-commit scope: all six fix commits touch only styles.css, corpus.js, index.html — confirmed.
+- No 3D engine files (brain.js/haze.js/graph.js) in any fix commit — confirmed.
+- Six fix commits exist: bdd3a17, b7467f5, 04fa578 (round 1); 6a65080, e6098c9, e9bf420 (round 2).
 
-## Founder Visual Checkpoint (Task 2) — AWAITING 2ND PASS
+## Founder Visual Checkpoint (Task 2) — AWAITING 3RD PASS
 
-The founder must re-verify the three fixed surfaces. See CHECKPOINT REACHED output for exact steps.
+The founder must re-verify the three round-2 surfaces (× in kicker row, side-view brain glyph
+with no active border, looser corpus spacing). See CHECKPOINT REACHED output for exact steps.
