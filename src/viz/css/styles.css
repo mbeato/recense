@@ -781,11 +781,10 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
 }
 .mode-window #btn-corpus:hover { opacity: 1; }
 
-/* Active: corpus is shown — muted rose border (NOT amber) */
+/* Active: corpus is shown — opacity + brightened color only (no border, founder round 2) */
 .mode-window #btn-corpus.corpus-active {
   opacity: 1;
   color: #c8bcd0;
-  border: 1px solid rgba(156, 112, 128, 0.55);
 }
 
 /* ── Flat 2D corpus graph host (READER-04) ────────────────────────────────

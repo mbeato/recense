@@ -27,8 +27,9 @@
 // BOOK icon: shown when brain is active (button = "go to corpus").
 const ICON_BOOK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`;
 // BRAIN icon: shown when corpus is active (button = "go back to brain").
-// Simple stylised brain outline — two lobes separated by a centre indent.
-const ICON_BRAIN = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2C7 2 5 4 5 6.5c0 1-.4 1.9-1 2.5C3.1 10 2 11.4 2 13c0 2.2 1.8 4 4 4h1"/><path d="M14.5 2C17 2 19 4 19 6.5c0 1 .4 1.9 1 2.5.9 1 2 2.4 2 4 0 2.2-1.8 4-4 4h-1"/><path d="M12 22v-5"/><path d="M9 17h6"/><path d="M12 2v4"/></svg>`;
+// Side-view (sagittal) brain cross-section — cerebrum in profile facing left, a couple
+// of internal gyri folds, and a small cerebellum/brainstem nub at the lower-back (right).
+const ICON_BRAIN = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16c-2 0-3-1.6-3-3.4 0-1.6 1-3 2.4-3.4C4.6 5.6 7.4 3 11 3c4.4 0 7.6 3.2 7.6 7 0 1 .4 1.6 1 2.2.8.8 1.2 1.6 1.2 2.6 0 1.6-1.4 3-3.2 3"/><path d="M17.6 17.8c.4 1.6-.6 3.2-2.4 3.2-1.4 0-2.4-1-2.4-2.4"/><path d="M7 10c1.2.4 1.8 1.4 1.8 2.6"/><path d="M12 8c1.4.6 2 1.8 2 3.4"/></svg>`;
 
 // Muted palette (founder-locked) — kept local so corpus.js has no dependency on the
 // brain's THREE-oriented numeric color constants. Hex strings for canvas fillStyle.
