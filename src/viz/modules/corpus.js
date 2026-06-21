@@ -362,6 +362,9 @@ export function initCorpus(ctx) {
   function goToBrain() {
     setBrainButton();
     setTopicsSearchHidden(false);
+    // The index sidebar (if open) docks over the corpus — close it before the brain returns
+    // so it doesn't linger over the 3D brain (39-02 re-verify: sidebar-over-corpus model).
+    if (typeof ctx.closeIndexSidebar === 'function') ctx.closeIndexSidebar();
     transition.toBrain();
   }
 
@@ -389,6 +392,35 @@ export function initCorpus(ctx) {
   // reader was opened over the corpus — the hero interaction deliberately drops to the brain.
   ctx.showBrainFromCorpus = function showBrainFromCorpus() {
     goToBrain();
+  };
+
+  // ── ctx hooks for the index sidebar (index.js, 39-02 re-verify) ─────────────
+  // The index list docks as a left sidebar OVER this corpus graph. index.js needs to (a) open
+  // the corpus when the sidebar opens from the brain view, (b) know if the corpus is already
+  // open, and (c) cross-highlight the node matching a hovered sidebar row.
+  ctx.openCorpus = function openCorpus() {
+    if (!transition.isCorpus()) goToCorpus();
+  };
+  ctx.isCorpusOpen = function isCorpusOpen() {
+    return transition.isCorpus();
+  };
+  // highlightCorpusNode(slug|null): amber-highlight the doc node whose slug matches (or clear
+  // when null). Non-fatal if the graph isn't built yet. Re-asserting the nodeCanvasObject
+  // accessor flags force-graph to repaint the (otherwise static, pinned) canvas so the
+  // hovered amber shows without moving the camera.
+  ctx.highlightCorpusNode = function highlightCorpusNode(slug) {
+    if (!CorpusGraph) return;
+    let nextId = null;
+    if (slug) {
+      for (const id in nodeSlugs) { if (nodeSlugs[id] === slug) { nextId = id; break; } }
+    }
+    if (nextId === hoveredId) return;
+    hoveredId = nextId;
+    try {
+      if (typeof CorpusGraph.nodeCanvasObject === 'function') {
+        CorpusGraph.nodeCanvasObject(CorpusGraph.nodeCanvasObject());
+      }
+    } catch (_) { /* non-fatal — highlight just won't repaint on this lib version */ }
   };
 
   // Eagerly prepare the corpus shortly after init (independent of the brain load) so the
