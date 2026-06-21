@@ -51,9 +51,10 @@ export function initDetail(ctx) {
   const closeBtn   = document.querySelector('[aria-label="Close node detail"]');
 
   // ── State ──────────────────────────────────────────────────────────────────
-  let selectedNode  = null;
-  let selectionRing = null;
-  let dimmedNodes   = [];   // nodes whose opacity we lowered for focus mode
+  let selectedNode       = null;
+  let selectionRing      = null;
+  let hazeSelectionMarker = null;  // standalone scene-level ring for haze nodes (no __mesh)
+  let dimmedNodes        = [];   // nodes whose opacity we lowered for focus mode
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -189,8 +190,23 @@ export function initDetail(ctx) {
       if (selectionRing.material) selectionRing.material.dispose();
     }
     selectionRing = null;
+
+    // Haze selection marker: standalone scene-level Mesh (haze nodes have no __mesh).
+    if (hazeSelectionMarker) {
+      if (ctx.Graph && typeof ctx.Graph.scene === 'function') {
+        ctx.Graph.scene().remove(hazeSelectionMarker);
+      }
+      if (hazeSelectionMarker.geometry) hazeSelectionMarker.geometry.dispose();
+      if (hazeSelectionMarker.material) hazeSelectionMarker.material.dispose();
+    }
+    hazeSelectionMarker = null;
+
     selectedNode  = null;
     ctx.selectedId = null;  // read by graph.js for schema collapse-on-reclick
+
+    // Restore any focus-unhazed neighborhood (haze nodes promoted into the real
+    // graph by the last selection) back into the instanced cloud. No-op if none.
+    if (ctx.clearHazeFocus) ctx.clearHazeFocus();
   }
 
   /**
@@ -406,6 +422,22 @@ export function initDetail(ctx) {
       });
       selectionRing = new ctx.THREE.Mesh(ringGeo, ringMat);
       node.__mesh.add(selectionRing);
+    } else if (node.__hazeIdx != null && ctx.THREE && ctx.Graph && typeof ctx.Graph.scene === 'function') {
+      // Haze nodes are InstancedMesh instances — they have no individual __mesh to
+      // parent a ring to. Create a standalone ring at the node's world position and
+      // add it directly to the scene. The ring radius (2.8–3.4) matches haze node
+      // radius 2 scaled by ~1.4–1.7 (same ratio as the non-haze branch above).
+      const ringGeo = new ctx.THREE.RingGeometry(2.8, 3.4, 32);
+      const ringMat = new ctx.THREE.MeshBasicMaterial({
+        color: 0xd9a05c,
+        transparent: true,
+        opacity: 0.6,
+        side: ctx.THREE.DoubleSide,
+        depthWrite: false,
+      });
+      hazeSelectionMarker = new ctx.THREE.Mesh(ringGeo, ringMat);
+      hazeSelectionMarker.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
+      ctx.Graph.scene().add(hazeSelectionMarker);
     }
 
     // 3+4. Detail surface — shell-compact routes to the adjacent window via
@@ -468,6 +500,13 @@ export function initDetail(ctx) {
 
     // 7. Reset idle timer so the camera focus is not overridden immediately
     if (typeof ctx.markActive === 'function') ctx.markActive();
+
+    // 8. Focus un-haze: lift a focused haze node + its 1-hop haze neighbors out
+    // of the instanced cloud into the real graph (bright nodes + edges). No-op
+    // for non-haze nodes, beyond clearing any prior haze focus. Runs last so the
+    // ring/detail/focus-dim above are already applied (the promoted neighbors are
+    // in applyFocusDim's keep set, so they stay bright while the rest recedes).
+    if (ctx.focusHazeNeighborhood) ctx.focusHazeNeighborhood(node);
   }
 
   // ── Public API: closeDetail ────────────────────────────────────────────────

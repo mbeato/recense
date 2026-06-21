@@ -171,7 +171,8 @@ const ctx = {
   // (ctx.showTombstones is pre-seeded to false so this works before initHud runs)
   getVisibleNodes() {
     return allNodes.filter(n =>
-      n.__cat !== 'haze' && (ctx.showTombstones || !n.tombstoned)
+      (n.__cat !== 'haze' || ctx.focusedHaze.has(n.id))
+      && (ctx.showTombstones || !n.tombstoned)
     );
   },
 
@@ -186,7 +187,8 @@ const ctx = {
   getVisibleLinks() {
     const ok = id => {
       const n = idMap.get(id);
-      return n && n.__cat !== 'haze' && (ctx.showTombstones || !n.tombstoned);
+      return n && (n.__cat !== 'haze' || ctx.focusedHaze.has(id))
+        && (ctx.showTombstones || !n.tombstoned);
     };
     return allLinks.filter(l => {
       const s = typeof l.source === 'object' ? l.source.id : l.source;
@@ -196,6 +198,13 @@ const ctx = {
   },
 
   showTombstones: false,  // toggled by hud.js initHud's btn-tombstones handler
+
+  // Haze node ids temporarily promoted into the real graph by a focus-unhaze
+  // (graph.js focusHazeNeighborhood) — getVisibleNodes/Links + lod.linkVis honor
+  // this set so a focused haze node + its 1-hop haze neighbors render as real
+  // nodes with edges, restoring the pre-instancing focus behavior. Cleared on
+  // deselect.
+  focusedHaze: new Set(),
 };
 
 // ── Ordered module wiring ──────────────────────────────────────────────────────

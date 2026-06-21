@@ -94,9 +94,13 @@ export function initTrace(ctx) {
 
   // ── activate(node, level) ─────────────────────────────────────────────────
   // Raises the node's activation level and enqueues it for animation.
-  // No-op if the node has no material (not yet rendered).
+  // Haze nodes (InstancedMesh, have __hazeIdx but no __mat) get a color-only
+  // branch that drives ctx.hazeMesh.setColorAt — no per-frame setMatrixAt so
+  // the 6k-instance matrix buffer stays untouched (performance constraint).
+  // Regular nodes must have __mat to be rendered — early-return if absent.
   function activate(node, level) {
-    if (!node || !node.__mat) return;
+    if (!node) return;
+    if (node.__mat == null && node.__hazeIdx == null) return;
     node.__act = Math.max(node.__act || 0, level);
     active.add(node);
   }
@@ -136,6 +140,26 @@ export function initTrace(ctx) {
 
     // -- Activation decay: walk only the active set ---------------------------
     for (const node of [...active]) {
+      // ── Haze (InstancedMesh) branch: color-only, no __mat / __mesh ──────────
+      if (node.__hazeIdx != null && node.__hazeBase && ctx.hazeMesh) {
+        node.__act -= dt * 0.6; // same ~1.6 s decay as regular nodes
+        if (node.__act <= 0.001) {
+          node.__act = 0;
+          active.delete(node);
+          // Restore rest color — copy __hazeBase into the instance color buffer
+          ctx.hazeMesh.setColorAt(node.__hazeIdx, node.__hazeBase);
+          ctx.hazeMesh.instanceColor.needsUpdate = true;
+          continue;
+        }
+        const a = Math.max(0, node.__act);
+        // Lerp toward HOT amber (color-only; no setMatrixAt scale-pulse)
+        const activationColor = node.__hazeBase.clone().lerp(HOT_COLOR, a * 0.8);
+        ctx.hazeMesh.setColorAt(node.__hazeIdx, activationColor);
+        ctx.hazeMesh.instanceColor.needsUpdate = true;
+        continue;
+      }
+
+      // ── Regular (non-instanced) nodes: original material + scale path ────────
       if (!node.__mat || !node.__mesh) {
         active.delete(node);
         continue;

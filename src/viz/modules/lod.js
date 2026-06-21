@@ -165,6 +165,12 @@ export function initLod(ctx) {
     const sid = typeof l.source === 'object' ? l.source.id : l.source;
     const tid = typeof l.target === 'object' ? l.target.id : l.target;
 
+    // Focus-unhaze: a haze node promoted on focus (graph.js focusHazeNeighborhood)
+    // adds itself + its haze neighbors to ctx.focusedHaze. Both endpoints in that
+    // set are both promoted-and-visible haze nodes, so show the connecting edge —
+    // normal linkVis below would reject it (haze nodes have no expanded schema).
+    if (ctx.focusedHaze && ctx.focusedHaze.has(sid) && ctx.focusedHaze.has(tid)) return true;
+
     // 'abstracts' edges (source=schema, target=member): show while the schema is
     // drilled-in OR the member was density-revealed (connects the revealed member
     // to its hub so a sparse overview reads as a constellation, not loose dots).

@@ -90,10 +90,17 @@ function truncLabel(s, max) {
  * Annotates the node with __mesh, __mat, __base, __baseOp, __baseR, __act,
  * __actGain so trace.js can drive the activation animation.
  */
-function makeNodeObject(node) {
+function makeNodeObject(node, ctx) {
   if (node.__mesh) return node.__mesh;
 
-  const radius = nodeRadius(node);
+  // Focus un-haze: a haze node promoted into the real graph (ctx.focusedHaze)
+  // must render BRIGHT, not at haze opacity — otherwise the "promoted" node is
+  // a real node styled exactly like the cloud it came from and nothing pops.
+  // Give it the normal (member-tier) radius + full opacity while focused.
+  const focusedHaze = node.__cat === 'haze'
+    && ctx && ctx.focusedHaze && ctx.focusedHaze.has(node.id);
+
+  const radius = focusedHaze ? 2.5 : nodeRadius(node);
   const baseColor = node.tombstoned
     ? new THREE.Color(TOMBSTONE_COLOR)
     : new THREE.Color(TYPE_COLOR[node.type] ?? TYPE_COLOR.fact);
@@ -102,7 +109,7 @@ function makeNodeObject(node) {
     color: baseColor.clone(),
     transparent: true,
     opacity: node.tombstoned ? 0.35
-      : (node.__cat === 'haze' ? HAZE_OPACITY * _hazeOpacityScale : 0.88),
+      : (node.__cat === 'haze' && !focusedHaze ? HAZE_OPACITY * _hazeOpacityScale : 0.88),
     depthWrite: true,
   });
 
@@ -402,7 +409,7 @@ export function initGraph(ctx) {
     .backgroundColor('#000000')
     .graphData({ nodes: getVisibleNodes(), links: getVisibleLinks() })
     .nodeRelSize(nodeRelSize)
-    .nodeThreeObject(makeNodeObject)
+    .nodeThreeObject(node => makeNodeObject(node, ctx))
     .nodeVisibility(n  => ctx.nodeVisible ? ctx.nodeVisible(n)  : true)
     .linkVisibility(l  => ctx.linkVis     ? ctx.linkVis(l)      : true)
     .linkColor(()      => 'rgba(125,112,122,0.30)')
@@ -471,6 +478,15 @@ export function initGraph(ctx) {
     .onBackgroundClick(() => {
       // Clicking empty space dismisses the focused node. Drags/orbits do not
       // trigger this — 3d-force-graph only fires it for true clicks.
+      //
+      // Haze nodes are NOT in graphData, so a haze click reaches fg3d as a
+      // "background" click — and this fires AFTER _onHazePointerUp (pointerup)
+      // has already opened the detail for it. Without the guard below it would
+      // immediately tear that selection down (the live B1 bug: focus+trace
+      // survive but detail+ring vanish). _onHazePointerUp sets _hazeClickConsumed
+      // only when a haze node was actually hit, so true empty-space clicks (flag
+      // unset) still dismiss as before.
+      if (ctx._hazeClickConsumed) { ctx._hazeClickConsumed = false; return; }
       if (ctx.closeDetail) ctx.closeDetail();
     });
 
@@ -753,6 +769,10 @@ export function initGraph(ctx) {
 
     function _onHazePointerDown(e) {
       _hazePointerDownPos = { x: e.clientX, y: e.clientY };
+      // Clear any stale suppression flag so a genuine empty-space click later
+      // can still dismiss (belt-and-suspenders if a prior onBackgroundClick
+      // never fired).
+      ctx._hazeClickConsumed = false;
     }
 
     function _onHazePointerUp(e) {
@@ -774,7 +794,32 @@ export function initGraph(ctx) {
       if (hits.length && typeof hits[0].instanceId === 'number') {
         const node = ctx.hazeInstanceMap.get(hits[0].instanceId);
         if (node && ctx.selectNode) {
+          // Suppress the impending fg3d background-click teardown (set before
+          // selectNode; the background 'click' fires after this pointerup).
+          ctx._hazeClickConsumed = true;
           ctx.selectNode(node);
+        }
+      } else {
+        // Proximity fallback: the exact triangle-level InstancedMesh raycast can
+        // miss near the silhouette edge of a small sphere (radius-2 haze nodes are
+        // ~2% of screen at typical depth). Project every haze node to NDC and pick
+        // the nearest one within a 10px screen-space threshold.
+        // O(n_haze) per near-miss click — acceptable since this only fires when the
+        // primary raycast returns nothing.
+        const PROX_NDC = 10 / Math.max(rect.width, rect.height) * 2; // 10px → NDC units
+        let bestDist = PROX_NDC;
+        let bestNode = null;
+        const _proxPt = new THREE.Vector3();
+        for (const [, node] of ctx.hazeInstanceMap) {
+          if (node.x == null) continue;
+          _proxPt.set(node.x, node.y, node.z).project(camera);
+          const d = Math.sqrt((_proxPt.x - _mouse.x) ** 2 + (_proxPt.y - _mouse.y) ** 2);
+          if (d < bestDist) { bestDist = d; bestNode = node; }
+        }
+        if (bestNode && ctx.selectNode) {
+          // Same background-click suppression as the direct-hit branch.
+          ctx._hazeClickConsumed = true;
+          ctx.selectNode(bestNode);
         }
       }
     }
@@ -791,5 +836,73 @@ export function initGraph(ctx) {
         _hazeHoveredNode = null;
       }
     };
+
+    // ── Focus un-haze ──────────────────────────────────────────────────────
+    // Restores the pre-instancing behavior: focusing a haze node lifts it and
+    // its 1-hop haze neighbors OUT of the instanced cloud into the real graph
+    // (bright nodes + connecting edges), instead of dimming them with the rest
+    // of the haze. Mirrors schema drill-in: mutate graphData + refreshVisibility.
+    //
+    // Why promotion (not "just brighten"): all ~6k haze nodes share one material,
+    // and InstancedMesh has no per-instance opacity — there is no way to keep a
+    // few instances bright while dimming the rest. The faithful path is to render
+    // the focused neighborhood as real nodes (getVisibleNodes/Links + ctx.focusedHaze).
+    const FOCUS_HAZE_CAP = 16;        // cap neighbors for high-degree nodes
+    const _hideDummy    = new THREE.Object3D();
+    _hideDummy.scale.setScalar(0);
+    _hideDummy.updateMatrix();        // zero-scale → instance renders to nothing
+    const _restoreDummy = new THREE.Object3D();
+
+    function _hideHazeInstance(idx) {
+      ctx.hazeMesh.setMatrixAt(idx, _hideDummy.matrix);
+      ctx.hazeMesh.instanceMatrix.needsUpdate = true;
+    }
+    function _restoreHazeInstance(n) {
+      _restoreDummy.position.set(n.x || 0, n.y || 0, n.z || 0);
+      _restoreDummy.scale.setScalar(nodeRadius(n)); // 2 for haze (mirror buildHazeLayer)
+      _restoreDummy.updateMatrix();
+      ctx.hazeMesh.setMatrixAt(n.__hazeIdx, _restoreDummy.matrix);
+      ctx.hazeMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    function _clearHazeFocus() {
+      if (!ctx.focusedHaze || !ctx.focusedHaze.size) return;
+      for (const id of ctx.focusedHaze) {
+        const n = ctx.idMap.get(id);
+        if (!n) continue;
+        n.fx = undefined; n.fy = undefined; n.fz = undefined; // unpin
+        if (n.__hazeIdx != null) _restoreHazeInstance(n);     // back into the cloud
+      }
+      ctx.focusedHaze = new Set();
+      Graph.graphData({ nodes: getVisibleNodes(), links: getVisibleLinks() });
+      if (ctx.refreshVisibility) ctx.refreshVisibility();
+    }
+
+    // Promote node + its 1-hop HAZE neighbors. Non-haze neighbors are already
+    // real nodes and follow normal LOD; we only lift haze ones out of the cloud.
+    ctx.focusHazeNeighborhood = function focusHazeNeighborhood(node) {
+      _clearHazeFocus();                                   // drop any prior focus
+      if (!node || node.__cat !== 'haze') return;          // only haze focus promotes
+      const ids = new Set([node.id]);
+      const edges = (ctx.adj.get(node.id) || []).slice(0, FOCUS_HAZE_CAP);
+      for (const e of edges) {
+        const sid = typeof e.source === 'object' ? e.source.id : e.source;
+        const tid = typeof e.target === 'object' ? e.target.id : e.target;
+        const nbId = sid === node.id ? tid : sid;
+        const nb = ctx.idMap.get(nbId);
+        if (nb && nb.__cat === 'haze') ids.add(nbId);       // only haze neighbors
+      }
+      ctx.focusedHaze = ids;
+      for (const id of ids) {
+        const n = ctx.idMap.get(id);
+        if (!n) continue;
+        n.fx = n.x; n.fy = n.y; n.fz = n.z;                 // pin in place (no drift)
+        if (n.__hazeIdx != null) _hideHazeInstance(n.__hazeIdx); // avoid double-render
+      }
+      Graph.graphData({ nodes: getVisibleNodes(), links: getVisibleLinks() });
+      if (ctx.refreshVisibility) ctx.refreshVisibility();
+    };
+
+    ctx.clearHazeFocus = _clearHazeFocus;
   }
 }
