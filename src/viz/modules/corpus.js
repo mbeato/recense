@@ -286,16 +286,29 @@ export function initCorpus(ctx) {
   }
 
   const CAM_MS = 700;
+  // Saved brain-view camera position, captured right before pulling back, so returning
+  // restores it EXACTLY. (ctx.recenter only resets z and left the pulled-back x/y in
+  // place, so repeated brain<->corpus swaps compounded the zoom-out.) null until first open.
+  let homeCam = null;
   // Pull the 3D brain camera back along its current view direction so the brain visibly
   // recedes into the distance as the corpus settles in over it (the "rise up to a map"
-  // feel). ctx.recenter() dives it back home on return. Net-zero — reuses the existing
-  // 3d-force-graph cameraPosition animation.
+  // feel). Net-zero — reuses the existing 3d-force-graph cameraPosition animation.
   function pullBackBrain() {
     if (!ctx.Graph || typeof ctx.Graph.cameraPosition !== 'function') return;
     const p = ctx.Graph.cameraPosition();
     if (!p) return;
+    homeCam = { x: p.x, y: p.y, z: p.z };
     const K = 2.3;
     ctx.Graph.cameraPosition({ x: p.x * K, y: p.y * K, z: p.z * K }, { x: 0, y: 0, z: 0 }, CAM_MS);
+  }
+  // Dive the camera back to the exact pre-pull-back framing (no compounding). Falls back
+  // to ctx.recenter() if we somehow never captured a home position.
+  function diveBackToBrain() {
+    if (homeCam && ctx.Graph && typeof ctx.Graph.cameraPosition === 'function') {
+      ctx.Graph.cameraPosition({ x: homeCam.x, y: homeCam.y, z: homeCam.z }, { x: 0, y: 0, z: 0 }, CAM_MS);
+    } else if (typeof ctx.recenter === 'function') {
+      ctx.recenter(CAM_MS);
+    }
   }
 
   async function showCorpus() {
@@ -347,7 +360,7 @@ export function initCorpus(ctx) {
     container.classList.remove('corpus-in');
     setTimeout(() => { if (!corpusActive) container.classList.remove('open'); }, CAM_MS);
     if (brainEl) brainEl.style.visibility = '';
-    if (typeof ctx.recenter === 'function') ctx.recenter(CAM_MS);
+    diveBackToBrain();
     // B3: restore topics/search when returning to brain view.
     const topicWrap = document.getElementById('topic-wrap');
     const searchWrap = document.getElementById('search-wrap');
@@ -376,7 +389,8 @@ export function initCorpus(ctx) {
   // corpus stayed mounted underneath the overlay, so there is nothing to rebuild —
   // we just confirm the corpus is shown and the brain stays hidden (idempotent).
   ctx.returnToCorpus = function returnToCorpus() {
-    pullBackBrain();
+    // Camera is already in the pulled-back corpus framing here (reader opened OVER the
+    // corpus without moving it), so do NOT pull back again — just re-assert the overlay.
     container.classList.add('open');
     requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('corpus-in')));
     if (brainEl) brainEl.style.visibility = '';
