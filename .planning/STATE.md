@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Project Onboarding
 status: Phase 33 complete
-stopped_at: Phase 36 context gathered
-last_updated: "2026-06-21T01:25:22.787Z"
+stopped_at: Phase 35 context gathered
+last_updated: "2026-06-21T01:26:10.998Z"
 progress:
   total_phases: 15
   completed_phases: 5
@@ -268,9 +268,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-21T01:25:22.778Z
-Stopped at: Phase 36 context gathered
-Resume file: .planning/phases/36-typed-predicate-edges-spike/36-CONTEXT.md
+Last session: 2026-06-21T01:26:10.990Z
+Stopped at: Phase 35 context gathered
+Resume file: .planning/phases/35-recency-strength-retrieval-ranking/35-CONTEXT.md
 
 ## Key Decisions (Phase 28)
 
