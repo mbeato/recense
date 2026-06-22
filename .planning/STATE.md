@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: Retrieval & Reasoning Depth
 status: ready_to_plan
-stopped_at: Phase 39.1 context gathered
-last_updated: "2026-06-22T22:13:31.772Z"
+stopped_at: Completed 39.1-01-PLAN.md
+last_updated: "2026-06-22T23:16:48.974Z"
 progress:
   total_phases: 11
   completed_phases: 4
-  total_plans: 13
-  completed_plans: 12
+  total_plans: 18
+  completed_plans: 13
   percent: 36
 ---
 
@@ -20,7 +20,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** **v7.0 build phases COMPLETE + typed recall LIVE at 92% coverage** (commits `96726d4` go-live, `c7c3fc0` tuning). 37-04 cleared its GO gate (typed top-3 83.3% vs 37.5%, +45.8pts; payload 3.8 vs 20; compose +63.9pts). Live activation: glosses embedded into live `recense.db`, 611 proven typed edges transplanted from the scratch DB (FK clean, backup at `recense.db.bak-pre-typed-37-*`), `RECENSE_TYPED_EXTRACTION_MODE=merged` in sleep.env, `embedAndStoreGlosses` wired into the sleep pass (was unwired). **Live gold-reached on the 24-query set climbed 25%→50%→71%→92%** via: (1) anchor-union — seed typedReach from all top-K candidates not just bestMatch; (2) `typedAnchorPoolK=20` new config knob (kept separate from candidateK, which sizes the judge/consolidation candidate set); (3) reworded 5 weak glosses to natural question form (zero false positives). Real recalls now typed+precise ("what does recense use?"→Haiku/Vitest/text-embedding-3-large; "what does Max prefer?"→obsidian vault). 2060 tests pass, no regression.
+**Current focus:** Phase 39.1 — corpus-quality-project-hub-and-subject-docs-via-zero-interve
 
 **Phase 37 go-live — remaining levers (not blocking; coverage tuning DONE):**
 
@@ -36,8 +36,8 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ```
 Milestone: v7.0 Retrieval & Reasoning Depth — BUILD PHASES COMPLETE (35/36/37/38/38.1/39 all done)
-Phase: 37 (typed-predicate-edges-build) — ✓ COMPLETE (37-04 gate GO)
-Plan: 4 of 4 complete (37-04 precision gate cleared: typed top-3 83.3% / lift +45.8pts / payload 3.8 vs 20)
+Phase: 39.1 (corpus-quality-project-hub-and-subject-docs-via-zero-interve) — EXECUTING
+Plan: 2 of 5
 Next: /gsd-discuss-phase 39.1 (Corpus Quality), then plan; v6.0/v7.0 close after 39.1 lands
 
 [██████████████████████████████████████████████░] v1–v5.0 SHIPPED · v6.0 COMPLETE · v7.0 build COMPLETE (35/36/37/38/38.1/39 ✓)
@@ -112,6 +112,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 | Phase 28-schema-anchored-corpus P02 | 2026-06-19 | 4 commits (2 RED + 2 GREEN) | 4 files |
 | Phase 30 P01 | 65 | 2 tasks | 4 files |
 | Phase 34 P02 | 5 | 3 tasks | 3 files |
+| Phase 39.1 P01 | 5 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -297,9 +298,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-22T22:13:31.763Z
-Stopped at: Phase 39.1 context gathered
-Resume file: .planning/phases/39.1-corpus-quality-project-hub-and-subject-docs-via-zero-interve/39.1-CONTEXT.md
+Last session: 2026-06-22T23:16:48.953Z
+Stopped at: Completed 39.1-01-PLAN.md
+Resume file: None
 
 ## Key Decisions (Phase 28)
 
