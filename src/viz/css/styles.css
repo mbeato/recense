@@ -905,17 +905,19 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
    sidebar overlays the left edge of #corpus-graph (it does NOT reflow the canvas — reflowing
    would re-trigger the corpus zoomToFit framing). Fades in/out (founder: views should fade).
    z-index 8: above #corpus-graph (5), below #reader (40) and the toolbar buttons (70). */
+/* Single source for the rail width — also drives the #corpus-graph offset below. */
+:root { --index-width: 270px; }
 #index-panel {
   position: fixed;
   top: 0;
   left: 0;
   bottom: 0;
-  width: 300px;
-  max-width: 78vw;
+  width: var(--index-width);
+  max-width: 60vw;
   z-index: 8;
   display: none;            /* index.js toggles to flex */
   flex-direction: column;
-  background: rgba(23, 15, 29, 0.97); /* near-opaque aubergine — graph faintly behind the edge */
+  background: rgba(23, 15, 29, 0.97); /* near-opaque aubergine */
   border-right: 1px solid rgba(139, 112, 144, 0.22);
   box-shadow: 2px 0 24px rgba(0, 0, 0, 0.35);
   box-sizing: border-box;
@@ -925,6 +927,11 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   transition: opacity 320ms ease;
 }
 #index-panel.shown { opacity: 1; }
+
+/* Split layout (founder polish): when the index is docked, the corpus graph reflows to the
+   right of the rail instead of being overlaid — the familiar Obsidian/VS-Code shape. corpus.js
+   re-fits the canvas (ctx.refitCorpus) after this offset applies so framing stays correct. */
+.index-docked #corpus-graph { left: var(--index-width); }
 
 /* Sidebar header — title + collapse control */
 .index-sidebar-header {

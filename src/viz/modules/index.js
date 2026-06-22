@@ -260,7 +260,16 @@ export function initIndex(ctx) {
     isSidebarOpen = true;
     showReopenHandle(false);
     container.style.display = 'flex';
-    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('shown')));
+    // Dock as a true split: body.index-docked offsets #corpus-graph by --index-width so the graph
+    // reflows beside the rail instead of being overlaid (founder polish). Re-fit after the layout
+    // change applies so the corpus frames into the narrower width.
+    document.body.classList.add('index-docked');
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        container.classList.add('shown');
+        if (typeof ctx.refitCorpus === 'function') ctx.refitCorpus();
+      });
+    });
     prepareIndex();
   }
 
@@ -268,6 +277,11 @@ export function initIndex(ctx) {
     isSidebarOpen = false;
     if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(null);
     container.classList.remove('shown');
+    // Undock: corpus reclaims the full width; re-fit so it re-frames to the wider canvas.
+    document.body.classList.remove('index-docked');
+    if (typeof ctx.refitCorpus === 'function') {
+      requestAnimationFrame(() => { if (typeof ctx.refitCorpus === 'function') ctx.refitCorpus(); });
+    }
     const onEnd = (ev) => {
       if (ev && ev.target !== container) return;
       if (!isSidebarOpen) container.style.display = 'none';

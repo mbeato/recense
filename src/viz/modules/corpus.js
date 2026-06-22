@@ -375,10 +375,11 @@ export function initCorpus(ctx) {
   function goToCorpus() {
     setCorpusButton();
     setTopicsSearchHidden(true);
-    transition.toCorpus(prepareCorpus());
-    // The index sidebar opens by default with the corpus view (39-02 re-verify: the dedicated
-    // #btn-index was removed — corpus IS the index entry point now).
+    // Open the index sidebar BEFORE the reveal so the corpus offsets (left:var(--index-width))
+    // and frames into the remaining width — a true split, not an overlay (founder polish, 39).
+    // The dedicated #btn-index was removed; corpus IS the index entry point now.
     if (typeof ctx.openIndexSidebar === 'function') ctx.openIndexSidebar();
+    transition.toCorpus(prepareCorpus());
   }
   function goToBrain() {
     setBrainButton();
@@ -424,6 +425,13 @@ export function initCorpus(ctx) {
   };
   ctx.isCorpusOpen = function isCorpusOpen() {
     return transition.isCorpus();
+  };
+  // refitCorpus(): re-size the canvas to its (possibly offset) container and re-frame. Called by
+  // index.js after the sidebar docks/undocks so the graph frames into the remaining width (split
+  // layout, founder polish). No-op if the graph isn't built yet; fitAndClamp guards the zoom.
+  ctx.refitCorpus = function refitCorpus() {
+    sizeCorpusGraph();
+    fitAndClamp();
   };
   // highlightCorpusNode(slug|null): amber-highlight the doc node whose slug matches AND its
   // CONTAINMENT SUBTREE — every doc it contains, recursively, down the doc_containment spine
