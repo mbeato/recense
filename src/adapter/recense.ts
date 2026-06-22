@@ -99,6 +99,11 @@ switch (cmd) {
   // dedup-facts-cli.ts guards execution with `require.main === module` (it exports
   // printDryRun for unit tests), so spawn as a subprocess so the guard fires.
   case 'dedup-facts': spawnScript('dedup-facts-cli.js', process.argv.slice(3)); break;
+  // cleanup-corpus-cli.ts guards execution with `require.main === module` (it exports
+  // enumerateJunkDocs/printDryRunReport/hardDeleteJunkDocs for unit tests), so spawn
+  // as a subprocess so the guard fires correctly in the child.
+  // Default: dry-run ON; real mutating run requires --no-dry-run (T-25-06 discipline).
+  case 'cleanup-corpus': spawnScript('cleanup-corpus-cli.js', process.argv.slice(3)); break;
   // remember-cli.ts guards execution with `require.main === module` (it exports helpers for
   // unit tests + holds the write lock + runs the judge synchronously), so spawn as a subprocess
   // so the guard fires correctly in the child. Use slice(3) NOT rest/slice(4) — slice(4) drops
@@ -128,7 +133,7 @@ switch (cmd) {
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, remember, viz, sleep-pass, seed, ingest, import-memory, ingest-project, dedup-entities, dedup-facts, generate-doc, promote-corpus, generate-corpus, snapshot, scheduler, mcp, serve\n',
+      'Commands: hook, init, doctor, recall, remember, viz, sleep-pass, seed, ingest, import-memory, ingest-project, dedup-entities, dedup-facts, cleanup-corpus, generate-doc, promote-corpus, generate-corpus, snapshot, scheduler, mcp, serve\n',
     );
     process.exit(1);
 }
