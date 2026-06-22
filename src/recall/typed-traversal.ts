@@ -40,13 +40,17 @@ import type { SemanticStore } from '../db/semantic-store';
  *             are not typed predicates and must not be followed.
  *
  * @param store         - SemanticStore instance (uses getOutEdgesWithRel).
- * @param anchor        - Starting node id.
+ * @param anchor        - Starting node id, or a set of anchor ids to seed the union.
+ *                        Phase 37 go-live: the online recall path seeds from the top-K
+ *                        retrieval candidates (not just bestMatch) so a fragmented or
+ *                        fact-node rank-1 hit doesn't starve the typed path of the clean
+ *                        entity that actually holds the edges (lifts live firing ~2x).
  * @param predicatePath - Ordered sequence of typed predicates to follow (v1: length 1).
  * @param K             - Maximum number of nodes to return.
  */
 export function typedReach(
   store: SemanticStore,
-  anchor: string,
+  anchor: string | string[],
   predicatePath: string[],
   K: number,
 ): string[] {
@@ -54,8 +58,9 @@ export function typedReach(
 
   // best[node] = max accumulated path-weight reaching it along the typed path.
   // Identical to spike traverse.ts:46 but uses store.getOutEdgesWithRel instead
-  // of the spike's inline SELECT.
-  let frontier = new Map<string, number>([[anchor, 0]]);
+  // of the spike's inline SELECT. Seed the frontier from one or many anchors.
+  const anchorIds = Array.isArray(anchor) ? anchor : [anchor];
+  let frontier = new Map<string, number>(anchorIds.map((a) => [a, 0]));
 
   for (const pred of predicatePath) {
     const next = new Map<string, number>();

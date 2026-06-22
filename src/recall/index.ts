@@ -176,10 +176,15 @@ export class RecallEngine {
     );
 
     if (matchedPredicate !== null) {
-      // D-07: single-hop typed traversal from bestMatch anchor (v1 spec, predicatePath.length=1)
+      // D-07: single-hop typed traversal (v1 spec, predicatePath.length=1).
+      // Phase 37 go-live: seed from ALL top-K retrieval candidates, not just bestMatch.
+      // Live entity fragmentation (e.g. "Max" vs "Max (design lead)") and fact-sentence
+      // rank-1 hits frequently starve a single-anchor traversal of the clean entity that
+      // holds the typed edges; unioning the candidate pool ~doubled live firing (25%→50%)
+      // with no new embed/LLM call. typedReach dedups by dst and ranks by path weight.
       const typedFrontier = typedReach(
         this.store,
-        bestMatch.id,
+        topHits.map((h) => h.id),
         [matchedPredicate],
         this.config.recallNeighborhoodBudget,
       );

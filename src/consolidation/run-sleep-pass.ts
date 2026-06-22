@@ -32,6 +32,7 @@ import { SchemaInducer } from '../consolidation/schema-induction';
 import { SchemaRelationDeriver } from '../consolidation/schema-relations';
 import { CorpusPromoter } from '../consolidation/corpus-promoter';
 import { InsightReflector } from '../consolidation/insight-reflector';
+import { embedAndStoreGlosses, loadGlossEmbeddings } from '../consolidation/gloss-embeddings';
 import { generateCorpusDocs } from '../consolidation/corpus-generator';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
@@ -456,6 +457,19 @@ export async function runConsolidation(
   // Provenance high-water mark so Phase-19 viz lighting (below) can scope exactly
   // the nodes THIS pass touches — consolidation_event.ts (ms) bounds the pass.
   const passStartTs = realClock.nowMs();
+
+  // Phase 37 (TYPED-02): ensure the 12 predicate-gloss embeddings are stored ONCE so the
+  // online recall typed-path can activate (matchPredicate returns null until they exist).
+  // Idempotent — skip if already present; fail-soft so an embed hiccup never aborts the pass.
+  if (!loadGlossEmbeddings(store)) {
+    try {
+      await embedAndStoreGlosses(consolidatorProvider, store);
+      log('gloss embeddings: stored 12 predicate glosses (typed-recall path now active)');
+    } catch (err) {
+      log(`gloss embeddings: skipped (embed failed: ${String(err).slice(0, 80)}) — recall stays on neighborhood path`);
+    }
+  }
+
   // EVAL-04 two-tier observability: the escalation counter is process-global. Each hourly
   // sleep pass is a FRESH process (counter starts at 0), so the canary log below reports this
   // pass for free — NO reset here. (A reset would corrupt the EVAL-02 harness, which drives
