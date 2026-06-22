@@ -33,7 +33,9 @@
  */
 import Database from 'better-sqlite3';
 import type { Clock } from '../lib/clock';
+import type { EngineConfig } from '../lib/config';
 import type { SemanticStore } from '../db/semantic-store';
+import type { ModelProvider } from '../model/provider';
 import { cosineSimF32 } from '../retrieval/topk';
 import { newId } from '../lib/hash';
 import { GLOBAL_SCOPE } from '../lib/scope';
@@ -704,6 +706,506 @@ export class CorpusPromoter {
       containment: chapterDocIds.size, // number of landing→chapter edges written
       reference: 0,
       tombstoned: 0,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// normalizeSubjectName — slug normalization helper (Pattern 3 / RESEARCH)
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize an LLM-proposed subject name to a stable slug segment.
+ * Rule: lowercase → replace non-alphanumeric runs with '-' → trim leading/trailing '-'.
+ * Examples: "Sleep Pass" → "sleep-pass"; "Config & Tuning" → "config-tuning"
+ */
+export function normalizeSubjectName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+// ---------------------------------------------------------------------------
+// SubjectPromoter types
+// ---------------------------------------------------------------------------
+
+export interface SubjectPromoteResult {
+  /** Subjects proposed by Stage-2 LLM call (all, including existing+refresh). */
+  proposed: Array<{ name: string; relatedSchemaIds: string[] }>;
+  /** Count of truly new subject stubs created. */
+  created: number;
+  /** Subject slugs that already existed and have been queued for refresh. */
+  refreshQueued: string[];
+  /** Doc node id of the hub stub (slug = scope), or null if scope guard fired early. */
+  hubDocId: string | null;
+  /** Doc node ids of newly created subject stubs. */
+  subjectDocIds: string[];
+}
+
+// ---------------------------------------------------------------------------
+// SubjectPromoter
+// ---------------------------------------------------------------------------
+
+/**
+ * SubjectPromoter — D-02/D-03/D-05/D-06 exhaust-gate subject promotion (Phase 39.1-02).
+ *
+ * Implements the two-stage promotion engine for project-hub + LLM-named subject docs:
+ *
+ * Stage 1 (LLM-free, read-only):
+ *   - CREATE gate: for each candidate scope schema, check if mass >= threshold AND no
+ *     existing live subject doc for its prospective slug.
+ *   - REFRESH gate: for an existing subject doc, count abstracts members with
+ *     last_access > node_doc.generated_at >= corpusSubjectDriftThreshold.
+ *   - D-37 firewall on ALL member queries (origin!='inferred').
+ *   - D-43 guard: inferred members NEVER contribute to mass or drift counts.
+ *
+ * Stage 2 (one LLM call per scope, only if a gate is open):
+ *   - Calls provider.generate once with top-N schemas by mass as input.
+ *   - Prompt anchors against existing subject slugs (idempotency, Pitfall 1).
+ *   - Names length-bounded to 200 chars (Security V5).
+ *   - Response: JSON [{name, relatedSchemaIds}]. Each accepted subject either matches
+ *     an existing slug (→ REFRESH queued) or is genuinely new (→ CREATE stub).
+ *
+ * Phase C (single IMMEDIATE transaction, NO await inside):
+ *   - Creates hub stub (slug = scope).
+ *   - Creates each new subject stub (slug = scope:name).
+ *   - Writes hub→subject doc_containment edges (fill-in-place).
+ *   - Persists subject-schema-ids:<subjectSlug> meta key per subject (Plan 03 contract).
+ *   - All stubs stay empty (value=''); FTS-suppressed; origin='inferred'.
+ *
+ * Threat mitigations:
+ *   - T-39.1-04: LLM subject names length-bounded, treated as labels, never executed.
+ *   - T-39.1-05: D-37 firewall on every member/drift query.
+ *   - T-39.1-06: hub stub + subject stubs created in one IMMEDIATE transaction; stubs empty.
+ */
+export class SubjectPromoter {
+  private readonly db: Database.Database;
+  private readonly store: SemanticStore;
+  private readonly clock: Clock;
+  private readonly provider: ModelProvider;
+  private readonly config: Pick<EngineConfig, 'corpusSubjectDriftThreshold'>;
+
+  // Prepared statements (T-01-SQL: compiled once in constructor)
+
+  /** Members of a schema with D-37 firewall (excludes inferred). Used for mass gate. */
+  private readonly stmtGetSchemaMembersInScope: Database.Statement;
+  /** Count of members touched after doc.generated_at (REFRESH drift gate). */
+  private readonly stmtDriftCount: Database.Statement;
+  /** Find live doc node by slug (node_doc.slug column). */
+  private readonly stmtGetLiveDocBySlug: Database.Statement;
+  /** All live subject doc slugs for a scope (scope:* prefix, not bare scope slug). */
+  private readonly stmtGetExistingSubjectSlugs: Database.Statement;
+  /** Schemas in scope sorted by member count desc (for top-N proposal input). */
+  private readonly stmtGetSchemasInScopeWithMass: Database.Statement;
+  /** FTS suppression (mirrors CorpusPromoter). */
+  private readonly stmtFtsDelete: Database.Statement;
+
+  constructor(
+    db: Database.Database,
+    store: SemanticStore,
+    clock: Clock,
+    provider: ModelProvider,
+    config: Pick<EngineConfig, 'corpusSubjectDriftThreshold'>,
+  ) {
+    this.db = db;
+    this.store = store;
+    this.clock = clock;
+    this.provider = provider;
+    this.config = config;
+
+    // D-37 firewall: members for a schema in a scope, non-inferred, for mass computation.
+    // We need two constraints: the edge kind + destination node filter + scope membership.
+    this.stmtGetSchemaMembersInScope = db.prepare(`
+      SELECT DISTINCT m.id
+      FROM edge e
+      JOIN node m ON m.id = e.dst
+        AND m.type IN ('fact','entity')
+        AND m.tombstoned = 0
+        AND m.origin != 'inferred'
+      JOIN node_scope ns ON ns.node_id = m.id AND ns.scope = ?
+      WHERE e.src = ? AND e.kind = 'abstracts'
+    `);
+
+    // REFRESH drift gate: count of abstracts members touched after generated_at.
+    // D-37 firewall: origin!='inferred', tombstoned=0, type IN ('fact','entity').
+    this.stmtDriftCount = db.prepare(`
+      SELECT COUNT(*) AS driftCount
+      FROM edge e
+      JOIN node m ON m.id = e.dst
+        AND m.type IN ('fact','entity')
+        AND m.tombstoned = 0
+        AND m.origin != 'inferred'
+        AND m.last_access > ?
+      WHERE e.src = ? AND e.kind = 'abstracts'
+    `);
+
+    // Look up a live doc node by slug (node_doc.slug = ?).
+    this.stmtGetLiveDocBySlug = db.prepare(`
+      SELECT n.id, nd.generated_at
+      FROM node n
+      JOIN node_doc nd ON nd.node_id = n.id
+      WHERE n.type = 'doc' AND n.tombstoned = 0 AND nd.slug = ?
+      LIMIT 1
+    `);
+
+    // Existing live subject doc slugs for this scope: slugs matching 'scope:%'.
+    // Excludes the bare scope hub slug and UUID chapter slugs (which don't have ':' prefix).
+    this.stmtGetExistingSubjectSlugs = db.prepare(`
+      SELECT nd.slug
+      FROM node n
+      JOIN node_doc nd ON nd.node_id = n.id
+      WHERE n.type = 'doc' AND n.tombstoned = 0
+        AND nd.slug LIKE ? ESCAPE '\\'
+    `);
+
+    // Schemas in scope ordered by member mass desc (for top-20 proposal input).
+    // D-37 firewall applied to member counts.
+    this.stmtGetSchemasInScopeWithMass = db.prepare(`
+      SELECT s.id AS schemaId, s.value AS schemaLabel,
+             COUNT(DISTINCT m.id) AS memberCount
+      FROM node s
+      JOIN edge e ON e.src = s.id AND e.kind = 'abstracts'
+      JOIN node m ON m.id = e.dst
+        AND m.type IN ('fact','entity')
+        AND m.tombstoned = 0
+        AND m.origin != 'inferred'
+      JOIN node_scope ns ON ns.node_id = m.id AND ns.scope = ?
+      WHERE s.type = 'schema' AND s.tombstoned = 0
+      GROUP BY s.id, s.value
+      ORDER BY memberCount DESC
+      LIMIT 20
+    `);
+
+    // FTS suppression (mirrors CorpusPromoter / doc-writer.ts pattern)
+    this.stmtFtsDelete = db.prepare('DELETE FROM node_fts WHERE node_id = ?');
+  }
+
+  // ── Private: Stage-1 gate helpers ──────────────────────────────────────────
+
+  /**
+   * Evaluate the Stage-1 gates for a scope.
+   * Returns: createGateOpen (any schema crosses mass threshold with no existing subject doc)
+   *          and refreshGateOpen (any existing subject doc has drift >= threshold).
+   * LLM-free — only SQL reads (D-05).
+   */
+  private evaluateStage1Gates(
+    scope: string,
+    existingSubjectSlugs: string[],
+    schemas: Array<{ schemaId: string; schemaLabel: string; memberCount: number }>,
+    driftThreshold: number,
+  ): { createGateOpen: boolean; refreshGateOpen: boolean } {
+    const minMass = 4; // minMembers floor for CREATE gate (mirrors CorpusPromoter.minMembers)
+
+    let createGateOpen = false;
+    let refreshGateOpen = false;
+
+    // CREATE gate: schema meets mass threshold AND no existing subject doc for its slug.
+    for (const schema of schemas) {
+      if (schema.memberCount < minMass) continue;
+
+      const subjectSlug = `${scope}:${normalizeSubjectName(schema.schemaLabel)}`;
+      if (!existingSubjectSlugs.includes(subjectSlug)) {
+        createGateOpen = true;
+        break; // found at least one CREATE candidate — no need to scan further
+      }
+    }
+
+    // REFRESH gate: for each existing subject doc, check if drift >= threshold.
+    // Evaluated independently of minMass — an existing subject can drift regardless of
+    // whether its underlying schemas still meet the mass floor.
+    if (!refreshGateOpen) {
+      // Build a map from normalized slug suffix → schema for drift lookup.
+      const slugToSchema = new Map<string, (typeof schemas)[0]>();
+      for (const schema of schemas) {
+        const subjectSlug = `${scope}:${normalizeSubjectName(schema.schemaLabel)}`;
+        slugToSchema.set(subjectSlug, schema);
+      }
+
+      for (const subjectSlug of existingSubjectSlugs) {
+        const schema = slugToSchema.get(subjectSlug);
+        if (!schema) continue; // slug exists but no matching schema in scope — skip
+
+        const docRow = this.stmtGetLiveDocBySlug.get(subjectSlug) as
+          | { id: string; generated_at: number }
+          | undefined;
+        if (!docRow) continue;
+
+        const drift = (
+          this.stmtDriftCount.get(docRow.generated_at, schema.schemaId) as
+          | { driftCount: number }
+          | undefined
+        )?.driftCount ?? 0;
+
+        if (drift >= driftThreshold) {
+          refreshGateOpen = true;
+          break;
+        }
+      }
+    }
+
+    return { createGateOpen, refreshGateOpen };
+  }
+
+  // ── Public API ─────────────────────────────────────────────────────────────
+
+  /**
+   * Run the exhaust-gate subject promotion for a scope.
+   *
+   * Phase A (LLM-free, read-only): evaluate Stage-1 CREATE + REFRESH gates.
+   * Phase B (LLM call, only when a gate is open): propose subjects via provider.generate.
+   * Phase C (single IMMEDIATE transaction, NO await inside): create hub + subject stubs,
+   *   write hub→subject doc_containment edges, persist subject-schema-ids meta.
+   *
+   * @param scope Project scope string (e.g. 'brain-memory').
+   * @returns SubjectPromoteResult with created stubs, refresh queue, hub/subject doc ids.
+   */
+  async promoteSubjects(scope: string): Promise<SubjectPromoteResult> {
+    const emptyResult: SubjectPromoteResult = {
+      proposed: [],
+      created: 0,
+      refreshQueued: [],
+      hubDocId: null,
+      subjectDocIds: [],
+    };
+
+    // D-04 guard: never promote GLOBAL_SCOPE or empty scope
+    if (!scope || scope === GLOBAL_SCOPE) {
+      return emptyResult;
+    }
+
+    const driftThreshold = this.config.corpusSubjectDriftThreshold;
+
+    // ── Phase A: Stage-1 LLM-free gates ────────────────────────────────────
+
+    // Get schemas in scope sorted by mass (top-20 for proposal input)
+    const schemas = this.stmtGetSchemasInScopeWithMass.all(scope) as Array<{
+      schemaId: string;
+      schemaLabel: string;
+      memberCount: number;
+    }>;
+
+    if (schemas.length === 0) {
+      return emptyResult;
+    }
+
+    // Get existing subject doc slugs for this scope (scope:* pattern)
+    const escapedScope = scope.replace(/[%_\\]/g, '\\$&');
+    const existingSubjectRows = this.stmtGetExistingSubjectSlugs.all(
+      `${escapedScope}:%`
+    ) as Array<{ slug: string }>;
+    const existingSubjectSlugs = existingSubjectRows.map(r => r.slug);
+
+    const { createGateOpen, refreshGateOpen } = this.evaluateStage1Gates(
+      scope,
+      existingSubjectSlugs,
+      schemas,
+      driftThreshold,
+    );
+
+    // D-05: if no gate is open, return without an LLM call
+    if (!createGateOpen && !refreshGateOpen) {
+      return emptyResult;
+    }
+
+    // ── Phase B: Stage-2 subject-proposal LLM call ─────────────────────────
+
+    // Build the subject-names list from existing slugs (strip the 'scope:' prefix)
+    const existingSubjectNames = existingSubjectSlugs.map(s => s.slice(scope.length + 1));
+
+    // Prompt: top-N schemas as label:memberCount lines
+    const schemaInputLines = schemas
+      .map(s => `${s.schemaLabel}: ${s.memberCount}`)
+      .join('\n');
+
+    const anchorBlock = existingSubjectNames.length > 0
+      ? `EXISTING SUBJECTS (do NOT rename these): ${existingSubjectNames.join(', ')}\n\n`
+      : '';
+
+    const proposalPrompt = `You are categorizing memory schemas for the project "${scope}" into named subject areas.
+
+${anchorBlock}SCHEMAS (label: member count):
+${schemaInputLines}
+
+Propose a small set of named subject areas (3-8) that group these schemas into coherent topics. For each subject, list the schema IDs that belong to it.
+
+Output ONLY valid JSON (no markdown, no explanation):
+[{"name": "subject-name-hyphenated", "relatedSchemaIds": ["uuid1", "uuid2"]}]`;
+
+    const md = await this.provider.generate(proposalPrompt, { maxTokens: 2000 });
+    if (md.trim().length === 0) {
+      throw new Error(`SubjectPromoter: subject-proposal for scope "${scope}" returned empty output`);
+    }
+
+    // Parse the JSON response
+    let rawProposals: Array<{ name: string; relatedSchemaIds: string[] }>;
+    try {
+      const jsonStr = md.trim().replace(/^```json\s*|^```\s*|```\s*$/g, '').trim();
+      rawProposals = JSON.parse(jsonStr);
+      if (!Array.isArray(rawProposals)) throw new Error('not an array');
+    } catch {
+      throw new Error(`SubjectPromoter: subject-proposal JSON parse failed for scope "${scope}": ${md.slice(0, 200)}`);
+    }
+
+    // Validate and normalize each proposed subject
+    const MAX_NAME_LEN = 200; // Security V5 — length-bound subject names
+    const schemaIdSet = new Set(schemas.map(s => s.schemaId));
+
+    interface AcceptedSubject {
+      name: string;
+      normalizedName: string;
+      subjectSlug: string;
+      relatedSchemaIds: string[];
+      isNew: boolean;
+    }
+
+    const accepted: AcceptedSubject[] = [];
+    const seenSlugs = new Set<string>();
+
+    for (const proposal of rawProposals) {
+      if (!proposal || typeof proposal.name !== 'string') continue;
+
+      const name = proposal.name.trim();
+      if (!name || name.length > MAX_NAME_LEN) continue;
+
+      const normalizedName = normalizeSubjectName(name);
+      if (!normalizedName) continue;
+
+      const subjectSlug = `${scope}:${normalizedName}`;
+      if (seenSlugs.has(subjectSlug)) continue; // deduplicate proposals
+      seenSlugs.add(subjectSlug);
+
+      // Filter relatedSchemaIds to only include schemas that exist in scope
+      const relatedSchemaIds = Array.isArray(proposal.relatedSchemaIds)
+        ? proposal.relatedSchemaIds.filter(
+            (id): id is string => typeof id === 'string' && schemaIdSet.has(id)
+          )
+        : [];
+
+      const isNew = !existingSubjectSlugs.includes(subjectSlug);
+
+      accepted.push({ name, normalizedName, subjectSlug, relatedSchemaIds, isNew });
+    }
+
+    if (accepted.length === 0) {
+      return emptyResult;
+    }
+
+    // ── Phase C: atomic write (single IMMEDIATE transaction, NO await inside) ────
+
+    const now = this.clock.nowMs();
+
+    // Look up hub stub (slug = scope)
+    const existingHubRow = this.stmtGetLiveDocBySlug.get(scope) as
+      | { id: string; generated_at: number }
+      | undefined;
+
+    // Prepare new subject creation data (read existing subject docs before transaction)
+    const existingSubjectDocs = new Map<string, string>(); // subjectSlug → docId
+    for (const slug of existingSubjectSlugs) {
+      const row = this.stmtGetLiveDocBySlug.get(slug) as { id: string } | undefined;
+      if (row) existingSubjectDocs.set(slug, row.id);
+    }
+
+    let hubDocId: string;
+    const newSubjectDocIds: string[] = [];
+    const refreshQueued: string[] = [];
+
+    this.db.transaction(() => {
+      // 1. Create (or reuse) hub stub (slug = scope).
+      //    Hub stays empty — prose filled by Plan 03's generateDocForHub.
+      if (existingHubRow) {
+        hubDocId = existingHubRow.id;
+      } else {
+        hubDocId = newId();
+        this.store.upsertNode({
+          id: hubDocId,
+          type: 'doc',
+          value: '',          // empty stub — fill-in-place (BUG-2c / Pitfall 2)
+          origin: 'inferred',
+          s: 0,
+          c: 1.0,
+          last_access: now,
+        });
+        this.stmtFtsDelete.run(hubDocId);
+        this.store.upsertNodeDoc({
+          node_id: hubDocId,
+          slug: scope,
+          generated_at: now,
+          updated_at: now,
+        });
+        this.store.upsertNodeScope({
+          node_id: hubDocId,
+          scope: scope,
+          updated_at: now,
+        });
+      }
+
+      // 2. Create new subject stubs; mark existing as refresh-queued.
+      for (const subject of accepted) {
+        if (!subject.isNew) {
+          // Existing subject: queue for refresh (no new stub)
+          refreshQueued.push(subject.subjectSlug);
+        } else {
+          // New subject: create stub (slug = scope:name, scope annotation = scope string)
+          // D-03 demotion: scope = project scope string, NOT a schemaId
+          const docId = newId();
+          this.store.upsertNode({
+            id: docId,
+            type: 'doc',
+            value: '',          // empty stub — prose filled by Plan 03
+            origin: 'inferred',
+            s: 0,
+            c: 1.0,
+            last_access: now,
+          });
+          this.stmtFtsDelete.run(docId);
+          this.store.upsertNodeDoc({
+            node_id: docId,
+            slug: subject.subjectSlug,
+            generated_at: now,
+            updated_at: now,
+          });
+          this.store.upsertNodeScope({
+            node_id: docId,
+            scope: scope,       // project scope, NOT schemaId (D-03)
+            updated_at: now,
+          });
+          existingSubjectDocs.set(subject.subjectSlug, docId);
+          newSubjectDocIds.push(docId);
+        }
+
+        // 3. Persist subject-schema-ids meta key for Plan 03 (BLOCKER-2 contract).
+        //    Written for ALL subjects (new AND refreshed) so Plan 03 can always read it.
+        this.store.setMeta(
+          `subject-schema-ids:${subject.subjectSlug}`,
+          JSON.stringify(subject.relatedSchemaIds),
+        );
+      }
+
+      // 4. Write hub→subject doc_containment edges for ALL live subject stubs.
+      //    Includes pre-existing subject stubs (fill-in-place idempotency).
+      for (const [subjectSlug, subjectDocId] of existingSubjectDocs) {
+        // Only write edges for subjects in the accepted set (newly created or known)
+        const isKnown = accepted.some(a => a.subjectSlug === subjectSlug);
+        if (!isKnown) continue;
+        this.store.upsertEdge({
+          src: hubDocId,
+          dst: subjectDocId,
+          rel: 'doc_containment',
+          kind: 'doc_containment',
+          w: 1.0,
+          last_access: now,
+        });
+      }
+    }).immediate();
+
+    return {
+      proposed: accepted.map(a => ({ name: a.name, relatedSchemaIds: a.relatedSchemaIds })),
+      created: newSubjectDocIds.length,
+      refreshQueued,
+      hubDocId,
+      subjectDocIds: newSubjectDocIds,
     };
   }
 }
