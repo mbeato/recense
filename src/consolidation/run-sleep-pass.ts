@@ -15,8 +15,11 @@
  *  defined in sleep-pass-cli.ts and are tested there. They are re-exported from
  *  sleep-pass-cli for zero test-import breakage.
  */
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { dirname, join, basename } from 'node:path';
 import Database from 'better-sqlite3';
 import { DEFAULT_CONFIG } from '../lib/config';
+import type { EngineConfig } from '../lib/config';
 import { realClock } from '../lib/clock';
 import type { Clock } from '../lib/clock';
 import { EpisodicStore } from '../db/episode-store';
@@ -33,6 +36,8 @@ import { SchemaRelationDeriver } from '../consolidation/schema-relations';
 import { CorpusPromoter } from '../consolidation/corpus-promoter';
 import { InsightReflector } from '../consolidation/insight-reflector';
 import { embedAndStoreGlosses, loadGlossEmbeddings } from '../consolidation/gloss-embeddings';
+import { EntityDedup } from '../consolidation/entity-dedup';
+import { FactDedup } from '../consolidation/fact-dedup';
 import { generateCorpusDocs } from '../consolidation/corpus-generator';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
@@ -338,6 +343,63 @@ export async function consumePendingCorpusMarkers(
  *               the consolidator provider's `generate` head to return cached claims;
  *               embed/judge/judgeBatch run for real; granite/Ollama is never called.
  */
+/**
+ * Phase 25 go-nightly (RECENSE_SLEEP_DEDUP=1, dark-default OFF): end-of-pass graph hygiene.
+ *
+ * The existing entity/fact dedup is a precision-first, SAME-normalized-value collapser
+ * (blocking key = normalizeValue, confirm with cosine >= 0.88) — it only merges textual
+ * duplicates ("ccusage"≡"ccusage"), never cross-value semantic variants, so the per-pass
+ * risk is low and the result is idempotent. Opt-in CLI meant duplicates accumulated between
+ * manual runs; running it nightly keeps the graph clean.
+ *
+ * SAFETY (founder SPOF — no other DB backups): take a consistent VACUUM INTO snapshot FIRST
+ * as the rollback point. If the snapshot fails, SKIP dedup entirely — a destructive merge must
+ * never run without a restore point. A dedup error after a good snapshot is logged, not thrown,
+ * so it can't abort the rest of the pass; the snapshot is retained for manual restore.
+ */
+function runGraphHygiene(
+  db: Database.Database,
+  store: SemanticStore,
+  sink: SQLiteConsolidationSink,
+  config: EngineConfig,
+  clock: Clock,
+  log: (msg: string) => void,
+): void {
+  const SNAP_KEEP = 5;
+  const DEDUP_THRESHOLD = 0.88; // Phase 25 D-01 proven default (cosine within same-value bucket)
+  const base = basename(config.dbPath);
+
+  // 1. Consistent pre-dedup snapshot (WAL-safe, compacted). Skip dedup if this fails.
+  try {
+    const dir = join(dirname(config.dbPath), 'snapshots');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const stamp = new Date(clock.nowMs()).toISOString().replace(/[:.]/g, '-');
+    const snapPath = join(dir, `${base}.${stamp}.bak`);
+    db.exec(`VACUUM INTO '${snapPath.replace(/'/g, "''")}'`);
+    log(`graph-hygiene: snapshot -> ${snapPath}`);
+    // Prune oldest beyond SNAP_KEEP (lexicographic sort == chronological for ISO stamps).
+    const snaps = readdirSync(dir)
+      .filter((f) => f.startsWith(`${base}.`) && f.endsWith('.bak'))
+      .sort();
+    for (const old of snaps.slice(0, Math.max(0, snaps.length - SNAP_KEEP))) {
+      try { unlinkSync(join(dir, old)); } catch { /* best-effort prune */ }
+    }
+  } catch (err) {
+    log(`graph-hygiene: snapshot FAILED (${String(err).slice(0, 80)}) — SKIPPING dedup (no rollback point)`);
+    return;
+  }
+
+  // 2. Same-value entity + fact dedup (FK-safe rewire→tombstone; never deletes; idempotent).
+  try {
+    const ent = new EntityDedup(db, store, sink, clock, config).run({ threshold: DEDUP_THRESHOLD, dryRun: false });
+    log(`graph-hygiene: entity dedup — ${ent.mergedClusters} clusters merged, ${ent.tombstoned} tombstoned`);
+    const fct = new FactDedup(db, store, sink, clock, config).run({ threshold: DEDUP_THRESHOLD, dryRun: false });
+    log(`graph-hygiene: fact dedup — ${fct.mergedClusters} clusters merged, ${fct.tombstoned} tombstoned`);
+  } catch (err) {
+    log(`graph-hygiene: dedup error (${String(err).slice(0, 120)}) — snapshot retained for restore`);
+  }
+}
+
 export async function runConsolidation(
   db: Database.Database,
   dbPath: string,
@@ -540,6 +602,12 @@ export async function runConsolidation(
     const tt = getTwoTierStats();
     const rate = tt.cheap_calls > 0 ? Math.round((100 * tt.escalations) / tt.cheap_calls) : 0;
     log(`two-tier judge: ${tt.cheap_calls} claims triaged, ${tt.escalations} escalated to Sonnet (${rate}% escalation)`);
+  }
+
+  // Phase 25 go-nightly (opt-in): pre-dedup snapshot + same-value entity/fact dedup.
+  // Dark-default OFF; flip RECENSE_SLEEP_DEDUP=1 in sleep.env after watching one pass.
+  if (env['RECENSE_SLEEP_DEDUP'] === '1') {
+    runGraphHygiene(db, store, sink, config, realClock, log);
   }
 
   log('Sleep pass complete');
