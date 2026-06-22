@@ -145,7 +145,14 @@ export class RecallEngine {
     if (!cueVec) return NULL_RESULT;
 
     // ── (2) Top match via CandidateRetriever ──────────────────────────────────
-    const topHits = this.retriever.topk(cueVec, this.config.candidateK);
+    // Fetch ONE candidate list sized for both consumers: the neighborhood path needs
+    // only bestMatch (topHits[0]), the typed path seeds its union from the top
+    // typedAnchorPoolK (Phase 37 go-live). One topk = one cosine scan; bestMatch is
+    // identical regardless of K, so the neighborhood path is unaffected.
+    const topHits = this.retriever.topk(
+      cueVec,
+      Math.max(this.config.candidateK, this.config.typedAnchorPoolK),
+    );
     const bestMatch = topHits[0];
     if (!bestMatch) return NULL_RESULT;
 
@@ -184,7 +191,7 @@ export class RecallEngine {
       // with no new embed/LLM call. typedReach dedups by dst and ranks by path weight.
       const typedFrontier = typedReach(
         this.store,
-        topHits.map((h) => h.id),
+        topHits.slice(0, this.config.typedAnchorPoolK).map((h) => h.id),
         [matchedPredicate],
         this.config.recallNeighborhoodBudget,
       );

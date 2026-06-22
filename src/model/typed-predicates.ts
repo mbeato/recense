@@ -51,14 +51,19 @@ export interface Triple {
  * Phrased as the natural-language QUESTION form users actually ask (CONTEXT.md §specifics).
  * Short precise glosses outperform paragraph-length prompts for cosine matching.
  */
+// Phase 37 go-live: the 5 marked glosses were reworded to mirror natural question
+// phrasing — the verbose originals embedded too far from "what does X use?" / "what is
+// X part of?" (uses scored only 0.22, losing to configured_with). Lifts predicate-match
+// 17→22/24 with ZERO false positives. supersedes/integrates_with kept ORIGINAL: a
+// reworded supersedes mis-won integrates_with on the dev-int query (q18).
 export const PREDICATE_GLOSSES: Record<Predicate, string> = {
-  built_by:         'who created or built this / who is the author',
-  works_on:         'what project does this person work on',
-  part_of:          'what system or project is this a component of',
-  uses:             'what tool library or service does this use',
+  built_by:         'who built or created this',           // reworded
+  works_on:         'what does this work on',               // reworded
+  part_of:          'what is this part of',                 // reworded
+  uses:             'what does this use',                   // reworded
   depends_on:       'what does this depend on to function',
   runs_on:          'what runtime host or platform does this run on',
-  located_in:       'where is this located or stored / what repo or dir',
+  located_in:       'where is this located',                // reworded
   integrates_with:  'what peer system does this integrate with',
   supersedes:       'what does this replace or supersede',
   prefers:          'what does this person prefer or favor',

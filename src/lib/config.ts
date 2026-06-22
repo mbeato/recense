@@ -345,6 +345,15 @@ export interface EngineConfig {
   predicateGlossThreshold: number;
 
   /**
+   * Phase 37 go-live: number of top retrieval candidates the typed-path seeds the
+   * union traversal from (not just the single bestMatch). Live coverage saturates at
+   * 20 (gold-reached 50%→71%); larger pools add no recall and only grow the frontier.
+   * Recall issues ONE topk at max(candidateK, typedAnchorPoolK) so there is no extra
+   * cosine scan and the neighborhood path's bestMatch (topHits[0]) is unchanged.
+   */
+  typedAnchorPoolK: number;
+
+  /**
    * Max tokens to inject at SessionStart. Default: 500.
    * Matches the existing vault-briefing hook budget (session-start-context.ts
    * TOKEN_BUDGET = 500) for comparability during dogfood. Char proxy: budget × 4.
@@ -728,6 +737,11 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   // Phase 37: min cosine for query→predicate confident match (D-07, RESEARCH §2).
   // Below threshold → schema-neighborhood fallback (D-06); calibrate against D-05 harness.
   predicateGlossThreshold: 0.35,
+  // Phase 37 go-live: # of top retrieval candidates the typed-path seeds typedReach from.
+  // The single bestMatch is often a fact-sentence or fragmented entity; unioning the top-K
+  // recovers the clean edge-bearing entity. Live sweep: gold-reached saturates at 20
+  // (50%→71%), small frontier (~3.7). Recall fetches max(candidateK, this) candidates ONCE.
+  typedAnchorPoolK: 20,
   injectionTokenBudget: 500,
   spreadDecay: 0.5,
   deletedSimilarityThreshold: 0.7,

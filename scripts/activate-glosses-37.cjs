@@ -27,8 +27,8 @@ const DB_PATH = arg('--db', `${process.env.HOME}/.config/recense/recense.db`);
   const db = new Database(DB_PATH); // read-write: setMeta writes one meta row
   const store = new SemanticStore(db, realClock, config);
 
-  if (loadGlossEmbeddings(store)) {
-    console.log('gloss embeddings already present — nothing to do (idempotent).');
+  if (loadGlossEmbeddings(store) && !process.argv.includes('--force')) {
+    console.log('gloss embeddings already present — nothing to do (idempotent). Pass --force to re-embed.');
     db.close();
     return;
   }
