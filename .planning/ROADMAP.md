@@ -8,7 +8,7 @@
 - ✅ **v3.1 Schema Depth & Brain-Window Polish** — Phases 18–19 (shipped 2026-06-15)
 - ✅ **v4.0 Proactive Memory** — Phases 20–23 (shipped 2026-06-17) — full detail: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 - ✅ **v5.0 Foundational Memory Store + Reader Layer** — Phases 24–28 (shipped 2026-06-19) — full detail: [milestones/v5.0-ROADMAP.md](milestones/v5.0-ROADMAP.md)
-- 🔲 **v6.0 Project Onboarding** — Phases 29–32 (all phases COMPLETE; awaiting `complete-milestone` archive)
+- ✅ **v6.0 Project Onboarding** — Phases 29–34 (shipped 2026-06-22) — full detail: [milestones/v6.0-ROADMAP.md](milestones/v6.0-ROADMAP.md). Agentic project survey → episodes → consolidation, generalized doc ingest, idempotent re-ingest, scoped recall + auto-corpus; plus folded-in standalone phases: synchronous curated write (`recense remember`, Phase 33) and cross-surface visual polish (Phase 34).
 - 🔲 **v7.0 Retrieval & Reasoning Depth** — Phases 35–39 (IN PROGRESS — 35, 36-spike, **37 COMPLETE** (37-04 typed-edges precision gate cleared GO: typed top-3 83.3% / lift +45.8pts / payload 3.8 vs 20 nodes), 38, 38.1, 39 done) — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections, reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export both explicitly deferred.
 - 🔲 **v8.0 Performance, Efficiency & Competitive Parity** — Phases 40–43 (planned, starts after v7.0) — prove at-or-above competitors (mem0/Zep) on accuracy + latency + token via LOCOMO baseline, build the vector index (kill brute-force cosine at 7000+ nodes), token-cost audit, then lock it all behind regression gates. Hard rule: every competitive number reproducible or cited — no inflated metrics.
 
@@ -200,6 +200,8 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 | 30. Core Ingest Command | v6.0 | 3/3 | Complete   | 2026-06-20 |
 | 31. Doc Ingest + Idempotent Re-ingest | v6.0 | 2/2 | Complete   | 2026-06-20 |
 | 32. Project Recall + Auto-Corpus | v6.0 | 3/3 | Complete   | 2026-06-21 |
+| 33. Synchronous Curated Write (`recense remember`) | v6.0 | 2/2 | Complete | 2026-06-20 |
+| 34. Visual Polish Pass | v6.0 | 3/3 | Complete | 2026-06-20 |
 
 ### Phase 28: Schema-Anchored Corpus
 
@@ -224,7 +226,9 @@ Plans:
 - [x] 28-03-PLAN.md — CorpusPromoter: mass-gate+noise filter, centroid-cosine+mass-direction ladder, eager doc stubs, CLI + sleep-pass wiring; BLOCKING CORPUS-05 snapshot test (CORPUS-02/03/05)
 - [x] 28-04-PLAN.md — /graph?type=doc + corpus.js link-kind styling (containment solid/directed, reference faint/dashed); hero-verify legible forest (CORPUS-04)
 
-## Phase Details — v6.0 Project Onboarding
+## Phase Details — v6.0 Project Onboarding — SHIPPED 2026-06-22
+
+> Archived: full detail in [milestones/v6.0-ROADMAP.md](milestones/v6.0-ROADMAP.md) and audit in [v6.0-MILESTONE-AUDIT.md](v6.0-MILESTONE-AUDIT.md). Phases 33 (`recense remember`) and 34 (visual polish) were standalone phases folded into v6.0 at close (founder decision 2026-06-22) → v6.0 = phases 29–34. The expanded phase detail below is retained as history.
 
 recense onboards a fresh/unexplored project into the brain on demand via an agentic survey → episodes → consolidation. Builds on v5.0 scope provenance, the SourceAdapter seam, and the schema-anchored corpus. Spike-first: Phase 29 proves survey quality before the full build.
 

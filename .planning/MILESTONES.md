@@ -1,5 +1,49 @@
 # Milestones
 
+## v6.0 Project Onboarding (Shipped: 2026-06-22)
+
+**Phases completed:** 6 phases (29–34), 16 plans
+**Requirements:** INGEST-01/02/03/04, DOCING-01, REINGEST-01/02, RECALL-01/02, REMEMBER-01/02/03, VIZ-POLISH-01/02/03 — all Complete/Satisfied (15/15)
+**Git:** tag `v6.0` (annotated, at close-HEAD — v6.0/v7.0 histories were interleaved on 2026-06-20, so no clean code boundary; tag marks the milestone close)
+**Verification:** all 6 phase VERIFICATION.md `passed`; milestone audit `passed` (`v6.0-MILESTONE-AUDIT.md`); cross-phase integration check PASSED (4/4 E2E flows wired, 109 cross-phase integration tests pass, tsc clean)
+**Scope note:** Phases 33 (`recense remember`) and 34 (visual polish) were standalone phases folded into v6.0 at close per founder decision 2026-06-22.
+
+**Key accomplishments:**
+
+- **Agentic project onboarding** — `recense ingest-project <dir>`: an agent surveys a fresh repo (README, structure, key modules, conventions, gotchas) with a why-not-what / no-raw-code prompt and emits **summarized semantic knowledge** as episodes through the offline pipeline (origin=`observed`, scope-tagged via `node_scope`), gated by a `genuine|noise` quality judge that excludes raw-code and low-value structural facts. Proven on a real project before build (Phase 29 spike GO → Phase 30).
+- **Generalized doc ingest + idempotent re-ingest** — ingestion extended to a project's own documents (README/`docs/*.md`/`CLAUDE.md`); a per-project `gitFingerprint` cursor makes re-ingest incremental and reconsolidation reconciles changed beliefs in place rather than minting duplicates (Phase 31).
+- **Scoped project recall + auto-corpus** — `recense recall --scope <slug>` provenance-filters to one project (D-S1-safe: scope never enters ranking), and onboarding auto-promotes/generates the project's schema-anchored corpus landing doc via a crash-safe deferred marker consumed in the sleep pass — a newly-onboarded project is immediately browsable in the Reader (Phase 32, live-verified on `/Users/vtx/usage`: 24KB / 148-citation landing doc).
+- **Synchronous curated write (`recense remember`)** — closes the "replaces MEMORY.md" promise on the WRITE side: a verbatim curated single-fact write (origin=`asserted_by_user`, lock-guarded) that runs synchronous in-place reconsolidation (D-04 force-reconcile, else insert); native Claude Code auto-memory retired via a global directive + `autoMemoryEnabled:false` kill-switch + value_hash-verified migration of the 12 `.md` files into the live brain (Phase 33).
+- **Cross-surface visual polish** — spacing/alignment consistency and explicit loading/empty/error + hover/focus states across the four live viz surfaces (Reader, Corpus 2D graph, Detail, Brain HUD), CSS-only, with founder-locked guards held: amber reserved for activation/hover, 3D density anchor unchanged, zero runtime-dep change (Phase 34).
+
+**Engine invariants held:** single-tenant; graph is source of truth, vector is derived cache; online paths LLM-free; never strengthen a fact from inferred output (D-43); net-zero new runtime deps; all LLM cost in the offline pass (`recense remember` is the by-design synchronous exception).
+
+**Known deferred items at close:** 43 open artifacts acknowledged & deferred (see STATE.md → Deferred Items) — none scoped to v6.0 phases; 37 are completed quick-tasks lacking status files, 1 stale debug session, 3 intentional future-todos, 2 dormant seeds (SEED-003/004). Plus two carried tech-debt items from the audit: `--scope` case-normalization in the write paths, and a lingering headless-client process handle after `generateDoc`/`generateCorpusDocs`.
+
+---
+
+## v5.0 Foundational Memory Store + Reader Layer (Shipped: 2026-06-19)
+
+**Phases completed:** 5 phases (24–28)
+**Requirements:** SCOPE-01..04, DEDUP-01..03, RETR-01/03 (RETR-02 documented dead-end), READER-01..04, CORPUS-01..06 — all Complete/Satisfied
+**Git:** tag `v5.0` (annotated `c410eb8`, pushed to `origin`)
+**Suite at close:** 1766 passed, 3 skipped · tsc clean
+**Verification:** Phase 28 verifier passed; founder-approved hero-verify; code review CR-01/WR-01 fixed, WR-02 rejected with rationale
+
+**Key accomplishments:**
+
+- **SCOPE — Foundational store** — verified the landed `node_scope` provenance + `import-memory` CLI, fixed the FK consolidation crash at root (`67eee74`), re-enabled the hourly agent, and ran the human-gated migration of 199 MEMORY.md facts into the brain under `[scope]` attribution (197 source files archived, reversible) — Phase 24.
+- **DEDUP — Entity dedup/prune** — a repeatable, origin-guarded consolidation pass merges near-duplicate entity nodes into canonical nodes (121 clusters / 150 tombstoned live), FK-clean, no recall regression — Phase 25.
+- **RETR — Belief-correction / duplicate-fact fix** — RETR-01 diagnosis correctly localized the duplicate-fact symptom to the consolidation judge / PE-routing (NOT the embedder; RETR-02 judge-prompt fix was validation-falsified and reverted — a documented dead-end); RETR-03 shipped `recense dedup-facts` — Phase 26.
+- **READER — Reader Layer** — doc-as-node lifecycle-exempt generation with inline `recense://fact/<id>` citations, `/doc` route + Reader/Brain toggle, citation staleness/regen, and a flat 2D Obsidian-style corpus graph — Phase 27.
+- **CORPUS — Schema-Anchored Corpus** — the corpus became the abstraction graph rendered as prose: LLM-free mass-gated promotion + centroid-cosine containment/reference ladder, schema-thesis generation, eager OFFLINE generation in the sleep pass (more faithful than lazy-on-click), fill-in-place stub writing for stable corpus edges, and a self-confirmation guard verified RED-under-injection — Phase 28.
+
+**Engine invariants held:** single-tenant; graph is source of truth; online paths LLM-free; never strengthen a fact from inferred output (D-43); net-zero new runtime deps; all LLM cost in the offline pass.
+
+**Known open at close:** live brain corpus generation was in progress at archive; viz-scaling (instanced haze) shipped as a follow-up quick-task to handle the growing node count; v6.0 (Project Onboarding) opened to ingest fresh projects.
+
+---
+
 ## v4.0 Proactive Memory (Shipped: 2026-06-17)
 
 **Phases completed:** 4 phases (20–23), ~39 feat commits

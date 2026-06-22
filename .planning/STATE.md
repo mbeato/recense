@@ -280,6 +280,19 @@ Carried forward from v4.0 close (2026-06-17):
 | Corpus / Phase 32 | Run `promoteScope('tonos')` (+ other project scopes) so project landing docs gain chapter-doc children — the hybrid index already renders project→chapter nesting; tonos is currently a standalone Phase-27 generate-doc with no children. | Deferred to Phase 32 (Project Recall + Auto-Corpus) | 2026-06-21 |
 | Corpus freshness | Refresh/grow the doc corpus — it's been a while since docs were added and some schemas/projects lack docs. Run `ingest-project` on unexplored projects + corpus promotion / doc-generation passes. Also feeds the ~100-doc trigger for index categories above. | Backlog — operational | 2026-06-21 |
 
+### Acknowledged & deferred at v6.0 milestone close (2026-06-22)
+
+43 open artifacts surfaced by the pre-close audit-open scan were acknowledged and deferred (none scoped to v6.0 phases 29–34):
+
+| Category | Item | Status |
+|----------|------|--------|
+| quick_tasks | 37 completed quick-tasks lacking a status/summary file (dates 260606→260620, v1.0–v6.0 era) | Acknowledged — completed work, missing metadata only |
+| debug | `knowledge-base` debug session [status unknown] | Acknowledged — stale/ambient, not v6.0 |
+| todos | content-hardening-deferred · corpus-brain-3d-transition · viz-search-and-hull-quality | Acknowledged — intentional future deferrals |
+| seeds | SEED-003 (multi-tenant namespaces) · SEED-004 (Telegram reference client) | Dormant by design |
+| tech-debt (audit) | `--scope` not lowercase-normalized in ingest-project-cli / remember-cli (recall-cli lowercases) — mixed-case write/recall mismatch | Deferred — convention-only edge case |
+| tech-debt (audit) | headless-client process lingers at 0% CPU after generateDoc / generateCorpusDocs (DB writes land correctly) | Deferred — pre-existing operational note |
+
 ## Session Continuity
 
 Last session: 2026-06-21T18:42:00.000Z

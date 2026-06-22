@@ -10,6 +10,10 @@ The memory **learns and stays correct over time** — it forms generalizations t
 
 ## Current State
 
+**v6.0 Project Onboarding shipped 2026-06-22** (phases 29–34, 16 plans, git tag `v6.0`): recense can now onboard a **fresh, unexplored project** on demand. The primitive is an agentic survey — `recense ingest-project <dir>` reads a repo and emits *summarized semantic knowledge* (not raw code), gated by a `genuine|noise` quality judge, through the existing episodic → consolidation pipeline (origin=`observed`, scope-tagged via `node_scope`); proven on a real project by a go/no-go spike before build (Phase 29 → 30). Generalized doc ingest extends to a project's own README/`docs/*.md`/`CLAUDE.md`, and a per-project `gitFingerprint` cursor makes re-ingest incremental + idempotent (reconsolidation reconciles in place, no duplicates) (Phase 31). `recense recall --scope <slug>` provenance-filters to one project (D-S1-safe: scope never enters ranking), and onboarding auto-promotes/generates the project's schema-anchored corpus landing doc via a crash-safe deferred marker consumed in the sleep pass, so a newly-onboarded project is immediately browsable in the Reader (Phase 32, live-verified on `/Users/vtx/usage`). Two standalone phases were folded in: the synchronous curated write `recense remember` — a verbatim, lock-guarded single-fact write that runs in-place reconsolidation and retires native Claude Code auto-memory (global directive + `autoMemoryEnabled:false` + value_hash-verified migration of the 12 `.md` files) (Phase 33) — and a cross-surface visual-polish pass (Phase 34, CSS-only, founder-locked palette/density guards held). Milestone audit `passed` (15/15 reqs, 4/4 E2E flows wired); engine stayed single-tenant, graph-as-truth, LLM-free on the hot path (`recense remember` the by-design synchronous exception), net-zero new runtime deps.
+
+**v5.0 Foundational Memory Store + Reader Layer shipped 2026-06-19** (phases 24–28): recense became the single source of truth for the founder's knowledge and grew a reader/corpus layer that renders the abstraction graph as prose. Scope-aware fact gather + a human-gated migration of 199 MEMORY.md facts under `[scope]` provenance (Phase 24, FK-consolidation bug root-caused + fixed); repeatable origin-guarded entity dedup (Phase 25) and a `recense dedup-facts` pass (Phase 26 — RETR-01 correctly localized the duplicate-fact symptom to the consolidation judge/PE-routing, *not* the embedder; the RETR-02 judge-prompt fix was validation-falsified and reverted, a documented dead-end); the Reader Layer (Phase 27 — doc-as-node generation with inline `recense://fact/<id>` citations, `/doc` route + Reader/Brain toggle, staleness/regen, flat 2D corpus graph); and the Schema-Anchored Corpus (Phase 28 — LLM-free mass-gated promotion + centroid-cosine containment/reference ladder, schema-thesis generation, eager offline generation in the sleep pass, fill-in-place stub writing for stable corpus edges, self-confirmation guard verified RED-under-injection). Git tag `v5.0`. Engine stayed single-tenant, graph-as-truth, LLM-free on the hot path, net-zero new runtime deps.
+
 **v4.0 Proactive Memory shipped 2026-06-17** (phases 20–23, ~150 commits): recense crossed from passive recall to a memory that *surfaces and acts*. Temporal ingestion (`node_temporal`, Google Calendar adapter, Gmail episodic-variant, multi-account OAuth) → LLM-free `/v1/surface` ranking + D-43 self-confirmation sentinel → notify-only Telegram P0/P1 push (default-OFF, restart-surviving dedup) → approval-gated execution of any user-configured MCP tool (hard approval gate, 4 injection-hardening controls, typed destructive confirm, D-06 edit re-approval, `source:'hitl'` audit excluded from consolidation). Live-validated end-to-end against a real MCP server; one real D-43 audit-provenance bug found by the live gate and fixed; code review clean after CR-01 (prompt-injection fence) fix. All 13 requirements (TEMP/SURF/PUSH/ACT) satisfied. Git tag `v4.0`. The engine stayed passive, LLM-free on the hot path, single-tenant, net-zero new runtime deps.
 
 **v3.1 Schema Depth & Brain-Window Polish shipped 2026-06-15** (phases 18–19, 8 plans): the learning layer now reasons over relations *between* schemas, and the Recense brain window is navigable and visually clean. SREL-01/02/03 + VIZ-07/08/09 all delivered and verified; both phases PASS, Phase 19 founder-accepted live. Git tag `v3.1`.
@@ -30,7 +34,23 @@ The memory **learns and stays correct over time** — it forms generalizations t
 
 **v2.0 Open-Source Release shipped 2026-06-10** (phases 9–10): anyone can `brain init` a working install (BYO keys, live-validated, chmod-600 env), audit it with `brain doctor`, schedule the sleep pass cross-platform (launchd/croner), and watch spreading-activation pathways live in the `brain viz` 3D UI. CI matrix green on macOS + Linux. Schema at v5 after the post-ship ARCH-REVIEW hardening pass.
 
-## Current Milestone: v5.0 Foundational Memory Store + Reader Layer
+## Last Milestone: v6.0 Project Onboarding — SHIPPED 2026-06-22
+
+> Shipped (phases 29–34, git tag `v6.0`). Phases 33 (`recense remember`) + 34 (visual polish) folded in at close. Full detail: [milestones/v6.0-ROADMAP.md](milestones/v6.0-ROADMAP.md); audit: [v6.0-MILESTONE-AUDIT.md](v6.0-MILESTONE-AUDIT.md). The original goal/target-features below are retained as history. **Active work is v7.0 Retrieval & Reasoning Depth (phases 35–39, build complete) — closing next.**
+
+**Goal:** Let a user onboard a **fresh, unexplored project** into the brain on demand — instead of only learning a project organically (Claude Code conversations) or from docs already in the Obsidian vault. The primitive is an **agentic project survey → episodes**: an agent reads the repo (README, structure, key modules, conventions, gotchas) and writes down *summarized semantic knowledge — not raw code*, which flows through the existing episodic → consolidation pipeline (origin=`observed`, scope-tagged, idempotent by reconsolidation). This makes recense useful for projects the founder hasn't already worked through in Claude Code, and feeds the schema-anchored corpus so a newly-onboarded project is immediately browsable.
+
+**Target capabilities (all 4 confirmed by founder 2026-06-19):**
+- **Agentic survey-ingest (core)** — `recense ingest-project <dir>`: an agent explores the repo and emits summarized observations → episodes → facts/schemas via the offline pipeline. Knowledge, not a code index.
+- **Generalized doc ingest** — extend document ingestion beyond the single Obsidian vault dir to a project's own docs (README, docs/*.md, CLAUDE.md), origin=`observed`.
+- **Idempotent re-ingest** — re-running on a changed project updates beliefs in place (reconsolidation) with a per-project cursor for incremental re-ingest.
+- **Project recall surface** — scoped recall of a project's ingested knowledge + auto-generate its schema-anchored corpus doc so onboarding makes it immediately browsable in the reader.
+
+**Key context:** Builds directly on v5.0 (scope provenance `node_scope`, the reader/corpus layer, the offline consolidation cost model) and the existing `SourceAdapter`/episodic seams. **Spike-first** (D): prove the agentic-survey fact/schema quality on one project before committing to the full command design. Constraint: summarized knowledge only — raw code line-by-line is rejected (it mints low-value noise). Engine invariants hold: single-tenant, graph is source of truth, online paths LLM-free, never strengthen a fact from inferred output, net-zero new runtime deps; ingestion LLM cost lives in the offline pass. Pairs with the just-shipped viz-scaling work (instanced haze) so the brain renders at the higher node counts ingestion produces.
+
+## Last Milestone: v5.0 Foundational Memory Store + Reader Layer — SHIPPED 2026-06-19
+
+> Shipped (phases 24–28, git tag `v5.0`). Phase 28 (Schema-Anchored Corpus) was added in-milestone, superseding READER-04. Full detail: [milestones/v5.0-ROADMAP.md](milestones/v5.0-ROADMAP.md). No active milestone — run `/gsd:new-milestone` to open v6.0. The original goal/target-features below are retained as history.
 
 **Goal:** Make recense the single source of truth for the founder's knowledge — retire the flat MEMORY.md / Obsidian-authoring stores into the brain, clean up the entity layer, fix the retrieval-embedding weakness, and surface it all through a generated human-readable reader layer that links prose claims down to atomic facts.
 
@@ -114,9 +134,24 @@ Built + verified in **Phase 12: HTTP Serving Mode** (2026-06-11, 815 tests passi
 - [x] Notify-only proactive Telegram push (default-OFF, restart-surviving dedup) — PUSH-01/02/03
 - [x] Approval-gated execution against any connected MCP tool (hard approval gate, injection hardening, typed destructive confirm, `source:'hitl'` excluded from consolidation) — ACT-01/02/03
 
-### Active (v5.0 Foundational Memory Store + Reader Layer)
+**v5.0 Foundational Memory Store + Reader Layer shipped 2026-06-19** (phases 24–28, git tag `v5.0`):
+- [x] Foundational store — `node_scope` provenance verify + `import-memory` migration (199 facts) + clean-consolidation FK gate — SCOPE-01/02/03/04 (Phase 24)
+- [x] Origin-guarded entity dedup/prune pass — DEDUP-01/02/03 (Phase 25)
+- [x] Belief-correction / duplicate-fact fix (judge+PE-routing localized; `recense dedup-facts`) — RETR-01/03 (RETR-02 documented dead-end) (Phase 26)
+- [x] Reader layer — doc-as-node generation w/ inline `recense://fact/<id>` citations, `/doc` route + Reader/Brain toggle, staleness/regen — READER-01/02/03 (Phase 27)
+- [x] Schema-anchored corpus — abstraction graph rendered as prose, mass-gated promotion, containment/reference ladder, offline gen, self-confirmation guard — CORPUS-01..06 (Phase 28, superseded READER-04)
 
-Requirements defined in `.planning/REQUIREMENTS.md` — foundational store (provenance verify + `import-memory` migration + a clean-consolidation gate), entity dedup/prune, retrieval-embedding fix, and the reader layer (doc nodes, facts→doc generation with inline citations, staleness/regen, reader UI, doc→doc graph). Backlog-derived (ex-999.3/999.5/999.2/999.4); roadmap sequences foundation → cleanup → retrieval → reader.
+**v6.0 Project Onboarding shipped 2026-06-22** (phases 29–34, git tag `v6.0`):
+- [x] Agentic survey-ingest — `recense ingest-project <dir>` → summarized observations → episodes → consolidation, scope-tagged, offline, quality-gated — INGEST-01/02/03/04 (Phases 29–30)
+- [x] Generalized doc ingest (README/`docs/*.md`/`CLAUDE.md`, origin=observed) — DOCING-01 (Phase 31)
+- [x] Idempotent + incremental re-ingest (per-project `gitFingerprint` cursor, in-place reconciliation) — REINGEST-01/02 (Phase 31)
+- [x] Scoped project recall + auto-corpus landing doc (D-S1-safe scope filter; deferred marker → sleep-pass promote/generate) — RECALL-01/02 (Phase 32)
+- [x] Synchronous curated write `recense remember` (verbatim + in-place reconsolidation) + native-memory cutover — REMEMBER-01/02/03 (Phase 33, folded in)
+- [x] Cross-surface visual polish (spacing/alignment + states/transitions, CSS-only, guards held) — VIZ-POLISH-01/02/03 (Phase 34, folded in)
+
+### Active (v7.0 Retrieval & Reasoning Depth — build complete, closing; v8.0 next)
+
+v7.0 (phases 35–39) build phases are complete and typed recall is live at 92% coverage — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections/derived insights, and reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export explicitly deferred. v7.0 archival is in progress (this session). Next milestone **v8.0 Performance, Efficiency & Competitive Parity** (phases 40–43, planned): LOCOMO competitive baseline → vector index (kill brute-force cosine at 7000+ nodes) → token/cost audit → eval regression gates. Hard rule: every competitive number reproducible or cited.
 
 ### Out of Scope
 
@@ -156,7 +191,10 @@ Requirements defined in `.planning/REQUIREMENTS.md` — foundational store (prov
 | Engine stays single-tenant (reaffirmed 2026-06-10) | Per-user hosting = instance-per-user; namespace multi-tenancy is SEED-003 behind a real trigger | — Pending |
 | viz anatomical brain = intentional chrome; VIZ-06 term-ban dropped (2026-06-10) | Faithfulness governs engine mechanisms, not presentation; the ban was overkill | — Pending |
 | recense becomes the single foundational store; retire flat MEMORY.md/Obsidian-authoring (v5.0, 2026-06-17) | Facts-for-retrieval belong in the learning brain, not flat files; scope = single-tenant provenance (NOT multi-tenancy), retrieval stays global; long-form human vault deep-dives stay | — Pending |
-| Reader layer = generated docs over the brain with inline fact-refs (v5.0, 2026-06-17) | Keeps a pleasant reading surface while recense is source of truth; id-based citations never stale by construction (only prose drifts); slice validated 19/19 citations, 0 invented | — Pending |
+| Reader layer = generated docs over the brain with inline fact-refs (v5.0, 2026-06-17) | Keeps a pleasant reading surface while recense is source of truth; id-based citations never stale by construction (only prose drifts); slice validated 19/19 citations, 0 invented | ✓ Good — v5.0 shipped reader + schema-anchored corpus; v6.0 onboarding auto-generates per-project landing docs onto it |
+| Onboard fresh projects via agentic survey of *summarized knowledge*, not raw code (v6.0, 2026-06-19) | Raw line-by-line code mints low-value noise facts; the brain stores semantic knowledge. Survey feeds the same episodic→consolidation pipeline (origin=observed, scope-tagged), so abstraction + idempotent reconsolidation come for free | ✓ Good — spike-gated GO before build (Phase 29); live-verified end-to-end on `/Users/vtx/usage` |
+| `recense remember` = synchronous verbatim curated write + native-memory cutover (v6.0/Phase 33) | recense owned READ (session-start recall) but deliberate facts still leaked to native `.md` memory; passive turn-capture and batch import were both lossy. A synchronous in-place-reconsolidating write closes the "replaces MEMORY.md" promise on the write side | ✓ Good — global directive + `autoMemoryEnabled:false` + 12-file value_hash-verified migration; customer-zero now writes through the brain |
+| Fold standalone phases 33/34 into v6.0 at close (2026-06-22) | Phases 33 (curated write) + 34 (visual polish) were standalone, added 2026-06-20 between the v6.0 and v7.0 themes; 34's VIZ-POLISH reqs were already in v6.0's REQUIREMENTS.md → contiguous v6.0 = 29–34, v7.0 = 35–39 | — Pending (bookkeeping) |
 
 ## Evolution
 
@@ -176,4 +214,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-17 — v5.0 Foundational Memory Store + Reader Layer opened (phases 24–27, promoted from backlog 999.3/999.5/999.2/999.4). v4.0 Proactive Memory shipped + closed (git tag `v4.0`). 999.3 code already landed on `main` via parallel work (schema v10) → Phase 24 is verify+migrate. Open FK consolidation crash root-cause-fixed in code, pending a clean-pass verification (Phase 24 gate). Next: define `.planning/REQUIREMENTS.md` → roadmap.*
+*Last updated: 2026-06-22 — v6.0 Project Onboarding shipped + archived (phases 29–34, git tag `v6.0`; standalone phases 33/34 folded in). Milestone audit passed (15/15 reqs, 4/4 E2E flows). v5.0 requirements moved to Validated (prior drift corrected). Active work is v7.0 Retrieval & Reasoning Depth (phases 35–39, build complete) — closing next in this session; then v8.0 (phases 40–43).*
