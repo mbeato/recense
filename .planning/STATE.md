@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: Retrieval & Reasoning Depth
 status: ready_to_plan
-stopped_at: Phase 39 COMPLETE — index sidebar (corpus-docked, hybrid nested tree + search) + backlinks shipped, verified 3/3, code-review WR-01..04 fixed, founder-approved. Backlog captured (clustering @100+ docs, promoteScope('tonos'), corpus refresh).
-last_updated: "2026-06-22T21:45:32.477Z"
+stopped_at: Phase 39.1 context gathered
+last_updated: "2026-06-22T22:13:31.772Z"
 progress:
   total_phases: 11
   completed_phases: 4
@@ -297,9 +297,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-21T18:42:00.000Z
-Stopped at: Phase 39 COMPLETE — index sidebar (corpus-docked, hybrid nested tree + search) + backlinks shipped, verified 3/3, code-review WR-01..04 fixed, founder-approved. Backlog captured (clustering @100+ docs, promoteScope('tonos'), corpus refresh).
-Resume file: None
+Last session: 2026-06-22T22:13:31.763Z
+Stopped at: Phase 39.1 context gathered
+Resume file: .planning/phases/39.1-corpus-quality-project-hub-and-subject-docs-via-zero-interve/39.1-CONTEXT.md
 
 ## Key Decisions (Phase 28)
 
