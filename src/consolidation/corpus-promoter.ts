@@ -1107,7 +1107,7 @@ Output ONLY valid JSON (no markdown, no explanation):
       if (row) existingSubjectDocs.set(slug, row.id);
     }
 
-    let hubDocId: string;
+    let hubDocId: string = ''; // assigned inside transaction — TypeScript flow guard
     const newSubjectDocIds: string[] = [];
     const refreshQueued: string[] = [];
 

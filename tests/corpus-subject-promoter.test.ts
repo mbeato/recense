@@ -50,7 +50,10 @@ function makeMockProvider(response: string): ModelProvider & { callCount: number
       return texts.map(() => new Float32Array(4));
     },
     async judge(_claim: string, _candidates: Array<{ id: string; value: string }>) {
-      return { verdict: 'standalone' as const, best_candidate_id: null, contradicted_ids: [] };
+      return { best_candidate_id: null, relation: 'unrelated' as const, magnitude: 0, contradicted_ids: [] };
+    },
+    async judgeBatch(items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>) {
+      return items.map(() => ({ best_candidate_id: null, relation: 'unrelated' as const, magnitude: 0, contradicted_ids: [] }));
     },
   };
 }
