@@ -36,8 +36,8 @@ import Database from 'better-sqlite3';
 import { newId } from '../lib/hash';
 import type { SemanticStore } from '../db/semantic-store';
 import type { ModelProvider } from '../model/provider';
-import { gatherFacts, gatherFactsForSchema, gatherSiblingDocs } from './doc-gather';
-import type { GatherSchemaParams, SiblingDoc } from './doc-gather';
+import { gatherFacts, gatherFactsForSchema, gatherFactsForSubject, gatherSiblingDocs } from './doc-gather';
+import type { GatherSchemaParams, GatherSubjectParams, SiblingDoc } from './doc-gather';
 
 // ── Shared citation-verify + canonicalize helper ──────────────────────────
 //
@@ -355,6 +355,235 @@ export async function generateDoc(
   if (md.trim().length === 0) {
     throw new Error(
       'doc generation returned empty output (likely a headless timeout or subprocess failure) — not persisting',
+    );
+  }
+
+  // ── 4. Citation-verify + canonicalize (shared helper — NOT duplicated) ────
+  const verified = verifyCitations(db, md);
+
+  return {
+    markdown: verified.canonicalMarkdown,
+    docId: newId(),
+    citedFactIds: verified.uniqueVerified,
+    citationCount: verified.uniqueVerified.length,
+    invented: verified.inventedCount,
+    tombstoned: verified.tombstonedCount,
+    linkedDocRefs: verified.linkedDocRefs,
+  };
+}
+
+// ── Hub + Subject prompt builders (Phase 39.1, D-01/D-04) ────────────────────
+
+/**
+ * Build the doc-generation prompt for a project hub (D-04: synthesized overview + linked index).
+ *
+ * The hub prompt augments buildDocPrompt with a SUBJECT DOCS section that lists each
+ * subjectDoc as a `recense://doc/<docId>` ref (NOT a bare name string). This is load-bearing
+ * for D-04 navigability: verifyCitations resolves these refs into linkedDocRefs, and
+ * writeDoc (Plan 02/03) turns them into doc_link edges — a bare name produces prose, not links.
+ *
+ * Resolution notes:
+ *  - subjectDocs entries with {name, docId} are passed ALREADY resolved by the caller
+ *    (the generator supplies docIds, not slugs, because they come from node_doc.node_id).
+ *  - The model is instructed to emit ONE index line per subject, formatted exactly as
+ *    a recense://doc/<docId> ref so verifyCitations can extract them.
+ *  - Full subject doc bodies are NOT included in the prompt (Open Question 2 — names + one
+ *    summary line only). Hub provides navigation-layer overview; subjects hold the depth.
+ *
+ * @param scope       Project scope slug (e.g. 'brain-memory').
+ * @param factBlock   Pre-formatted "[<uuid>] <fact>" lines.
+ * @param siblings    Other live docs the model may link to (may be empty).
+ * @param subjectDocs Resolved subject docs { name: string; docId: string }[].
+ */
+export function buildHubDocPrompt(
+  scope: string,
+  factBlock: string,
+  siblings: SiblingDoc[],
+  subjectDocs: Array<{ name: string; docId: string }>,
+): string {
+  const relatedBlock = buildRelatedDocsBlock(siblings);
+
+  const subjectIndexBlock = subjectDocs.length > 0
+    ? `\n\nSUBJECT DOCS (named deep-dives for this project — MUST link to each using recense://doc/<docId>):
+${subjectDocs.map(s => `  [${s.docId}] ${s.name}`).join('\n')}
+
+When writing the index section, include ONE line per subject formatted EXACTLY as:
+  [subject name](recense://doc/<docId>)
+using the exact docId shown above. Do NOT write bare subject names without a recense://doc/ link — the link is how this index becomes navigable.`
+    : '';
+
+  return `You are generating a human-readable PROJECT HUB OVERVIEW from a set of atomic memory facts.
+
+You are given FACTS about "${scope}". Each line is: [<uuid>] <fact text>
+
+FACTS:
+${factBlock}${relatedBlock}${subjectIndexBlock}
+
+Write a structured markdown hub overview about "${scope}". The hub must include:
+1. A synthesized overview section: what this project is, its key purpose, current state.
+2. An index section listing each subject deep-dive with a navigable recense://doc/<docId> link.
+
+Use only the sections the facts can support.
+
+HARD RULES:
+1. Every substantive claim MUST cite the fact id(s) it draws from, inline, as a markdown link: [the cited phrase](recense://fact/<uuid>). Use the exact uuid from the bracket.
+2. Use ONLY the provided facts. Do NOT add any outside knowledge or invent details. If you cannot cite it from a fact above, do not write it.
+3. If facts conflict, note the conflict and cite both.
+4. Prefer specific, interview-defensible detail over generic prose.
+5. Each subject doc MUST appear in the index as a recense://doc/<docId> link (NOT a bare name). Missing a subject or using a bare name is a defect.
+
+Output ONLY the markdown hub overview, no preamble.`;
+}
+
+/**
+ * Build the doc-generation prompt for a subject doc (D-02: LLM-named, content-driven).
+ *
+ * Mirrors buildSchemaDocPrompt but frames subjectName (NOT a schema UUID label) as the
+ * thesis. The subject name is a human-readable content-driven name (e.g. "sleep pass",
+ * "retrieval", "config") proposed by the subject-naming LLM call in the promoter.
+ *
+ * @param scope       Project scope slug.
+ * @param subjectName Human-readable subject name (e.g. 'retrieval', 'sleep pass').
+ * @param factBlock   Pre-formatted "[<uuid>] <fact>" lines.
+ * @param siblings    Other live docs the model may link to (may be empty).
+ */
+export function buildSubjectDocPrompt(
+  scope: string,
+  subjectName: string,
+  factBlock: string,
+  siblings: SiblingDoc[],
+): string {
+  const relatedBlock = buildRelatedDocsBlock(siblings);
+
+  return `You are generating a human-readable SUBJECT DEEP-DIVE from a set of atomic memory facts.
+
+This deep-dive's thesis is a named subject area for the project "${scope}":
+"${subjectName}"
+
+The FACTS below are the evidence for this subject. Each line is: [<uuid>] <fact text>
+
+FACTS:
+${factBlock}${relatedBlock}
+
+Write a structured markdown deep-dive whose thesis is the subject above. Every section should demonstrate, explain, or elaborate on that subject using the evidence facts. Use only the sections the facts can support (e.g. Core Concepts, How It Works, Key Decisions, Open Questions).
+
+HARD RULES:
+1. Every substantive claim MUST cite the fact id(s) it draws from, inline, as a markdown link: [the cited phrase](recense://fact/<uuid>). Use the exact uuid from the bracket.
+2. Use ONLY the provided facts. Do NOT add any outside knowledge or invent details. If you cannot cite it from a fact above, do not write it.
+3. If facts conflict, note the conflict and cite both.
+4. Prefer specific, interview-defensible detail over generic prose.
+
+Output ONLY the markdown deep-dive, no preamble.`;
+}
+
+// ── Hub + Subject generation functions (Phase 39.1, D-01/D-04) ───────────────
+
+/**
+ * Generate a project hub doc (D-04: synthesized overview + linked subject index).
+ *
+ * Hub-specific behavior:
+ *  - The hub markdown MUST contain a recense://doc/<docId> ref per subjectDocs entry
+ *    so verifyCitations populates linkedDocRefs and writeDoc (Plan 02/03) writes a
+ *    doc_link edge per subject — bare subject name strings produce prose, not links.
+ *  - Throws on empty model output (same guard as generateDoc — never persists an empty hub).
+ *
+ * Read-only: no strengthen, setEmbedding, or markActive (T-28-SC invariant).
+ *
+ * @param deps        Injected DB + store + provider.
+ * @param scope       Project scope slug (e.g. 'brain-memory').
+ * @param subjectDocs Resolved subject docs { name, docId }[] for the linked index.
+ * @param opts        Optional tuning.
+ */
+export async function generateDocForHub(
+  deps: GenerateDeps,
+  scope: string,
+  subjectDocs: Array<{ name: string; docId: string }>,
+  opts: { semanticK?: number } = {},
+): Promise<GenerateDocResult> {
+  const { db, store, provider } = deps;
+
+  // ── 1. Gather facts + sibling docs ────────────────────────────────────────
+  const facts = await gatherFacts({ db, store, provider }, scope, { semanticK: opts.semanticK });
+  const factBlock = facts.map(f => `[${f.id}] ${f.value}`).join('\n');
+  const siblingDocs = gatherSiblingDocs(db, scope);
+
+  // ── 2. Build hub prompt (overview + navigable subject index) ──────────────
+  const prompt = buildHubDocPrompt(scope, factBlock, siblingDocs, subjectDocs);
+
+  // ── 3. Generate via judge-tier model ──────────────────────────────────────
+  const md = await provider.generate(prompt, { maxTokens: 4000 });
+
+  // ── 3b. Fail loud on empty output — NEVER persist an empty hub doc ─────────
+  if (md.trim().length === 0) {
+    throw new Error(
+      'hub doc generation returned empty output (likely a headless timeout or subprocess failure) — not persisting',
+    );
+  }
+
+  // ── 4. Citation-verify + canonicalize (shared helper — NOT duplicated) ────
+  // verifyCitations also extracts linkedDocRefs from recense://doc/<id> refs in the
+  // markdown — these are what writeDoc (Plan 02/03) turns into doc_link edges.
+  const verified = verifyCitations(db, md);
+
+  return {
+    markdown: verified.canonicalMarkdown,
+    docId: newId(),
+    citedFactIds: verified.uniqueVerified,
+    citationCount: verified.uniqueVerified.length,
+    invented: verified.inventedCount,
+    tombstoned: verified.tombstonedCount,
+    linkedDocRefs: verified.linkedDocRefs,
+  };
+}
+
+/**
+ * Generate a subject doc (D-02: LLM-named, content-driven subject deep-dive).
+ *
+ * Subject-specific behavior:
+ *  - Gathers facts via gatherFactsForSubject (union of abstracts members across schemaIds).
+ *  - Frames subjectName (NOT a schema UUID label) as the thesis (D-02).
+ *  - Same citation-verify + empty-guard + GenerateDocResult shape as all generators.
+ *
+ * Read-only: no strengthen, setEmbedding, or markActive (T-28-SC invariant).
+ *
+ * @param deps    Injected DB + store + provider.
+ * @param params  Subject identity: scope, subjectName, schemaIds, and optional centroid.
+ * @param opts    Optional tuning (semanticK passed to gatherFactsForSubject).
+ */
+export async function generateDocForSubject(
+  deps: GenerateDeps,
+  params: { scope: string; subjectName: string; schemaIds: string[] } & Partial<Pick<GatherSubjectParams, 'centroid'>>,
+  opts: { semanticK?: number } = {},
+): Promise<GenerateDocResult> {
+  const { db, store, provider } = deps;
+  const { scope, subjectName, schemaIds, centroid = null } = params;
+
+  // ── 1. Gather facts via subject's schema set ───────────────────────────────
+  // gatherFactsForSubject: union of abstracts members across ALL schemaIds, D-37-gated.
+  const facts = await gatherFactsForSubject(
+    { db, store, provider },
+    { schemaIds, centroid, subjectName },
+    { semanticK: opts.semanticK },
+  );
+
+  const factBlock = facts.map(f => `[${f.id}] ${f.value}`).join('\n');
+
+  // Gather sibling docs so the subject can cross-link to hub or other subjects.
+  // Pass the subjectName as a discriminant for the exclude check is not applicable here
+  // (subject docs are identified by their slug scope:name, not a raw name string);
+  // pass an empty string so nothing is excluded — the subject doc doesn't exist yet.
+  const siblingDocs = gatherSiblingDocs(db, '');
+
+  // ── 2. Build subject-thesis prompt ────────────────────────────────────────
+  const prompt = buildSubjectDocPrompt(scope, subjectName, factBlock, siblingDocs);
+
+  // ── 3. Generate via judge-tier model ──────────────────────────────────────
+  const md = await provider.generate(prompt, { maxTokens: 4000 });
+
+  // ── 3b. Fail loud on empty output ─────────────────────────────────────────
+  if (md.trim().length === 0) {
+    throw new Error(
+      'subject doc generation returned empty output (likely a headless timeout or subprocess failure) — not persisting',
     );
   }
 

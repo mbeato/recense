@@ -545,6 +545,19 @@ export interface EngineConfig {
    */
   insightSurfacingEnabled: boolean;
 
+  // --- Phase 39.1: subject doc exhaust-gate tunables (D-06/D-07) ---
+
+  /**
+   * Minimum count of atoms touched since a subject doc was last generated to trigger
+   * the REFRESH gate (D-06). An atom is "touched" when its node.last_access > node_doc.generated_at
+   * (i.e. it was confirmed or extended during a consolidation pass since the doc was written).
+   *
+   * Shape mirrors highMass:10 / reflectMassFloorHigh:10 — a count-based absolute threshold
+   * consistent with the PE-gated philosophy (N new signals to trigger a refresh, not a ratio).
+   * Default: 3. Override via RECENSE_CORPUS_SUBJECT_DRIFT_THRESHOLD env var at the call site.
+   */
+  corpusSubjectDriftThreshold: number;
+
   // --- Phase 6: multi-channel ingestion tunables (D-60/D-65/D-68/D-69) ---
 
   /**
@@ -767,6 +780,9 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   reflectMassFloorLow: 7,             // hysteresis low-water: dissolve insight when mass drops below this (D-06; seeded from Phase-28 lowMass:7)
   reflectFreshnessThreshold: 0.7,     // conservative recall freshness gate; lower after 38-04 eval (D-05)
   insightSurfacingEnabled: false,     // D-05: ship DARK — no recall behavior change until 38-04 eval proves compose-token win (mirrors rankStrengthWeight:0)
+
+  // Phase 39.1: subject doc exhaust-gate tunables (D-06/D-07)
+  corpusSubjectDriftThreshold: 3,     // min atom-touch-count since last gen to trigger REFRESH gate (D-06; analogous to highMass:10 shape)
 
   // Phase 6: multi-channel ingestion (D-60/D-65/D-68/D-69)
   gmail: {
