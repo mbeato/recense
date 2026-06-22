@@ -363,6 +363,167 @@ export function computeSchemaCentroid(
   return centroid;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// gatherFactsForSubject — D-01/D-03: subject-anchored fact gather (Phase 39.1)
+//
+// Gathers the UNION of `abstracts` members across ALL schemaIds in the subject,
+// deduped by node id. Mirrors gatherFactsForSchema's three-source structure but
+// spans MULTIPLE schemas:
+//
+//  (1) SPINE — facts and entities directly abstracted by ANY schema in the
+//              subject's schemaIds set, via kind='abstracts' edges.
+//              D-37 firewall enforced on every member row:
+//                n.type IN ('fact','entity') AND n.tombstoned = 0 AND n.origin != 'inferred'
+//              Tagged via 'scope' (same tag as gatherFactsForSchema spine — no
+//              downstream via-handling or corpus-test changes needed).
+//
+//  (2) SEMANTIC BREADTH — hybridTopk seeded by the caller-supplied centroid.
+//              If centroid is null, this source is SKIPPED entirely — no embed
+//              call, no throw. Null centroid degrades gracefully to spine + entity-hop.
+//
+//  (3) ENTITY-HOP — 1-hop fact neighbors of entities abstracted by ANY schema
+//              in schemaIds (collected from source 1).
+//
+// Self-confirmation guard (D-43): the D-37 firewall on every member query
+// prevents inferred nodes (docs, insights) from feeding the gather.
+//
+// Read-only — no DB writes. All SQL uses bound ? params (T-01-SQL).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Parameters for subject-anchored gather (Phase 39.1). */
+export interface GatherSubjectParams {
+  /** The set of schema UUIDs whose abstracted members define this subject. */
+  schemaIds: string[];
+  /**
+   * Pre-computed centroid (mean embedding) for the subject's members.
+   * If null, the semantic breadth pass is skipped — no embed call is made.
+   */
+  centroid: Float32Array | null;
+  /**
+   * Optional human-readable subject name used as queryText in hybridTopk.
+   * Falls back to '' when absent (centroid alone is used for BM25 co-signal).
+   */
+  subjectName?: string;
+}
+
+/**
+ * Gather facts for a subject (set of schemas) from three sources, union/dedup by id.
+ *
+ * @param deps    Injected DB + store + provider (same shape as gatherFacts).
+ * @param params  Schema ids + precomputed centroid + optional subject name.
+ * @param opts    Optional tuning (semanticK defaults to 60).
+ */
+export async function gatherFactsForSubject(
+  deps: GatherDeps,
+  params: GatherSubjectParams,
+  opts: { semanticK?: number } = {},
+): Promise<GatheredFact[]> {
+  const { db } = deps;
+  const retriever = deps.retriever ?? new CandidateRetriever(db);
+  const semanticK = opts.semanticK ?? 60;
+  const { schemaIds, centroid, subjectName = '' } = params;
+
+  // ── 1. SPINE — union of facts/entities abstracted by ALL schemas in subject ──
+  // D-37 firewall (verbatim from corpus-promoter.ts:171-175): inferred nodes NEVER
+  // feed the subject gather (self-confirmation guard, Pitfall 3 / D-43).
+  // Tagged 'scope' — identical to gatherFactsForSchema so downstream via-handling,
+  // citation-verify, and corpus tests need no change (Phase-28 key decision).
+  const spineById = new Map<string, Row>();
+  const abstractedEntityIds: string[] = [];
+
+  if (schemaIds.length > 0) {
+    const placeholders = schemaIds.map(() => '?').join(',');
+    // Query members across ALL schemas in one pass, deduped by id via the Map.
+    const evidenceStmt = db.prepare(`
+      SELECT DISTINCT n.id, n.value, n.c, n.origin, n.last_access, n.type
+      FROM edge e
+      JOIN node n ON n.id = e.dst
+      WHERE e.src IN (${placeholders})
+        AND e.kind = 'abstracts'
+        AND n.type IN ('fact','entity')
+        AND n.tombstoned = 0
+        AND n.origin != 'inferred'
+    `);
+    const evidenceRows = evidenceStmt.all(...schemaIds) as Array<Row & { type: string }>;
+
+    for (const row of evidenceRows) {
+      if (row.type === 'fact') {
+        spineById.set(row.id, { id: row.id, value: row.value, c: row.c, origin: row.origin, last_access: row.last_access });
+      } else if (row.type === 'entity') {
+        abstractedEntityIds.push(row.id);
+      }
+    }
+  }
+  const spineFacts = [...spineById.values()];
+
+  // ── 2. SEMANTIC BREADTH — centroid-seeded hybridTopk ──────────────────────
+  // Only when centroid is non-null. Never calls provider.embed — the caller
+  // must pre-compute the centroid. Null = graceful degrade to spine + entity-hop.
+  let semanticFacts: Row[] = [];
+  if (centroid !== null) {
+    try {
+      const hits = retriever.hybridTopk(centroid, subjectName, semanticK);
+      if (hits.length > 0) {
+        const hitIds = hits.map(h => h.id);
+        const placeholders = hitIds.map(() => '?').join(',');
+        const semanticStmt = db.prepare(`
+          SELECT id, value, c, origin, last_access
+          FROM node
+          WHERE id IN (${placeholders}) AND type = 'fact' AND tombstoned = 0
+        `);
+        semanticFacts = semanticStmt.all(...hitIds) as Row[];
+      }
+    } catch {
+      // Non-fatal — fall back to spine + entity-hop.
+    }
+  }
+
+  // ── 3. ENTITY-HOP — 1-hop fact neighbors of abstracted entities ───────────
+  // Re-rooted at the subject's abstracted entity ids (from source 1).
+  // Same 1-hop pattern as gatherFactsForSchema.
+  const linkedFacts: Row[] = [];
+  if (abstractedEntityIds.length > 0) {
+    const placeholders = abstractedEntityIds.map(() => '?').join(',');
+    const neighborSql = `
+      SELECT DISTINCT n.id, n.value, n.c, n.origin, n.last_access
+      FROM edge e
+      JOIN node n ON n.id = (CASE WHEN e.src IN (${placeholders}) THEN e.dst ELSE e.src END)
+      WHERE (e.src IN (${placeholders}) OR e.dst IN (${placeholders}))
+        AND n.type = 'fact' AND n.tombstoned = 0
+    `;
+    linkedFacts.push(
+      ...(db
+        .prepare(neighborSql)
+        .all(...abstractedEntityIds, ...abstractedEntityIds, ...abstractedEntityIds) as Row[]),
+    );
+  }
+
+  // ── 4. Union / dedup by id (verbatim from gatherFacts/gatherFactsForSchema) ─
+  const byId = new Map<string, GatheredFact>();
+
+  for (const r of spineFacts) {
+    byId.set(r.id, { ...r, via: 'scope' });
+  }
+  for (const r of semanticFacts) {
+    const existing = byId.get(r.id);
+    if (existing) {
+      existing.via = existing.via.includes('semantic') ? existing.via : `${existing.via}+semantic`;
+    } else {
+      byId.set(r.id, { ...r, via: 'semantic' });
+    }
+  }
+  for (const r of linkedFacts) {
+    const existing = byId.get(r.id);
+    if (existing) {
+      existing.via = existing.via.includes('linked') ? existing.via : `${existing.via}+linked`;
+    } else {
+      byId.set(r.id, { ...r, via: 'linked' });
+    }
+  }
+
+  return [...byId.values()];
+}
+
 /** A sibling doc (another live deep-dive) the generator can link to. */
 export interface SiblingDoc {
   /** Full doc NODE id (used in recense://doc/<id> refs). */

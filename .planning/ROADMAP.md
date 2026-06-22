@@ -527,6 +527,27 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
 
 **Dependency shape:** strict-ish chain 40 → {41, 42} → 43. Phase 40 (baseline + harness) gates everything. 41 (latency) and 42 (token) are independent of each other and can run in parallel once 40 lands. 43 (regression gates) comes last — it freezes whatever 40–42 achieved.
 
+### Phase 39.1: Corpus Quality: project-hub and subject docs via zero-intervention LLM exhaust-gate, retroactive junk-doc cleanup, recense and vtx ingestion (INSERTED)
+
+**Goal:** Make the brain's generated doc corpus genuinely good. Replace the landing-doc + schema-UUID-chapter-doc model with a content-driven taxonomy - one **project-hub doc** per scope (synthesized overview + linked subject index) plus many **LLM-named subject docs** - generated with **zero user intervention** via a two-stage LLM exhaust-gate (Stage 1 harvests cheap signal from the sleep pass's existing extract/judge calls to decide what's worth a doc; Stage 2 spends a dedicated generation call only when a CREATE-on-mass or REFRESH-on-drift gate opens, bounded by a per-pass budget cap + self-draining priority queue). Schema clustering is demoted to an internal signal. Then retroactively hard-delete obsolete/structural junk docs from the live brain (dry-run -> approve -> VACUUM INTO snapshot -> FK-safe delete), and validate the whole pipeline end-to-end by running the `ingest-project` full code survey on recense-itself (scope `brain-memory`) and vtx (scope `vtx`). Sequencing is a hard chain: **Build -> clean -> ingest** (D-11). Directly serves the core value ("stays correct over time") by applying PE-gated reconsolidation to docs.
+**Requirements**: No formal requirement IDs (REQUIREMENTS.md retired at v6.0 close); traceability anchored to CONTEXT decisions D-01->D-11.
+**Depends on:** Phase 39 (reader index/backlinks surfaces reused for hub<->subject navigation)
+**Success Criteria** (what must be TRUE):
+
+  1. Each ingested project scope has exactly one project-hub doc (slug = scope) carrying a synthesized overview + a linked index of its subject docs, with `doc_containment` edges to each subject - D-01, D-04
+  2. Subject docs are LLM-named with stable `scope:name` slugs (never schema-UUID slugs), emerge from content (not 1:1 with schema clusters), and are idempotent across passes (no slug-drift duplicate accumulation) - D-02, D-03
+  3. Doc generation is zero-intervention: a Stage-1 LLM-free gate decides candidacy (CREATE on mass, REFRESH on drift = atoms touched since `generated_at`), Stage-2 spends a generation call only when a gate opens, and a per-pass budget cap defers overflow to a self-draining marker queue - D-05, D-06, D-07
+  4. A one-time cleanup CLI hard-deletes the three deterministic junk classes (old UUID chapter docs, empty stubs, noise-schema docs) after a dry-run + founder approval + a verified VACUUM INTO snapshot, in FK-safe order, touching only `origin='inferred'` doc nodes - D-08, D-09
+  5. `ingest-project` full code survey completes on recense (brain-memory) and vtx, and a sleep pass produces hub + LLM-named subject docs in the new taxonomy for both - end-to-end validation - D-10, D-11
+**Plans:** 5/5 plans
+
+Plans:
+- [ ] 39.1-01-PLAN.md - Generation layer: generateDocForHub + generateDocForSubject + gatherFactsForSubject + drift config knob (D-01/02/03/04)
+- [ ] 39.1-02-PLAN.md - SubjectPromoter: Stage-1 CREATE/REFRESH gates + Stage-2 idempotent subject-proposal call + hub<->subject containment (D-02/03/05/06)
+- [ ] 39.1-03-PLAN.md - Orchestration: sleep-pass exhaust-gate wiring + hub/subject generation dispatch + budget cap & self-draining queue (D-05/07)
+- [ ] 39.1-04-PLAN.md - Cleanup CLI: dry-run -> snapshot -> FK-safe hard-delete of junk docs; founder-gated live run (D-08/09)
+- [ ] 39.1-05-PLAN.md - Ingestion validation: ingest-project full survey on recense + vtx, verify new-taxonomy docs end-to-end (D-10/11)
+
 ### Phase 40: Competitive Benchmark Baseline
 
 **Goal:** Stand up an apples-to-apples competitive benchmark and record honest baselines on all three axes, so "at or above competitors" becomes a falsifiable target instead of a slogan. Adds LOCOMO (the bench mem0/Zep actually cite) alongside the existing LongMemEval + KU replay harness; captures recense's current accuracy, retrieval latency (p50/p95), and token cost per write+recall; and pins the specific competitor numbers to beat with their sources.
