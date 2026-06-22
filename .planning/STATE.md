@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: Retrieval & Reasoning Depth
 status: ready_to_plan
-stopped_at: Completed 39.1-01-PLAN.md
-last_updated: "2026-06-22T23:46:23.980Z"
+stopped_at: 39.1-04 Tasks 1+2 complete (cleanup-corpus CLI built + tested); Task 3 (live cleanup run) awaiting founder approval — blocking-human checkpoint
+last_updated: "2026-06-22T20:00:00.000Z"
 progress:
   total_phases: 11
   completed_phases: 4
