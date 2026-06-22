@@ -8,8 +8,8 @@
 - ✅ **v3.1 Schema Depth & Brain-Window Polish** — Phases 18–19 (shipped 2026-06-15)
 - ✅ **v4.0 Proactive Memory** — Phases 20–23 (shipped 2026-06-17) — full detail: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 - ✅ **v5.0 Foundational Memory Store + Reader Layer** — Phases 24–28 (shipped 2026-06-19) — full detail: [milestones/v5.0-ROADMAP.md](milestones/v5.0-ROADMAP.md)
-- 🔲 **v6.0 Project Onboarding** — Phases 29–32 (active)
-- 🔲 **v7.0 Retrieval & Reasoning Depth** — Phases 35–39 (planned) — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections, reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export both explicitly deferred.
+- 🔲 **v6.0 Project Onboarding** — Phases 29–32 (all phases COMPLETE; awaiting `complete-milestone` archive)
+- 🔲 **v7.0 Retrieval & Reasoning Depth** — Phases 35–39 (IN PROGRESS — 35, 36-spike, 37-01/02/03, 38, 38.1, 39 done; **37-04 typed-edges precision gate is the lone open plan**) — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections, reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export both explicitly deferred.
 - 🔲 **v8.0 Performance, Efficiency & Competitive Parity** — Phases 40–43 (planned, starts after v7.0) — prove at-or-above competitors (mem0/Zep) on accuracy + latency + token via LOCOMO baseline, build the vector index (kill brute-force cosine at 7000+ nodes), token-cost audit, then lock it all behind regression gates. Hard rule: every competitive number reproducible or cited — no inflated metrics.
 
 ## Phases
@@ -100,9 +100,9 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
 
 **Plans**: 3 plans
 
-- [ ] 24-01-PLAN.md — verify FK-free clean sleep pass + live [scope] attribution, re-enable hourly agent (SCOPE-01/02 gate)
-- [ ] 24-02-PLAN.md — import-memory --dry-run gate check: ≥193 facts, 0 policy-bundle leaks (SCOPE-03)
-- [ ] 24-03-PLAN.md — human-gated real import + sleep pass, recall verification, migration report, founder-gated source retirement (SCOPE-04)
+- [x] 24-01-PLAN.md — verify FK-free clean sleep pass + live [scope] attribution, re-enable hourly agent (SCOPE-01/02 gate)
+- [x] 24-02-PLAN.md — import-memory --dry-run gate check: ≥193 facts, 0 policy-bundle leaks (SCOPE-03)
+- [x] 24-03-PLAN.md — human-gated real import + sleep pass, recall verification, migration report, founder-gated source retirement (SCOPE-04)
 
 ### Phase 25: Entity Dedup / Prune
 
@@ -475,7 +475,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 38-01-PLAN.md — Model/DDL foundation: type='insight' + derived_from CHECK migrations (schema v13), node_insight sidecar, eviction child-wipe, config knobs
+- [x] 38-01-PLAN.md — Model/DDL foundation: type='insight' + derived_from CHECK migrations (schema v13), node_insight sidecar, eviction child-wipe, config knobs
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -484,7 +484,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 38-04-PLAN.md — Eval: instrument the KU replay harness with compose-token measurement (off vs on), prove the no-regression token win + founder activation decision
+- [x] 38-04-PLAN.md — Eval: instrument the KU replay harness with compose-token measurement (off vs on), prove the no-regression token win + founder activation decision
 
 ### Phase 38.1: Consolidation intra-pass dedup fix (embed-on-mint) (INSERTED)
 

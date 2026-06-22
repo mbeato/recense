@@ -1,7 +1,7 @@
 ---
 gsd_state_version: 1.0
-milestone: v6.0
-milestone_name: Project Onboarding
+milestone: v7.0
+milestone_name: Retrieval & Reasoning Depth
 status: ready_to_plan
 stopped_at: Phase 39 COMPLETE — WIKI-01/02/03 verified 3/3, code-review clean (WR-01..04 fixed), founder-approved
 last_updated: "2026-06-21T18:42:00.000Z"
@@ -20,17 +20,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 39 COMPLETE (reader wiki-parity). Next deliberate work: resume v6.0 (Phase 31 Doc Ingest + Idempotent Re-ingest).
+**Current focus:** Phase 39 COMPLETE (reader wiki-parity). Frontier is the tail of **v7.0** — the lone open plan is **37-04** (typed-edges precision gate: paid harness run + founder sign-off). v6.0 (29–32) is fully complete; archive it via `complete-milestone` when ready.
 
 ## Current Position
 
 ```
-Milestone: v6.0 Project Onboarding — IN PROGRESS (Phase 39 of v7.0 landed early)
+Milestone: v7.0 Retrieval & Reasoning Depth — IN PROGRESS (v6.0 phases 29–32 all complete)
 Phase: 39 (reader-wiki-parity-index-and-backlinks) — ✓ COMPLETE
 Plan: 2 of 2 complete (WIKI-01 index sidebar + WIKI-02 backlinks; verified 3/3, code-review clean)
-Next: Phase 31 (Doc Ingest + Idempotent Re-ingest)
+Next: 37-04 — typed predicate edges precision gate (harness built; needs paid run + go/no-go). Only open plan in 29–39.
 
-[████████████████████████████████████████████░░░] v1-v5.0 SHIPPED · v6.0 Phase 30 COMPLETE (ingest-project live-validated on /Users/vtx/usage: 248 facts, 23 schemas, [usage] recall)
+[████████████████████████████████████████████░░░] v1–v5.0 SHIPPED · v6.0 phases COMPLETE · v7.0 nearly done (35/36/37-01..03/38/38.1/39 ✓; 37-04 open)
 ```
 
 **v6.0 phases:**
