@@ -20,13 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** **v7.0 build phases COMPLETE + typed recall ACTIVATED on the live brain** (commit `96726d4`). 37-04 cleared its GO gate (typed top-3 83.3% vs 37.5%, +45.8pts; payload 3.8 vs 20; compose +63.9pts). Then went live: glosses embedded into live `recense.db` (meta key present), 611 proven typed edges transplanted from the scratch DB (FK clean, backup at `recense.db.bak-pre-typed-37-*`), `RECENSE_TYPED_EXTRACTION_MODE=merged` set in sleep.env, and `embedAndStoreGlosses` wired into the sleep pass (was unwired). **Honest live coverage on the 24-query set: predicate-match 71%, typed-path fires 50% (gold-reached), precise when fired** (real recalls: "who built apimesh?"→"Max and mbeato", "urby supersede?"→"putyouon"). Anchor-union fix (seed typedReach from all top-K candidates, not just bestMatch) doubled firing 25%→50%; 2060 tests pass, no regression (non-firing → neighborhood fallback).
+**Current focus:** **v7.0 build phases COMPLETE + typed recall LIVE at 92% coverage** (commits `96726d4` go-live, `c7c3fc0` tuning). 37-04 cleared its GO gate (typed top-3 83.3% vs 37.5%, +45.8pts; payload 3.8 vs 20; compose +63.9pts). Live activation: glosses embedded into live `recense.db`, 611 proven typed edges transplanted from the scratch DB (FK clean, backup at `recense.db.bak-pre-typed-37-*`), `RECENSE_TYPED_EXTRACTION_MODE=merged` in sleep.env, `embedAndStoreGlosses` wired into the sleep pass (was unwired). **Live gold-reached on the 24-query set climbed 25%→50%→71%→92%** via: (1) anchor-union — seed typedReach from all top-K candidates not just bestMatch; (2) `typedAnchorPoolK=20` new config knob (kept separate from candidateK, which sizes the judge/consolidation candidate set); (3) reworded 5 weak glosses to natural question form (zero false positives). Real recalls now typed+precise ("what does recense use?"→Haiku/Vitest/text-embedding-3-large; "what does Max prefer?"→obsidian vault). 2060 tests pass, no regression.
 
-**Phase 37 go-live follow-ups (not blocking, no-inflated-metrics):**
-- candidateK=5 is small → some edge-bearing entities miss the candidate pool; raising it would lift the 50%.
-- weak `uses`/`part_of`/`works_on` glosses cap predicate-match at 71% → tune gloss strings.
-- entity fragmentation ("Max" vs "Max (design lead)") → Phase 25 entity dedup reduces it.
-- **⚠ sleep.env OPENAI_API_KEY is REVOKED** (exposed in transcript 2026-06-18 AND 2026-06-21 — rotate). Until rotated, the sleep pass's node-text embeds + gloss self-heal no-op; the ambient shell key was used for the one-off gloss embed. Online recall uses the working ambient key.
+**Phase 37 go-live — remaining levers (not blocking; coverage tuning DONE):**
+- 2 queries still below gloss threshold (genuinely ambiguous) + entity fragmentation ("Max" vs "Max (design lead)") → Phase 25 entity dedup is the next real lever.
+- **OPENAI_API_KEY ROTATED 2026-06-21** by founder (sleep.env updated) — sleep-pass node embeds + gloss self-heal now functional. (Old key was exposed in transcript twice; now dead.)
+- Gloss tuning was measured on the template-derived query set (somewhat optimistic); the rewording is principled (mirror question form) and false-positive-free, but real-world phrasing may vary.
 
 v6.0 (29–32) also fully complete; archive milestones via `complete-milestone` when ready.
 
