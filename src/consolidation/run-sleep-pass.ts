@@ -33,7 +33,7 @@ import type { ExtractedClaim } from '../model/claim-extractor';
 import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
 import { SchemaRelationDeriver } from '../consolidation/schema-relations';
-import { CorpusPromoter } from '../consolidation/corpus-promoter';
+import { CorpusPromoter, SubjectPromoter } from '../consolidation/corpus-promoter';
 import { InsightReflector } from '../consolidation/insight-reflector';
 import { embedAndStoreGlosses, loadGlossEmbeddings } from '../consolidation/gloss-embeddings';
 import { EntityDedup } from '../consolidation/entity-dedup';
@@ -488,6 +488,15 @@ export async function runConsolidation(
     minMembers: 4,
   });
 
+  // Plan 39.1-03 (D-05 Stage-2 integration): SubjectPromoter — exhaust-gate subject promotion.
+  // Runs AFTER consolidate() (schema induction complete — Pitfall 6) and BEFORE
+  // generateCorpusDocs (so new hub/subject stubs exist before the fill loop).
+  // Uses inducerProvider (judge-tier) for the Stage-2 subject-proposal LLM call.
+  // corpusSubjectDriftThreshold env override read at the CORPUS-06 call site below.
+  const subjectPromoter = new SubjectPromoter(db, store, realClock, inducerProvider, {
+    corpusSubjectDriftThreshold: parseInt(env['RECENSE_CORPUS_SUBJECT_DRIFT_THRESHOLD'] ?? '3', 10) || 3,
+  });
+
   // D-07 (REFLECT-01, Plan 38-02): InsightReflector — synthesizes one judge-tier insight node
   // per qualifying stale schema cluster. Runs in Phase C after corpusPromoter.promote() and
   // before runEvictionSweep() so dissolved-cluster tombstoned insights are swept the same pass.
@@ -551,13 +560,55 @@ export async function runConsolidation(
     // so that force-promoted scope stubs (landing + chapters) are filled in the SAME pass.
     // Crash-safe order: promoteScope first, deleteMeta only on success (T-32-MARK).
     // Best-effort: a per-marker failure logs + leaves the marker for retry; does NOT abort.
-    // corpusPromoter is the same instance built above (lines 354-361).
+    // corpusPromoter is the same instance built above.
     try {
       await consumePendingCorpusMarkers(db, store, corpusPromoter, log);
     } catch (err) {
       // consumePendingCorpusMarkers already handles per-marker errors internally.
       // This outer catch is a final safety net — should never fire in practice.
       log(`CORPUS-06: consumePendingCorpusMarkers threw unexpectedly: ${err}`);
+    }
+
+    // Plan 39.1-03 (D-05 Stage-2): Run subject promotion AFTER consolidate() (so schema
+    // induction for this pass is complete — Pitfall 6) and BEFORE generateCorpusDocs (so
+    // the new hub/subject stubs exist before the fill loop runs).
+    //
+    // scope = cwdToScope() resolves the active project scope for this pass.
+    // Best-effort: a promoter failure MUST NOT abort the sleep pass — log and continue.
+    // T-39.1-09: exhaust-gate failure is non-fatal; consolidation + hygiene still complete.
+    const scope = cwdToScope(process.cwd());
+    try {
+      const subjectResult = await subjectPromoter.promoteSubjects(scope);
+      log(
+        `EXHAUST-GATE: proposed=${subjectResult.proposed.length} ` +
+        `created=${subjectResult.created} refreshQueued=${subjectResult.refreshQueued.length} ` +
+        `scope=${scope}`,
+      );
+    } catch (err) {
+      log(`EXHAUST-GATE: subjectPromoter threw (non-fatal): ${err}`);
+    }
+
+    // Plan 39.1-03 (D-07): Drain pending-subject-doc-gen markers written by generateCorpusDocs
+    // when overflow stubs were deferred last pass. These markers identify hub/subject stubs
+    // that exceeded the maxDocs cap — they should be included in THIS pass's generation loop.
+    //
+    // The markers themselves are NOT consumed here — they are written and cleared by
+    // generateCorpusDocs itself (crash-safe: cleared only on successful generation of the
+    // matching stub). This drain step is therefore a no-op at the SQL level; the pending
+    // markers are automatically picked up by generateCorpusDocs below because the corresponding
+    // stubs are still empty (length(value)=0) and the marker-write is idempotent ('1').
+    //
+    // For observability: log the pending count before generation so operators can see the queue.
+    try {
+      const stmtCountPending = db.prepare(
+        "SELECT COUNT(*) AS n FROM meta WHERE key LIKE 'pending-subject-doc-gen:%'"
+      );
+      const pendingRow = stmtCountPending.get() as { n: number };
+      if (pendingRow.n > 0) {
+        log(`EXHAUST-GATE: ${pendingRow.n} deferred subject/hub stubs in marker queue (will drain this pass)`);
+      }
+    } catch (err) {
+      log(`EXHAUST-GATE: pending-marker count failed (non-fatal): ${err}`);
     }
 
     const maxDocs = parseInt(env['RECENSE_CORPUS_GEN_MAX'] ?? '25', 10) || 25;
