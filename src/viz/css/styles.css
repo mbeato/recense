@@ -872,33 +872,33 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   font-style: normal;
 }
 
-/* ── Index reopen handle — slim left-edge tab shown only while the sidebar is collapsed ──
-   (created by index.js, appended to body). Brings the index sidebar back. z:8 like the panel;
-   on the left edge so it never collides with the right-side toolbar buttons. */
+/* ── Index reopen button — TOP-LEFT corner of the corpus view, shown only while collapsed ──
+   (created by index.js, appended to body). An arrow (▶) toggle that brings the index rail back.
+   Top-left is free in corpus view (the #panel HUD is hidden there) and mirrors the muted toolbar
+   button treatment on the right. z:70 + no-drag so a window top-drag region can't shadow it. */
 #index-reopen {
   position: fixed;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 16px;
-  height: 54px;
+  top: 12px;
+  left: 12px;
+  width: 30px;
+  height: 30px;
   display: none;          /* .shown toggles to flex */
   align-items: center;
   justify-content: center;
   padding: 0;
   margin: 0;
-  z-index: 8;
+  z-index: 70;
   border: 1px solid rgba(139, 112, 144, 0.22);
-  border-left: none;
-  border-radius: 0 8px 8px 0;
-  background: rgba(23, 15, 29, 0.97);
-  color: #9a8aa4;
-  opacity: 0.7;
+  border-radius: 7px;
+  background: rgba(26, 18, 32, 0.7);
+  color: #c8bcd0;
+  opacity: 0.75;
   cursor: pointer;
+  -webkit-app-region: no-drag;
   transition: opacity 0.15s ease, color 0.15s ease;
 }
 #index-reopen.shown { display: flex; }
-#index-reopen:hover { opacity: 1; color: #c8bcd0; }
+#index-reopen:hover { opacity: 1; color: #e7dfec; }
 
 /* ── Index sidebar — docks LEFT over the corpus graph (39-02 re-verify, founder direction) ──
    The index list + corpus graph are two views of the same doc set, shown side by side. The
