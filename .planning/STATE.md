@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: Retrieval & Reasoning Depth
 status: ready_to_plan
-stopped_at: Phase 37 COMPLETE — 37-04 typed-edges precision gate cleared GO (typed top-3 83.3% / lift +45.8pts / payload 3.8 vs 20 nodes; founder D-05+D-04 sign-off). v7.0 build phases all done.
-last_updated: "2026-06-22T00:15:00.000Z"
+stopped_at: Phase 39 COMPLETE — index sidebar (corpus-docked, hybrid nested tree + search) + backlinks shipped, verified 3/3, code-review WR-01..04 fixed, founder-approved. Backlog captured (clustering @100+ docs, promoteScope('tonos'), corpus refresh).
+last_updated: "2026-06-22T21:45:32.477Z"
 progress:
-  total_phases: 16
-  completed_phases: 8
-  total_plans: 29
-  completed_plans: 29
-  percent: 50
+  total_phases: 11
+  completed_phases: 4
+  total_plans: 13
+  completed_plans: 12
+  percent: 36
 ---
 
 # Project State
@@ -23,13 +23,14 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 **Current focus:** **v7.0 build phases COMPLETE + typed recall LIVE at 92% coverage** (commits `96726d4` go-live, `c7c3fc0` tuning). 37-04 cleared its GO gate (typed top-3 83.3% vs 37.5%, +45.8pts; payload 3.8 vs 20; compose +63.9pts). Live activation: glosses embedded into live `recense.db`, 611 proven typed edges transplanted from the scratch DB (FK clean, backup at `recense.db.bak-pre-typed-37-*`), `RECENSE_TYPED_EXTRACTION_MODE=merged` in sleep.env, `embedAndStoreGlosses` wired into the sleep pass (was unwired). **Live gold-reached on the 24-query set climbed 25%→50%→71%→92%** via: (1) anchor-union — seed typedReach from all top-K candidates not just bestMatch; (2) `typedAnchorPoolK=20` new config knob (kept separate from candidateK, which sizes the judge/consolidation candidate set); (3) reworded 5 weak glosses to natural question form (zero false positives). Real recalls now typed+precise ("what does recense use?"→Haiku/Vitest/text-embedding-3-large; "what does Max prefer?"→obsidian vault). 2060 tests pass, no regression.
 
 **Phase 37 go-live — remaining levers (not blocking; coverage tuning DONE):**
+
 - 2/24 queries still below the gloss threshold (genuinely ambiguous phrasing) — gloss-quality, NOT fragmentation.
 - Phase 25 entity dedup was done 2026-06-18 (opt-in CLI). It is NOT the lever for the Max fragmentation — "Max"/"Max (design lead)" are distinct surface forms in different normalizeValue buckets, so the same-value dedup never compares them; the anchor-union (typedAnchorPoolK=20) handles that fragmentation at recall (why coverage hit 92%). Catching semantic variants needs a NEW cross-value matcher (false-merge risk: "OpenAI" vs "OpenAI API key") — deliberately NOT built.
 - **Phase 25 NOW NIGHTLY (commit `a483864`, flag `RECENSE_SLEEP_DEDUP=1` ENABLED in sleep.env 2026-06-21):** the existing precision-first same-value entity+fact dedup runs at the end of each sleep pass, preceded by a consistent VACUUM INTO snapshot (`~/.config/recense/snapshots/`, keep last 5) — the rollback point given the no-DB-backup SPOF; if the snapshot fails, dedup is skipped. E2E-verified on a live copy: snapshot valid, 26 entity + 9 fact clusters merged, FK clean, idempotent. Cross-value semantic merge deliberately excluded.
 - **OPENAI_API_KEY ROTATED 2026-06-21** by founder (sleep.env updated) — sleep-pass node embeds + gloss self-heal now functional. (Old key was exposed in transcript twice; now dead.)
 - Gloss tuning was measured on the template-derived query set (somewhat optimistic); the rewording is principled (mirror question form) and false-positive-free, but real-world phrasing may vary.
 
-v6.0 (29–32) also fully complete; archive milestones via `complete-milestone` when ready.
+**MILESTONE STATUS (2026-06-22):** **v6.0 SHIPPED + tagged** — phases 29–34 archived (standalone phases 33/34 folded in), audit `passed` (15/15 reqs, 4/4 E2E flows), git tag `v6.0`, REQUIREMENTS.md retired; archives at `milestones/v6.0-ROADMAP.md` + `v6.0-REQUIREMENTS.md` + `v6.0-MILESTONE-AUDIT.md`. **v7.0 close HELD** — phases 35–39 build complete + verification BACKFILLED (authored `36/37/38-VERIFICATION.md` grounded in a live-source integration check + re-run unit suites; refreshed `37-VALIDATION.md` to validated/green), milestone audit `passed` (`v7.0-MILESTONE-AUDIT.md`), but the **tag is deferred pending Phase 39.1 (Corpus Quality)** per founder direction — close v7.0 as phases 35–39.1 after 39.1 lands. RANK-02 + REFLECT-02 shipped DARK, no win claimed (tech-debt). Tag push for `v6.0` not yet done.
 
 ## Current Position
 
@@ -37,7 +38,7 @@ v6.0 (29–32) also fully complete; archive milestones via `complete-milestone` 
 Milestone: v7.0 Retrieval & Reasoning Depth — BUILD PHASES COMPLETE (35/36/37/38/38.1/39 all done)
 Phase: 37 (typed-predicate-edges-build) — ✓ COMPLETE (37-04 gate GO)
 Plan: 4 of 4 complete (37-04 precision gate cleared: typed top-3 83.3% / lift +45.8pts / payload 3.8 vs 20)
-Next: archive v6.0/v7.0 via `complete-milestone`, then v8.0 (Phases 40–43: bench baseline → vector index → cost audit → eval gates)
+Next: /gsd-discuss-phase 39.1 (Corpus Quality), then plan; v6.0/v7.0 close after 39.1 lands
 
 [██████████████████████████████████████████████░] v1–v5.0 SHIPPED · v6.0 COMPLETE · v7.0 build COMPLETE (35/36/37/38/38.1/39 ✓)
 ```
@@ -131,6 +132,7 @@ Next: decide retirement (run move OR formally defer + close Phase 24), then Phas
 - Phase 34 added (2026-06-20): **Visual Polish Pass** — cross-surface UI cleanup of the four live viz surfaces (Reader, Corpus 2D graph, Detail panel/page, Brain HUD/controls) along two axes only: spacing/alignment consistency + states & transitions (loading/empty/error, hover/focus, smooth transitions). Polish only — no structural/composition change, no redesign. Founder-locked guards: palette (amber=activation/hover only, ref 27-04 violation), 3D density anchor (no regress), net-zero deps. Standalone (all surfaces exist + live). UI hint: yes — route through `/gsd-ui-phase 34` at plan time. Founder-directed 2026-06-20.
 - Phase 33 added (2026-06-20): **Synchronous Curated Write (`recense remember`)** — closes the customer-zero "replaces MEMORY.md" promise on the WRITE side. recense owns read (recall at session-start) but deliberate facts still leak to native Claude Code `.md` memory because the only write paths are passive-lossy (turn-capture→sleep-pass) or batch-lossy (import-memory). Adds a synchronous, verbatim, curated single-fact write that runs in-place reconsolidation (reuses update-decision/sink/judge), plus a CLAUDE.md cutover directive and a one-time lossless migration of the 12 existing `.md` files through the new command. Standalone — depends only on the live consolidation machinery, NOT the v6.0 onboarding phases. Founder-directed 2026-06-20; design forks resolved (reconsolidate-on-write + migrate-via-remember). See memory [[graphify-is-codebase-tool-not-memory-rival]] context thread.
 - Phase 28 added (2026-06-19): **Schema-Anchored Corpus** — pivots the reader corpus from project-scope docs to the abstraction graph rendered as prose (docs anchor on schemas/entities, cite direct facts; mass-gated promotion; hierarchy mirrors the `abstracts` ladder; decide-cheap/generate-lazy; read-only projection). **Supersedes Phase 27 READER-04** (doc_link-between-projects); inherits the reader UI + flat 2D renderer + lazy-gen + /doc routes + gather + doc-writer. Origin: design discussion during Phase 27 27-05 verification (see memory [[corpus-from-schemas-design]]).
+- Phase 39.1 inserted after Phase 39: Corpus Quality — project-hub + subject docs via LLM exhaust-gate, retroactive junk cleanup, recense+vtx ingestion (design in recense, scope brain-memory) (URGENT)
 
 ### v5.0 Dependency Chain
 

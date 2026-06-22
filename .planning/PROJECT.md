@@ -36,7 +36,7 @@ The memory **learns and stays correct over time** — it forms generalizations t
 
 ## Last Milestone: v6.0 Project Onboarding — SHIPPED 2026-06-22
 
-> Shipped (phases 29–34, git tag `v6.0`). Phases 33 (`recense remember`) + 34 (visual polish) folded in at close. Full detail: [milestones/v6.0-ROADMAP.md](milestones/v6.0-ROADMAP.md); audit: [v6.0-MILESTONE-AUDIT.md](v6.0-MILESTONE-AUDIT.md). The original goal/target-features below are retained as history. **Active work is v7.0 Retrieval & Reasoning Depth (phases 35–39, build complete) — closing next.**
+> Shipped (phases 29–34, git tag `v6.0`). Phases 33 (`recense remember`) + 34 (visual polish) folded in at close. Full detail: [milestones/v6.0-ROADMAP.md](milestones/v6.0-ROADMAP.md); audit: [v6.0-MILESTONE-AUDIT.md](v6.0-MILESTONE-AUDIT.md). The original goal/target-features below are retained as history. **v7.0 Retrieval & Reasoning Depth (phases 35–39) build is complete and its verification is backfilled + audited `passed`, but its close/tag is HELD pending Phase 39.1 (Corpus Quality) per founder direction 2026-06-22.**
 
 **Goal:** Let a user onboard a **fresh, unexplored project** into the brain on demand — instead of only learning a project organically (Claude Code conversations) or from docs already in the Obsidian vault. The primitive is an **agentic project survey → episodes**: an agent reads the repo (README, structure, key modules, conventions, gotchas) and writes down *summarized semantic knowledge — not raw code*, which flows through the existing episodic → consolidation pipeline (origin=`observed`, scope-tagged, idempotent by reconsolidation). This makes recense useful for projects the founder hasn't already worked through in Claude Code, and feeds the schema-anchored corpus so a newly-onboarded project is immediately browsable.
 
@@ -149,9 +149,9 @@ Built + verified in **Phase 12: HTTP Serving Mode** (2026-06-11, 815 tests passi
 - [x] Synchronous curated write `recense remember` (verbatim + in-place reconsolidation) + native-memory cutover — REMEMBER-01/02/03 (Phase 33, folded in)
 - [x] Cross-surface visual polish (spacing/alignment + states/transitions, CSS-only, guards held) — VIZ-POLISH-01/02/03 (Phase 34, folded in)
 
-### Active (v7.0 Retrieval & Reasoning Depth — build complete, closing; v8.0 next)
+### Active (v7.0 Retrieval & Reasoning Depth — build complete, close HELD for Phase 39.1)
 
-v7.0 (phases 35–39) build phases are complete and typed recall is live at 92% coverage — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections/derived insights, and reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export explicitly deferred. v7.0 archival is in progress (this session). Next milestone **v8.0 Performance, Efficiency & Competitive Parity** (phases 40–43, planned): LOCOMO competitive baseline → vector index (kill brute-force cosine at 7000+ nodes) → token/cost audit → eval regression gates. Hard rule: every competitive number reproducible or cited.
+v7.0 (phases 35–39) build phases are complete and typed recall is live at 92% coverage — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections/derived insights, and reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export explicitly deferred. Verification is backfilled and the milestone audit is `passed`, but the **v7.0 close/tag is HELD** (founder direction 2026-06-22): **Phase 39.1 (Corpus Quality)** is to be discussed → planned → landed first, then v7.0 closes as phases 35–39.1. RANK-02 (strength fusion) and REFLECT-02 (insight surfacing) shipped DARK with no win claimed. Next milestone **v8.0 Performance, Efficiency & Competitive Parity** (phases 40–43, planned): LOCOMO competitive baseline → vector index (kill brute-force cosine at 7000+ nodes) → token/cost audit → eval regression gates. Hard rule: every competitive number reproducible or cited.
 
 ### Out of Scope
 
@@ -214,4 +214,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-22 — v6.0 Project Onboarding shipped + archived (phases 29–34, git tag `v6.0`; standalone phases 33/34 folded in). Milestone audit passed (15/15 reqs, 4/4 E2E flows). v5.0 requirements moved to Validated (prior drift corrected). Active work is v7.0 Retrieval & Reasoning Depth (phases 35–39, build complete) — closing next in this session; then v8.0 (phases 40–43).*
+*Last updated: 2026-06-22 — v6.0 Project Onboarding shipped + archived (phases 29–34, git tag `v6.0`; standalone phases 33/34 folded in). Milestone audit passed (15/15 reqs, 4/4 E2E flows). v5.0 requirements moved to Validated (prior drift corrected). v7.0 (phases 35–39) build complete + verification backfilled + audit `passed`, but close/tag HELD pending Phase 39.1 (Corpus Quality) per founder direction. Then v8.0 (phases 40–43).*
