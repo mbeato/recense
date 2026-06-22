@@ -1,5 +1,5 @@
 /**
- * corpus-generator — offline batch prose generation for schema-anchored corpus docs (CORPUS-06).
+ * corpus-generator — offline batch prose generation for corpus docs (CORPUS-06, Plan 39.1-03).
  *
  * Moves doc-prose generation OFFLINE into the sleep pass so every promoted schema's
  * deep-dive is generated while no user is waiting, rather than on the online /doc click
@@ -11,31 +11,39 @@
  *    skipped unconditionally (already generated). Re-running the same pass is safe.
  *  - Per-doc failure isolation: a single LLM timeout or empty-output throw MUST NOT
  *    abort the loop. The failure is logged and counted; the next stub continues.
- *  - maxDocs cap: generates up to maxDocs stubs per call, then logs and returns how
- *    many were deferred. No silent truncation — the summary line always shows deferred.
+ *  - maxDocs cap: generates up to maxDocs stubs per call (D-07 budget cap). Stubs
+ *    beyond the cap get a 'pending-subject-doc-gen:<scope>:<slug>' meta marker for
+ *    crash-safe retry next pass (self-draining priority queue). No silent truncation.
  *  - NO lock management: the caller owns the lock (sleep pass holds it; CLI acquires it
  *    before calling and releases in finally). This function is lock-agnostic.
  *  - NO clock read inside the function: `now` is passed in from the caller's clock so
  *    all writes in a batch share the same generation timestamp.
  *
+ * Doc-type dispatch (Plan 39.1-03, D-01/D-03):
+ *  - slug = bare scope string (no ':', not a UUID) → hub doc path (generateDocForHub).
+ *    Hub receives a LINKED {name, docId}[] index built from doc_containment children so
+ *    writeDoc materialises doc_link edges (D-04 navigable index, BLOCKER-1).
+ *  - slug = 'scope:name' → subject doc path (generateDocForSubject). schemaIds rebuilt
+ *    from 'subject-schema-ids:<slug>' meta key; NO second LLM call (BLOCKER-2).
+ *  - slug = UUID (resolves to a live schema node) → schema-chapter path (backward compat;
+ *    generateDocForSchema is still importable but no longer called here — D-03 demotion).
+ *
  * Engine invariants upheld:
- *  - D-43 self-confirmation: generateDocForSchema is read-only; it does NOT strengthen,
- *    setEmbedding, or markActive on source schemas or their facts.
- *  - writeDoc fills the stub IN PLACE (stable-edge invariant, BUG-2c): corpus edges
- *    written by CorpusPromoter (doc_containment/doc_reference) keep pointing at the same
- *    stub node id after prose is filled in. The corpus forest never dangles.
- *  - net-zero deps: no new runtime dependencies beyond what the sleep pass already imports.
- *  - All SQL via bound ? params (T-01-SQL); read-only queries here; writes via writeDoc.
+ *  - D-43 self-confirmation: all generators are read-only; no strengthen/setEmbedding.
+ *  - writeDoc fills the stub IN PLACE (stable-edge invariant, BUG-2c).
+ *  - D-37 firewall: subject schemaIds from meta are in-scope IDs (filtered at write time).
+ *  - net-zero deps: no new runtime dependencies.
+ *  - All SQL via bound ? params (T-01-SQL).
  *
  * Usage:
- *  - Sleep pass: call after consolidate() while lock is held (run-sleep-pass.ts).
+ *  - Sleep pass: call after consolidate() + promoteSubjects() while lock is held.
  *  - CLI: `recense generate-corpus [--db <path>] [--max <n>]` (generate-corpus-cli.ts).
  */
 import type Database from 'better-sqlite3';
 import type { SemanticStore } from '../db/semantic-store';
 import type { ModelProvider } from '../model/provider';
 import { computeSchemaCentroid } from '../reader/doc-gather';
-import { generateDoc, generateDocForSchema } from '../reader/doc-generator';
+import { generateDoc, generateDocForSchema, generateDocForHub, generateDocForSubject } from '../reader/doc-generator';
 import { writeDoc } from './doc-writer';
 
 // ---------------------------------------------------------------------------
@@ -80,11 +88,17 @@ export interface GenerateCorpusResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Fill empty schema-anchored corpus doc stubs with generated prose (CORPUS-06).
+ * Fill empty corpus doc stubs with generated prose (CORPUS-06, Plan 39.1-03).
  *
- * Queries live empty stubs (type='doc', tombstoned=0, length(value)=0) whose
- * node_doc.slug resolves to a live type='schema' node, then generates prose for
- * each via generateDocForSchema (judge-tier model, same path as the lazy CLI).
+ * Queries live empty stubs (type='doc', tombstoned=0, length(value)=0) and dispatches
+ * each by slug shape:
+ *  - UUID slug → schema-chapter path (generateDocForSchema, backward compat)
+ *  - bare scope slug (no ':') → hub doc path (generateDocForHub with linked {name,docId}[])
+ *  - 'scope:name' slug → subject doc path (generateDocForSubject with meta-rebuilt schemaIds)
+ *
+ * Stubs are sorted by priority (hubs first, then subjects by slug) before slicing at
+ * maxDocs. Overflow stubs get 'pending-subject-doc-gen:<scope>:<slug>' meta markers
+ * for crash-safe retry next pass (D-07 self-draining queue).
  *
  * @param deps  Injected DB + SemanticStore + ModelProvider (judge-tier).
  * @param opts  Optional cap, logger, and timestamp.
@@ -97,19 +111,7 @@ export async function generateCorpusDocs(
   const { db, store, provider } = deps;
   const { maxDocs = 25, log = () => undefined, now = Date.now() } = opts;
 
-  // Query ALL LIVE EMPTY doc stubs (both schema-chapter stubs and landing-doc stubs).
-  //
-  // A stub is:
-  //   - type='doc', tombstoned=0, value='' (empty — CorpusPromoter's eager placeholder)
-  //
-  // Each stub is classified by its slug:
-  //   - If nd.slug resolves to a live type='schema' node → schema chapter (existing path:
-  //     computeSchemaCentroid + generateDocForSchema)
-  //   - Otherwise → project-scope landing doc (new path: generateDoc(deps, slug))
-  //     The landing-doc slug is a project scope string (e.g. 'usage', 'brain-memory'),
-  //     not a schema id (Pitfall 4 distinction; mirrors generate-doc-cli.ts:149-166).
-  //
-  // Non-empty docs are excluded unconditionally — already generated (idempotency).
+  // Query ALL LIVE EMPTY doc stubs.
   // T-01-SQL: bound ? params only; no string interpolation.
   const stubStmt = db.prepare(`
     SELECT
@@ -123,35 +125,66 @@ export async function generateCorpusDocs(
   `);
 
   // Prepared statement to check whether a slug resolves to a live schema node
-  // (mirrors the dispatch in generate-doc-cli.ts lines 149-152)
+  // (schema-chapter path: slug = UUID = schemaId — Pitfall 4)
   const stmtSchemaForSlug = db.prepare(
     "SELECT value FROM node WHERE id = ? AND type = 'schema' AND tombstoned = 0"
   );
+
+  // Prepared statement to fetch doc_containment children of a hub stub.
+  // Used to build the {name, docId}[] linked index for generateDocForHub (D-04 / BLOCKER-1).
+  // Returns child doc node id + slug — name is derived from the slug suffix after 'scope:'.
+  const stmtContainmentChildren = db.prepare(`
+    SELECT c.id AS childId, nd.slug AS childSlug
+    FROM edge e
+    JOIN node c ON c.id = e.dst AND c.type = 'doc' AND c.tombstoned = 0
+    JOIN node_doc nd ON nd.node_id = c.id
+    WHERE e.src = ? AND e.kind = 'doc_containment'
+  `);
 
   const stubs = stubStmt.all() as Array<{
     docId: string;
     slug: string;
   }>;
 
-  // Classify each stub: schema-chapter vs landing-doc
+  // ── Slug-shape classification ─────────────────────────────────────────────
+  //
+  // UUID_PATTERN: matches 8-4-4-4-12 hex UUID format (schema-chapter slugs, Pitfall 4)
+  // SUBJECT_SLUG: matches 'scope:name' (contains exactly one ':')
+  // Otherwise: bare scope string → hub doc
+  const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  type StubKind = 'schema' | 'hub' | 'subject';
+
   interface ClassifiedStub {
     docId: string;
     slug: string;
-    schemaLabel: string | null; // non-null → schema chapter path; null → landing-doc path
+    kind: StubKind;
+    schemaLabel: string | null; // non-null only for schema-chapter path
+    /** Sort priority: 0 = hub (highest), 1 = subject, 2 = schema-chapter (deferred). */
+    priority: number;
   }
 
   const classifiedStubs: ClassifiedStub[] = stubs.map(({ docId, slug }) => {
-    const schemaRow = stmtSchemaForSlug.get(slug) as { value: string } | undefined;
-    return {
-      docId,
-      slug,
-      schemaLabel: schemaRow?.value ?? null,
-    };
+    if (UUID_PATTERN.test(slug)) {
+      // Schema-chapter path (backward compat — D-03 demoted but still supported)
+      const schemaRow = stmtSchemaForSlug.get(slug) as { value: string } | undefined;
+      return { docId, slug, kind: 'schema', schemaLabel: schemaRow?.value ?? null, priority: 2 };
+    }
+    if (slug.includes(':')) {
+      // Subject doc path: 'scope:name'
+      return { docId, slug, kind: 'subject', schemaLabel: null, priority: 1 };
+    }
+    // Hub doc path: bare scope string
+    return { docId, slug, kind: 'hub', schemaLabel: null, priority: 0 };
   });
+
+  // Sort by priority (hubs first, then subjects, then schema-chapters)
+  classifiedStubs.sort((a, b) => a.priority - b.priority || a.slug.localeCompare(b.slug));
 
   const total = classifiedStubs.length;
   const toProcess = classifiedStubs.slice(0, maxDocs);
-  const deferred = Math.max(0, total - maxDocs);
+  const overflowStubs = classifiedStubs.slice(maxDocs);
+  const deferred = overflowStubs.length;
 
   if (deferred > 0) {
     log(
@@ -161,29 +194,40 @@ export async function generateCorpusDocs(
     log(`corpus-generator: ${total} empty stubs found`);
   }
 
+  // D-07: Write deferred-stub markers for overflow stubs (crash-safe retry next pass).
+  // Key format: 'pending-subject-doc-gen:<scope>:<slug>'
+  // Only write markers for hub and subject stubs (not schema-chapters — those use the
+  // existing pending-corpus-promotion:<scope> marker pattern).
+  for (const stub of overflowStubs) {
+    if (stub.kind === 'hub' || stub.kind === 'subject') {
+      const markerKey = `pending-subject-doc-gen:${stub.slug}`;
+      store.setMeta(markerKey, '1');
+      log(`corpus-generator: deferred stub marker written: ${markerKey}`);
+    }
+  }
+
   let generated = 0;
   let failed = 0;
 
-  for (const { docId: _docId, slug, schemaLabel } of toProcess) {
+  for (const { docId: _docId, slug, kind, schemaLabel } of toProcess) {
     try {
       let gen: Awaited<ReturnType<typeof generateDocForSchema>>;
 
-      if (schemaLabel !== null) {
-        // ── Schema-chapter path (existing, unchanged) ────────────────────────
-        // Compute the D-37-gated centroid for this schema.
-        // Returns null when no gated members have embeddings — semantic breadth is skipped;
-        // spine + entity-hop still produce a doc (by design, not a fallback path).
-        const schemaId = slug; // slug = schemaId for chapter stubs (Pitfall 4)
+      if (kind === 'schema') {
+        // ── Schema-chapter path (D-03 backward compat — no longer primary path) ──
+        // slug = schemaId (UUID); generateDocForSchema is NOT called for hub/subject stubs.
+        if (schemaLabel === null) {
+          // Slug is UUID-shaped but no live schema found — skip gracefully
+          log(`corpus-generator: skipping schema stub ${slug} (schema node not found)`);
+          failed++;
+          continue;
+        }
+        const schemaId = slug;
         const centroid = computeSchemaCentroid(db, schemaId);
-
-        // Generate prose via the schema-anchored path (judge-tier model, D-04).
-        // generateDocForSchema throws on empty output — caught below (per-doc isolation).
         gen = await generateDocForSchema(
           { db, store, provider },
           { schemaId, centroid, schemaLabel },
         );
-
-        // Fill the stub IN PLACE (stable-edge invariant, BUG-2c).
         writeDoc(store, db, {
           docId: gen.docId,
           slug: schemaId,
@@ -192,20 +236,31 @@ export async function generateCorpusDocs(
           linkedDocRefs: gen.linkedDocRefs,
           now,
         });
-
         log(
           `corpus-generator: generated doc for schema ${schemaId} ` +
           `(citations=${gen.citationCount} invented=${gen.invented})`,
         );
-      } else {
-        // ── Landing-doc path (new, Plan 32-02) ──────────────────────────────
-        // slug is a project scope string ('usage', 'brain-memory', etc.), not a schema id.
-        // Route through the project-scope generateDoc path (mirrors generate-doc-cli.ts:165).
-        // generateDoc throws on empty output — caught below (per-doc isolation).
-        gen = await generateDoc({ db, store, provider }, slug);
 
-        // Fill the stub IN PLACE (stable-edge invariant, BUG-2c).
-        // Landing stub node id + doc_containment edges from promoteScope are preserved.
+      } else if (kind === 'hub') {
+        // ── Hub doc path (D-01/D-04) ─────────────────────────────────────────
+        // slug is a bare scope string (e.g. 'brain-memory').
+        // Build {name, docId}[] from the hub's doc_containment children so the hub index
+        // renders recense://doc/<docId> refs and writeDoc materialises doc_link edges.
+        // BLOCKER-1: must pass LINKED refs, not bare names.
+        const childRows = stmtContainmentChildren.all(_docId) as Array<{
+          childId: string;
+          childSlug: string;
+        }>;
+
+        // Derive subject name from child slug suffix (strip 'scope:' prefix).
+        const subjectDocs = childRows
+          .filter(r => r.childSlug.startsWith(`${slug}:`))
+          .map(r => ({
+            name: r.childSlug.slice(slug.length + 1), // strip 'scope:' prefix
+            docId: r.childId,
+          }));
+
+        gen = await generateDocForHub({ db, store, provider }, slug, subjectDocs);
         writeDoc(store, db, {
           docId: gen.docId,
           slug,
@@ -214,18 +269,69 @@ export async function generateCorpusDocs(
           linkedDocRefs: gen.linkedDocRefs,
           now,
         });
-
         log(
-          `corpus-generator: generated landing doc for scope ${slug} ` +
-          `(citations=${gen.citationCount} invented=${gen.invented})`,
+          `corpus-generator: generated hub doc for scope ${slug} ` +
+          `(subjects=${subjectDocs.length} citations=${gen.citationCount} invented=${gen.invented})`,
         );
+
+        // Clear deferred marker if present (this hub was previously deferred)
+        const markerKey = `pending-subject-doc-gen:${slug}`;
+        store.deleteMeta(markerKey);
+
+      } else {
+        // ── Subject doc path (D-02, BLOCKER-2) ───────────────────────────────
+        // slug = 'scope:name'; schemaIds rebuilt from 'subject-schema-ids:<slug>' meta.
+        // NO second LLM call to reconstruct the schema set — read from meta only.
+        const colonIdx = slug.indexOf(':');
+        const scope = slug.slice(0, colonIdx);
+        const subjectName = slug.slice(colonIdx + 1);
+
+        const metaKey = `subject-schema-ids:${slug}`;
+        const metaValue = store.getMeta(metaKey);
+
+        if (metaValue == null) {
+          // BLOCKER-2 guard: if meta key is missing, log and skip (no LLM call fallback)
+          log(`corpus-generator: skipping subject stub ${slug} — meta key '${metaKey}' not found`);
+          failed++;
+          continue;
+        }
+
+        let schemaIds: string[];
+        try {
+          schemaIds = JSON.parse(metaValue) as string[];
+        } catch {
+          log(`corpus-generator: skipping subject stub ${slug} — failed to parse '${metaKey}'`);
+          failed++;
+          continue;
+        }
+
+        gen = await generateDocForSubject(
+          { db, store, provider },
+          { scope, subjectName, schemaIds },
+        );
+        writeDoc(store, db, {
+          docId: gen.docId,
+          slug,
+          markdown: gen.markdown,
+          citedFactIds: gen.citedFactIds,
+          linkedDocRefs: gen.linkedDocRefs,
+          now,
+        });
+        log(
+          `corpus-generator: generated subject doc ${slug} ` +
+          `(schemaIds=${schemaIds.length} citations=${gen.citationCount} invented=${gen.invented})`,
+        );
+
+        // Clear deferred marker on success (crash-safe: only delete AFTER success)
+        const markerKey = `pending-subject-doc-gen:${slug}`;
+        store.deleteMeta(markerKey);
       }
 
       generated++;
     } catch (err) {
       // Per-doc failure isolation: log + count; continue with the next stub.
       // Typical causes: LLM timeout (empty output throw), transient headless client failure,
-      // or corrupt schema/scope data. A failed landing doc must not abort the schema loop.
+      // or corrupt schema/scope data. A failed doc must not abort the loop.
       // Log message uses 'failed for schema' prefix for backward compatibility with existing tests.
       log(`corpus-generator: failed for schema ${slug}: ${err}`);
       failed++;

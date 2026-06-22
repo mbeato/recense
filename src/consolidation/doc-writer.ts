@@ -105,13 +105,24 @@ export function writeDoc(
   // One-live-doc-per-slug invariant still holds after every path.
 
   // Find any EXISTING live doc node for this slug.
+  //
+  // Plan 39.1-03 fix (Rule 1 — BUG-2c stable-edge correctness for new taxonomy):
+  // With the hub+subject taxonomy, subject docs have nd.slug = 'scope:name' but
+  // ns.scope = project_scope. The previous ns.scope = ? lookup would find a non-empty
+  // subject stub when trying to fill the hub, causing the hub to be tombstone+recreated
+  // rather than filled in-place (breaking the BUG-2c stable-edge invariant). Changed to
+  // nd.slug = ? so the lookup is precise regardless of slug/scope alignment:
+  //   - schema-chapter: nd.slug = schemaId (UUID) ✓
+  //   - hub doc:        nd.slug = scope (bare string) ✓
+  //   - subject doc:    nd.slug = 'scope:name' ✓
+  //
   // Exclude the caller-supplied docId defensively (it doesn't exist yet but guards
   // against a bizarre double-call with the same id).
   const stmtFindLiveDocForSlug = db.prepare(
     `SELECT n.id, n.value
      FROM node n
-     JOIN node_scope ns ON ns.node_id = n.id
-     WHERE n.type = 'doc' AND n.tombstoned = 0 AND ns.scope = ? AND n.id != ?
+     JOIN node_doc nd ON nd.node_id = n.id
+     WHERE n.type = 'doc' AND n.tombstoned = 0 AND nd.slug = ? AND n.id != ?
      LIMIT 1`,
   );
 
