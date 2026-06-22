@@ -178,6 +178,26 @@ const valueOf = (id) => {
   return row ? row.value : id;
 };
 
+// ── value → node ids resolver ───────────────────────────────────────────────────
+// Query-set anchors/golds are node VALUES (human-readable, founder-signed), not ids.
+// The live recense.db keys nodes by UUID, so values must be resolved to ids before
+// traversal. The spike scratch.db keys nodes by their (lowercased) value, so the
+// fallback returns the normalized value itself — keeping both DBs working.
+// Entity fragmentation (multiple nodes sharing a value) → union all matching ids.
+let stmtIdsByValue;
+try {
+  stmtIdsByValue = db.prepare('SELECT id FROM node WHERE value = ?');
+} catch {
+  stmtIdsByValue = null;
+}
+function resolveIds(value) {
+  if (stmtIdsByValue) {
+    const rows = stmtIdsByValue.all(value);
+    if (rows.length) return rows.map(r => r.id);
+  }
+  return [normalize(value)]; // spike convention: id == normalized value
+}
+
 // ── edge query ────────────────────────────────────────────────────────────────
 // The spike DB has: SELECT src, dst, rel, w FROM edge (no 'kind' column).
 // The live DB has:  SELECT src, dst, rel, w, kind FROM edge.
@@ -211,8 +231,8 @@ function outEdges(src) {
 // ── TYPED traversal ───────────────────────────────────────────────────────────
 // Inlined from spike lib/traverse.ts:typedReach, adapted for the CJS harness.
 // Returns top-K node ids ranked by accumulated path-weight, stable id tiebreak.
-function typedReach(anchor, predicatePath, maxK) {
-  let frontier = new Map([[anchor, 0]]);
+function typedReach(anchorIds, predicatePath, maxK) {
+  let frontier = new Map(anchorIds.map(a => [a, 0]));
   for (const pred of predicatePath) {
     const next = new Map();
     for (const [node, acc] of frontier) {
@@ -235,9 +255,10 @@ function typedReach(anchor, predicatePath, maxK) {
 // ── UNTYPED (control) traversal ───────────────────────────────────────────────
 // Inlined from spike lib/traverse.ts:untypedTopK. Label-blind weighted k-hop BFS.
 // Returns top-K node ids ranked by best path-weight (rel deliberately ignored).
-function untypedTopK(anchor, depth, maxK) {
+function untypedTopK(anchorIds, depth, maxK) {
+  const anchorSet = new Set(anchorIds);
   const best = new Map();
-  let frontier = [{ node: anchor, acc: 0 }];
+  let frontier = anchorIds.map(node => ({ node, acc: 0 }));
   for (let d = 1; d <= depth; d++) {
     const next = [];
     for (const { node, acc } of frontier) {
@@ -247,7 +268,7 @@ function untypedTopK(anchor, depth, maxK) {
         ? db.prepare('SELECT dst, rel, w FROM edge WHERE src = ?').all(node)
         : db.prepare('SELECT dst, rel, w FROM edge WHERE src = ?').all(node);
       for (const e of allEdges) {
-        if (e.dst === anchor) continue;
+        if (anchorSet.has(e.dst)) continue;
         const score = acc + e.w;
         const prev = best.get(e.dst);
         if (!prev || score > prev.score) best.set(e.dst, { score, depth: d });
@@ -284,9 +305,9 @@ function edgesOf(src) {
 }
 
 /** Typed arm payload: labeled triples (anchor → predicate → neighbor). */
-function typedPayloadLines(anchor, predicatePath, topKPayload) {
+function typedPayloadLines(anchorIds, predicatePath, topKPayload) {
   const lines = [];
-  let frontier = [anchor];
+  let frontier = [...anchorIds];
   for (const pred of predicatePath) {
     const next = [];
     for (const node of frontier) {
@@ -303,11 +324,11 @@ function typedPayloadLines(anchor, predicatePath, topKPayload) {
 }
 
 /** Untyped arm payload: same structural edges, predicate STRIPPED. */
-function untypedPayloadLines(anchor, depth, topKValues) {
+function untypedPayloadLines(anchorIds, depth, topKValues) {
   const keep = new Set(topKValues.map(normalize));
-  keep.add(normalize(valueOf(anchor)));
+  for (const a of anchorIds) keep.add(normalize(valueOf(a)));
   const lines = [];
-  let frontier = [anchor];
+  let frontier = [...anchorIds];
   for (let d = 0; d < depth; d++) {
     const next = [];
     for (const node of frontier) {
@@ -329,18 +350,28 @@ const rankOf = (payload, goldId) => {
   return i === -1 ? null : i + 1;
 };
 
+// Value-based rank: the gold is a node VALUE; returned payloads are node ids.
+// Rank = 1-based position of the first returned id whose value matches the gold.
+// Handles entity fragmentation (any id sharing the gold value counts as a hit).
+const rankOfValue = (ids, goldValue) => {
+  const g = normalize(goldValue);
+  for (let i = 0; i < ids.length; i++) {
+    if (normalize(valueOf(ids[i])) === g) return i + 1;
+  }
+  return null;
+};
+
 // ── DRY-RUN: validate wiring + query-set parse, ZERO LLM calls, exit 0 ───────
 if (DRY_RUN) {
   console.log('[dry-run] Validating DB access and query-set wiring...');
   let validCount = 0;
   let parseErrors = 0;
   for (const q of spec.queries) {
-    const anchorId = normalize(q.anchor);
-    const goldId   = normalize(q.gold);
+    const anchorIds = resolveIds(q.anchor);
     try {
       // Verify traversal functions run without error (no LLM calls).
-      const typedIds   = typedReach(anchorId, q.predicate_path, K);
-      const untypedIds = untypedTopK(anchorId, q.predicate_path.length, K);
+      const typedIds   = typedReach(anchorIds, q.predicate_path, K);
+      const untypedIds = untypedTopK(anchorIds, q.predicate_path.length, K);
       // Dry-run: just confirm the functions return arrays (may be empty — edges not yet present).
       if (!Array.isArray(typedIds) || !Array.isArray(untypedIds)) {
         console.error(`  [dry-run] ERROR on ${q.id}: traversal did not return array`);
@@ -453,15 +484,15 @@ async function measurePrecision(thresholdLabel) {
   const rows = [];
 
   for (const q of spec.queries) {
-    const anchorId = normalize(q.anchor);
-    const goldId   = normalize(q.gold);
-    const depth    = q.predicate_path.length;  // 1 for v1 single-hop
+    const anchorIds = resolveIds(q.anchor);
+    const goldId    = normalize(q.gold);   // for compose text-match (answersGold)
+    const depth     = q.predicate_path.length;  // 1 for v1 single-hop
 
     // PRIMARY: typed and untyped traversal (deterministic, zero variance).
-    const typedFull   = typedReach(anchorId, q.predicate_path, BIG);
-    const untypedFull = untypedTopK(anchorId, depth, BIG);
-    const typedNTA    = rankOf(typedFull, goldId);
-    const untypedNTA  = rankOf(untypedFull, goldId);
+    const typedFull   = typedReach(anchorIds, q.predicate_path, BIG);
+    const untypedFull = untypedTopK(anchorIds, depth, BIG);
+    const typedNTA    = rankOfValue(typedFull, q.gold);
+    const untypedNTA  = rankOfValue(untypedFull, q.gold);
     const reachable   = untypedNTA !== null;
 
     // Payload size (token-win metric): typed path length vs neighborhood K=20.
@@ -472,10 +503,10 @@ async function measurePrecision(thresholdLabel) {
     // SECONDARY (LLM-compose, 3x majority, CONFIRMATION ONLY — never gates).
     let typedCompose = null, untypedCompose = null;
     if (DO_COMPOSE && reachable) {
-      const typedKPayload   = typedReach(anchorId, q.predicate_path, K);
-      const untypedKPayload = untypedTopK(anchorId, depth, K);
-      const tLines = typedPayloadLines(anchorId, q.predicate_path, typedKPayload);
-      const uLines = untypedPayloadLines(anchorId, depth, untypedKPayload.map(id => valueOf(id)));
+      const typedKPayload   = typedReach(anchorIds, q.predicate_path, K);
+      const untypedKPayload = untypedTopK(anchorIds, depth, K);
+      const tLines = typedPayloadLines(anchorIds, q.predicate_path, typedKPayload);
+      const uLines = untypedPayloadLines(anchorIds, depth, untypedKPayload.map(id => valueOf(id)));
       typedCompose   = await composeCorrectRate(q.question, tLines, goldId);
       untypedCompose = await composeCorrectRate(q.question, uLines, goldId);
     }

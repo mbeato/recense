@@ -9,7 +9,7 @@
 - ✅ **v4.0 Proactive Memory** — Phases 20–23 (shipped 2026-06-17) — full detail: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 - ✅ **v5.0 Foundational Memory Store + Reader Layer** — Phases 24–28 (shipped 2026-06-19) — full detail: [milestones/v5.0-ROADMAP.md](milestones/v5.0-ROADMAP.md)
 - 🔲 **v6.0 Project Onboarding** — Phases 29–32 (all phases COMPLETE; awaiting `complete-milestone` archive)
-- 🔲 **v7.0 Retrieval & Reasoning Depth** — Phases 35–39 (IN PROGRESS — 35, 36-spike, 37-01/02/03, 38, 38.1, 39 done; **37-04 typed-edges precision gate is the lone open plan**) — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections, reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export both explicitly deferred.
+- 🔲 **v7.0 Retrieval & Reasoning Depth** — Phases 35–39 (IN PROGRESS — 35, 36-spike, **37 COMPLETE** (37-04 typed-edges precision gate cleared GO: typed top-3 83.3% / lift +45.8pts / payload 3.8 vs 20 nodes), 38, 38.1, 39 done) — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections, reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export both explicitly deferred.
 - 🔲 **v8.0 Performance, Efficiency & Competitive Parity** — Phases 40–43 (planned, starts after v7.0) — prove at-or-above competitors (mem0/Zep) on accuracy + latency + token via LOCOMO baseline, build the vector index (kill brute-force cosine at 7000+ nodes), token-cost audit, then lock it all behind regression gates. Hard rule: every competitive number reproducible or cited — no inflated metrics.
 
 ## Phases
@@ -443,7 +443,7 @@ recense deepens the two weakest edges of the engine — *how it ranks what it re
   2. Recall assembles a typed relational path; multi-hop queries return a precise path with fewer tokens than the untyped-neighborhood baseline at equal-or-better answer quality on the harness — TYPED-02
   3. Self-confirmation guard intact: inferred output never mints or strengthens a typed edge
 
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 **Wave 1**
@@ -457,7 +457,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 37-04-PLAN.md — Build harness + gate (TYPED-02): 37-precision-harness, re-derived query set, D-05 founder sign-off, PRIMARY precision gate
+- [x] 37-04-PLAN.md — Build harness + gate (TYPED-02): 37-precision-harness, re-derived query set, D-05 founder sign-off, PRIMARY precision gate
 
 ### Phase 38: Stored Reflections / Derived Insights
 

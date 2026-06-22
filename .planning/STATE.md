@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: Retrieval & Reasoning Depth
 status: ready_to_plan
-stopped_at: Phase 39 COMPLETE — WIKI-01/02/03 verified 3/3, code-review clean (WR-01..04 fixed), founder-approved
-last_updated: "2026-06-21T18:42:00.000Z"
+stopped_at: Phase 37 COMPLETE — 37-04 typed-edges precision gate cleared GO (typed top-3 83.3% / lift +45.8pts / payload 3.8 vs 20 nodes; founder D-05+D-04 sign-off). v7.0 build phases all done.
+last_updated: "2026-06-22T00:15:00.000Z"
 progress:
   total_phases: 16
   completed_phases: 8
   total_plans: 29
-  completed_plans: 28
+  completed_plans: 29
   percent: 50
 ---
 
@@ -20,17 +20,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 39 COMPLETE (reader wiki-parity). Frontier is the tail of **v7.0** — the lone open plan is **37-04** (typed-edges precision gate: paid harness run + founder sign-off). v6.0 (29–32) is fully complete; archive it via `complete-milestone` when ready.
+**Current focus:** **v7.0 build phases COMPLETE** — 37-04 (the last open plan) cleared its GO gate. Typed recall proven on the live engine (typed top-3 83.3% vs 37.5% untyped, +45.8pts; payload 3.8 vs 20 nodes; SECONDARY compose +63.9pts confirms). v6.0 (29–32) also fully complete; archive milestones via `complete-milestone` when ready.
 
 ## Current Position
 
 ```
-Milestone: v7.0 Retrieval & Reasoning Depth — IN PROGRESS (v6.0 phases 29–32 all complete)
-Phase: 39 (reader-wiki-parity-index-and-backlinks) — ✓ COMPLETE
-Plan: 2 of 2 complete (WIKI-01 index sidebar + WIKI-02 backlinks; verified 3/3, code-review clean)
-Next: 37-04 — typed predicate edges precision gate (harness built; needs paid run + go/no-go). Only open plan in 29–39.
+Milestone: v7.0 Retrieval & Reasoning Depth — BUILD PHASES COMPLETE (35/36/37/38/38.1/39 all done)
+Phase: 37 (typed-predicate-edges-build) — ✓ COMPLETE (37-04 gate GO)
+Plan: 4 of 4 complete (37-04 precision gate cleared: typed top-3 83.3% / lift +45.8pts / payload 3.8 vs 20)
+Next: archive v6.0/v7.0 via `complete-milestone`, then v8.0 (Phases 40–43: bench baseline → vector index → cost audit → eval gates)
 
-[████████████████████████████████████████████░░░] v1–v5.0 SHIPPED · v6.0 phases COMPLETE · v7.0 nearly done (35/36/37-01..03/38/38.1/39 ✓; 37-04 open)
+[██████████████████████████████████████████████░] v1–v5.0 SHIPPED · v6.0 COMPLETE · v7.0 build COMPLETE (35/36/37/38/38.1/39 ✓)
 ```
 
 **v6.0 phases:**
