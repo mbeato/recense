@@ -20,7 +20,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** **v7.0 build phases COMPLETE** — 37-04 (the last open plan) cleared its GO gate. Typed recall proven on the live engine (typed top-3 83.3% vs 37.5% untyped, +45.8pts; payload 3.8 vs 20 nodes; SECONDARY compose +63.9pts confirms). v6.0 (29–32) also fully complete; archive milestones via `complete-milestone` when ready.
+**Current focus:** **v7.0 build phases COMPLETE + typed recall ACTIVATED on the live brain** (commit `96726d4`). 37-04 cleared its GO gate (typed top-3 83.3% vs 37.5%, +45.8pts; payload 3.8 vs 20; compose +63.9pts). Then went live: glosses embedded into live `recense.db` (meta key present), 611 proven typed edges transplanted from the scratch DB (FK clean, backup at `recense.db.bak-pre-typed-37-*`), `RECENSE_TYPED_EXTRACTION_MODE=merged` set in sleep.env, and `embedAndStoreGlosses` wired into the sleep pass (was unwired). **Honest live coverage on the 24-query set: predicate-match 71%, typed-path fires 50% (gold-reached), precise when fired** (real recalls: "who built apimesh?"→"Max and mbeato", "urby supersede?"→"putyouon"). Anchor-union fix (seed typedReach from all top-K candidates, not just bestMatch) doubled firing 25%→50%; 2060 tests pass, no regression (non-firing → neighborhood fallback).
+
+**Phase 37 go-live follow-ups (not blocking, no-inflated-metrics):**
+- candidateK=5 is small → some edge-bearing entities miss the candidate pool; raising it would lift the 50%.
+- weak `uses`/`part_of`/`works_on` glosses cap predicate-match at 71% → tune gloss strings.
+- entity fragmentation ("Max" vs "Max (design lead)") → Phase 25 entity dedup reduces it.
+- **⚠ sleep.env OPENAI_API_KEY is REVOKED** (exposed in transcript 2026-06-18 AND 2026-06-21 — rotate). Until rotated, the sleep pass's node-text embeds + gloss self-heal no-op; the ambient shell key was used for the one-off gloss embed. Online recall uses the working ambient key.
+
+v6.0 (29–32) also fully complete; archive milestones via `complete-milestone` when ready.
 
 ## Current Position
 
