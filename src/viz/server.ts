@@ -546,8 +546,11 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         }
         return;
       }
-      // T-27-10: sanitize slug to [a-z0-9-], length-cap (same as the CLI's --slug flag).
-      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+      // T-27-10: sanitize slug to [a-z0-9:-], length-cap. The colon is REQUIRED — subject docs
+      // have slug 'scope:name'; stripping it (old [a-z0-9-]) regenerated a malformed colon-less
+      // hub doc (duplicate). Colon is safe here: SQL lookups are parameterized and spawnGenerateDoc
+      // uses a spawn args array (no shell), so ':' cannot enable injection.
+      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9:-]/g, '').slice(0, 64);
       if (!slug) {
         res.writeHead(400, { 'content-type': 'text/plain' });
         res.end('bad slug');
@@ -591,7 +594,7 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         slug = resolvedSlug;
       } else {
         const rawSlug = params.get('slug') ?? '';
-        slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+        slug = rawSlug.toLowerCase().replace(/[^a-z0-9:-]/g, '').slice(0, 64);
         if (!slug) {
           res.writeHead(400, { 'content-type': 'text/plain' });
           res.end('bad slug');
@@ -637,7 +640,7 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         slug = resolvedSlug;
       } else {
         const rawSlug = params.get('slug') ?? '';
-        slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+        slug = rawSlug.toLowerCase().replace(/[^a-z0-9:-]/g, '').slice(0, 64);
         if (!slug) {
           res.writeHead(400, { 'content-type': 'text/plain' });
           res.end('bad slug');
@@ -731,7 +734,7 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         slug = resolvedSlug;
       } else {
         const rawSlug = params.get('slug') ?? '';
-        slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+        slug = rawSlug.toLowerCase().replace(/[^a-z0-9:-]/g, '').slice(0, 64);
         if (!slug) {
           res.writeHead(400, { 'content-type': 'text/plain' });
           res.end('bad slug');
@@ -839,7 +842,7 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     // Used by the reader's regenerate button (27-04) and explicit regen.
     if (url === '/doc/generate' && req.method === 'POST') {
       const rawSlug = new URLSearchParams(req.url?.split('?')[1] ?? '').get('slug') ?? '';
-      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
+      const slug = rawSlug.toLowerCase().replace(/[^a-z0-9:-]/g, '').slice(0, 64);
       if (!slug) {
         res.writeHead(400, { 'content-type': 'text/plain' });
         res.end('bad slug');
