@@ -3,13 +3,14 @@
  *
  * Derives the schema-anchored doc corpus in one atomic transaction:
  *  1. LLM-free SQL/COUNT mass gate + token-shape noise filter (D-06/D-07, CORPUS-02)
- *  2. Centroid-cosine + mass-direction ladder (D-01R/D-02R, CORPUS-03):
- *       - CONTAINMENT (directed parent→child): cosine-connected pairs where masses differ
- *         by ≥ massGapMin; parent = larger-mass schema; child keeps single strongest parent
- *         → clean forest, not a hairball
- *       - REFERENCE (undirected): cosine-connected pairs not selected as containment parent/child
- *  3. Eager lifecycle-exempt doc-node stubs (D-04) for newly promoted schemas
- *  4. Wipe+rebuild of all doc_containment + doc_reference edges (derived cache)
+ *  2. Eager lifecycle-exempt doc-node stubs (D-04) for newly promoted schemas
+ *  3. Tombstoning of demoted doc stubs (mass fell below lowMass)
+ *
+ * Note (Phase 39.2 — D-11 single-ownership):
+ *  doc_containment + doc_reference edge derivation was retired from this class.
+ *  The DocGraphDeriver (src/consolidation/doc-graph-deriver.ts) is now the sole owner
+ *  of both edge kinds — it runs in Phase C immediately after corpusPromoter.promote()
+ *  and wipes+rebuilds all doc_containment + doc_reference edges atomically.
  *
  * Engine invariants upheld:
  *  - D-03: ALL corpus edges are written between TYPE='doc' nodes only — source schemas
@@ -21,7 +22,6 @@
  *  - D-12: all time reads via this.clock.nowMs() — never Date.now() directly.
  *  - D-37 firewall: centroid computation uses only tombstoned=0, origin!='inferred',
  *    type IN ('fact','entity') nodes (same gate as SchemaRelationDeriver).
- *  - Pitfall 5: Float32Array decoded with byteOffset + byteLength/4 (never bare Buffer).
  *  - Pitfall 6: promoter NEVER calls strengthen/setEmbedding/upsertEdge on a source schema.
  *
  * Threat mitigations:
@@ -36,7 +36,6 @@ import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
 import type { SemanticStore } from '../db/semantic-store';
 import type { ModelProvider } from '../model/provider';
-import { cosineSimF32 } from '../retrieval/topk';
 import { newId } from '../lib/hash';
 import { GLOBAL_SCOPE } from '../lib/scope';
 
@@ -129,11 +128,8 @@ export class CorpusPromoter {
 
   // Prepared statements — compiled once in constructor (T-01-SQL)
   private readonly stmtGetSchemaNodes: Database.Statement;
-  private readonly stmtGetClusterableNodes: Database.Statement;
   private readonly stmtGetSchemaMembersWithValues: Database.Statement;
   private readonly stmtGetLiveDocForSlug: Database.Statement;
-  private readonly stmtWipeDocContainment: Database.Statement;
-  private readonly stmtWipeDocReference: Database.Statement;
   private readonly stmtFtsDelete: Database.Statement;
   /** For promoteScope: find schemas that have at least one gated member with node_scope = S */
   private readonly stmtGetSchemasInScope: Database.Statement;
@@ -153,23 +149,14 @@ export class CorpusPromoter {
       ...opts,
     };
 
-    // D-37 firewall: same gated query as SchemaRelationDeriver — inferred content cannot
-    // launder into corpus derivation (tombstoned=0, origin!='inferred', type IN ('fact','entity'))
-    this.stmtGetClusterableNodes = db.prepare(
-      "SELECT id, embedding FROM node " +
-      "WHERE tombstoned = 0 AND origin != 'inferred' " +
-      "AND type IN ('fact','entity') AND embedding IS NOT NULL"
-    );
-
     // Live schema nodes — same as SchemaRelationDeriver.stmtGetSchemaNodes
     this.stmtGetSchemaNodes = db.prepare(
       "SELECT id, value FROM node WHERE type = 'schema' AND tombstoned = 0"
     );
 
     // Schema members with their node values (for mass + noise-fraction computation, D-07).
-    // D-37 firewall (CR-01): exclude origin='inferred' here too — must match the centroid
-    // query (stmtGetClusterableNodes) so inferred output cannot inflate a schema's mass or
-    // dilute its noise fraction across the promotion gate (self-confirmation guard).
+    // D-37 firewall (CR-01): exclude origin='inferred' — inferred output cannot inflate a
+    // schema's mass or dilute its noise fraction across the promotion gate (self-confirmation guard).
     this.stmtGetSchemaMembersWithValues = db.prepare(
       "SELECT e.dst as id, n.value as value FROM edge e " +
       "JOIN node n ON n.id = e.dst " +
@@ -183,15 +170,6 @@ export class CorpusPromoter {
       "JOIN node_scope ns ON ns.node_id = n.id " +
       "WHERE n.type = 'doc' AND n.tombstoned = 0 AND ns.scope = ? " +
       "LIMIT 1"
-    );
-
-    // D-04 wipe-and-rebuild: delete ALL prior doc-corpus edges (not scoped to a schema)
-    // so the derived cache is rebuilt from scratch on every pass (idempotency + correctness)
-    this.stmtWipeDocContainment = db.prepare(
-      "DELETE FROM edge WHERE kind = 'doc_containment'"
-    );
-    this.stmtWipeDocReference = db.prepare(
-      "DELETE FROM edge WHERE kind = 'doc_reference'"
     );
 
     // FTS suppression for new doc stubs (mirrors doc-writer.ts pattern)
@@ -215,41 +193,31 @@ export class CorpusPromoter {
   /**
    * Run the D-04 idempotent promotion pass.
    *
-   * Phase A (async-free, read-only): mass computation, noise filter, hysteresis, centroid
-   *   derivation (SREL-01 math verbatim), cosine+mass ladder derivation.
+   * Phase A (async-free, read-only): mass computation, noise filter, hysteresis.
    * Phase B (one db.transaction().immediate(), NO await inside — T-02-ASYNC):
-   *   eager doc stubs for newly promoted schemas, tombstone for demoted ones,
-   *   wipe+rebuild doc_containment + doc_reference edges.
+   *   eager doc stubs for newly promoted schemas, tombstone for demoted ones.
+   *
+   * Note (Phase 39.2 — D-11): doc_containment + doc_reference edge derivation retired.
+   * The DocGraphDeriver now owns both edge kinds and runs after this call in Phase C.
    *
    * @param opts dryRun: return counts without writing (default: false)
    */
   async promote(opts: { dryRun?: boolean } = {}): Promise<PromoteResult> {
     const { dryRun = false } = opts;
     const now = this.clock.nowMs();
-    const { highMass, lowMass, noiseCap, corpusCosineThreshold, massGapMin, minMembers } = this.opts;
+    const { highMass, lowMass, noiseCap } = this.opts;
 
     // ── Phase A: read-only analysis ───────────────────────────────────────
-
-    // Build clusterableById from the D-37-gated query (Pitfall 5: byteOffset decode)
-    const clusterableRows = this.stmtGetClusterableNodes.all() as Array<{
-      id: string;
-      embedding: Buffer;
-    }>;
-    const clusterableById = new Map<string, Buffer>();
-    for (const row of clusterableRows) {
-      clusterableById.set(row.id, row.embedding);
-    }
 
     // Get all live schema nodes
     const schemaNodes = this.stmtGetSchemaNodes.all() as Array<{ id: string; value: string }>;
 
-    // Per-schema: mass + noise_frac + centroid + existing doc stub
+    // Per-schema: mass + noise_frac + existing doc stub
     interface SchemaInfo {
       id: string;
       value: string;
       mass: number;         // COUNT(DISTINCT live fact|entity members)
       noiseFrac: number;    // fraction of members that are noise tokens
-      centroid: Float32Array | null;
       existingDocId: string | null;
     }
 
@@ -269,31 +237,6 @@ export class CorpusPromoter {
       const noiseCount = members.filter(m => isNoiseMember(m.value)).length;
       const noiseFrac = noiseCount / mass;
 
-      // Centroid computation — verbatim from SchemaRelationDeriver (schema-relations.ts:285-310)
-      // Pitfall 5: Float32Array decoded with byteOffset + byteLength/4 (never bare Buffer)
-      const memberVecs: Float32Array[] = [];
-      for (const member of members) {
-        const embBuf = clusterableById.get(member.id);
-        if (!embBuf) continue; // not in gated set (inferred/tombstoned/null-embedding/schema-type)
-        memberVecs.push(
-          new Float32Array(embBuf.buffer, embBuf.byteOffset, embBuf.byteLength / 4)
-        );
-      }
-
-      let centroid: Float32Array | null = null;
-      if (memberVecs.length > 0) {
-        const dims = memberVecs[0]!.length;
-        centroid = new Float32Array(dims);
-        for (const vec of memberVecs) {
-          for (let i = 0; i < dims; i++) {
-            centroid[i]! += vec[i]!;
-          }
-        }
-        for (let i = 0; i < dims; i++) {
-          centroid[i]! /= memberVecs.length;
-        }
-      }
-
       // Check for an existing live doc stub
       const existingDocRow = this.stmtGetLiveDocForSlug.get(schema.id) as
         | { id: string }
@@ -305,7 +248,6 @@ export class CorpusPromoter {
         value: schema.value,
         mass,
         noiseFrac,
-        centroid,
         existingDocId,
       });
     }
@@ -344,85 +286,19 @@ export class CorpusPromoter {
       // else: below lowMass, no doc → nothing to do
     }
 
-    // ── Cosine+mass ladder derivation (D-01R/D-02R) ───────────────────────
-    // For each promoted-schema pair: cosineSimF32(centroidA, centroidB)
-    // If sim >= corpusCosineThreshold AND both have >= minMembers:
-    //   - mass gap >= massGapMin → CONTAINMENT candidate (larger-mass = parent)
-    //   - mass gap < massGapMin → REFERENCE candidate
-    //
-    // Forest rule (D-02R): each child keeps only its single strongest (highest-sim) parent
-
-    // Filter to schemas with valid centroids and minMembers floor
-    const schemasForLadder = promotedSchemas.filter(
-      s => s.centroid !== null && s.mass >= minMembers
-    );
-
-    interface ContainmentCandidate {
-      parentSchemaId: string;
-      childSchemaId: string;
-      sim: number;
-    }
-
-    interface ReferenceCandidate {
-      schemaIdA: string;
-      schemaIdB: string;
-      sim: number;
-    }
-
-    // Best parent for each child (single strongest cosine-connected parent → forest)
-    // Map: childSchemaId → { parentSchemaId, sim }
-    const bestParent = new Map<string, { parentSchemaId: string; sim: number }>();
-    const referencePairs: ReferenceCandidate[] = [];
-
-    for (let i = 0; i < schemasForLadder.length; i++) {
-      const a = schemasForLadder[i]!;
-      for (let j = i + 1; j < schemasForLadder.length; j++) {
-        const b = schemasForLadder[j]!;
-
-        const sim = cosineSimF32(a.centroid!, b.centroid!);
-        if (sim < corpusCosineThreshold) continue;
-
-        const massGap = Math.abs(a.mass - b.mass);
-
-        if (massGap >= massGapMin) {
-          // CONTAINMENT direction: larger-mass = parent, smaller-mass = child
-          const parent = a.mass >= b.mass ? a : b;
-          const child = a.mass >= b.mass ? b : a;
-
-          // Forest rule: keep only the strongest parent per child
-          const existing = bestParent.get(child.id);
-          if (!existing || sim > existing.sim) {
-            bestParent.set(child.id, { parentSchemaId: parent.id, sim });
-          }
-        } else {
-          // REFERENCE: cosine-connected, equal-ish mass
-          referencePairs.push({ schemaIdA: a.id, schemaIdB: b.id, sim });
-        }
-      }
-    }
-
-    // Containment candidates from bestParent map
-    const containmentCandidates: ContainmentCandidate[] = [];
-    for (const [childSchemaId, { parentSchemaId, sim }] of bestParent) {
-      containmentCandidates.push({ parentSchemaId, childSchemaId, sim });
-    }
-
     // dryRun: return counts without writing
+    // containment + reference are 0 — DocGraphDeriver owns edge derivation (D-11)
     if (dryRun) {
       return {
         promoted: promotedSchemas.map(s => s.id),
-        containment: containmentCandidates.length,
-        reference: referencePairs.length,
+        containment: 0,
+        reference: 0,
         tombstoned: demotedDocIds.length,
       };
     }
 
     // ── Phase B: atomic write (single db.transaction().immediate()) ───────
     // T-02-ASYNC: NO await inside the transaction body — all async work done in Phase A
-
-    // Map from schemaId → docId (for writing corpus edges)
-    // Populated during Phase B by looking up or creating doc stubs
-    const schemaToDocId = new Map<string, string>();
 
     this.db.transaction(() => {
       // 0. Tombstone demoted doc stubs (mass < lowMass fell below the band)
@@ -435,8 +311,7 @@ export class CorpusPromoter {
       //    slug = schemaId (Pitfall 4 — schemaId is the anchor, not the human label)
       for (const info of promotedSchemas) {
         if (info.existingDocId) {
-          // Already has a live stub — use it
-          schemaToDocId.set(info.id, info.existingDocId);
+          // Already has a live stub — use it (no action needed)
           continue;
         }
 
@@ -473,60 +348,16 @@ export class CorpusPromoter {
           scope: info.id,
           updated_at: now,
         });
-
-        schemaToDocId.set(info.id, docId);
       }
 
-      // 2. Wipe ALL prior doc_containment + doc_reference edges (D-04 wipe-and-rebuild)
-      //    Idempotent: next pass rebuilds from scratch; a crash mid-wipe leaves an empty
-      //    derived cache that is correctly rebuilt on the next pass
-      this.stmtWipeDocContainment.run();
-      this.stmtWipeDocReference.run();
-
-      // 3. Rebuild doc_containment edges (D-01R: parent→child, directed)
-      //    D-03: src and dst are BOTH doc node ids — never schema ids (self-confirmation guard)
-      for (const { parentSchemaId, childSchemaId, sim } of containmentCandidates) {
-        const parentDocId = schemaToDocId.get(parentSchemaId);
-        const childDocId = schemaToDocId.get(childSchemaId);
-        if (!parentDocId || !childDocId) continue; // shouldn't happen; defensive skip
-
-        // Pitfall 6: src/dst are doc node ids — source schemas never gain edges here
-        this.store.upsertEdge({
-          src: parentDocId,   // parent DOC
-          dst: childDocId,    // child DOC
-          rel: 'doc_containment',
-          kind: 'doc_containment',
-          w: sim,
-          last_access: now,
-        });
-      }
-
-      // 4. Rebuild doc_reference edges (D-02R: undirected, cosine-connected equal-mass pairs)
-      //    D-03: both endpoints are doc node ids only
-      for (const { schemaIdA, schemaIdB, sim } of referencePairs) {
-        const docIdA = schemaToDocId.get(schemaIdA);
-        const docIdB = schemaToDocId.get(schemaIdB);
-        if (!docIdA || !docIdB) continue; // defensive skip
-
-        // Stable ordering (lexicographic by doc id) for deterministic idempotency
-        const [srcId, dstId] = docIdA < docIdB ? [docIdA, docIdB] : [docIdB, docIdA];
-
-        // Pitfall 6: src/dst are doc node ids — source schemas never gain edges
-        this.store.upsertEdge({
-          src: srcId!,
-          dst: dstId!,
-          rel: 'doc_reference',
-          kind: 'doc_reference',
-          w: sim,
-          last_access: now,
-        });
-      }
+      // Note: doc_containment + doc_reference edge writes removed (D-11).
+      // The DocGraphDeriver runs after this call and owns wipe+rebuild of both kinds.
     }).immediate(); // M-5: write-lock discipline — avoid SQLITE_BUSY_SNAPSHOT in WAL mode
 
     return {
       promoted: promotedSchemas.map(s => s.id),
-      containment: containmentCandidates.length,
-      reference: referencePairs.length,
+      containment: 0,  // DocGraphDeriver now owns edge derivation (D-11)
+      reference: 0,    // DocGraphDeriver now owns edge derivation (D-11)
       tombstoned: demotedDocIds.length,
     };
   }
@@ -684,26 +515,14 @@ export class CorpusPromoter {
         landingDocId = newLandingId;
       }
 
-      // 3. Write landing→chapter doc_containment edges.
-      //    D-03 / Pitfall 6: src = landing doc id, dst = chapter doc id (both type='doc').
-      //    promoteScope is ADDITIVE — it does NOT wipe the global doc_containment cache
-      //    (organic promote() owns wipe-and-rebuild). We re-add these edges on every call
-      //    so they survive the next organic promote() wipe-and-rebuild (idempotent, w=1.0).
-      for (const [, chapterDocId] of chapterDocIds) {
-        this.store.upsertEdge({
-          src: landingDocId,        // parent: landing doc
-          dst: chapterDocId,        // child: chapter doc
-          rel: 'doc_containment',
-          kind: 'doc_containment',
-          w: 1.0,                   // deterministic onboarding spine, not a cosine relation
-          last_access: now,
-        });
-      }
+      // Note (Phase 39.2 — D-11): landing→chapter doc_containment edge-writing retired.
+      // The DocGraphDeriver now owns all hub→subject containment (D-08/D-11).
+      // Stub creation above is still required so stubs exist before the deriver runs.
     }).immediate();
 
     return {
       promoted: promotedIds,
-      containment: chapterDocIds.size, // number of landing→chapter edges written
+      containment: 0,  // DocGraphDeriver now owns edge derivation (D-11)
       reference: 0,
       tombstoned: 0,
     };
@@ -1100,13 +919,6 @@ Output ONLY valid JSON (no markdown, no explanation):
       | { id: string; generated_at: number }
       | undefined;
 
-    // Prepare new subject creation data (read existing subject docs before transaction)
-    const existingSubjectDocs = new Map<string, string>(); // subjectSlug → docId
-    for (const slug of existingSubjectSlugs) {
-      const row = this.stmtGetLiveDocBySlug.get(slug) as { id: string } | undefined;
-      if (row) existingSubjectDocs.set(slug, row.id);
-    }
-
     let hubDocId: string = ''; // assigned inside transaction — TypeScript flow guard
     const newSubjectDocIds: string[] = [];
     const refreshQueued: string[] = [];
@@ -1171,7 +983,6 @@ Output ONLY valid JSON (no markdown, no explanation):
             scope: scope,       // project scope, NOT schemaId (D-03)
             updated_at: now,
           });
-          existingSubjectDocs.set(subject.subjectSlug, docId);
           newSubjectDocIds.push(docId);
         }
 
@@ -1183,21 +994,9 @@ Output ONLY valid JSON (no markdown, no explanation):
         );
       }
 
-      // 4. Write hub→subject doc_containment edges for ALL live subject stubs.
-      //    Includes pre-existing subject stubs (fill-in-place idempotency).
-      for (const [subjectSlug, subjectDocId] of existingSubjectDocs) {
-        // Only write edges for subjects in the accepted set (newly created or known)
-        const isKnown = accepted.some(a => a.subjectSlug === subjectSlug);
-        if (!isKnown) continue;
-        this.store.upsertEdge({
-          src: hubDocId,
-          dst: subjectDocId,
-          rel: 'doc_containment',
-          kind: 'doc_containment',
-          w: 1.0,
-          last_access: now,
-        });
-      }
+      // Note (Phase 39.2 — D-11): hub→subject doc_containment edge-writing retired.
+      // The DocGraphDeriver now owns all hub→subject containment (D-08/D-11 single-ownership).
+      // Hub + subject stubs created above are still required so stubs exist before the deriver runs.
     }).immediate();
 
     return {
