@@ -121,6 +121,13 @@ export function initCorpus(ctx) {
   const isChapterNode = (n) => UUID_RE.test((n && n.slug) || '');
   const isNodeVisible = (n) => showChapters || !isChapterNode(n);
 
+  // Set of recognized PROJECT scopes — derived from subject docs (slug 'project:name'), whose
+  // scope is the bare project. Only these get a generated hue tint (D-16/D-17). Chapter docs
+  // (scope = a schema UUID), isolated docs, and any malformed/unrecognized scope fall back to the
+  // muted rose REST_NODE instead of a random per-scope color (founder direction 2026-06-23).
+  // Derived from SUBJECTS (not hubs) so a malformed colon-less doc can't register itself as a project.
+  let projectScopes = new Set();
+
   // Chapter-visibility toggle button — created once, hidden until the corpus view is open.
   let chapterToggleBtn = document.getElementById('btn-corpus-chapters');
   if (!chapterToggleBtn) {
@@ -197,6 +204,12 @@ export function initCorpus(ctx) {
     // via the node_doc JOIN, so D-08 click→reader resolution works client-side).
     nodeSlugs = {};
     nodeLabels = {};
+    // Recognized project scopes = scopes of subject docs (slug contains ':'). Used to decide
+    // which nodes get a project tint vs the muted rose fallback (chapters / isolated / malformed).
+    projectScopes = new Set();
+    for (const node of (data.nodes || [])) {
+      if ((node.slug || '').includes(':') && node.scope) projectScopes.add(node.scope);
+    }
     for (const node of (data.nodes || [])) {
       if (node.slug) nodeSlugs[node.id] = node.slug;
       // BUG-1 fix (28-04): display the human schema label (server resolves it via the schema
@@ -227,8 +240,10 @@ export function initCorpus(ctx) {
         // D-13: dim UUID schema-chapter docs (visible but faded/desaturated — NOT hidden).
         const isChapterDoc = UUID_RE.test(node.slug || '');
         canvasCtx.globalAlpha = isChapterDoc ? 0.35 : 1.0;
-        // D-16: scope-keyed tint; hover stays amber (activation-only).
-        const baseColor = scopeColor(node.scope);
+        // D-16: scope-keyed tint for recognized PROJECT scopes only; hover stays amber
+        // (activation-only). Chapter / isolated / malformed-scope docs → muted rose REST_NODE
+        // (founder direction: no random per-scope colors for non-project docs).
+        const baseColor = projectScopes.has(node.scope) ? scopeColor(node.scope) : REST_NODE;
         // Circle fill
         canvasCtx.beginPath();
         canvasCtx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
