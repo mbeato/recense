@@ -54,6 +54,8 @@ import { NoopCorpusPromoter } from './corpus-promoter';
 import type { CorpusPromoter } from './corpus-promoter';
 import { NoopInsightReflector } from './insight-reflector';
 import type { InsightReflector } from './insight-reflector';
+import { NoopDocGraphDeriver } from './doc-graph-deriver';
+import type { DocGraphDeriver } from './doc-graph-deriver';
 
 // ---------------------------------------------------------------------------
 // Module-level helpers
@@ -215,6 +217,7 @@ export class Consolidator {
   private readonly deriver: SchemaRelationDeriver | NoopSchemaRelationDeriver;
   private readonly corpusPromoter: CorpusPromoter | NoopCorpusPromoter;
   private readonly insightReflector: InsightReflector | NoopInsightReflector;
+  private readonly docGraphDeriver: DocGraphDeriver | NoopDocGraphDeriver;
   private readonly config: EngineConfig;
   private readonly clock: Clock;
   private readonly sink: ConsolidationSink;
@@ -246,6 +249,9 @@ export class Consolidator {
     deriver: SchemaRelationDeriver | NoopSchemaRelationDeriver = new NoopSchemaRelationDeriver(),
     corpusPromoter: CorpusPromoter | NoopCorpusPromoter = new NoopCorpusPromoter(),
     insightReflector: InsightReflector | NoopInsightReflector = new NoopInsightReflector(),
+    // D-11/D-20 (Phase 39.2): DocGraphDeriver — sole owner of doc_reference + doc_containment edges.
+    // Defaulted to Noop so existing Consolidator constructions (tests) are unaffected.
+    docGraphDeriver: DocGraphDeriver | NoopDocGraphDeriver = new NoopDocGraphDeriver(),
   ) {
     this.db = db;
     this.episodes = episodes;
@@ -257,6 +263,7 @@ export class Consolidator {
     this.deriver = deriver;
     this.corpusPromoter = corpusPromoter;
     this.insightReflector = insightReflector;
+    this.docGraphDeriver = docGraphDeriver;
     this.config = config;
     this.clock = clock;
     this.sink = sink;
@@ -914,6 +921,10 @@ export class Consolidator {
     // (needs fresh schema_rel / super-schema edges), before eviction so the new s=0 doc stubs
     // are present (eviction leaves lifecycle-exempt s=0 nodes alone). LLM-free + idempotent.
     await this.corpusPromoter.promote();
+    // D-11/D-20 (Phase 39.2): DocGraphDeriver — wipe+rebuild all doc_reference + doc_containment
+    // edges from schema/fact graph. Runs AFTER promote() (stubs + subject-schema-ids meta fresh)
+    // and BEFORE insightReflector.reflect() (deriver is sole owner; no competing writers — D-11).
+    await this.docGraphDeriver.deriveDocGraph();
     // D-07 (REFLECT-01, Plan 38-02): insight reflection after corpus promotion, before eviction.
     // A dissolved-cluster tombstoned insight is collected by runEvictionSweep() in the same pass.
     await this.insightReflector.reflect();
