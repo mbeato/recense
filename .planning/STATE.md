@@ -4,8 +4,8 @@ milestone: v8.0
 milestone_name: Performance, Efficiency & Competitive Parity
 status: executing
 stopped_at: Phase 39.2 context gathered
-last_updated: "2026-06-23T11:56:30.660Z"
-last_activity: 2026-06-23 -- Phase 39.2 planning complete
+last_updated: "2026-06-23T11:59:31.172Z"
+last_activity: 2026-06-23 -- Phase 39.2 execution started
 progress:
   total_phases: 5
   completed_phases: 1
@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** **Milestone v8.0 — Performance, Efficiency & Competitive Parity** (Phases 40–43, roadmap already in ROADMAP.md). Phase 40 (Competitive Benchmark Baseline) context gathered (`40-CONTEXT.md`) and being planned in a separate session. Carryover: Phase 39.1-05 live doc-verification still deferred async (drain running) — see Deferred Items + `39.1-05-SUMMARY.md` checklist.
+**Current focus:** Phase 39.2 — multi-level-corpus-graph-from-schema-projection
 
 **Phase 37 go-live — remaining levers (not blocking; coverage tuning DONE):**
 
@@ -36,10 +36,10 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 ## Current Position
 
 Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
-Phase: 40 — Competitive Benchmark Baseline (context gathered; being planned in a separate session)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-06-23 -- Phase 39.2 planning complete
+Phase: 39.2 (multi-level-corpus-graph-from-schema-projection) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 39.2
+Last activity: 2026-06-23 -- Phase 39.2 execution started
 Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async.
 
 ## Performance Metrics
