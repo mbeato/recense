@@ -25,7 +25,9 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import { describe, it, expect } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -261,16 +263,85 @@ describe('locomo-harness', () => {
     expect(isSessionHit(['D6:1'], new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]))).toBe(true);
   });
 
-  // ── Test 3 (skipped — Plan 40-02 ships locomo-harness.cjs): dry-run exit 0 ─
+  // ── Test 3 (active — Plan 40-02): dry-run smoke ─────────────────────────────
   //
-  // TODO(Plan 40-02): un-skip once scripts/eval/locomo-harness.cjs exists.
-  // Verify: spawnSync(harness.cjs, ['--dry-run', '--eval', MINI_FIXTURE_PATH]) exits 0.
+  // spawnSync(harness.cjs, ['--dry-run', '--eval', MINI_FIXTURE_PATH]) exits 0
+  // and writes one result line per scoreable QA pair (category !== 5).
+  // Mini fixture has 5 QA pairs; 1 is category 5 → 4 result lines expected.
 
-  it.skip('harness --dry-run exits 0 (Plan 40-02 gate)', () => {
-    // This test will be implemented once locomo-harness.cjs is built in Plan 40-02.
-    // Pattern: spawnSync(process.execPath, [harness.cjs, '--dry-run', '--eval', fixture])
-    // Expected: result.status === 0
-    throw new Error('TODO: implement in Plan 40-02');
+  it('harness --dry-run exits 0 and writes result lines per scoreable QA pair', () => {
+    const HARNESS_PATH = path.resolve(__dirname, '../scripts/eval/locomo-harness.cjs');
+    const OUT = path.join(os.tmpdir(), `locomo-dry-smoke-${Date.now()}-${process.pid}.jsonl`);
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [HARNESS_PATH, '--dry-run', '--eval', MINI_FIXTURE_PATH, '--out', OUT],
+        { encoding: 'utf8', cwd: path.resolve(__dirname, '..'), timeout: 30_000 },
+      );
+
+      // Must exit 0
+      expect(result.status).toBe(0);
+      // Must log dry-run mode
+      expect(result.stdout).toContain('[dry-run]');
+
+      // Output file must exist with result lines
+      expect(fs.existsSync(OUT)).toBe(true);
+      const lines = fs.readFileSync(OUT, 'utf8').split('\n').filter(l => l.trim());
+      // Mini fixture: 5 QA pairs, 1 category-5 → 4 scoreable rows
+      expect(lines.length).toBe(4);
+
+      // Each result line must have required fields
+      for (const line of lines) {
+        const rec = JSON.parse(line) as Record<string, unknown>;
+        expect(rec).toHaveProperty('sample_id');
+        expect(rec).toHaveProperty('hypothesis');
+        expect(rec.hypothesis).toBe('dry-run-stub-answer');
+        // category 5 must never appear in output
+        expect(rec.category).not.toBe(5);
+      }
+    } finally {
+      try { fs.unlinkSync(OUT); } catch {}
+    }
+  });
+
+  // ── Test 4 (active — Plan 40-02): no-flag guard exits non-zero ───────────────
+  //
+  // Running the harness with no mode flag must exit non-zero (T-40-03).
+
+  it('harness exits non-zero when no mode flag is passed (--run gate)', () => {
+    const HARNESS_PATH = path.resolve(__dirname, '../scripts/eval/locomo-harness.cjs');
+
+    const result = spawnSync(
+      process.execPath,
+      [HARNESS_PATH],
+      { encoding: 'utf8', cwd: path.resolve(__dirname, '..'), timeout: 10_000 },
+    );
+
+    expect(result.status).not.toBe(0);
+    // Must print usage guidance
+    expect(result.stderr).toContain('--dry-run');
+  });
+
+  // ── Structural pin: source contains category-5 skip and [Session N] tag ──────
+  //
+  // These structural pins ensure the harness maintains the R@K tag→hit contract
+  // even after future edits. They are lightweight source inspections, not runtime.
+
+  it('harness source contains category-5 skip guard', () => {
+    const HARNESS_PATH = path.resolve(__dirname, '../scripts/eval/locomo-harness.cjs');
+    const src = fs.readFileSync(HARNESS_PATH, 'utf8');
+    // The scoreable filter must exclude category 5
+    expect(src).toMatch(/category.*!==.*5|category.*===.*5/);
+  });
+
+  it('harness source contains [Session N] tag in formatSession (load-bearing for R@K)', () => {
+    const HARNESS_PATH = path.resolve(__dirname, '../scripts/eval/locomo-harness.cjs');
+    const src = fs.readFileSync(HARNESS_PATH, 'utf8');
+    // The [Session N] tag is inserted by formatSession and parsed by the R@K hit logic
+    expect(src).toContain('[Session ');
+    // Evidence parsing must use the D-prefix dialog ID format
+    expect(src).toContain("replace('D', '')");
   });
 
 });
