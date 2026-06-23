@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v8.0
 milestone_name: Performance, Efficiency & Competitive Parity
-status: In Progress
-stopped_at: v8.0 active — Phase 40 (Competitive Benchmark Baseline) being planned in a separate session
-last_updated: "2026-06-23T02:24:33.120Z"
-last_activity: 2026-06-23 — Switched to milestone v8.0 (v7.0 shipped + tagged)
+status: executing
+stopped_at: Phase 40 context gathered
+last_updated: "2026-06-23T10:50:56.330Z"
+last_activity: 2026-06-23 -- Phase 40 planning complete
 progress:
-  total_phases: 4
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 5
+  completed_phases: 1
+  total_plans: 10
+  completed_plans: 5
+  percent: 20
 ---
 
 # Project State
@@ -38,8 +38,8 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
 Phase: 40 — Competitive Benchmark Baseline (context gathered; being planned in a separate session)
 Plan: —
-Status: In Progress (planning Phase 40)
-Last activity: 2026-06-23 — Switched to milestone v8.0 (v7.0 shipped + tagged)
+Status: Ready to execute
+Last activity: 2026-06-23 -- Phase 40 planning complete
 Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async.
 
 ## Performance Metrics
@@ -85,6 +85,7 @@ Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred a
 - Phase 33 added (2026-06-20): **Synchronous Curated Write (`recense remember`)** — closes the customer-zero "replaces MEMORY.md" promise on the WRITE side. recense owns read (recall at session-start) but deliberate facts still leak to native Claude Code `.md` memory because the only write paths are passive-lossy (turn-capture→sleep-pass) or batch-lossy (import-memory). Adds a synchronous, verbatim, curated single-fact write that runs in-place reconsolidation (reuses update-decision/sink/judge), plus a CLAUDE.md cutover directive and a one-time lossless migration of the 12 existing `.md` files through the new command. Standalone — depends only on the live consolidation machinery, NOT the v6.0 onboarding phases. Founder-directed 2026-06-20; design forks resolved (reconsolidate-on-write + migrate-via-remember). See memory [[graphify-is-codebase-tool-not-memory-rival]] context thread.
 - Phase 28 added (2026-06-19): **Schema-Anchored Corpus** — pivots the reader corpus from project-scope docs to the abstraction graph rendered as prose (docs anchor on schemas/entities, cite direct facts; mass-gated promotion; hierarchy mirrors the `abstracts` ladder; decide-cheap/generate-lazy; read-only projection). **Supersedes Phase 27 READER-04** (doc_link-between-projects); inherits the reader UI + flat 2D renderer + lazy-gen + /doc routes + gather + doc-writer. Origin: design discussion during Phase 27 27-05 verification (see memory [[corpus-from-schemas-design]]).
 - Phase 39.1 inserted after Phase 39: Corpus Quality — project-hub + subject docs via LLM exhaust-gate, retroactive junk cleanup, recense+vtx ingestion (design in recense, scope brain-memory) (URGENT)
+- Phase 39.2 inserted after Phase 39.1: Multi-Level Corpus Graph from Schema Projection — project the doc->doc graph (doc_reference subject<->subject + cross-project, multi-level containment) down from the existing schema/fact graph; LLM-free, no re-ingest. Origin: 39.1-05 verify found doc_reference near-empty (star topology). Structure-only; corpus-content fix (exhaust-judge, hollow subjects, schema-chapter regen) deferred.
 
 ### v5.0 Dependency Chain
 
