@@ -112,6 +112,49 @@ export function initCorpus(ctx) {
   // Separate from hoveredId so sidebar-driven multi-node highlight and direct graph hover coexist.
   let highlightSet = new Set();
 
+  // Chapter (UUID schema-chapter) docs are HIDDEN by default to keep the index readable.
+  // Founder override of D-13 (2026-06-23): the all-shown-dimmed default was too cluttered —
+  // ~160 hazed chapters drowned the hub→subject skeleton in mist. A toggle (off by default)
+  // reveals them. Chapters stay in the (pinned) force layout so their positions are stable when
+  // shown; nodeVisibility/linkVisibility just skip painting them — instant toggle, no re-settle.
+  let showChapters = false;
+  const isChapterNode = (n) => UUID_RE.test((n && n.slug) || '');
+  const isNodeVisible = (n) => showChapters || !isChapterNode(n);
+
+  // Chapter-visibility toggle button — created once, hidden until the corpus view is open.
+  let chapterToggleBtn = document.getElementById('btn-corpus-chapters');
+  if (!chapterToggleBtn) {
+    chapterToggleBtn = document.createElement('button');
+    chapterToggleBtn.id = 'btn-corpus-chapters';
+    chapterToggleBtn.type = 'button';
+    chapterToggleBtn.style.cssText = [
+      'position:fixed', 'top:12px', 'right:12px', 'z-index:40', 'display:none',
+      'padding:6px 10px', 'font:12px system-ui,-apple-system,sans-serif',
+      'color:#c8bcd0', 'background:rgba(40,28,50,0.85)',
+      'border:1px solid rgba(156,112,128,0.45)', 'border-radius:6px', 'cursor:pointer',
+    ].join(';');
+    document.body.appendChild(chapterToggleBtn);
+  }
+  function syncChapterToggleLabel() {
+    chapterToggleBtn.textContent = showChapters ? 'Hide chapter docs' : 'Show chapter docs';
+    chapterToggleBtn.setAttribute('aria-pressed', String(showChapters));
+  }
+  function setChapterToggleVisible(v) { chapterToggleBtn.style.display = v ? 'block' : 'none'; }
+  syncChapterToggleLabel();
+  chapterToggleBtn.addEventListener('click', () => {
+    showChapters = !showChapters;
+    syncChapterToggleLabel();
+    if (!CorpusGraph) return;
+    try {
+      // Re-assert the visibility + paint accessors so force-graph repaints the (static, pinned)
+      // canvas with the new filter — same repaint trick used by highlightCorpusNode.
+      if (typeof CorpusGraph.nodeVisibility === 'function') CorpusGraph.nodeVisibility(CorpusGraph.nodeVisibility());
+      if (typeof CorpusGraph.linkVisibility === 'function') CorpusGraph.linkVisibility(CorpusGraph.linkVisibility());
+      if (typeof CorpusGraph.nodeCanvasObject === 'function') CorpusGraph.nodeCanvasObject(CorpusGraph.nodeCanvasObject());
+    } catch (_) { /* non-fatal */ }
+    fitAndClamp();
+  });
+
   /** Build the 2D ForceGraph instance once and fetch its data. */
   async function buildCorpusGraph() {
     const ForceGraph = window.ForceGraph;
@@ -211,6 +254,16 @@ export function initCorpus(ctx) {
         canvasCtx.beginPath();
         canvasCtx.arc(node.x, node.y, NODE_R + 2, 0, 2 * Math.PI, false);
         canvasCtx.fill();
+      })
+      // Founder override (2026-06-23): hide chapter docs by default to declutter. Hiding via
+      // nodeVisibility/linkVisibility (not graphData removal) keeps positions pinned so toggling
+      // is instant. A link is visible only when BOTH endpoints are visible.
+      .nodeVisibility((node) => isNodeVisible(node))
+      .linkVisibility((link) => {
+        const s = typeof link.source === 'object' ? link.source : null;
+        const t = typeof link.target === 'object' ? link.target : null;
+        if (!s || !t) return true; // pre-layout (string ids) — default visible
+        return isNodeVisible(s) && isNodeVisible(t);
       })
       // D-08 / D-14: link-kind-aware styling (CORPUS-04).
       // doc_containment      = solid directed spine (heavier, arrow at child, no dash).
@@ -392,7 +445,8 @@ export function initCorpus(ctx) {
     if (!CorpusGraph || !CorpusGraph.zoomToFit) return;
     try {
       // Instant fit — no animation, so we never render the over-zoomed intermediate frame.
-      CorpusGraph.zoomToFit(0, 40);
+      // Frame only the VISIBLE nodes (chapters may be hidden) so the skeleton fills the view.
+      CorpusGraph.zoomToFit(0, 40, (node) => isNodeVisible(node));
       // Immediately clamp the zoom ceiling (also 0ms). For a small graph zoomToFit lands
       // above MAX_ZOOM; this snaps it down before the next frame, no rubberband.
       if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
@@ -477,6 +531,7 @@ export function initCorpus(ctx) {
   function goToCorpus() {
     setCorpusButton();
     setTopicsSearchHidden(true);
+    setChapterToggleVisible(true);
     // Open the index sidebar BEFORE the reveal so the corpus offsets (left:var(--index-width))
     // and frames into the remaining width — a true split, not an overlay (founder polish, 39).
     // The dedicated #btn-index was removed; corpus IS the index entry point now.
@@ -486,6 +541,7 @@ export function initCorpus(ctx) {
   function goToBrain() {
     setBrainButton();
     setTopicsSearchHidden(false);
+    setChapterToggleVisible(false);
     // The index sidebar (if open) docks over the corpus — close it before the brain returns
     // so it doesn't linger over the 3D brain (39-02 re-verify: sidebar-over-corpus model).
     if (typeof ctx.closeIndexSidebar === 'function') ctx.closeIndexSidebar();
@@ -509,6 +565,7 @@ export function initCorpus(ctx) {
   ctx.returnToCorpus = function returnToCorpus() {
     setCorpusButton();
     setTopicsSearchHidden(true);
+    setChapterToggleVisible(true);
     transition.assertCorpus();
   };
 
