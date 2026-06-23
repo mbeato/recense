@@ -456,6 +456,11 @@ export function initReader(ctx) {
   // polls until the fresh doc is ready and reloads it (reusing the poll loop).
 
   async function regenerate() {
+    // Capture the current doc's generated_at BEFORE regenerating. A successful regen supersedes
+    // the doc node with a newer generated_at; if it fails/times out (the generate-doc CLI is
+    // spawned detached with stdio:'ignore', so the server can't see the failure) the doc is left
+    // unchanged. Comparing generated_at after the poll is how we detect that silent no-op.
+    const prevGeneratedAt = await fetchGeneratedAt();
     try {
       // Remove the stale banner immediately to signal the action was taken.
       const existingBanner = body.querySelector('.staleness-banner');
@@ -483,12 +488,36 @@ export function initReader(ctx) {
       ctx.staleFactIds = staleFactIds;
       ctx.staleFactPrevValues = staleFactPrevValues;
       await loadWithPoll();
+
+      // Detect a silent no-op: if generated_at did not advance, the generator failed or timed
+      // out and loadWithPoll just re-rendered the OLD doc. Surface it instead of pretending success.
+      const newGeneratedAt = await fetchGeneratedAt();
+      if (prevGeneratedAt != null && newGeneratedAt != null && newGeneratedAt <= prevGeneratedAt) {
+        const failEl = document.createElement('div');
+        failEl.className = 'reader-loading';
+        failEl.textContent =
+          'regeneration didn’t complete — the generator timed out or errored. The doc is unchanged; use “regenerate” to try again.';
+        body.insertBefore(failEl, body.firstChild);
+      }
     } catch (e) {
       // Non-fatal: show an inline error.
       const errEl = document.createElement('div');
       errEl.className = 'reader-loading';
       errEl.textContent = 'regenerate failed: ' + String(e);
       body.insertBefore(errEl, body.firstChild);
+    }
+  }
+
+  // Fetch the live doc node's generated_at for the current slug (regen success detection).
+  // Returns a number, or null on any error / missing field (caller treats null as "unknown").
+  async function fetchGeneratedAt() {
+    try {
+      const res = await fetch('/doc/meta?slug=' + encodeURIComponent(currentSlug));
+      if (!res.ok) return null;
+      const d = await res.json();
+      return typeof d.generated_at === 'number' ? d.generated_at : null;
+    } catch (_) {
+      return null;
     }
   }
 

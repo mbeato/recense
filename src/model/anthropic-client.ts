@@ -87,6 +87,17 @@ export const SDK_MAX_RETRIES: number = (() => {
 })();
 
 /**
+ * Call-time cloud-SDK timeout. Defaults to SDK_TIMEOUT_MS (60s) so the M-4 lock-hold bound
+ * holds for the always-on paths, but allows a per-process override via RECENSE_SDK_TIMEOUT_MS.
+ * generate-doc-cli raises this to 600s for slow cited-prose doc generation on the cloud API
+ * path — mirroring its existing RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS raise. Read at CALL time (not
+ * module load) so a CLI's runtime env-set — applied after this module is imported — takes effect.
+ */
+export function resolveSdkTimeoutMs(): number {
+  return parseEnvInt('RECENSE_SDK_TIMEOUT_MS', SDK_TIMEOUT_MS, 1);
+}
+
+/**
  * Pure helper — returns the correct model id string for the configured provider.
  * No client construction; safe to call in tests without credentials.
  */
@@ -122,7 +133,7 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
     } = {};
     if (config.vertexProjectId) opts.projectId = config.vertexProjectId;
     if (config.vertexRegion) opts.region = config.vertexRegion;
-    opts.timeout = SDK_TIMEOUT_MS;
+    opts.timeout = resolveSdkTimeoutMs();
     opts.maxRetries = SDK_MAX_RETRIES;
     const client = new AnthropicVertex(opts);
     // Cast to AnthropicLike: the extra second arg (`{ jsonSchema? }`) lands in the
@@ -156,7 +167,7 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
     const openai = new OpenAI({
       baseURL: config.deepseekBaseUrl,
       apiKey: process.env['DEEPSEEK_API_KEY'],
-      timeout: SDK_TIMEOUT_MS,
+      timeout: resolveSdkTimeoutMs(),
       maxRetries: SDK_MAX_RETRIES,
     });
     // Pass SDK_MAX_RETRIES so throw-level retries (KXE) are bounded consistently
@@ -175,6 +186,6 @@ export function createAnthropicClient(config: EngineConfig): { client: Anthropic
 
   // Default: direct Anthropic SDK — reads ANTHROPIC_API_KEY from env automatically.
   // Cast to AnthropicLike: same reasoning as the vertex path above (T-CLB-seam).
-  const client = new Anthropic({ timeout: SDK_TIMEOUT_MS, maxRetries: SDK_MAX_RETRIES });
+  const client = new Anthropic({ timeout: resolveSdkTimeoutMs(), maxRetries: SDK_MAX_RETRIES });
   return { client: client as unknown as AnthropicLike, model };
 }

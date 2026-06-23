@@ -128,6 +128,13 @@ async function main(): Promise<void> {
     if (!process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS']) {
       process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS'] = '600000';
     }
+    // Same 10-min headroom for the CLOUD API path (Anthropic/Vertex/DeepSeek). The headless
+    // raise above only covers `claude -p`; when the judge tier resolves to the cloud SDK its
+    // timeout defaults to SDK_TIMEOUT_MS (60s), which a ~4000-token doc-gen call overruns →
+    // "Request timed out" → empty/unchanged doc. resolveSdkTimeoutMs() reads this at call time.
+    if (!process.env['RECENSE_SDK_TIMEOUT_MS']) {
+      process.env['RECENSE_SDK_TIMEOUT_MS'] = '600000';
+    }
 
     // The judge-tier config is the strong-model slot in any env — no new docModel var.
     const judgeConfig = { ...config, ...resolveProviderOverlay(process.env, 'RECENSE_JUDGE_PROVIDER') };
