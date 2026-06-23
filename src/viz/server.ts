@@ -154,10 +154,12 @@ export function startVizServer(dbPath: string, port: number): http.Server {
   // (slug='tonos' etc.) won't match any schema.id → sch.value IS NULL → fall back to slug.
   const stmtDocNodes = db.prepare(`
     SELECT n.id, n.type, n.value, n.s, n.c, n.origin, n.tombstoned, nd.slug,
-           COALESCE(NULLIF(sch.value, ''), nd.slug) AS label
+           COALESCE(NULLIF(sch.value, ''), nd.slug) AS label,
+           ns.scope
     FROM node n
     JOIN node_doc nd ON nd.node_id = n.id
     LEFT JOIN node sch ON sch.id = nd.slug AND sch.type = 'schema' AND sch.tombstoned = 0
+    LEFT JOIN node_scope ns ON ns.node_id = n.id
     WHERE n.type='doc' AND n.tombstoned=0
   `);
   // CORPUS-04: Return doc_link + doc_containment + doc_reference edges, but only between
