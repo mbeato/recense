@@ -33,6 +33,7 @@ import { DefaultModelProvider } from '../model/provider';
 import { generateDoc, generateDocForSchema } from '../reader/doc-generator';
 import { computeSchemaCentroid } from '../reader/doc-gather';
 import { writeDoc } from '../consolidation/doc-writer';
+import { DocGraphDeriver } from '../consolidation/doc-graph-deriver';
 import { acquireLock, releaseLock } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
@@ -189,6 +190,21 @@ async function main(): Promise<void> {
     });
 
     fileLog(`written: nodeId=${genResult.docId}`);
+
+    // ── 7b. Re-derive the doc-graph (Phase 39.2 — keep regen from orphaning a doc) ──
+    // Regeneration mints a NEW doc node id and tombstones the old one, stranding the
+    // node-id-keyed doc_containment/doc_reference edges on the dead node — the regenerated doc
+    // would render disjoint until the next sleep pass. DocGraphDeriver is the sole owner of those
+    // edges (D-11); its LLM-free wipe-and-rebuild re-keys them onto the live node via slug/scope,
+    // restoring the doc's hub→subject / subject→chapter / cross-project links immediately.
+    // Non-fatal: the doc write already succeeded; an edge-rebuild hiccup just defers reconnection
+    // to the next sleep pass.
+    try {
+      const docGraph = await new DocGraphDeriver(db, store, config, realClock).deriveDocGraph();
+      fileLog(`doc-graph re-derived: containment=${docGraph.containment} reference=${docGraph.reference}`);
+    } catch (e) {
+      fileLog(`doc-graph re-derive skipped (non-fatal): ${e}`);
+    }
 
     // ── 8. Emit result JSON ───────────────────────────────────────────────────
     process.stdout.write(
