@@ -108,6 +108,38 @@ function isEligibleForExtraction(episode: EpisodeRow, config: EngineConfig): boo
 /** Concurrency for the Phase A extraction prefetch pool. */
 const PREFETCH_CONCURRENCY = 4;
 
+/**
+ * Episode batch size for the chunked prefetch loop (FIX-STALL-01).
+ *
+ * Problem: the one-shot prefetchExtractions() awaited ALL N eligible episodes before
+ * the per-episode loop ran. With N=308, 4-concurrent claude-headless workers at ~30s/episode,
+ * the prefetch took ~38 min — exceeding LOCK_STALE_MS (30 min). The hourly launchd job
+ * reclaimed the stale lock and relaunched with the same unchanged backlog, looping forever
+ * (markConsolidated was never called).
+ *
+ * Fix: process episodes in batches of PREFETCH_EPISODE_BATCH_SIZE. Each batch:
+ *   1. prefetchExtractions(batch) → ~20 × 30s / 4 concurrent = ~2.5 min
+ *   2. per-episode loop for the batch → calls markConsolidated N times, checkpointing progress
+ *   3. advance to next batch
+ *
+ * At 20 episodes/batch, each batch prefetch takes ~2.5 min. A 300-episode backlog needs 15
+ * batches ≈ 37 min total, but each batch checkpoints 20 committed episodes before the next
+ * starts — so even if the lock stales mid-run, the next pass starts with a smaller backlog
+ * rather than repeating from zero.
+ *
+ * Tunable: set RECENSE_PREFETCH_EPISODE_BATCH_SIZE env to override. Constraints:
+ *   - Too small → many batches, each with its own reembedDirty-like overhead (negligible).
+ *   - Too large → approaches the old one-shot problem. Keep batch × 30s / 4 < 20 min.
+ *   - Default 20: 20 × 30s / 4 = 2.5 min/batch (13% of the 30-min stale window).
+ */
+const PREFETCH_EPISODE_BATCH_SIZE_DEFAULT = 20;
+function getPrefetchBatchSize(): number {
+  const raw = process.env['RECENSE_PREFETCH_EPISODE_BATCH_SIZE'];
+  if (!raw) return PREFETCH_EPISODE_BATCH_SIZE_DEFAULT;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : PREFETCH_EPISODE_BATCH_SIZE_DEFAULT;
+}
+
 // ---------------------------------------------------------------------------
 // Internal types — collect Phase A results into plain arrays before any DB write
 // ---------------------------------------------------------------------------
@@ -471,16 +503,47 @@ export class Consolidator {
     // Quarantined episodes are NOT marked consolidated — they will be retried next pass.
     const quarantine = new Set<string>();
 
-    // ── Phase A optimization: prefetch claim extractions ────────────────────
-    // Extraction depends only on episode content/source/role — never on graph state.
-    // Hoist it before the ordered loop with a bounded pool (PREFETCH_CONCURRENCY=4).
-    // Episodes are still processed in order below (EPISODE ORDER IS SEMANTICS: episode N's
-    // claims are judged against graph state written by episodes 1..N-1). Only extraction
-    // is parallelised; echo detection, embedding, judging, and all writes remain in order.
-    const eligibleForPrefetch = unconsolidated.filter(ep => isEligibleForExtraction(ep, this.config));
-    const prefetchedExtractions = await this.prefetchExtractions(eligibleForPrefetch);
+    // ── Phase A optimization: chunked prefetch claim extractions ────────────
+    // FIX-STALL-01: process episodes in batches of PREFETCH_EPISODE_BATCH_SIZE instead of
+    // one blocking prefetch over ALL episodes before the per-episode loop starts.
+    //
+    // OLD (broken at scale): await prefetchExtractions(ALL 308 episodes) → 38 min →
+    //   exceeds LOCK_STALE_MS (30 min) → launchd reclaims lock → restarts from 308 unchanged
+    //   backlog → markConsolidated is NEVER called → infinite stall loop.
+    //
+    // NEW (batched): for each chunk of PREFETCH_EPISODE_BATCH_SIZE episodes:
+    //   1. prefetchExtractions(chunk) → ~2.5 min/chunk (20 eps × 30s / 4 workers)
+    //   2. per-episode loop for the chunk → markConsolidated called N times per chunk
+    //   3. advance to next chunk
+    // Progress is checkpointed after each batch, so a stale-lock restart resumes from a
+    // smaller backlog rather than replaying the full N every time.
+    //
+    // EPISODE ORDER IS SEMANTICS: episodes within a chunk are extracted in parallel (order
+    // doesn't matter for extraction) but processed in the original listUnconsolidated() order
+    // in the per-episode loop. Cross-chunk ordering is also preserved (we slice unconsolidated
+    // in index order). The invariant "episode N's claims are judged against graph state written
+    // by episodes 1..N-1" is maintained because the per-episode loop always runs in original order.
+    //
+    // Extraction depends only on episode content/source/role — never on graph state (safe to
+    // parallelize across the chunk). All writes still happen in the ordered per-episode loop (Phase B).
+    const prefetchBatchSize = getPrefetchBatchSize();
+    // prefetchedExtractions accumulates results from all chunks — reused across the loop below.
+    // The Map is populated chunk-by-chunk; the per-episode loop below always finds a result for
+    // eligible episodes because the chunk covers exactly the sub-slice being processed.
+    const prefetchedExtractions = new Map<string, { claims: ExtractedClaim[]; triples: Triple[] } | Error>();
 
-    for (let episode of unconsolidated) {
+    // Process unconsolidated in chunks. Each chunk: prefetch → per-episode loop → next chunk.
+    for (let chunkStart = 0; chunkStart < unconsolidated.length; chunkStart += prefetchBatchSize) {
+      const chunk = unconsolidated.slice(chunkStart, chunkStart + prefetchBatchSize);
+      const eligibleInChunk = chunk.filter(ep => isEligibleForExtraction(ep, this.config));
+      const chunkResults = await this.prefetchExtractions(eligibleInChunk);
+      // Merge into the shared map so the per-episode loop below can look up results.
+      for (const [id, result] of chunkResults) {
+        prefetchedExtractions.set(id, result);
+      }
+
+      // ── Per-episode loop for this chunk ─────────────────────────────────
+      for (let episode of chunk) {
       // H-2: per-episode isolation — mirrors the per-adapter isolation in D-66 (runPullPhase).
       // A deterministically-failing episode (bad API 400 on its content, corrupt DB row)
       // must not block later episodes or abort Phase C / induction / eviction.
@@ -835,7 +898,8 @@ export class Consolidator {
         quarantine.add(episode.id);
         // fall through to next episode (continue implicit after catch)
       }
-    }
+      } // end per-episode loop for this chunk
+    } // end chunked prefetch outer loop (FIX-STALL-01)
 
     // ── Phase C: Re-embed nodes dirtied by this pass, then eviction sweep ──
     await this.reembedDirty();
