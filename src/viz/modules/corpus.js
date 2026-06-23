@@ -128,7 +128,9 @@ export function initCorpus(ctx) {
     chapterToggleBtn.id = 'btn-corpus-chapters';
     chapterToggleBtn.type = 'button';
     chapterToggleBtn.style.cssText = [
-      'position:fixed', 'top:12px', 'right:12px', 'z-index:40', 'display:none',
+      // right:54px clears the top-right button column (collapse/corpus/recenter, right:12px ~30px
+      // wide, ends ~42px) so the toggle docks to its LEFT instead of rendering beneath it.
+      'position:fixed', 'top:12px', 'right:54px', 'z-index:40', 'display:none',
       'padding:6px 10px', 'font:12px system-ui,-apple-system,sans-serif',
       'color:#c8bcd0', 'background:rgba(40,28,50,0.85)',
       'border:1px solid rgba(156,112,128,0.45)', 'border-radius:6px', 'cursor:pointer',
