@@ -901,3 +901,160 @@ describe('DocGraphDeriver — canonical fixture (hub + 3 subjects)', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 39.2 Change B: subject→chapter doc_containment edges
+// ---------------------------------------------------------------------------
+
+describe('DocGraphDeriver — subject→chapter containment (Phase 39.2, Change B)', () => {
+  it('a subject whose schemaIds include a schema that has a chapter doc (slug=schemaId) produces a subject→chapter doc_containment edge', async () => {
+    const db = makeDb();
+    const store = makeStore(db);
+    const clock = makeClock();
+    const config = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+    const deriver = new DocGraphDeriver(db, store, config, clock);
+
+    // Hub doc
+    const hubId = newId();
+    insertDocNode(db, hubId, 'proj-chapter', 'proj-chapter');
+
+    // Subject doc (slug contains ':' = subject)
+    const subId = newId();
+    insertDocNode(db, subId, 'proj-chapter:my-subject', 'proj-chapter');
+
+    // A second subject so we have ≥2 subjects and the deriver does not early-exit
+    const sub2Id = newId();
+    insertDocNode(db, sub2Id, 'proj-chapter:other-subject', 'proj-chapter');
+
+    // Schema with UUID slug
+    const schemaId = '11111111-2222-3333-4444-555555555555';
+    insertSchemaNode(db, schemaId, 'Chapter Schema');
+
+    // Chapter doc: slug === schemaId (UUID_RE matches)
+    const chapterDocId = newId();
+    insertDocNode(db, chapterDocId, schemaId, schemaId); // scope = schemaId
+
+    // A fact for the schema (needed so subjects have member data)
+    const factId = newId();
+    insertFactNode(db, factId, 'chapter fact', 0);
+    insertEdge(db, schemaId, factId, 'abstracts', 'abstracts');
+
+    // A separate schema for sub2 (no chapter doc)
+    const schema2Id = newId();
+    insertSchemaNode(db, schema2Id, 'Other Schema');
+    const fact2Id = newId();
+    insertFactNode(db, fact2Id, 'other fact', 1);
+    insertEdge(db, schema2Id, fact2Id, 'abstracts', 'abstracts');
+
+    // subject-schema-ids meta: my-subject references schemaId (UUID)
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+      `subject-schema-ids:proj-chapter:my-subject`, JSON.stringify([schemaId])
+    );
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+      `subject-schema-ids:proj-chapter:other-subject`, JSON.stringify([schema2Id])
+    );
+
+    await deriver.deriveDocGraph();
+
+    const containment = readDocEdges(db).filter(e => e.kind === 'doc_containment');
+
+    // The subject should have a containment edge to the chapter doc
+    const subjectToChapter = containment.filter(e => e.src === subId && e.dst === chapterDocId);
+    expect(subjectToChapter).toHaveLength(1);
+    expect(subjectToChapter[0]!.w).toBe(1.0);
+  });
+
+  it('a chapter can receive containment edges from multiple subjects (DAG, D-07)', async () => {
+    const db = makeDb();
+    const store = makeStore(db);
+    const clock = makeClock();
+    const config = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+    const deriver = new DocGraphDeriver(db, store, config, clock);
+
+    const hubId = newId();
+    insertDocNode(db, hubId, 'proj-multi-ch', 'proj-multi-ch');
+
+    // Two subjects that both reference the same schema / chapter doc
+    const subA = newId();
+    const subB = newId();
+    insertDocNode(db, subA, 'proj-multi-ch:sub-a', 'proj-multi-ch');
+    insertDocNode(db, subB, 'proj-multi-ch:sub-b', 'proj-multi-ch');
+
+    const schemaId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    insertSchemaNode(db, schemaId, 'Shared Chapter Schema');
+
+    const chapterDocId = newId();
+    insertDocNode(db, chapterDocId, schemaId, schemaId);
+
+    const factA = newId();
+    const factB = newId();
+    insertFactNode(db, factA, 'fact-a', 0);
+    insertFactNode(db, factB, 'fact-b', 1);
+    insertEdge(db, schemaId, factA, 'abstracts', 'abstracts');
+    insertEdge(db, schemaId, factB, 'abstracts', 'abstracts');
+
+    // Both subjects reference the same schemaId
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+      `subject-schema-ids:proj-multi-ch:sub-a`, JSON.stringify([schemaId])
+    );
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+      `subject-schema-ids:proj-multi-ch:sub-b`, JSON.stringify([schemaId])
+    );
+
+    await deriver.deriveDocGraph();
+
+    const containment = readDocEdges(db).filter(e => e.kind === 'doc_containment');
+    const toChapter = containment.filter(e => e.dst === chapterDocId);
+
+    // Both subA and subB should have edges to the chapter
+    expect(toChapter.some(e => e.src === subA)).toBe(true);
+    expect(toChapter.some(e => e.src === subB)).toBe(true);
+    // No duplicate edges
+    expect(toChapter.filter(e => e.src === subA)).toHaveLength(1);
+    expect(toChapter.filter(e => e.src === subB)).toHaveLength(1);
+  });
+
+  it('chapter doc without a corresponding schema entry in subject schemaIds produces no subject→chapter edge', async () => {
+    const db = makeDb();
+    const store = makeStore(db);
+    const clock = makeClock();
+    const config = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+    const deriver = new DocGraphDeriver(db, store, config, clock);
+
+    const hubId = newId();
+    insertDocNode(db, hubId, 'proj-no-ch', 'proj-no-ch');
+
+    const subId = newId();
+    insertDocNode(db, subId, 'proj-no-ch:my-sub', 'proj-no-ch');
+
+    const sub2Id = newId();
+    insertDocNode(db, sub2Id, 'proj-no-ch:other-sub', 'proj-no-ch');
+
+    // Chapter doc exists, but subject schema list does NOT include its slug
+    const chapterSchemaId = 'cccccccc-dddd-eeee-ffff-000000000000';
+    const chapterDocId = newId();
+    insertDocNode(db, chapterDocId, chapterSchemaId, chapterSchemaId);
+    insertSchemaNode(db, chapterSchemaId, 'Orphan Chapter Schema');
+
+    // Subject references a DIFFERENT schema (not chapterSchemaId)
+    const otherSchemaId = newId();
+    insertSchemaNode(db, otherSchemaId, 'Other Schema');
+    const factId = newId();
+    insertFactNode(db, factId, 'other fact', 0);
+    insertEdge(db, otherSchemaId, factId, 'abstracts', 'abstracts');
+
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+      `subject-schema-ids:proj-no-ch:my-sub`, JSON.stringify([otherSchemaId])
+    );
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+      `subject-schema-ids:proj-no-ch:other-sub`, JSON.stringify([otherSchemaId])
+    );
+
+    await deriver.deriveDocGraph();
+
+    const containment = readDocEdges(db).filter(e => e.kind === 'doc_containment');
+    const toOrphanChapter = containment.filter(e => e.dst === chapterDocId);
+    // No edge from any subject to the chapter (their schemaIds don't include chapterSchemaId)
+    expect(toOrphanChapter).toHaveLength(0);
+  });
+});

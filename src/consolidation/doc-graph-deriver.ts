@@ -560,6 +560,33 @@ export class DocGraphDeriver {
       }
     }
 
+    // D-11 subject→chapter containment (Phase 39.2):
+    // For each subject, for each schema in its schemaIds, if there is a chapter doc
+    // (a doc whose slug === schemaId, UUID format), add a containment edge
+    // subject → chapter. This wires the multi-level graph: hub→subject→chapter.
+    // A chapter may receive multiple subject parents (DAG, D-07 — no cycle risk
+    // because chapter docs are never subjects themselves).
+    const slugToDocId = new Map<string, string>(allDocNodes.map(n => [n.slug, n.id]));
+
+    for (const sub of subjects) {
+      for (const schemaId of sub.schemaIds) {
+        // A chapter doc has slug === schemaId (UUID_RE format)
+        if (!UUID_RE.test(schemaId)) continue;
+        const chapterDocId = slugToDocId.get(schemaId);
+        if (!chapterDocId) continue; // no chapter doc exists yet for this schema
+
+        const edgeKey = `${sub.node.id}\0${chapterDocId}`;
+        if (containmentSet.has(edgeKey)) continue; // already present — skip
+
+        containmentSet.add(edgeKey);
+        containmentEdges.push({
+          srcId: sub.node.id,
+          dstId: chapterDocId,
+          w: 1.0,
+        });
+      }
+    }
+
     // 9. De-dup: suppress reference edges for pairs that also have containment (in either direction)
     // Build containment pair lookup
     const containmentPairs = new Set<string>(); // "minId\0maxId"
