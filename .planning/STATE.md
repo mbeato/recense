@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v8.0
 milestone_name: Performance, Efficiency & Competitive Parity
-status: completed
+status: executing
 stopped_at: Phase 39.2 context gathered
-last_updated: "2026-06-23T14:46:19.698Z"
-last_activity: 2026-06-23 -- Phase 39.2 marked complete
+last_updated: "2026-06-23T15:48:49.451Z"
+last_activity: 2026-06-23 -- Phase 40 execution started
 progress:
-  total_phases: 22
-  completed_phases: 14
-  total_plans: 62
-  completed_plans: 51
-  percent: 64
+  total_phases: 5
+  completed_phases: 1
+  total_plans: 10
+  completed_plans: 5
+  percent: 20
 ---
 
 # Project State
@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 39.2 — multi-level-corpus-graph-from-schema-projection
+**Current focus:** Phase 40 — competitive-benchmark-baseline
 
 **Phase 37 go-live — remaining levers (not blocking; coverage tuning DONE):**
 
@@ -36,10 +36,10 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 ## Current Position
 
 Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
-Phase: 39.2 — COMPLETE
-Plan: 1 of 4
-Status: Phase 39.2 complete
-Last activity: 2026-06-23 -- Phase 39.2 marked complete
+Phase: 40 (competitive-benchmark-baseline) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 40
+Last activity: 2026-06-23 -- Phase 40 execution started
 Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async.
 
 ## Performance Metrics
