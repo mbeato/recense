@@ -562,6 +562,15 @@ export interface SubjectPromoteResult {
   subjectDocIds: string[];
 }
 
+/** Options for promoteSubjects. */
+export interface PromoteSubjectsOpts {
+  /**
+   * When true, skip the Stage-1 gate check and proceed to the LLM call regardless.
+   * Used by the backfill-subjects CLI to force re-promotion on existing subjects.
+   */
+  force?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // SubjectPromoter
 // ---------------------------------------------------------------------------
@@ -777,9 +786,10 @@ export class SubjectPromoter {
    *   write hub→subject doc_containment edges, persist subject-schema-ids meta.
    *
    * @param scope Project scope string (e.g. 'brain-memory').
+   * @param opts  Optional. force: bypass Stage-1 gate check (for backfill CLI).
    * @returns SubjectPromoteResult with created stubs, refresh queue, hub/subject doc ids.
    */
-  async promoteSubjects(scope: string): Promise<SubjectPromoteResult> {
+  async promoteSubjects(scope: string, opts?: PromoteSubjectsOpts): Promise<SubjectPromoteResult> {
     const emptyResult: SubjectPromoteResult = {
       proposed: [],
       created: 0,
@@ -822,8 +832,8 @@ export class SubjectPromoter {
       driftThreshold,
     );
 
-    // D-05: if no gate is open, return without an LLM call
-    if (!createGateOpen && !refreshGateOpen) {
+    // D-05: if no gate is open and force is not set, return without an LLM call
+    if (!createGateOpen && !refreshGateOpen && !opts?.force) {
       return emptyResult;
     }
 
@@ -832,9 +842,11 @@ export class SubjectPromoter {
     // Build the subject-names list from existing slugs (strip the 'scope:' prefix)
     const existingSubjectNames = existingSubjectSlugs.map(s => s.slice(scope.length + 1));
 
-    // Prompt: top-N schemas as label:memberCount lines
+    // Prompt: top-N schemas as NUMBERED list (index: label (N members))
+    // The LLM is shown integer indices so it can reference schemas by number,
+    // avoiding UUID hallucination (the root cause of empty subject-schema-ids).
     const schemaInputLines = schemas
-      .map(s => `${s.schemaLabel}: ${s.memberCount}`)
+      .map((s, i) => `${i}: ${s.schemaLabel} (${s.memberCount} members)`)
       .join('\n');
 
     const anchorBlock = existingSubjectNames.length > 0
@@ -843,13 +855,13 @@ export class SubjectPromoter {
 
     const proposalPrompt = `You are categorizing memory schemas for the project "${scope}" into named subject areas.
 
-${anchorBlock}SCHEMAS (label: member count):
+${anchorBlock}SCHEMAS (number: label (member count)):
 ${schemaInputLines}
 
-Propose a small set of named subject areas (3-8) that group these schemas into coherent topics. For each subject, list the schema IDs that belong to it.
+Propose a small set of named subject areas (3-8) that group these schemas into coherent topics. For each subject, list the schema NUMBERS (the integer index shown before each schema label) that belong to it.
 
 Output ONLY valid JSON (no markdown, no explanation):
-[{"name": "subject-name-hyphenated", "relatedSchemaIds": ["uuid1", "uuid2"]}]`;
+[{"name": "subject-name-hyphenated", "relatedSchemaIndexes": [0, 3, 7]}]`;
 
     const md = await this.provider.generate(proposalPrompt, { maxTokens: 2000 });
     if (md.trim().length === 0) {
@@ -857,7 +869,7 @@ Output ONLY valid JSON (no markdown, no explanation):
     }
 
     // Parse the JSON response
-    let rawProposals: Array<{ name: string; relatedSchemaIds: string[] }>;
+    let rawProposals: Array<{ name: string; relatedSchemaIndexes?: number[]; relatedSchemaIds?: string[] }>;
     try {
       const jsonStr = md.trim().replace(/^```json\s*|^```\s*|```\s*$/g, '').trim();
       rawProposals = JSON.parse(jsonStr);
@@ -894,12 +906,28 @@ Output ONLY valid JSON (no markdown, no explanation):
       if (seenSlugs.has(subjectSlug)) continue; // deduplicate proposals
       seenSlugs.add(subjectSlug);
 
-      // Filter relatedSchemaIds to only include schemas that exist in scope
-      const relatedSchemaIds = Array.isArray(proposal.relatedSchemaIds)
-        ? proposal.relatedSchemaIds.filter(
-            (id): id is string => typeof id === 'string' && schemaIdSet.has(id)
-          )
-        : [];
+      // Derive relatedSchemaIds from either index-based (new prompt) or ID-based (backward compat).
+      // Index path: map each integer k to schemas[k].schemaId, filter out-of-range, dedup, constrain to schemaIdSet.
+      // ID path (fallback): filter to IDs in schemaIdSet (safety net for old-format responses).
+      let relatedSchemaIds: string[];
+      if (Array.isArray(proposal.relatedSchemaIndexes)) {
+        const seen = new Set<string>();
+        relatedSchemaIds = [];
+        for (const k of proposal.relatedSchemaIndexes) {
+          if (typeof k !== 'number' || !Number.isInteger(k) || k < 0 || k >= schemas.length) continue;
+          const schemaId = schemas[k]?.schemaId;
+          if (!schemaId || !schemaIdSet.has(schemaId) || seen.has(schemaId)) continue;
+          seen.add(schemaId);
+          relatedSchemaIds.push(schemaId);
+        }
+      } else {
+        // Backward-compat: LLM returned relatedSchemaIds directly (UUID strings)
+        relatedSchemaIds = Array.isArray(proposal.relatedSchemaIds)
+          ? proposal.relatedSchemaIds.filter(
+              (id): id is string => typeof id === 'string' && schemaIdSet.has(id)
+            )
+          : [];
+      }
 
       const isNew = !existingSubjectSlugs.includes(subjectSlug);
 
@@ -956,7 +984,20 @@ Output ONLY valid JSON (no markdown, no explanation):
       // 2. Create new subject stubs; mark existing as refresh-queued.
       for (const subject of accepted) {
         if (!subject.isNew) {
-          // Existing subject: queue for refresh (no new stub)
+          // Existing subject: queue for refresh (no new stub).
+          // Correct stale node_scope to use the PROJECT scope (not the subject's own slug).
+          // Root cause fix: prior versions wrote scope = subjectSlug (the slug, not the project).
+          // This breaks hub→subject containment and scope coloring in DocGraphDeriver (D-08).
+          const existingDocRow = this.stmtGetLiveDocBySlug.get(subject.subjectSlug) as
+            | { id: string; generated_at: number }
+            | undefined;
+          if (existingDocRow) {
+            this.store.upsertNodeScope({
+              node_id: existingDocRow.id,
+              scope: scope,    // project scope, corrected from stale slug-scope
+              updated_at: now,
+            });
+          }
           refreshQueued.push(subject.subjectSlug);
         } else {
           // New subject: create stub (slug = scope:name, scope annotation = scope string)

@@ -437,3 +437,117 @@ describe('SubjectPromoter — stub invariants', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// relatedSchemaIndexes: index-mapping produces real schema IDs (root-cause fix)
+// ---------------------------------------------------------------------------
+
+describe('SubjectPromoter — relatedSchemaIndexes index mapping (Phase 39.2 root-cause fix)', () => {
+  it('proposal with relatedSchemaIndexes:[0,2] yields subject-schema-ids = schemas[0].schemaId + schemas[2].schemaId (NOT empty)', async () => {
+    const { db, store, clock } = makeDb();
+    const scope = 'index-mapping-scope';
+
+    // Seed three schemas with enough members to open the CREATE gate (≥4 each)
+    const schemaIds = ['schema-idx-0', 'schema-idx-1', 'schema-idx-2'];
+    const schemaLabels = ['Alpha Schema', 'Beta Schema', 'Gamma Schema'];
+    for (let i = 0; i < schemaIds.length; i++) {
+      seedScopeWithSchema(db, store, scope, schemaIds[i]!, schemaLabels[i]!, 5);
+    }
+
+    // LLM returns relatedSchemaIndexes (integer indices, not UUIDs)
+    // referencing schemas at positions 0 and 2 in the sorted-by-mass list.
+    // Since all three have the same member count (5), the query returns them in
+    // insertion order; we ask for indices 0 and 2 to cover two distinct schemas.
+    const provider = makeMockProvider(
+      JSON.stringify([
+        { name: 'Mixed Subject', relatedSchemaIndexes: [0, 2] },
+      ])
+    );
+    const promoter = new SubjectPromoter(db, store, clock, provider, DEFAULT_CONFIG);
+    const result = await promoter.promoteSubjects(scope);
+
+    expect(result.created).toBe(1);
+    const expectedSlug = `${scope}:mixed-subject`;
+
+    // subject-schema-ids must be NON-EMPTY (the root-cause check)
+    const metaValue = store.getMeta(`subject-schema-ids:${expectedSlug}`);
+    expect(metaValue).not.toBeNull();
+
+    const parsed = JSON.parse(metaValue!) as string[];
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed.length).toBe(2);
+
+    // Each ID must be a real schema ID from our set (not a UUID hallucination)
+    for (const id of parsed) {
+      expect(schemaIds).toContain(id);
+    }
+  });
+
+  it('out-of-range index is ignored, valid indices still resolve', async () => {
+    const { db, store, clock } = makeDb();
+    const scope = 'oob-index-scope';
+
+    seedScopeWithSchema(db, store, scope, 'schema-oob-0', 'First Schema', 5);
+
+    // LLM returns index 0 (valid) and 99 (out of range)
+    const provider = makeMockProvider(
+      JSON.stringify([
+        { name: 'Valid Subject', relatedSchemaIndexes: [0, 99] },
+      ])
+    );
+    const promoter = new SubjectPromoter(db, store, clock, provider, DEFAULT_CONFIG);
+    const result = await promoter.promoteSubjects(scope);
+
+    expect(result.created).toBe(1);
+    const expectedSlug = `${scope}:valid-subject`;
+    const metaValue = store.getMeta(`subject-schema-ids:${expectedSlug}`);
+    const parsed = JSON.parse(metaValue!) as string[];
+
+    // Only index 0 resolved; index 99 ignored
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toBe('schema-oob-0');
+  });
+
+  it('force option bypasses the exhaust gate and still calls LLM', async () => {
+    const { db, store, clock } = makeDb();
+    const scope = 'force-gate-scope';
+
+    // No schemas at all — normally the gate would short-circuit before LLM
+    const provider = makeMockProvider('[]');
+    const promoter = new SubjectPromoter(db, store, clock, provider, DEFAULT_CONFIG);
+
+    // Without force: schemas is empty, so we return emptyResult before gate check
+    const resultNoForce = await promoter.promoteSubjects(scope);
+    expect(provider.callCount).toBe(0);
+    expect(resultNoForce.created).toBe(0);
+
+    // Add schemas to let the LLM call proceed with force=true
+    seedScopeWithSchema(db, store, scope, 'schema-force', 'Force Schema', 5);
+
+    // Create an existing subject so that without force the CREATE gate would be open,
+    // but close the REFRESH gate by using a fresh doc (no drift). The gate should be
+    // closed only in the edge case where a subject matches every qualifying schema.
+    // Simpler: just verify that force=true invokes the LLM even with a closed gate.
+    // We'll simulate a "no gate open" scenario by pre-creating the subject doc:
+    const subjectSlug = `${scope}:force-schema`;
+    const existingId = 'doc-force-existing';
+    store.upsertNode({ id: existingId, type: 'doc', value: '', origin: 'inferred', s: 0, c: 1.0, last_access: 1000 });
+    store.upsertNodeDoc({ node_id: existingId, slug: subjectSlug, generated_at: 1000, updated_at: 1000 });
+    store.upsertNodeScope({ node_id: existingId, scope, updated_at: 1000 });
+
+    // Now gate is closed (subject exists, no drift). Without force: no LLM call.
+    const providerClosed = makeMockProvider('[]');
+    const promoterClosed = new SubjectPromoter(db, store, clock, providerClosed, DEFAULT_CONFIG);
+    const resultClosed = await promoterClosed.promoteSubjects(scope);
+    expect(providerClosed.callCount).toBe(0);
+    expect(resultClosed.created).toBe(0);
+
+    // With force=true: LLM is called despite gate being closed
+    const providerForced = makeMockProvider(
+      JSON.stringify([{ name: 'Force Schema', relatedSchemaIndexes: [0] }])
+    );
+    const promoterForced = new SubjectPromoter(db, store, clock, providerForced, DEFAULT_CONFIG);
+    await promoterForced.promoteSubjects(scope, { force: true });
+    expect(providerForced.callCount).toBe(1);
+  });
+});
