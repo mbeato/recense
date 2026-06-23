@@ -97,7 +97,7 @@ interface NestedConversation {
  */
 function evidenceToSessionIdx(dialogId: string): number {
   // dialogId format: "D{N}:{turn_within_session}"
-  const sessionNum = parseInt(dialogId.split(':')[0].replace('D', ''), 10);
+  const sessionNum = parseInt((dialogId.split(':')[0] ?? '').replace('D', ''), 10);
   return sessionNum - 1; // 0-based index
 }
 
