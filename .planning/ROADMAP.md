@@ -560,7 +560,12 @@ Plans:
   2. A written baseline records recense's current accuracy, retrieval latency (p50/p95 on the live ~7000-node brain), and token cost per write and per recall — BENCH-02
   3. The competitor numbers to beat (mem0, Zep/Graphiti, MemPalace on LOCOMO/DMR/LongMemEval) are documented with their published sources AND with a one-line note on what each number actually measures (e.g. MemPalace's 96.6% = raw-embedder mode, not architecture); every recense number is reproducible from a committed script — no unsourced, rounded-up, or methodology-misread figures (founder no-inflated-metrics rule, applied to reading competitors too) — BENCH-03
 
-**Plans:** 0 plans (run `/gsd-plan-phase 40`)
+**Plans:** 5 plans (Wave 1: 40-01 | Wave 2: 40-02, 40-03 | Wave 3: 40-04 | Wave 4: 40-05)
+- [ ] 40-01-PLAN.md - Wave 0 foundation: acquire LoCoMo-10 (gitignored), verify category codes by count, dry-run fixture, category-5 + R@K unit-test scaffolds (BENCH-01)
+- [ ] 40-02-PLAN.md - locomo-harness.cjs: clone longmemeval harness, JSON-array loader, per-session ingest + consolidate-once, category-5 skip, retrieval-only latency, session-level R@K, --run/--probe/--dry-run gates (BENCH-01, BENCH-02)
+- [ ] 40-03-PLAN.md - locomo-scorer.cjs: mem0 Appendix A judge (gpt-4o-mini/temp-0/max_tokens-10), category-5 denominator, D-10 v7.0 config snapshot in meta (BENCH-02, BENCH-03)
+- [ ] 40-04-PLAN.md - latency-curve.cjs (retrieval-only p50/p95 vs N, public node pool) + 40-COMPETITOR-TARGETS.md methodology note (Zep 84% DO-NOT-CITE, mem0 66.88% primary) (BENCH-02, BENCH-03)
+- [ ] 40-05-PLAN.md - operator-gated: D-01 cost probe HARD GATE + official baseline run on v7.0-tagged SUT + 40-BASELINE.md write-up (autonomous: false) (BENCH-02)
 
 ### Phase 41: Vector Index + Hot-Path Latency
 
