@@ -34,6 +34,7 @@ import { Consolidator } from '../consolidation/consolidator';
 import { SchemaInducer } from '../consolidation/schema-induction';
 import { SchemaRelationDeriver } from '../consolidation/schema-relations';
 import { CorpusPromoter, SubjectPromoter } from '../consolidation/corpus-promoter';
+import { DocGraphDeriver } from '../consolidation/doc-graph-deriver';
 import { InsightReflector } from '../consolidation/insight-reflector';
 import { embedAndStoreGlosses, loadGlossEmbeddings } from '../consolidation/gloss-embeddings';
 import { EntityDedup } from '../consolidation/entity-dedup';
@@ -488,6 +489,11 @@ export async function runConsolidation(
     minMembers: 4,
   });
 
+  // D-11 (Phase 39.2): DocGraphDeriver — LLM-free, wipe-and-rebuild, sole owner of
+  // doc_reference + doc_containment edges. Runs in Phase C after corpusPromoter.promote()
+  // (stubs + subject-schema-ids meta must exist first). Zero new deps — uses (db, store, config, clock).
+  const docGraphDeriver = new DocGraphDeriver(db, store, config, realClock);
+
   // Plan 39.1-03 (D-05 Stage-2 integration): SubjectPromoter — exhaust-gate subject promotion.
   // Runs AFTER consolidate() (schema induction complete — Pitfall 6) and BEFORE
   // generateCorpusDocs (so new hub/subject stubs exist before the fill loop).
@@ -522,6 +528,7 @@ export async function runConsolidation(
     deriver,
     corpusPromoter,
     insightReflector,
+    docGraphDeriver,  // D-11/D-20 (Phase 39.2): sole doc-edge owner, runs after promote()
   );
 
   // ── 5. Run the sleep pass ──────────────────────────────────────────────────
