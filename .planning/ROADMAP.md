@@ -539,13 +539,13 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
   3. Doc generation is zero-intervention: a Stage-1 LLM-free gate decides candidacy (CREATE on mass, REFRESH on drift = atoms touched since `generated_at`), Stage-2 spends a generation call only when a gate opens, and a per-pass budget cap defers overflow to a self-draining marker queue - D-05, D-06, D-07
   4. A one-time cleanup CLI hard-deletes the three deterministic junk classes (old UUID chapter docs, empty stubs, noise-schema docs) after a dry-run + founder approval + a verified VACUUM INTO snapshot, in FK-safe order, touching only `origin='inferred'` doc nodes - D-08, D-09
   5. `ingest-project` full code survey completes on recense (brain-memory) and vtx, and a sleep pass produces hub + LLM-named subject docs in the new taxonomy for both - end-to-end validation - D-10, D-11
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 - [x] 39.1-01-PLAN.md - Generation layer: generateDocForHub + generateDocForSubject + gatherFactsForSubject + drift config knob (D-01/02/03/04)
 - [x] 39.1-02-PLAN.md - SubjectPromoter: Stage-1 CREATE/REFRESH gates + Stage-2 idempotent subject-proposal call + hub<->subject containment (D-02/03/05/06)
 - [x] 39.1-03-PLAN.md - Orchestration: sleep-pass exhaust-gate wiring + hub/subject generation dispatch + budget cap & self-draining queue (D-05/07)
-- [ ] 39.1-04-PLAN.md - Cleanup CLI: dry-run -> snapshot -> FK-safe hard-delete of junk docs; founder-gated live run (D-08/09)
+- [x] 39.1-04-PLAN.md - Cleanup CLI: dry-run -> snapshot -> FK-safe hard-delete of junk docs; founder-gated live run (D-08/09)
 - [ ] 39.1-05-PLAN.md - Ingestion validation: ingest-project full survey on recense + vtx, verify new-taxonomy docs end-to-end (D-10/11)
 
 ### Phase 40: Competitive Benchmark Baseline
