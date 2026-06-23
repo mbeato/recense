@@ -14,7 +14,7 @@
 
   **Plans:** 4 plans in 3 waves (Wave 1: 39.2-01 | Wave 2: 39.2-02, 39.2-04 | Wave 3: 39.2-03).
   - [x] 39.2-01-PLAN.md — DocGraphDeriver core: LLM-free projection of doc_reference (IDF shared-members + schema_rel adjacency, top-K, union) + multi-level doc_containment (strict-ALL ladder ancestry, multi-parent DAG, acyclic, hub-indexes-all) [wave 1]
-  - [ ] 39.2-02-PLAN.md — Retire corpus-promoter centroid-cosine doc-edges + wire DocGraphDeriver into Phase C after promote() (D-11 single ownership, D-20) [wave 2]
+  - [x] 39.2-02-PLAN.md — Retire corpus-promoter centroid-cosine doc-edges + wire DocGraphDeriver into Phase C after promote() (D-11 single ownership, D-20) [wave 2]
   - [ ] 39.2-03-PLAN.md — Viz + reader foregrounding: scope-hue node coloring, dimmed UUID chapters, 3 distinct edge types, hub-anchored force, richer backlinks [wave 3, human-verify]
   - [ ] 39.2-04-PLAN.md — `recense derive-doc-graph` backfill CLI (live one-shot, --dry-run/--db, JSON counts) [wave 2]
 - 🔲 **v8.0 Performance, Efficiency & Competitive Parity** — Phases 40–43 (planned, starts after v7.0) — prove at-or-above competitors (mem0/Zep) on accuracy + latency + token via LOCOMO baseline, build the vector index (kill brute-force cosine at 7000+ nodes), token-cost audit, then lock it all behind regression gates. Hard rule: every competitive number reproducible or cited — no inflated metrics.
