@@ -35,16 +35,49 @@ const ICON_BRAIN = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" 
 
 // Muted palette (founder-locked) — kept local so corpus.js has no dependency on the
 // brain's THREE-oriented numeric color constants. Hex strings for canvas fillStyle.
-const REST_NODE = '#9c7080';    // dusty rose — doc nodes at rest (muted)
+const REST_NODE = '#9c7080';    // dusty rose — fallback for docs with no scope
 const REST_NODE_RING = 'rgba(156,112,128,0.55)'; // faint rose ring
 const HOVER_NODE = '#ffb866';   // warm amber — ACTIVATION ONLY (hover/selected)
 const LINK_REST = 'rgba(130,105,140,0.35)'; // muted mauve — doc_link + doc_reference base
 // Containment spine: slightly stronger slate/mauve (still muted — NOT amber).
 // Heavier and more opaque than LINK_REST so the parent→child hierarchy reads clearly.
 const CONTAINMENT_COLOR = 'rgba(110,90,130,0.70)'; // stronger slate/mauve spine
+// D-14: cross-project reference edge — muted cool blue, distinct from the mauve/slate band.
+const CROSS_PROJECT_REF = 'rgba(140,170,200,0.55)'; // muted cool blue — cross-project bridges
 const LABEL_COLOR = '#c8bcd0';  // muted slate/mauve label text
 const LABEL_COLOR_HOVER = '#e7dfec'; // brightened on hover
 const BG = '#170f1d';           // deep warm aubergine — matches the viz background
+
+// D-16/D-17: scope → hue assignment (generative rotation within the muted rose/slate/mauve band).
+// Palette constraints (founder-locked Phase 15): saturation low (~28%), lightness mid (~52%),
+// hue rotated. Amber (#ffb866 ~ hue 33) is reserved for activation/hover ONLY — auto-tints
+// must NOT produce amber. Starting at hue 300 (mauve/rose) with step 53 (prime-ish to avoid
+// early collisions), the first 8 scopes land at: 300, 353, 46, 99, 152, 205, 258, 311.
+// Hue 46 is the closest to amber territory (20-50 range). At SCOPE_SAT=28% / SCOPE_LIGHT=52%
+// this yields a desaturated olive-beige — not amber. The founder-locked amber is fully
+// saturated at ~47% (hsl(33,93%,72%)) and cannot be confused with a muted 28% tint.
+// Scopes 3+ rotate further into blue-green-purple space, well away from amber.
+const SCOPE_HUE_START = 300;   // start near mauve/rose
+const SCOPE_HUE_STEP = 53;     // rotation step — prime-ish to avoid repeats at low N
+const SCOPE_SAT = 28;           // % saturation — muted (founder-locked band)
+const SCOPE_LIGHT = 52;         // % lightness — mid, not garish
+const scopeColorCache = new Map(); // scope string → hsl string
+
+// D-16: return the muted scope tint for a given scope string.
+// Null/empty scope → falls back to REST_NODE (the legacy uniform rose).
+function scopeColor(scope) {
+  if (!scope) return REST_NODE;
+  if (scopeColorCache.has(scope)) return scopeColorCache.get(scope);
+  const idx = scopeColorCache.size;
+  const hue = (SCOPE_HUE_START + idx * SCOPE_HUE_STEP) % 360;
+  const color = `hsl(${hue}, ${SCOPE_SAT}%, ${SCOPE_LIGHT}%)`;
+  scopeColorCache.set(scope, color);
+  return color;
+}
+
+// D-13: UUID schema-chapter docs — detect by slug pattern.
+// Schema-chapter slugs are the schema node id (UUIDs); hub and subject slugs are plain strings.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Node circle radius in graph-space units (sizing for Obsidian-style legibility,
 // NOT the brain's nodeRadius/BRAIN_SCALE). Constant size — doc corpora are small.
@@ -139,15 +172,22 @@ export function initCorpus(ctx) {
     const G = ForceGraph()(container)
       .backgroundColor(BG)
       .graphData({ nodes: data.nodes || [], links: data.links || [] })
-      // Custom canvas paint: muted rose circle + ring + slug label (Obsidian-style).
-      // Amber is reserved for the hovered node only (activation-only palette rule).
+      // Custom canvas paint: scope-tinted circle + ring + slug label (Obsidian-style).
+      // Amber is reserved for the hovered node only (activation-only palette rule, D-17).
+      // D-13: UUID schema-chapter docs are dimmed (alpha 0.35) but remain visible.
+      // D-16: node fill uses scopeColor(node.scope) — each project gets a distinct muted tint.
       .nodeCanvasObject((node, canvasCtx, globalScale) => {
         const isHover = node.id === hoveredId || highlightSet.has(node.id);
         const r = NODE_R;
+        // D-13: dim UUID schema-chapter docs (visible but faded/desaturated — NOT hidden).
+        const isChapterDoc = UUID_RE.test(node.slug || '');
+        canvasCtx.globalAlpha = isChapterDoc ? 0.35 : 1.0;
+        // D-16: scope-keyed tint; hover stays amber (activation-only).
+        const baseColor = scopeColor(node.scope);
         // Circle fill
         canvasCtx.beginPath();
         canvasCtx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-        canvasCtx.fillStyle = isHover ? HOVER_NODE : REST_NODE;
+        canvasCtx.fillStyle = isHover ? HOVER_NODE : baseColor;
         canvasCtx.fill();
         // Faint ring
         canvasCtx.lineWidth = 1 / globalScale;
@@ -162,6 +202,8 @@ export function initCorpus(ctx) {
         canvasCtx.textBaseline = 'top';
         canvasCtx.fillStyle = isHover ? LABEL_COLOR_HOVER : LABEL_COLOR;
         canvasCtx.fillText(label, node.x, node.y + r + 1.5);
+        // Restore globalAlpha after painting this node (chapter dimming must not bleed).
+        canvasCtx.globalAlpha = 1.0;
       })
       // Pointer area covers the circle (label is decorative, not a click target).
       .nodePointerAreaPaint((node, color, canvasCtx) => {
@@ -170,12 +212,15 @@ export function initCorpus(ctx) {
         canvasCtx.arc(node.x, node.y, NODE_R + 2, 0, 2 * Math.PI, false);
         canvasCtx.fill();
       })
-      // D-08: link-kind-aware styling (CORPUS-04).
-      // doc_containment = solid directed spine (heavier, arrow at child, no dash).
-      // doc_reference   = faint dashed undirected cross-link (no arrow).
-      // doc_link        = faint mauve solid (existing treatment, no arrow, no dash).
+      // D-08 / D-14: link-kind-aware styling (CORPUS-04).
+      // doc_containment      = solid directed spine (heavier, arrow at child, no dash).
+      // doc_reference        = faint dashed undirected cross-link (no arrow).
+      //   same-project ref   = short dash [2,2] in LINK_REST (muted mauve).
+      //   cross-project ref  = longer dash [4,3] in CROSS_PROJECT_REF (cool blue) — D-14.
+      // doc_link             = faint mauve solid (existing treatment, no arrow, no dash).
       .linkColor(link => {
         const isContain = link.kind === 'doc_containment';
+        const isRef = link.kind === 'doc_reference';
         // Sidebar-row highlight: amber only the CONTAINMENT links whose both endpoints are in
         // the highlight set — i.e. the spine of the hovered node's subtree. Loose doc_link /
         // doc_reference edges stay muted even if both ends happen to be highlighted.
@@ -184,12 +229,32 @@ export function initCorpus(ctx) {
           const t = typeof link.target === 'object' ? link.target.id : link.target;
           if (highlightSet.has(s) && highlightSet.has(t)) return HOVER_NODE;
         }
-        return isContain ? CONTAINMENT_COLOR : LINK_REST;
+        if (isContain) return CONTAINMENT_COLOR;
+        if (isRef) {
+          // D-14: cross-project reference — src.scope !== dst.scope.
+          // Guard for the pre-layout string form (force-graph mutates source/target to
+          // node objects after layout init; before that they are string ids with no scope).
+          const srcScope = (typeof link.source === 'object' ? link.source.scope : null);
+          const dstScope = (typeof link.target === 'object' ? link.target.scope : null);
+          const isCrossProject = srcScope && dstScope && srcScope !== dstScope;
+          return isCrossProject ? CROSS_PROJECT_REF : LINK_REST;
+        }
+        return LINK_REST; // doc_link
       })
       .linkWidth(link => link.kind === 'doc_containment' ? 2 : 1)
       .linkDirectionalArrowLength(link => link.kind === 'doc_containment' ? 4 : 0)
       .linkDirectionalArrowRelPos(1)
-      .linkLineDash(link => link.kind === 'doc_reference' ? [2, 2] : null)
+      // D-14: cross-project references use a longer dash to visually distinguish cross-boundary
+      // edges from same-project references (which use the existing short [2,2] dash).
+      .linkLineDash(link => {
+        if (link.kind === 'doc_reference') {
+          const srcScope = (typeof link.source === 'object' ? link.source.scope : null);
+          const dstScope = (typeof link.target === 'object' ? link.target.scope : null);
+          const isCrossProject = srcScope && dstScope && srcScope !== dstScope;
+          return isCrossProject ? [4, 3] : [2, 2]; // longer dash for cross-project bridges
+        }
+        return null; // containment and doc_link: solid
+      })
       .onNodeHover((node) => {
         hoveredId = node ? node.id : null;
         container.style.cursor = node ? 'pointer' : '';
@@ -251,6 +316,43 @@ export function initCorpus(ctx) {
         { initialize(nodes) { _kNodes = nodes; } }
       );
       G.d3Force('collide', collideForce);
+
+      // D-15: Hub-anchored clustering — each project hub (slug without ':' and not a UUID)
+      // acts as a soft gravity anchor for its scope's nodes. Strategy: after the layout
+      // settles, the hub's pinned position (fx/fy) is set; subject nodes feel a gentle
+      // per-scope attractive pull toward their hub's position (separate forceX/forceY per
+      // scope). This pools each project's subjects around their hub while leaving hubs free
+      // to find natural positions relative to each other during the settling phase.
+      // We register a single 'hubAnchor' force that reads hub positions from the live node
+      // set and pulls same-scope non-hub nodes toward the hub centroid each tick.
+      let _aNodes = [];
+      const hubAnchorForce = Object.assign(
+        function(alpha) {
+          // Build hub position map per scope (hubs = slug without ':' and not UUID).
+          const hubPos = {};
+          for (const n of _aNodes) {
+            const slug = n.slug || '';
+            const isHub = slug && !slug.includes(':') && !UUID_RE.test(slug);
+            if (isHub && n.scope) {
+              hubPos[n.scope] = { x: n.x || 0, y: n.y || 0 };
+            }
+          }
+          // Pull same-scope non-hub nodes gently toward their hub.
+          const k = 0.04 * alpha;
+          for (const n of _aNodes) {
+            if (n.fx != null) continue; // pinned — skip
+            const slug = n.slug || '';
+            const isHub = slug && !slug.includes(':') && !UUID_RE.test(slug);
+            if (isHub) continue; // hub anchors itself
+            const hub = n.scope && hubPos[n.scope];
+            if (!hub) continue;
+            n.vx = (n.vx || 0) + (hub.x - (n.x || 0)) * k;
+            n.vy = (n.vy || 0) + (hub.y - (n.y || 0)) * k;
+          }
+        },
+        { initialize(nodes) { _aNodes = nodes; } }
+      );
+      G.d3Force('hubAnchor', hubAnchorForce);
     } catch (_) { /* non-fatal if force-graph doesn't expose d3Force */ }
 
     return G;
