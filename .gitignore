@@ -4,6 +4,8 @@ dist/
 scripts/eval/results/*PENDING*
 # LongMemEval-S dataset (~3 GB; download at eval time, not committed)
 scripts/eval/longmemeval-s.jsonl
+# LoCoMo-10 dataset (CC BY-NC 4.0; acquire via git clone snap-research/locomo, not committed)
+scripts/eval/locomo10.json
 *.db
 *.db-wal
 *.db-shm
