@@ -111,6 +111,13 @@ const HAIKU_OUTPUT_COST_PER_M = 4.00;
 
 const ANSWER_MODEL = DEFAULT_CONFIG.anthropicModel; // claude-haiku-4-5-20251001
 
+// Answer-gen concurrency: pool the per-QA answer calls to hide subprocess cold-start.
+// claude-headless spawns one `claude -p` per answer (~10-30s cold-start each); serial
+// answering made a full run ~10-20h. Pooling keeps answers subscription-billed (still
+// claude -p, still on the /usage meter) and only improves wall-clock. Dial down via
+// RECENSE_ANSWER_CONCURRENCY if the subscription rate-limits under concurrent load.
+const ANSWER_CONCURRENCY = Math.max(1, parseInt(process.env.RECENSE_ANSWER_CONCURRENCY || '6', 10) || 6);
+
 const DRY_RUN_STUB_ANSWER = 'dry-run-stub-answer';
 
 // ---- scratch DB factory -----------------------------------------------------
@@ -425,7 +432,14 @@ async function runBoundedPool(items, concurrency, fn) {
         const evalRetriever = new CandidateRetriever(scratch.db);
         const evalStore     = new SemanticStore(scratch.db, realClock, { ...DEFAULT_CONFIG, dbPath: scratch.dbPath });
 
-        for (const qa of scoreableQA) {
+        // Bounded-concurrency answer-gen: pool the per-QA answer calls to hide claude -p
+        // cold-start. Results are written by index (qaResults) to preserve output order
+        // despite out-of-order completion. The sync topk timing (D-06a) stays isolated —
+        // there is no await between its Date.now() bracket and the call, so concurrency
+        // cannot inflate retrieval_ms (embed_ms/answer_ms become wall-clock-under-load,
+        // which is fine: headline retrieval latency is measured separately on the live brain).
+        const qaResults = new Array(scoreableQA.length);
+        await runBoundedPool(scoreableQA.map((qa, qaIdx) => ({ qa, qaIdx })), ANSWER_CONCURRENCY, async ({ qa, qaIdx }) => {
           const questionText = qa.question || '';
           const goldAnswer   = qa.answer !== undefined ? qa.answer : '';
 
@@ -528,7 +542,7 @@ async function runBoundedPool(items, concurrency, fn) {
             process.stderr.write(`[qa-error] ${sampleId}: ${String(qaErr.message || qaErr).slice(0, 200)}\n`);
           }
 
-          convResults.push({
+          qaResults[qaIdx] = {
             sample_id:    sampleId,
             question:     questionText,
             gold_answer:  goldAnswer,
@@ -543,8 +557,10 @@ async function runBoundedPool(items, concurrency, fn) {
             topk_ids:     topkIds,
             topk_scores:  topkScores,
             ...(quarantineCount > 0 ? { quarantine_count: quarantineCount } : {}),
-          });
-        }
+          };
+        });
+        // Push in stable QA order (skip any holes from mid-pool failures).
+        for (const r of qaResults) { if (r) convResults.push(r); }
       }
 
     } catch (convErr) {
