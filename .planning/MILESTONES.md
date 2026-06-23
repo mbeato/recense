@@ -1,5 +1,27 @@
 # Milestones
 
+## v7.0 Retrieval & Reasoning Depth (Shipped: 2026-06-23)
+
+**Phases:** 35, 36 (spike), 37, 38, 38.1, 39, 39.1
+
+**Key accomplishments:**
+
+- **Phase 35 — Recency/Strength-Weighted Ranking (RANK-01/02):** LLM-free strength+recency term fused into cue-based RRF ranking as a pool-only, tombstone-excluded third weighted list — shipped DARK (w=0, byte-identical merge; no win claimed, tech-debt).
+- **Phase 36 — Typed Predicate Edges SPIKE:** proved typed relations lift multi-hop recall on a scratch DB → GO gate for Phase 37.
+- **Phase 37 — Typed Predicate Edges BUILD (TYPED-01/02):** typed edge model + offline typed extraction + typed-path recall. Live precision gate cleared GO — deterministic answer-in-top-3 **83.3% vs 37.5% untyped (+45.8pts)**, payload **3.8 vs 20 nodes (−81% tokens)** on a founder-signed 24-query set. Live coverage tuned 25%→92% (anchor-union + typedAnchorPoolK=20 + gloss rewording).
+- **Phase 38 — Stored Reflections / Derived Insights (REFLECT-01/02):** sleep-pass reflects over schema clusters → stores insights as origin=inferred, non-strengthening, confidence-capped. REFLECT-01 verified (D-43-safe, offline); REFLECT-02 ships DARK, win unmeasured (tech-debt).
+- **Phase 39 — Reader Wiki-Parity (WIKI-01/02/03):** browsable INDEX + "what links here" backlinks via existing reverse-edge lookup — presentation-layer LLM-Wiki parity, no engine change.
+- **Phase 39.1 — Corpus Quality (project-hub + subject docs via zero-intervention exhaust-gate):** new doc taxonomy (project-hub + LLM-named subject docs replacing 1:1 schema-UUID chapters); `promoteSubjects` exhaust-gate wired into the sleep pass with per-pass budget cap; one-time live junk cleanup (22 obsolete chapter docs deleted, fk-clean, snapshot-guarded); ingest of recense + vtx. **Surfaced + fixed a latent bulk-consolidation stall (FIX-STALL-01, `67b3ade`): prefetch-all-before-commit exceeded the 30-min stale-lock window → infinite replay loop; chunked the prefetch to checkpoint progress.**
+
+**Verification:** milestone audit `passed` (`milestones/v7.0-MILESTONE-AUDIT.md`); VERIFICATION.md authored for 36/37/38; 37-VALIDATION green. RANK-02 + REFLECT-02 shipped dark (no win claimed). 2147/2148 tests pass at close.
+
+**Known deferred at close (accepted, non-blocking):**
+- **Phase 39.1-05 Task 2** (live hub/subject doc generation + verification) — deferred to async post-close confirmation; the fixed consolidation drain was running in the background at close, to be verified retroactively (checklist in `39.1-05-SUMMARY.md`).
+- **43 open artifacts** re-acknowledged from the v6.0 close scan (37 quick-tasks missing metadata, 1 stale `knowledge-base` debug session, 3 intentional todos, 2 dormant seeds) — see STATE.md Deferred Items.
+- **Lock-heartbeat for >30-min consolidation passes** — `heartbeatLock()` exists but isn't called by the consolidator; proper fix threads a heartbeat callback through `consolidate()` (worked around at close with an external lock-touch).
+
+---
+
 ## v6.0 Project Onboarding (Shipped: 2026-06-22)
 
 **Phases completed:** 6 phases (29–34), 16 plans

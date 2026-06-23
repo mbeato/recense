@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: Retrieval & Reasoning Depth
-status: ready_to_plan
-stopped_at: Phase 40 context gathered
-last_updated: "2026-06-23T02:20:28.516Z"
+status: Awaiting next milestone
+stopped_at: v7.0 closed + tagged (Phases 35–39.1); Phase 39.1-05 doc-verification deferred async post-close (consolidation drain running)
+last_updated: "2026-06-23T02:24:33.120Z"
+last_activity: 2026-06-23 — Milestone v7.0 completed and archived
 progress:
   total_phases: 11
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 18
-  completed_plans: 16
-  percent: 36
+  completed_plans: 17
+  percent: 45
 ---
 
 # Project State
@@ -34,62 +35,10 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ## Current Position
 
-```
-Milestone: v7.0 Retrieval & Reasoning Depth — BUILD PHASES COMPLETE (35/36/37/38/38.1/39 all done)
-Phase: 39.1 (corpus-quality-project-hub-and-subject-docs-via-zero-interve) — EXECUTING
-Plan: 4 of 5
-Next: /gsd-discuss-phase 39.1 (Corpus Quality), then plan; v6.0/v7.0 close after 39.1 lands
-
-[██████████████████████████████████████████████░] v1–v5.0 SHIPPED · v6.0 COMPLETE · v7.0 build COMPLETE (35/36/37/38/38.1/39 ✓)
-```
-
-**v6.0 phases:**
-
-- Phase 29: Survey Quality Spike (INGEST-03) — go/no-go for the build
-- Phase 30: Core Ingest Command (INGEST-01/02/04) — depends on 29
-- Phase 31: Doc Ingest + Idempotent Re-ingest (DOCING-01, REINGEST-01/02) — depends on 30
-- Phase 32: Project Recall + Auto-Corpus (RECALL-01/02) — depends on 30+31
-
-**v6.0 Project Onboarding — opened 2026-06-19.** Goal: onboard a fresh/unexplored project into the brain via an agentic survey (summarized knowledge, not raw code) → episodes → consolidation; generalized doc ingest; idempotent re-ingest; scoped project recall + auto-corpus. Scope confirmed by founder (all 4 capabilities). Research skipped (designed from first principles + known ingestion seams). Phase numbering continues from 28 → 29+. Earlier v5.0 phase dirs (24-28) retained in `.planning/phases/` (no collision; archived detail in `milestones/v5.0-ROADMAP.md`).
-
-**Phase 27 Plan 05 (corpus graph — COMPLETE) — 2026-06-18:**
-
-- **Task 1 (`971c69b`):** `generateDoc` returns `linkedDocRefs` from `recense://doc/<id>` refs in prose; `writeDoc` creates `kind='doc_link'` edges for live target doc nodes only (in-set guard, T-27-15, FK-safe). 9 tests green.
-- **Task 2 (`738aa66`):** `GET /graph?type=doc` returns live doc nodes (with slug via node_doc JOIN) + doc_link edges; `/graph` unchanged. Data layer founder-verified correct — stays.
-- **Task 2b (founder-directed redesign — `f5a46e0` vendor + `11e4ba3` rendering):** the corpus view is now a SEPARATE flat 2D Obsidian-style graph (vendored `force-graph@1.43.5`, 2D canvas, no THREE dep, net-zero npm deps) on its own `#corpus-graph` container — NOT a 3D-brain data-swap. `corpus.js` owns `#btn-corpus`; lazy-inits the 2D instance on first open; full-window toggle hides `#graph` + shows `#corpus-graph` (brain untouched, no density regression); muted rose/slate/mauve at rest, amber hover-only; D-08 doc-node click → `/?doc=slug&reader=1`. Removed the 3D-swap code from reader.js. 14 corpus tests green; tsc clean; dist rebuilt.
-- **Task 3:** No new checkpoint opened (per direction). Viz server on **7819** against `/tmp/corpus-verify.db` (tonos + vtx + doc_link) — founder reload-confirms the flat graph there.
-
-**Phase 27 Plan 04 (staleness — COMPLETE, founder-approved) — 2026-06-18:**
-
-- **Task 1 (`63dbe0f`):** `GET /doc/staleness?slug=` in `server.ts`. `stmtCitedFacts` stmt compiled once: joins cites-edge reverse lookup to cited fact rows (tombstoned + last_access + prev_value). Returns `{generated_at, stale:[{factId,prev_value,value}], tombstoned:[id,...]}`. Read-only (T-27-13). 10 tests green.
-- **Task 2 (`f38a9ec`):** `fetchStaleness()` in `reader.js` — after wireFactLinks, fetches staleness, marks `.fact-stale` (+ data-prevValue) and `.fact-tombstoned` (pointer-events:none + aria-label) inline refs, prepends `.staleness-banner` with textContent count + `.btn-regen`. Stores `ctx.staleFactIds` + `ctx.staleFactPrevValues`. `regenerate()` POSTs to `/doc/generate` + reloads via loadWithPoll. `detail.js` populateDetail: `.meta-row.meta-diff` row shows "was: `<prev_value>`" via textContent (T-27-12). CSS: `.staleness-banner`, `.btn-regen`, `.meta-diff` rules in muted slate/mauve (not amber). 31/31 tests green. tsc clean.
-- **Task 3 (checkpoint): APPROVED.** Founder verified banner + tombstone marker + atom-panel diff + detection — all good. ONE palette fix requested + applied (`fcaa1e9`): `.fact-stale` re-toned from orange/amber `rgba(217,130,60,...)` (the activation color — founder-locked violation) to the muted `.doc-ref` rose family `rgba(156,112,128,...)`. `.fact-tombstoned` (muted red) + `.staleness-banner` (mauve) untouched. Dist rebuilt; 31/31 tests + tsc clean. Demo at `/tmp/staleness-demo.db` (re-seeded), viz server on port 7818 — founder to hard-reload http://127.0.0.1:7818/?doc=tonos&reader=1 to confirm the rose tone.
-
-**Phase 27 Plan 03 (reader UI — Tasks 1+2 done, Task 3 awaiting human-verify) — 2026-06-18:**
-
-- **Task 1:** DB-backed `/doc?slug=` route in `server.ts` (replaced file-backed `/doc?term=`). On miss: spawns `generate-doc-cli` detached subprocess (server stays read-only, T-27-11); returns 202 `{status:'generating'}`. `/doc/meta?slug=` returns `{nodeId, generated_at, citedFactIds:[...]}`. `POST /doc/generate?slug=` for force-regen. In-flight Set deduplicates concurrent spawns (T-27-10). 13 tests green.
-- **Task 2:** Promoted `reader.js` to DB-backed load (polls on 202), Reader/Brain toggle (btn text flips, class .open), graph focus on cited atoms via `Graph.nodeColor()/linkColor()` callbacks (client-side — cited set small), fact-ref click → `hide()` + `ctx.selectNode(node)` with selection preserved across toggle (READER-02). XSS-safe: single `innerHTML` from `renderMarkdown` output. 21 tests green.
-- **Task 3 (checkpoint): VERIFIED.** Founder exercised the prose→atom→brain→prose round-trip and confirmed it works (one system at two altitudes). Found 2 UX gaps, both fixed (commit `5fefcac`): (1) added `#reader-close` × button in the header — the open slide-in `#reader` covers `#btn-reader` so the toggle was unreachable from inside; wired to existing `hide()` + Escape; muted-mauve/slate styling (NOT amber); (2) palette-styled `#reader` scrollbar reusing the `.detail-page #detail` muted-mauve treatment. Toggle/focus logic untouched. Dist rebuilt. Ready for founder to reload `http://127.0.0.1:7818/?doc=tonos&reader=1` and confirm.
-
-**Phase 27 Plan 02 (doc-generation core) — COMPLETE 2026-06-18:**
-
-- `gatherFacts` (scope ∪ semantic ∪ entity-hop, D-01), `generateDoc` (judge-tier cited markdown + citation-verify, D-04), `writeDoc` (lifecycle-exempt type='doc' node — no embed/decay/FTS/training — single IMMEDIATE transaction), `recense generate-doc <slug>` CLI (lock-guarded, idempotent, --force).
-- **D-05 prose quality: PASS** (env judge model produces well-structured specific deep-dive ≥ Tonos baseline).
-- **Live bug 1 found+fixed (`6960a5c`):** the `claude-headless` judge emitted 8-char id PREFIXES (`recense://fact/e751c852`), not full UUIDs → strict `{36}` regex dropped all 71 citations (0 cites edges). Fix: accept 8+-char prefixes, resolve via unique-prefix match (ambiguous→invented), CANONICALIZE prose to full UUIDs so node.value/cites/reader-regex agree.
-- **Live bug 2 found+fixed (`809a0f7`):** `--force` re-run produced an EMPTY doc — NOT model non-determinism but a SWALLOWED TIMEOUT. The shared headless client (`DEFAULT_TIMEOUT_MS=120s`) returns empty content on timeout (its sleep-pass fail-safe); doc-gen's ~4000-token gen took ~122s → SIGKILL → empty string persisted as a silent 0-citation doc. Three scoped fixes (shared client UNCHANGED): (1) CLI raises doc-gen headless timeout to 600s (env-overridable); (2) generateDoc THROWS on empty output (never persists an empty doc); (3) writeDoc tombstones any prior live doc for the slug → one-live-doc-per-slug (--force supersedes, not appends). **27 tests green, tsc clean.**
-- **Pending (non-blocking, needs USER auth):** (a) stray-doc cleanup — two test-artifact tonos doc nodes (`218260d4` len 8900, `97dc7e6a` len 0, both 0 cites) need an FK-consistent delete; (b) live `generate-doc tonos --force` re-verify (expect citationCount ~30–71, matching cites edges, one live doc). The auto-mode classifier blocked BOTH as coordinator-authorized live/paid mutations (coordinator consent ≠ user consent). Both confirm unit-tested fixes; do not block closure.
-- **Carry into 27-03:** reader.js `recense://fact/<id>` interception MUST use the `{36}` full-UUID regex (the canonicalized doc body guarantees full UUIDs now).
-
-Phase 24 status (verified 2026-06-18):
-
-- **SCOPE-01** ✅ — FK root cause FIXED + live-verified (commit `67eee74`, debug `resolved/fk-consolidation-residual.md`); prior child-wipe (ab3b6c8) was only containment. Backlog plateau (~143) was a 2nd bug — salience-skip without `markConsolidated` — fixed `5326550`. Consolidation drains fully, clean passes, `foreign_key_check` empty. NOTE: the old "dirty sentinel clears" sub-criterion is UNMEETABLE — the sentinel is a permanent launchd TRIGGER, not clearable state; real signal = backlog≈0 + clean pass.
-- **SCOPE-02** ✅ — `[scope]` recall verified live (read-only harness): `[vtx]`/`[tonos]`/`[putyouon]` render; global/unscoped render no marker (D-S6). (Plan's "[global] renders" criterion was wrong — global = blank.)
-- **SCOPE-03** ✅ — `import-memory --dry-run` gate: 199 import / 7 policy skipped / 12 index skipped / 0 leaks (`24-02-DRYRUN-EVIDENCE.md`).
-- **SCOPE-04** ✅ DONE — real import (idempotent, +6 new → 199/199 memory-import consolidated, 0 source files touched, clean FK pass) + verified retrievable with correct `[scope]` across tonos/vtx/putyouon/global. Report: `999.3-MIGRATION.md`. Cost: cents (judge on CC subscription; ~14 episodes embedded via OpenAI). **RETIREMENT EXECUTED 2026-06-18** (quick-260617-w0u): MOVED (never deleted) **197** fact files → `~/.claude/projects-memory-archive-2026-06-18/` mirroring source layout (reversible); KEPT 12 MEMORY.md indexes + 7 policy bundles + **2 live trackers** (`interview_readiness_tracker`, `leetcode_practice_tracker` — skills read/write them every session, so excluded from the 199→197 move). Nav-layer verified safe first: only readers of moved files are the kept policy bundles + the 12 indexes (whose `[file.md]` links now dangle — cosmetic; recense recall supersedes them). DB untouched by the move; 199/199 still consolidated + scoped. Minor follow-up: the 2 trackers were imported as stale fact-snapshots — tombstone + add to importer skip-set (non-blocking).
-
-SECURITY: `OPENAI_API_KEY` was exposed in a session transcript 2026-06-18 (printed by a grep) → ROTATE it (revoke at platform.openai.com, update `~/.config/recense/sleep.env`; ~9 `.bak-*` copies hold the old key — dead once revoked).
-
-Next: decide retirement (run move OR formally defer + close Phase 24), then Phase 25 (Entity Dedup — node_scope live + FK fix already satisfy its only hard prereqs).
+Phase: Milestone v7.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-23 — Milestone v7.0 completed and archived
 
 ## Performance Metrics
 
@@ -283,6 +232,15 @@ Carried forward from v4.0 close (2026-06-17):
 | Corpus / Phase 32 | Run `promoteScope('tonos')` (+ other project scopes) so project landing docs gain chapter-doc children — the hybrid index already renders project→chapter nesting; tonos is currently a standalone Phase-27 generate-doc with no children. | Deferred to Phase 32 (Project Recall + Auto-Corpus) | 2026-06-21 |
 | Corpus freshness | Refresh/grow the doc corpus — it's been a while since docs were added and some schemas/projects lack docs. Run `ingest-project` on unexplored projects + corpus promotion / doc-generation passes. Also feeds the ~100-doc trigger for index categories above. | Backlog — operational | 2026-06-21 |
 
+### Acknowledged & deferred at v7.0 milestone close (2026-06-23)
+
+| Category | Item | Status |
+|----------|------|--------|
+| Phase 39.1 validation | Plan 39.1-05 Task 2 — live hub/subject doc generation + per-scope verification | Deferred ASYNC post-close (founder decision). Code + units done; the FIX-STALL-01 consolidation drain was running at close. Retroactive checklist in `39.1-05-SUMMARY.md`. |
+| Consolidation hardening | Lock-heartbeat for >30-min passes — call `heartbeatLock()` (exists in lockfile.ts:237) from the consolidator via a `consolidate()` callback (keeps src/consolidation free of adapter imports). FIX-STALL-01 stopped the infinite loop; this prevents the >30-min single-pass stale-lock collision. | Deferred — known follow-up (also pre-listed 2026-06-17) |
+| Phase 39.1 corpus polish | Auto-extracted v7.0 MILESTONES accomplishments were garbled by SUMMARY parsing → rewritten by hand at close. PROJECT.md full evolution review + RETROSPECTIVE.md v7.0 section not done at close. | Retroactive — founder OK'd updating docs post-close |
+| Open artifacts | Same 43 from v6.0 scan re-surfaced (none scoped to v7.0 phases) | Re-acknowledged — see v6.0 block below |
+
 ### Acknowledged & deferred at v6.0 milestone close (2026-06-22)
 
 43 open artifacts surfaced by the pre-close audit-open scan were acknowledged and deferred (none scoped to v6.0 phases 29–34):
@@ -334,6 +292,4 @@ Resume file: .planning/phases/40-competitive-benchmark-baseline/40-CONTEXT.md
 
 ## Operator Next Steps
 
-- **Task 3 hero-verify:** Start `recense viz` on a copy of the live DB (`cp ~/.config/recense/recense.db /tmp/review.db && recense viz --db /tmp/review.db`), open `http://127.0.0.1:7810/?doc=tonos&reader=1`. The reader will show a loading state while `generate-doc tonos` runs in the background (or immediately serve a cached doc if one exists). Exercise: click a fact-ref → atom selected → toggle to Brain → brain focused on cited atoms → toggle back → selection intact. Type "approved" or describe the gap.
-- **(User-authorized, non-blocking) Clean up + re-verify tonos doc:** Two stray test-artifact tonos doc nodes in live DB (`218260d4` len 8900, `97dc7e6a` len 0, both 0 cites) need FK-consistent delete. Then `recense generate-doc tonos --force --db ~/.config/recense/recense.db` (600s timeout, subscription billing).
-- **Next after Task 3 approval: Plan 27-04** (doc corpus view, staleness diff, regen button).
+- Start the next milestone with /gsd-new-milestone
