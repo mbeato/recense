@@ -116,6 +116,11 @@ switch (cmd) {
   // lock-guarded; CORPUS-02/03/05 — LLM-free idempotent corpus-promotion pass that derives
   // doc_containment + doc_reference edges between schema-anchored doc stubs).
   case 'promote-corpus': spawnScript('promote-corpus-cli.js', process.argv.slice(3)); break;
+  // derive-doc-graph-cli.ts guards execution with `require.main === module` (write-capable,
+  // lock-guarded; D-19/Phase 39.2 — LLM-free manual trigger for DocGraphDeriver: derives
+  // doc_reference + doc_containment edges from the schema/fact graph without waiting for
+  // an organic sleep pass).
+  case 'derive-doc-graph': spawnScript('derive-doc-graph-cli.js', process.argv.slice(3)); break;
   // generate-corpus-cli.ts guards execution with `require.main === module` (write-capable,
   // lock-guarded; CORPUS-06 — fills empty schema-anchored corpus doc stubs with prose via
   // the offline judge-tier generation path; lazy-on-click stays as fallback).
@@ -133,7 +138,7 @@ switch (cmd) {
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, remember, viz, sleep-pass, seed, ingest, import-memory, ingest-project, dedup-entities, dedup-facts, cleanup-corpus, generate-doc, promote-corpus, generate-corpus, snapshot, scheduler, mcp, serve\n',
+      'Commands: hook, init, doctor, recall, remember, viz, sleep-pass, seed, ingest, import-memory, ingest-project, dedup-entities, dedup-facts, cleanup-corpus, generate-doc, promote-corpus, generate-corpus, derive-doc-graph, snapshot, scheduler, mcp, serve\n',
     );
     process.exit(1);
 }
