@@ -615,3 +615,33 @@ Plans:
   3. The gate's baseline numbers are the v8.0-final figures, and the gate is documented so the founder can re-baseline intentionally (not by silent drift) — GATE-03
 
 **Plans:** 0 plans (run `/gsd-plan-phase 43`)
+
+## Backlog
+
+### Phase 999.1: Bundled-App Settings & Cost Controls (BACKLOG)
+
+**Goal:** User-facing settings/toggles so a bundled-app user can control which *token-spending* features run — without a re-architecture. Token cost is recense's only real marginal cost and it's wildly uneven across features; a distributable app needs both control (toggle off what you don't value) and transparency (see what's spending).
+
+**Track/timing:** PRODUCTIZATION — belongs on the distribution / tray-app track, matters when onboarding a non-founder user (Tonos as early client, then third parties). NOT a v8.0 (perf/parity) item. Orthogonal to the eval/perf phases (40–43); depends on nothing in them. For customer-zero (founder), env vars already suffice.
+
+**Key insight — the levers already exist as env/config; the gap is a settings *surface* (no `src/adapter/*settings*`):**
+- `RECENSE_CORPUS_GEN=0` → skip readable corpus docs entirely (the highest-cost, most-optional feature — Sonnet doc-gen ~42s each)
+- `RECENSE_CORPUS_GEN_MAX` (25) → docs-per-pass throttle
+- `consolSkipThreshold` / `consolSkipThresholdBySource` → gate low-salience turns out of the dominant Haiku extraction cost
+- `corpusSubjectDriftThreshold` (3) → subject-doc re-promote frequency
+- sleep-pass cron frequency → how often *any* cost-bearing work runs
+
+**Scope:**
+1. **Presets over a wall of switches:** *Lite* (extract + reconsolidation only — the non-optional moat), *Standard* (+ schema abstraction), *Full* (+ readable corpus docs).
+2. **Granular toggles** for the cost-bearing pieces (the levers above).
+3. **Token-usage readout** — "this period you spent N tokens, M on readable docs" (the contextscope instinct applied inward).
+
+**Guardrail (load-bearing):** the core (extract + prediction-error reconsolidation) is **non-optional** — toggling it off = not recense. The optional layer is corpus docs, schema depth, viz, frequency. Make that line explicit so a user can't accidentally gut the value.
+
+**Architecture note:** the online hook is already LLM-free — **100% of token cost lives in the offline sleep pass** — so this is a *switch on the offline pass*, NOT a re-architecture to "run it elsewhere." Readable docs are already lazy/offline.
+
+**Cheap MVP (~a day, if wanted before the full phase):** surface just `RECENSE_CORPUS_GEN` + sleep frequency + salience threshold via a `recense config` command. Full presets + usage readout + tray UI is the phase.
+
+**Requirements:** TBD
+
+**Plans:** 0 plans (promote with /gsd-review-backlog when ready)
