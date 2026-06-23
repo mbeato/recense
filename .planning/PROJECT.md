@@ -149,9 +149,11 @@ Built + verified in **Phase 12: HTTP Serving Mode** (2026-06-11, 815 tests passi
 - [x] Synchronous curated write `recense remember` (verbatim + in-place reconsolidation) + native-memory cutover — REMEMBER-01/02/03 (Phase 33, folded in)
 - [x] Cross-surface visual polish (spacing/alignment + states/transitions, CSS-only, guards held) — VIZ-POLISH-01/02/03 (Phase 34, folded in)
 
-### Active (v7.0 Retrieval & Reasoning Depth — build complete, close HELD for Phase 39.1)
+### Active (v8.0 Performance, Efficiency & Competitive Parity — Phases 40–43)
 
-v7.0 (phases 35–39) build phases are complete and typed recall is live at 92% coverage — recency/strength-weighted ranking, spike-gated typed predicate edges, stored reflections/derived insights, and reader wiki-parity (index + backlinks). Bi-temporal validity and markdown-export explicitly deferred. Verification is backfilled and the milestone audit is `passed`, but the **v7.0 close/tag is HELD** (founder direction 2026-06-22): **Phase 39.1 (Corpus Quality)** is to be discussed → planned → landed first, then v7.0 closes as phases 35–39.1. RANK-02 (strength fusion) and REFLECT-02 (insight surfacing) shipped DARK with no win claimed. Next milestone **v8.0 Performance, Efficiency & Competitive Parity** (phases 40–43, planned): LOCOMO competitive baseline → vector index (kill brute-force cosine at 7000+ nodes) → token/cost audit → eval regression gates. Hard rule: every competitive number reproducible or cited.
+**v7.0 Retrieval & Reasoning Depth SHIPPED + tagged 2026-06-23** (phases 35–39.1, git tag `v7.0`): typed recall live at 92% coverage — recency/strength-weighted ranking (dark), spike-gated typed predicate edges (37 precision gate GO: top-3 83.3% vs 37.5%, −81% payload), stored reflections (REFLECT-01 live), reader wiki-parity (index + backlinks), and corpus quality (project-hub + LLM-named subject docs via zero-intervention exhaust-gate; live junk cleanup; FIX-STALL-01 consolidation fix). RANK-02 + REFLECT-02 shipped DARK, no win claimed. Bi-temporal validity + markdown-export explicitly deferred. **Carryover:** Phase 39.1-05 live hub/subject doc-verification deferred async post-close (drain running; checklist in `39.1-05-SUMMARY.md`).
+
+**Now active — v8.0 (phases 40–43, roadmap in ROADMAP.md):** LOCOMO competitive baseline → vector index (kill brute-force cosine at 7000+ nodes) → token/cost audit → eval regression gates. Phase 40 (Competitive Benchmark Baseline) context gathered, being planned. Hard rule: every competitive number reproducible or cited. (PROJECT.md full milestone-evolution review still pending — deferred retroactive task.)
 
 ### Out of Scope
 

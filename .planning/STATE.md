@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v7.0
-milestone_name: Retrieval & Reasoning Depth
-status: Awaiting next milestone
-stopped_at: v7.0 closed + tagged (Phases 35–39.1); Phase 39.1-05 doc-verification deferred async post-close (consolidation drain running)
+milestone: v8.0
+milestone_name: Performance, Efficiency & Competitive Parity
+status: In Progress
+stopped_at: v8.0 active — Phase 40 (Competitive Benchmark Baseline) being planned in a separate session
 last_updated: "2026-06-23T02:24:33.120Z"
-last_activity: 2026-06-23 — Milestone v7.0 completed and archived
+last_activity: 2026-06-23 — Switched to milestone v8.0 (v7.0 shipped + tagged)
 progress:
-  total_phases: 11
-  completed_phases: 5
-  total_plans: 18
-  completed_plans: 17
-  percent: 45
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 39.1 — corpus-quality-project-hub-and-subject-docs-via-zero-interve
+**Current focus:** **Milestone v8.0 — Performance, Efficiency & Competitive Parity** (Phases 40–43, roadmap already in ROADMAP.md). Phase 40 (Competitive Benchmark Baseline) context gathered (`40-CONTEXT.md`) and being planned in a separate session. Carryover: Phase 39.1-05 live doc-verification still deferred async (drain running) — see Deferred Items + `39.1-05-SUMMARY.md` checklist.
 
 **Phase 37 go-live — remaining levers (not blocking; coverage tuning DONE):**
 
@@ -35,10 +35,12 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 ## Current Position
 
-Phase: Milestone v7.0 complete
+Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
+Phase: 40 — Competitive Benchmark Baseline (context gathered; being planned in a separate session)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-23 — Milestone v7.0 completed and archived
+Status: In Progress (planning Phase 40)
+Last activity: 2026-06-23 — Switched to milestone v8.0 (v7.0 shipped + tagged)
+Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async.
 
 ## Performance Metrics
 
