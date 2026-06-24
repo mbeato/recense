@@ -4,14 +4,14 @@ milestone: v8.0
 milestone_name: Performance, Efficiency & Competitive Parity
 status: executing
 stopped_at: Phase 41 context gathered
-last_updated: "2026-06-24T02:05:16.246Z"
-last_activity: 2026-06-23 -- Phase 40 execution started
+last_updated: "2026-06-24T02:27:43.975Z"
+last_activity: 2026-06-24 -- Phase 41 execution started
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 10
-  completed_plans: 10
-  percent: 33
+  total_plans: 13
+  completed_plans: 11
+  percent: 38
 ---
 
 # Project State
@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 40 — competitive-benchmark-baseline
+**Current focus:** Phase 41 — vector-index-and-hot-path-latency
 
 **Phase 37 go-live — remaining levers (not blocking; coverage tuning DONE):**
 
@@ -36,10 +36,10 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 ## Current Position
 
 Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
-Phase: 40 (competitive-benchmark-baseline) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 40
-Last activity: 2026-06-23 -- Phase 40 execution started
+Phase: 41 (vector-index-and-hot-path-latency) — EXECUTING
+Plan: 2 of 3 (41-01 spike COMPLETE)
+Status: Executing Phase 41
+Last activity: 2026-06-24 -- Phase 41 Plan 01 (mechanism spike) complete; decision = zero-dep flat-buffer sidecar
 Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async.
 
 ## Performance Metrics

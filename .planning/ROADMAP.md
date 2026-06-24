@@ -13,6 +13,7 @@
 - ✅ **Phase 39.2 — Multi-Level Corpus Graph from Schema Projection** (COMPLETE 2026-06-23 — VERIFICATION passed) (INSERTED 2026-06-23, post-v7.0 corpus-thread increment; standalone, runs alongside/before v8.0). Turn the corpus doc layer from a shallow 2-level hub→subject star into a multi-level interconnected doc→doc graph, **derived as a projection of the existing schema/fact graph** — LLM-free, ~$0, no re-ingest, no re-embed, works on docs already in the live DB. Origin: 39.1-05 live verify found `doc_reference` near-empty (4 edges) so every doc relates only to one of two project hubs; the rich structure already exists one layer down (2018 `abstracts` edges + shared facts/entities; subjects carry `subject-schema-ids` meta). Scope: (1) derive `doc_reference` edges subject↔subject + cross-project from shared schema-facts/entities + abstraction-ladder adjacency; (2) multi-level + non-strict/many-to-many containment from the `abstracts` ladder; (3) corpus 2D viz foregrounds the doc→doc graph. OUT of scope (deferred to a later corpus-CONTENT phase): exhaust-rejection LLM-judge, fixing hollow/empty subject docs, killing the ~200 regenerated schema-UUID chapter docs, substantive subject naming. Constraints: LLM-free, graph-as-truth, net-zero deps.
 
   **Plans:** 4 plans in 3 waves (Wave 1: 39.2-01 | Wave 2: 39.2-02, 39.2-04 | Wave 3: 39.2-03).
+
   - [x] 39.2-01-PLAN.md — DocGraphDeriver core: LLM-free projection of doc_reference (IDF shared-members + schema_rel adjacency, top-K, union) + multi-level doc_containment (strict-ALL ladder ancestry, multi-parent DAG, acyclic, hub-indexes-all) [wave 1]
   - [x] 39.2-02-PLAN.md — Retire corpus-promoter centroid-cosine doc-edges + wire DocGraphDeriver into Phase C after promote() (D-11 single ownership, D-20) [wave 2]
   - [x] 39.2-03-PLAN.md — Viz + reader foregrounding: scope-hue node coloring, dimmed UUID chapters, 3 distinct edge types, hub-anchored force, richer backlinks [wave 3, human-verify]
@@ -506,6 +507,7 @@ Plans:
 **Plans:** 1/1 plans complete
 
 Plans:
+
 - [x] 38.1-01-PLAN.md — invariant re-verify + thread claimVec & embed-on-mint at value==claim mint sites (per-site audit) + DEDUP-01 intra-pass regression test (DEDUP-01, DEDUP-02)
 
 ### Phase 39: Reader Wiki-Parity — Browsable Index + Surfaced Backlinks
@@ -522,6 +524,7 @@ Plans:
 **Plans:** 2/2 plans complete
 
 Plans:
+
 - [x] 39-01-PLAN.md — Backlinks: read-only /doc/backlinks route + reader "Referenced by" section + atom "cited by" (WIKI-02, WIKI-03)
 - [x] 39-02-PLAN.md — Browsable index: read-only /index route + #btn-index module/button grouped Projects/Schemas (WIKI-01, WIKI-03)
 
@@ -547,9 +550,11 @@ recense proves it is **at or above competitor memory systems** (mem0, Zep/Graphi
   3. Doc generation is zero-intervention: a Stage-1 LLM-free gate decides candidacy (CREATE on mass, REFRESH on drift = atoms touched since `generated_at`), Stage-2 spends a generation call only when a gate opens, and a per-pass budget cap defers overflow to a self-draining marker queue - D-05, D-06, D-07
   4. A one-time cleanup CLI hard-deletes the three deterministic junk classes (old UUID chapter docs, empty stubs, noise-schema docs) after a dry-run + founder approval + a verified VACUUM INTO snapshot, in FK-safe order, touching only `origin='inferred'` doc nodes - D-08, D-09
   5. `ingest-project` full code survey completes on recense (brain-memory) and vtx, and a sleep pass produces hub + LLM-named subject docs in the new taxonomy for both - end-to-end validation - D-10, D-11
+
 **Plans:** 4/5 plans executed
 
 Plans:
+
 - [x] 39.1-01-PLAN.md - Generation layer: generateDocForHub + generateDocForSubject + gatherFactsForSubject + drift config knob (D-01/02/03/04)
 - [x] 39.1-02-PLAN.md - SubjectPromoter: Stage-1 CREATE/REFRESH gates + Stage-2 idempotent subject-proposal call + hub<->subject containment (D-02/03/05/06)
 - [x] 39.1-03-PLAN.md - Orchestration: sleep-pass exhaust-gate wiring + hub/subject generation dispatch + budget cap & self-draining queue (D-05/07)
@@ -571,6 +576,7 @@ Plans:
   3. The competitor numbers to beat (mem0, Zep/Graphiti, MemPalace on LOCOMO/DMR/LongMemEval) are documented with their published sources AND with a one-line note on what each number actually measures (e.g. MemPalace's 96.6% = raw-embedder mode, not architecture); every recense number is reproducible from a committed script — no unsourced, rounded-up, or methodology-misread figures (founder no-inflated-metrics rule, applied to reading competitors too) — BENCH-03
 
 **Plans:** 5/5 plans complete
+
 - [x] 40-01-PLAN.md - Wave 0 foundation: acquire LoCoMo-10 (gitignored), verify category codes by count, dry-run fixture, category-5 + R@K unit-test scaffolds (BENCH-01)
 - [x] 40-02-PLAN.md - locomo-harness.cjs: clone longmemeval harness, JSON-array loader, per-session ingest + consolidate-once, category-5 skip, retrieval-only latency, session-level R@K, --run/--probe/--dry-run gates (BENCH-01, BENCH-02)
 - [x] 40-03-PLAN.md - locomo-scorer.cjs: mem0 Appendix A judge (gpt-4o-mini/temp-0/max_tokens-10), category-5 denominator, D-10 v7.0 config snapshot in meta (BENCH-02, BENCH-03)
@@ -591,8 +597,16 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
-- [ ] 41-01-PLAN.md — Spike: instrumented cold+warm comparison harness (zero-dep flat-buffer vs sqlite-vec vs brute-force) on the live brain; records the mechanism decision (PERF-01, PERF-02)
+**Wave 1**
+
+- [x] 41-01-PLAN.md — Spike: instrumented cold+warm comparison harness (zero-dep flat-buffer vs sqlite-vec vs brute-force) on the live brain; records the mechanism decision → zero-dep flat-buffer sidecar (PERF-01, PERF-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 41-02-PLAN.md — Build the chosen exact index behind CandidateRetriever (real cosine scores, persisted, end-of-pass build; consolidator stays brute-force) (PERF-01)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 41-03-PLAN.md — Gates: top-k equivalence + 3-harness no-regression (PERF-03) and cold+warm latency delta vs Phase 40 baseline (PERF-02)
 
 ### Phase 42: Token / Cost Efficiency Audit
@@ -632,6 +646,7 @@ Plans:
 **Track/timing:** PRODUCTIZATION — belongs on the distribution / tray-app track, matters when onboarding a non-founder user (Tonos as early client, then third parties). NOT a v8.0 (perf/parity) item. Orthogonal to the eval/perf phases (40–43); depends on nothing in them. For customer-zero (founder), env vars already suffice.
 
 **Key insight — the levers already exist as env/config; the gap is a settings *surface* (no `src/adapter/*settings*`):**
+
 - `RECENSE_CORPUS_GEN=0` → skip readable corpus docs entirely (the highest-cost, most-optional feature — Sonnet doc-gen ~42s each)
 - `RECENSE_CORPUS_GEN_MAX` (25) → docs-per-pass throttle
 - `consolSkipThreshold` / `consolSkipThresholdBySource` → gate low-salience turns out of the dominant Haiku extraction cost
@@ -639,6 +654,7 @@ Plans:
 - sleep-pass cron frequency → how often *any* cost-bearing work runs
 
 **Scope:**
+
 1. **Presets over a wall of switches:** *Lite* (extract + reconsolidation only — the non-optional moat), *Standard* (+ schema abstraction), *Full* (+ readable corpus docs).
 2. **Granular toggles** for the cost-bearing pieces (the levers above).
 3. **Token-usage readout** — "this period you spent N tokens, M on readable docs" (the contextscope instinct applied inward).
