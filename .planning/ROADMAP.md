@@ -588,7 +588,12 @@ Plans:
   2. Retrieval p50/p95 and SessionStart inject latency improve measurably vs the Phase 40 baseline on the live-scale brain; the online path remains LLM-free — PERF-02
   3. Accuracy on LOCOMO/LongMemEval/KU shows no regression vs baseline — a latency win that costs accuracy is rejected — PERF-03
 
-**Plans:** 0 plans (run `/gsd-plan-phase 41`)
+**Plans:** 3 plans
+
+Plans:
+- [ ] 41-01-PLAN.md — Spike: instrumented cold+warm comparison harness (zero-dep flat-buffer vs sqlite-vec vs brute-force) on the live brain; records the mechanism decision (PERF-01, PERF-02)
+- [ ] 41-02-PLAN.md — Build the chosen exact index behind CandidateRetriever (real cosine scores, persisted, end-of-pass build; consolidator stays brute-force) (PERF-01)
+- [ ] 41-03-PLAN.md — Gates: top-k equivalence + 3-harness no-regression (PERF-03) and cold+warm latency delta vs Phase 40 baseline (PERF-02)
 
 ### Phase 42: Token / Cost Efficiency Audit
 
