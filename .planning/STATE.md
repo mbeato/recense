@@ -4,8 +4,8 @@ milestone: v8.0
 milestone_name: Performance, Efficiency & Competitive Parity
 status: executing
 stopped_at: Phase 44 context gathered
-last_updated: "2026-06-24T23:09:44.868Z"
-last_activity: 2026-06-24 -- Phase 44 planning complete
+last_updated: "2026-06-24T23:36:27.984Z"
+last_activity: 2026-06-24 -- Phase 44 execution started
 progress:
   total_phases: 6
   completed_phases: 4
@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-17)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
-**Current focus:** Phase 42 — token-and-cost-efficiency-audit
+**Current focus:** Phase 44 — bundled-app-settings-cost-controls
 
 **Phase 37 go-live — remaining levers (not blocking; coverage tuning DONE):**
 
@@ -36,11 +36,11 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 ## Current Position
 
 Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
-Phase: 42 — COMPLETE
-Plan: 4 of 4
-Status: Ready to execute
+Phase: 44 (bundled-app-settings-cost-controls) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 44
 Decision (founder, 2026-06-24): PERF-03(b) the 3-harness end-to-end re-run is DEFERRED to the Phase 43 CI regression gate. Rationale: the harnesses don't use the index, so re-running them (hours-scale KU consolidation + paid-API spend over the $3 gate) corroborates an already-proven result and buys no new assurance. Both executor and verifier recommended deferral.
-Last activity: 2026-06-24 -- Phase 44 planning complete
+Last activity: 2026-06-24 -- Phase 44 execution started
 Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async. Live recense.db opened read-only throughout; only the .vindex sidecar was written.
 
 ## Performance Metrics
