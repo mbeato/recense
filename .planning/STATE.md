@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v8.0
 milestone_name: Performance, Efficiency & Competitive Parity
-status: executing
-stopped_at: Phase 41 Plan 03 complete (gates measured; PERF-03(b) harness re-run open)
-last_updated: "2026-06-24T03:47:00.000Z"
-last_activity: 2026-06-24 -- Phase 41 Plan 03 complete -- PERF-02 win + PERF-03 equivalence locked
+status: completed
+stopped_at: Phase 41 COMPLETE (PERF-01/02/03 PASS; PERF-03(b) end-to-end harness re-run DEFERRED to Phase 43 CI gate by founder)
+last_updated: "2026-06-24T03:58:22.347Z"
+last_activity: 2026-06-24 -- Phase 41 marked complete
 progress:
-  total_phases: 6
-  completed_phases: 2
-  total_plans: 13
-  completed_plans: 12
-  percent: 42
+  total_phases: 23
+  completed_phases: 16
+  total_plans: 65
+  completed_plans: 59
+  percent: 70
 ---
 
 # Project State
@@ -36,10 +36,11 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 ## Current Position
 
 Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
-Phase: 41 (vector-index-and-hot-path-latency) — Plans 01–03 COMPLETE (one gate open)
+Phase: 41 — COMPLETE
 Plan: 3 of 3 done (41-01 spike + 41-02 build + 41-03 gates)
-Status: Phase 41 gates measured; PERF-03(b) end-to-end harness re-run OPEN (needs founder call)
-Last activity: 2026-06-24 -- Phase 41 Plan 03 complete. PERF-02 PASS (live brain: warm 13/14 ms ~3.4× under the 45/46 ms baseline; cold SessionStart-inject 72/77 ms, −24/−22 ms vs same-run brute-force, stable over 4 runs — the persisted .vindex sidecar delivered the D-06 cold win the spike's from-scratch build could not). PERF-03(a) PASS (indexed topk byte-identical to brute-force, 40/40, max|Δscore|=0). PERF-03(b) 3-harness end-to-end re-run NOT completed (hours-scale LLM consolidation; harnesses run brute-force anyway) — recorded OPEN in 41-PERF-REPORT.md, needs approval to run or to defer to Phase 43.
+Status: Phase 41 COMPLETE — PERF-01/02/03 PASS. Independent verifier confirmed: indexed topk byte-identical to brute-force (40/40, max|Δscore|=0), and all three accuracy harnesses construct CandidateRetriever WITHOUT indexPath (replay-ku:259, locomo:160/432, longmemeval:217/710) so they run brute-force — byte-exact equivalence therefore satisfies PERF-03 "no accuracy regression" by construction.
+Decision (founder, 2026-06-24): PERF-03(b) the 3-harness end-to-end re-run is DEFERRED to the Phase 43 CI regression gate. Rationale: the harnesses don't use the index, so re-running them (hours-scale KU consolidation + paid-API spend over the $3 gate) corroborates an already-proven result and buys no new assurance. Both executor and verifier recommended deferral.
+Last activity: 2026-06-24 -- Phase 41 marked complete (PERF-03b deferred to Phase 43)
 Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async. Live recense.db opened read-only throughout; only the .vindex sidecar was written.
 
 ## Performance Metrics

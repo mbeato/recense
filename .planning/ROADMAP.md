@@ -594,7 +594,7 @@ Plans:
   2. Retrieval p50/p95 and SessionStart inject latency improve measurably vs the Phase 40 baseline on the live-scale brain; the online path remains LLM-free — PERF-02
   3. Accuracy on LOCOMO/LongMemEval/KU shows no regression vs baseline — a latency win that costs accuracy is rejected — PERF-03
 
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
 Plans:
 **Wave 1**

@@ -91,13 +91,17 @@ Why this does NOT undermine PERF-03, and the important caveat:
   **w=0 (pure cosine) = 77.8%** (14/18) from Phase-35 (`35-VERIFICATION.md`); the LOCOMO
   anchor is `locomo-d41d5c8.json` (headline J = 86.0%, R@5 = 77.3%, R@10 = 82.2%).
 
-**Verdict: PERF-03(b) = OPEN / NOT A PASS.** Per the plan's own rule, "deferred, approval
-pending" is **not** a pass state. The three-harness end-to-end confirmation is **deferred
-and requires explicit user approval** (run them — accepting the hours-scale consolidation
-cost and, for LOCOMO/LME, the paid-API spend — OR explicitly approve deferring the
-end-to-end confirmation to Phase 43's CI gate, with that approval recorded here). The
-mechanical equivalence PERF-03(a) is complete and is the stronger statement; the harness
-re-run is corroboration of an already byte-exact result.
+**Verdict: PERF-03(b) = DEFERRED to Phase 43 CI gate (founder-approved 2026-06-24).**
+Per the plan's own rule, "deferred, approval pending" is not a pass state — so this was
+surfaced to the founder as an explicit cost/approval decision. **Decision: defer the
+three-harness end-to-end re-run to Phase 43's CI regression gate.** Rationale (agreed by
+the executor, the independent gsd-verifier, and the founder): all three harnesses construct
+`CandidateRetriever` WITHOUT `indexPath` (`replay-ku:259`, `locomo:160/432`,
+`longmemeval:217/710`) — they run the brute-force fallback, not the index — so re-running
+them (hours-scale KU consolidation + paid-API spend over the $3 gate) corroborates an
+already byte-exact result and buys no new assurance. The mechanical equivalence PERF-03(a)
+is complete and is the load-bearing proof; the harness re-run is corroboration only and now
+lives as a Phase 43 CI regression sentinel.
 
 ---
 
@@ -201,7 +205,7 @@ Now that the numbers are in hand:
 | Gate | Status | Evidence |
 |------|--------|----------|
 | PERF-03(a) top-k equivalence (D-10) | **PASS** | 40/40 checks, 0 failures, max\|Δscore\|=0 (mock + real embed) |
-| PERF-03(b) 3-harness end-to-end no-regression | **OPEN — needs user approval** | not completed in-session (hours-scale consolidation; harnesses run brute-force, not the index); KU anchor 77.8% / LOCOMO J 86.0% |
+| PERF-03(b) 3-harness end-to-end no-regression | **DEFERRED to Phase 43 CI (founder-approved 2026-06-24)** | not run in-session (hours-scale consolidation + paid-API; harnesses run brute-force, not the index → corroboration only); KU anchor 77.8% / LOCOMO J 86.0% |
 | PERF-02 warm latency | **PASS** | 13/14 ms vs 45/46 ms baseline (~3.4×, −32 ms), stable |
 | PERF-02 cold latency (D-08 headline) | **PASS** | 72/77 ms vs 96/99 ms same-run brute (−24/−22 ms), stable over 4 runs |
 | Soft target set after the fact (D-08) | **DONE** | warm ≤15 ms p95, cold ≤80 ms p95 wall (embed-isolated) |
