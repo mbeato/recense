@@ -68,7 +68,7 @@ Stand up an apples-to-apples competitive benchmark and record honest baselines o
 
 ### Engine config / billing model
 - `CLAUDE.md` (project) §Constraints — sleep-pass model stack (extract=headless Haiku, judge=headless Sonnet via `claude -p` on Max subscription), `consolSkipThreshold` gating, config location `config.ts:620-622`, subscription-billing framing (`--output-format json` reports per-call `usage`/`total_cost_usd`).
-- `src/model/config.ts` — the frozen-config knobs to snapshot per D-10.
+- `src/lib/config.ts` (DEFAULT_CONFIG, ~line 712) — the frozen-config knobs to snapshot per D-10. (NOTE: `src/model/config.ts` does NOT exist — corrected 2026-06-22 during planning; RESEARCH + PATTERNS confirm.)
 
 ### To be acquired
 - LOCOMO dataset — **not yet downloaded**; acquire the standard LoCoMo-10 set + mem0/Zep's published LoCoMo evaluation (judge protocol + per-category numbers) as the D-05 research item.

@@ -47,6 +47,7 @@ metrics:
   completed: "2026-06-18"
   tasks_completed: 4
   files_changed: 8
+  live_verification: "generate-doc tonos --force on canonical DB (node 892c1045): citationCount=74, cites edges=74 (match), invented=0, 1 live doc node (supersede ok), prose 12318 chars / 79 inline refs all full-UUID (canonicalized), 0 FK violations. Orchestrator-run under user authorization 2026-06-18; two stray debug doc nodes (218260d4 truncated-id, 97dc7e6a empty-timeout) FK-deleted first."
 ---
 
 # Phase 27 Plan 02: Doc-Generation Core Summary

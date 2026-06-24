@@ -98,10 +98,30 @@ The `--dry-run` flag performs the NN scan + pollution filter with zero judge cal
 
 - Pre-existing `npm run build` failure on `fact-dedup.ts` (untracked file from prior work) — does not affect this script; dist modules are all present.
 
+## Real Judge Run — COMPLETED 2026-06-18 (orchestrator)
+
+Cost checkpoint resolved: **claude-headless** Sonnet judge (Max subscription, keys stripped → $0 API; `--setting-sources project` → no self-ingestion loop). 30 pairs judged over the live DB (read-only, mtime unchanged).
+
+**Verdict (`scripts/eval/results/judge-replay-isolate.json`):**
+
+| bucket | count |
+|--------|-------|
+| judge-miss | **20 (dominant)** |
+| pe-escape | 0 |
+| correct | 10 |
+| error/unknown | 0 |
+
+- Candidate pairs: 151 total → 14 pollution-excluded → 137 clean → top 30 judged.
+- High-similarity restatements (cos 0.97 / 0.94 / 0.91 / 0.91) all returned `unrelated` → judge-miss.
+- `extend` mis-classifications dominate the 0.72–0.82 band; several `confirm` / `contradict→reconcile` were correct.
+
+**DOMINANT FAILURE PATH: judge-miss.** PE-routing is exonerated (0 pe-escape).
+
+**26-07 FIX TARGET: `src/model/judge.ts`** (prompt / classification) — the judge mis-classifies same-belief restatements as `unrelated`/`extend` when they should be `confirm` (identical belief, strengthen) or `contradict` (changed belief, reconcile). Do **NOT** touch the PE-routing constants in `src/lib/config.ts` (0 pe-escape) and do **NOT** touch `unrelatedSimilarityThreshold` (cosine lever, falsified D-01).
+
 ## Next Phase Readiness
 
-- `scripts/eval/judge-replay-isolate.cjs` is ready to run once the cost checkpoint is approved by the orchestrator
-- 26-07 fix is blocked on the verdict JSON from the real judge run — orchestrator must drive that
+- Verdict produced; 26-07 is unblocked and must edit `src/model/judge.ts` only (plus its test), preserving the contradicted_ids candidate-set filter + order-swap consistency check (no over-tombstoning).
 
 ---
 
