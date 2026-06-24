@@ -98,8 +98,28 @@ export function createPopover(): BrowserWindow {
   // ?shell=1 marks the shell context for the viz (detail.js shellCompact):
   // the server strips query strings before routing, so it still serves
   // index.html unchanged.
-  win.loadURL('http://127.0.0.1:7810/?shell=1').catch(() => {
-    // Server may not be up yet — renderer will retry when shown.
+  win.loadURL('http://127.0.0.1:7810/?shell=1').catch(() => {});
+
+  // did-fail-load: bounded backoff retry until the viz server binds port 7810.
+  // Addresses the cold-start race: the spawned node child has not yet bound the
+  // port when the first loadURL fires, so loadURL fails and stays blank forever
+  // (Electron does not auto-retry). 30 × 2.5 s ≈ 75 s max; clears on success.
+  let _loadRetries = 0;
+  const LOAD_MAX_RETRIES = 30;
+  const LOAD_RETRY_MS = 2_500;
+  let _loadRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearLoadRetry = () => {
+    if (_loadRetryTimer !== null) { clearTimeout(_loadRetryTimer); _loadRetryTimer = null; }
+    _loadRetries = 0;
+  };
+  win.webContents.on('did-fail-load', (_ev, errorCode) => {
+    if (errorCode === -3) return; // ERR_ABORTED — user navigation, not server down
+    if (_loadRetryTimer !== null || _loadRetries >= LOAD_MAX_RETRIES) return;
+    _loadRetryTimer = setTimeout(() => {
+      _loadRetryTimer = null;
+      _loadRetries++;
+      win.loadURL('http://127.0.0.1:7810/?shell=1').catch(() => {});
+    }, LOAD_RETRY_MS);
   });
 
   // T-16-10: abort any navigation that leaves the loopback origin.
@@ -148,6 +168,7 @@ export function createPopover(): BrowserWindow {
   // the drag strip if we are pinned (a reload, or a pin issued before the
   // page was ready, would otherwise silently lose it).
   win.webContents.on('did-finish-load', () => {
+    clearLoadRetry(); // cancel any pending retry — load succeeded
     win.webContents.executeJavaScript(EXPAND_BTN_JS).catch(() => {});
     if (_pinned) {
       win.webContents.executeJavaScript(DRAG_STRIP_ADD).catch(() => {});

@@ -98,19 +98,43 @@ export function openMainWindow(): void {
     }
   });
 
+  // did-fail-load: bounded backoff retry until the viz server binds port 7810.
+  // Mirrors the same fix in popover.ts — see there for rationale.
+  // Declared before the did-finish-load handler below so clearLoadRetry is
+  // in scope when the handler closure captures it.
+  let loadRetries = 0;
+  const LOAD_MAX_RETRIES = 30;
+  const LOAD_RETRY_MS = 2_500;
+  let loadRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearLoadRetry = () => {
+    if (loadRetryTimer !== null) { clearTimeout(loadRetryTimer); loadRetryTimer = null; }
+    loadRetries = 0;
+  };
+
   // Inject the collapse-to-tray affordance whenever the page (re)loads.
+  // Clears the did-fail-load retry on success so duplicate retries never fire.
   _win.webContents.on('did-finish-load', () => {
+    clearLoadRetry(); // cancel any pending retry — load succeeded
     _win?.webContents.executeJavaScript(COLLAPSE_BTN_JS).catch(() => {});
   });
 
   // T-16-10: deny any new-window request from the renderer.
   _win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
-  _win.loadURL(VIZ_URL).catch(() => {
-    // Server may not be up yet — blank window; user can reopen from the tray.
+  _win.webContents.on('did-fail-load', (_ev, errorCode) => {
+    if (errorCode === -3) return; // ERR_ABORTED — user navigation, not server down
+    if (loadRetryTimer !== null || loadRetries >= LOAD_MAX_RETRIES) return;
+    loadRetryTimer = setTimeout(() => {
+      loadRetryTimer = null;
+      loadRetries++;
+      _win?.loadURL(VIZ_URL).catch(() => {});
+    }, LOAD_RETRY_MS);
   });
 
+  _win.loadURL(VIZ_URL).catch(() => {});
+
   _win.on('closed', () => {
+    clearLoadRetry(); // stop retrying if window was closed before server came up
     _win = null;
     // Back to menu-bar-only; tray + server keep running (D-06 baseline).
     if (process.platform === 'darwin') {
