@@ -187,6 +187,17 @@ describe('GET /doc?slug=', () => {
     expect(spawn).toHaveBeenCalled();
   });
 
+  it('202 generating payload carries elapsedMs (server-authoritative progress)', async () => {
+    // The reader seeds its progress bar from this elapsedMs so a node reopened mid-generation
+    // resumes the real progress instead of restarting at 0s. Contract: a non-negative number.
+    const r = await makeRequest(port, '/doc?slug=elapsed-probe');
+    expect(r.statusCode).toBe(202);
+    const json = JSON.parse(r.body) as { status: string; elapsedMs: number };
+    expect(json.status).toBe('generating');
+    expect(typeof json.elapsedMs).toBe('number');
+    expect(json.elapsedMs).toBeGreaterThanOrEqual(0);
+  });
+
   it('returns 400 for empty slug param', async () => {
     const r = await makeRequest(port, '/doc?slug=');
     expect(r.statusCode).toBe(400);

@@ -80,8 +80,12 @@ const MODULES_ROOT = path.resolve(VIZ_ROOT, 'modules');
 const CSS_ROOT = path.resolve(VIZ_ROOT, 'css');
 
 // T-27-10: track in-flight slug generations to prevent duplicate concurrent spawns.
-// Key = slug, Value = true while the generate-doc CLI is running.
-const inFlightSlugs = new Set<string>();
+// Key = slug, Value = Date.now() when the generate-doc CLI was first spawned for it.
+// Storing the start time (not just a boolean) lets the 202 payload report the REAL
+// elapsed generation time, so a reader reopened mid-generation resumes its progress bar
+// from where the backend actually is instead of restarting at 0s (the detached child
+// keeps running across reader close/reopen; only the UI used to forget).
+const inFlightSlugs = new Map<string, number>();
 
 /**
  * Serve a file from the filesystem with:
@@ -336,8 +340,8 @@ export function startVizServer(dbPath: string, port: number): http.Server {
   // Instead, it spawns the `recense generate-doc <slug>` CLI as a detached subprocess.
   // T-27-10: an in-flight Set prevents duplicate concurrent spawns for the same slug.
   function spawnGenerateDoc(slug: string, force = false): void {
-    if (inFlightSlugs.has(slug)) return; // T-27-10: already generating
-    inFlightSlugs.add(slug);
+    if (inFlightSlugs.has(slug)) return; // T-27-10: already generating (start time preserved)
+    inFlightSlugs.set(slug, Date.now());
 
     // Resolve the compiled CLI script path from the adapter directory.
     const cliScript = path.resolve(__dirname, '../adapter/generate-doc-cli.js');
@@ -355,6 +359,18 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     // Clear in-flight once the child exits (success or failure).
     child.on('close', () => inFlightSlugs.delete(slug));
     child.on('error', () => inFlightSlugs.delete(slug));
+  }
+
+  // Emit the 202 "generating" envelope with the REAL elapsed generation time for the slug.
+  // elapsedMs is derived from the in-flight start time recorded by spawnGenerateDoc, so a
+  // reader reopened mid-generation seeds its progress bar from the true elapsed instead of 0
+  // (call this AFTER spawnGenerateDoc so a freshly-started slug reports ~0). Falls back to 0
+  // if the slug somehow isn't tracked (e.g. the child exited between spawn and this read).
+  function send202Generating(res: http.ServerResponse, slug: string): void {
+    const startedAt = inFlightSlugs.get(slug);
+    const elapsedMs = startedAt != null ? Math.max(0, Date.now() - startedAt) : 0;
+    res.writeHead(202, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ status: 'generating', elapsedMs }));
   }
 
   const server = http.createServer((req, res) => {
@@ -534,8 +550,7 @@ export function startVizServer(dbPath: string, port: number): http.Server {
           } else if (row && row.value.trim().length === 0) {
             // Empty stub — spawn generation and return 202.
             spawnGenerateDoc(resolvedSlug);
-            res.writeHead(202, { 'content-type': 'application/json' });
-            res.end(JSON.stringify({ status: 'generating' }));
+            send202Generating(res, resolvedSlug);
           } else {
             res.writeHead(404, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ error: 'no live doc for id' }));
@@ -567,8 +582,7 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         } else {
           // No row OR empty-stub row — spawn CLI and return 202.
           spawnGenerateDoc(slug);
-          res.writeHead(202, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ status: 'generating' }));
+          send202Generating(res, slug);
         }
       } catch (err) {
         res.writeHead(500, { 'content-type': 'text/plain' });
@@ -849,8 +863,7 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         return;
       }
       spawnGenerateDoc(slug, true);
-      res.writeHead(202, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ status: 'generating' }));
+      send202Generating(res, slug);
       return;
     }
 

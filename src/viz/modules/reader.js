@@ -29,8 +29,11 @@ const DOC_LINK = /\[([^\]]+)\]\(recense:\/\/doc\/([a-z0-9-]+)\)/g;
 
 // Poll interval when waiting for lazy generation (ms).
 const POLL_MS = 2000;
-// Maximum poll attempts (~120s at 2s intervals) before giving up.
-const POLL_MAX = 60;
+// Maximum poll attempts before giving up. Sized to the server's generation budget: the
+// `claude -p` headless doc-gen timeout is 600s (commit 14cdf15), so 300 × 2s = 600s. The
+// old 120s cap abandoned long-but-healthy generations, which then re-anchored a fresh 0s
+// bar on the next open — a primary cause of the "restarts from the beginning" symptom.
+const POLL_MAX = 300;
 // Typical schema-doc generation wall-time (headless judge-tier, ~4k-token cited prose).
 // Measured ~42s on the live brain; used only to drive the progress-bar ETA estimate.
 const GEN_ESTIMATE_MS = 45000;
@@ -109,6 +112,11 @@ export function initReader(ctx) {
   let openFrom = 'brain';
 
   let loaded = false;
+  // Cross-node clobber guard: every loadWithPoll() run claims a fresh token. A still-running
+  // poll loop for a previously-opened doc (the reader close doesn't cancel it, and openReader
+  // re-targets currentSlug under it) must NOT write its result into the body now showing a
+  // DIFFERENT doc. Each loop re-checks its token after every await and bails if superseded.
+  let loadToken = 0;
   // citedFactIds fetched from /doc/meta; used for graph focus.
   let citedFactIds = [];
   // Staleness state (READER-03): populated from /doc/staleness after wireFactLinks().
@@ -228,16 +236,21 @@ export function initReader(ctx) {
    * progress state and poll until markdown arrives (D-02/D-03 single loading path).
    */
   async function loadWithPoll() {
+    // Claim a token for this run. If a later open re-targets the reader, loadToken advances
+    // and this loop bails at its next checkpoint instead of writing into the new doc's body.
+    const myToken = ++loadToken;
     let attempts = 0;
     let progress = null;
     try {
       while (attempts < POLL_MAX) {
         const res = await fetch('/doc?' + docQuery());
+        if (myToken !== loadToken) return; // superseded by a newer open — finally stops progress
         // IMPORTANT: must be `=== 200`, NOT `res.ok` — 202 ("generating") is also a 2xx,
         // so `res.ok` would swallow it and render the raw {"status":"generating"} JSON as
         // the doc body. Only a real 200 carries markdown.
         if (res.status === 200) {
           const md = await res.text();
+          if (myToken !== loadToken) return; // superseded mid-fetch — do not clobber the new doc
           if (progress) progress.done();
           // T-10-12/T-27-08: only innerHTML from renderMarkdown output (all values escaped).
           body.innerHTML = renderMarkdown(md);
@@ -251,10 +264,20 @@ export function initReader(ctx) {
           return;
         }
         if (res.status === 202) {
-          // D-03: single honest loading state — a real elapsed/ETA progress bar (built
-          // once on the first 202; it animates independently of the 2s poll cadence).
+          // D-03: single honest loading state — a real elapsed/ETA progress bar (built once
+          // on the first 202; it animates independently of the 2s poll cadence). The bar is
+          // SEEDED from the server-reported elapsed generation time so a reader reopened
+          // mid-generation resumes the true progress instead of restarting at 0s.
           attempts++;
-          if (!progress) progress = startGenProgress();
+          if (!progress) {
+            let elapsedMs = 0;
+            try {
+              const j = await res.json();
+              if (typeof j.elapsedMs === 'number') elapsedMs = j.elapsedMs;
+            } catch (_) { /* missing/old payload → seed from 0 */ }
+            if (myToken !== loadToken) return; // superseded while reading the envelope
+            progress = startGenProgress(elapsedMs);
+          }
           await sleep(POLL_MS);
           continue;
         }
@@ -274,7 +297,7 @@ export function initReader(ctx) {
    * snaps to 100% only when the real doc arrives. Honest about the estimate via "~Ns left".
    * Returns { stop, done } to tear down the animation interval.
    */
-  function startGenProgress() {
+  function startGenProgress(elapsedMs = 0) {
     body.textContent = '';
     const wrap = document.createElement('div');
     wrap.className = 'doc-progress';
@@ -289,7 +312,9 @@ export function initReader(ctx) {
     wrap.appendChild(label);
     body.appendChild(wrap);
 
-    const start = performance.now();
+    // Seed the clock from the server's real elapsed time (0 for a fresh generation) so a
+    // reopened reader resumes the bar where the backend actually is — not from 0s.
+    const start = performance.now() - Math.max(0, elapsedMs);
     const TAU = GEN_ESTIMATE_MS * 0.5; // ~87% at the estimate, ~98% at 2× it; never 100%.
     function tick() {
       const elapsed = performance.now() - start;
