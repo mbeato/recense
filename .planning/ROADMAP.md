@@ -622,7 +622,7 @@ Plans:
   3. The token-efficiency claim vs competitors (e.g. mem0's ~90% / claude-mem's ~10x retrieval savings) is stated with both recense's reproduced number and the cited competitor figure — no inflated comparison — COST-03
   4. Progressive-disclosure retrieval (index-first → detail-on-demand) is benchmarked against recense's schema-prior compression on the token axis; adopted into the recall/MCP surface only if it shows a measured token win with no accuracy regression, else explicitly declined with the numbers — COST-04
 
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 **Wave 1** *(parallel — no file overlap)*
@@ -632,7 +632,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 42-03-PLAN.md — Competitor-savings report: reproduced recall-side headline + write-side breakeven separate + mem0/claude-mem cited with methodology notes (COST-03)
+- [x] 42-03-PLAN.md — Competitor-savings report: reproduced recall-side headline + write-side breakeven separate + mem0/claude-mem cited with methodology notes (COST-03)
 
 **Wave 3** *(blocked on Wave 2; autonomous: false)*
 
