@@ -25,7 +25,7 @@ import { realClock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
 import type { ModelProvider } from '../model/provider';
 import { SemanticStore } from '../db/semantic-store';
-import { CandidateRetriever } from '../retrieval/topk';
+import { CandidateRetriever, vectorIndexPath } from '../retrieval/topk';
 import { StrengthDecayManager } from '../strength/decay';
 import { AllocationGate } from '../gate/allocation-gate';
 import { RetrievalEngine } from '../retrieval/engine';
@@ -100,7 +100,11 @@ export async function ambientRecall(
 ): Promise<string> {
   // Collaborators on the SHARED handle — single process, single DB open.
   const store = new SemanticStore(db, clock, config);
-  const retriever = new CandidateRetriever(db);
+  // Phase 41 (PERF-01/D-06): cue-less ambient path reads the persisted exact index (built
+  // end-of-sleep-pass) so the per-prompt recall skips re-marshaling ~10k embedding rows;
+  // brute-force fallback when the artifact is absent. config.dbPath is the same DB this handle
+  // was opened against (turn-capture-cli passes { ...DEFAULT_CONFIG, dbPath }).
+  const retriever = new CandidateRetriever(db, { indexPath: vectorIndexPath(config.dbPath) });
   const strength = new StrengthDecayManager(db, clock, config);
   const gate = new AllocationGate(config);
 

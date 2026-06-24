@@ -26,7 +26,7 @@ import { realClock } from '../lib/clock';
 import { EpisodicStore } from '../db/episode-store';
 import { SemanticStore } from '../db/semantic-store';
 import { StrengthDecayManager } from '../strength/decay';
-import { CandidateRetriever } from '../retrieval/topk';
+import { CandidateRetriever, vectorIndexPath } from '../retrieval/topk';
 import { DefaultModelProvider } from '../model/provider';
 import { RecallEngine } from '../recall';
 import { releaseLock, acquireLockWithRetry } from './lockfile';
@@ -142,7 +142,9 @@ async function main(): Promise<void> {
     const episodes = new EpisodicStore(db, realClock, config);
     const store    = new SemanticStore(db, realClock, config);
     const strength = new StrengthDecayManager(db, realClock, config);
-    const retriever = new CandidateRetriever(db);
+    // Phase 41 (PERF-01/D-06): cold CLI reads the persisted exact index (built end-of-sleep-pass)
+    // so each recall skips re-marshaling ~10k embedding rows; brute-force fallback when absent.
+    const retriever = new CandidateRetriever(db, { indexPath: vectorIndexPath(dbPath) });
 
     // M-7: apply provider overlay so RECENSE_MODEL_PROVIDER / role-specific provider
     // env vars route generate+judge to the configured provider. embed stays base config.

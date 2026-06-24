@@ -42,6 +42,16 @@ import { effectiveStrength } from '../strength/decay';
 const INDEX_MAGIC = 'RVIX';
 const INDEX_VERSION = 1;
 
+/**
+ * Canonical sidecar path for a given DB: `<dbPath>.vindex`, beside the DB file.
+ * The end-of-pass build (run-sleep-pass.ts) and the three cold online readers
+ * (session-start / recall / ambient) ALL derive the path through this one helper so they
+ * never drift.
+ */
+export function vectorIndexPath(dbPath: string): string {
+  return `${dbPath}.vindex`;
+}
+
 /** Loaded sidecar: parallel id array + contiguous f32 buffer + precomputed f64 norms. */
 interface LoadedIndex {
   dim: number;

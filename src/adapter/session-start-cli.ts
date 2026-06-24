@@ -31,7 +31,7 @@ import { SCHEMA_VERSION } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
 import { SemanticStore } from '../db/semantic-store';
-import { CandidateRetriever } from '../retrieval/topk';
+import { CandidateRetriever, vectorIndexPath } from '../retrieval/topk';
 import { StrengthDecayManager } from '../strength/decay';
 import { AllocationGate } from '../gate/allocation-gate';
 import { RetrievalEngine } from '../retrieval/engine';
@@ -122,7 +122,10 @@ async function main(): Promise<void> {
   // Instantiate all engine deps — LLM-free by construction (no Embedder/Judge instantiated)
   const clock = realClock;
   const store    = new SemanticStore(db, clock, config);
-  const retriever = new CandidateRetriever(db);
+  // Phase 41 (PERF-01/D-06): read the persisted exact index built at end-of-sleep-pass so this
+  // cold hook skips the ~170 ms re-marshal of ~10k embedding rows. Brute-force fallback is
+  // automatic when the artifact is absent (first run before any pass) — graph stays source of truth.
+  const retriever = new CandidateRetriever(db, { indexPath: vectorIndexPath(dbPath) });
   const strength  = new StrengthDecayManager(db, clock, config);
   const gate      = new AllocationGate(config);
   const engine    = new RetrievalEngine(db, clock, config, retriever, store, strength, gate);

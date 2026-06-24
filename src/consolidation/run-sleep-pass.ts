@@ -25,7 +25,7 @@ import type { Clock } from '../lib/clock';
 import { EpisodicStore } from '../db/episode-store';
 import { SemanticStore } from '../db/semantic-store';
 import { StrengthDecayManager } from '../strength/decay';
-import { CandidateRetriever } from '../retrieval/topk';
+import { CandidateRetriever, buildVectorIndex, vectorIndexPath } from '../retrieval/topk';
 import { DefaultModelProvider } from '../model/provider';
 import type { ModelProvider as ModelProviderSeam } from '../model/provider';
 import { getTwoTierStats } from '../model/judge';
@@ -666,6 +666,22 @@ export async function runConsolidation(
   // Dark-default OFF; flip RECENSE_SLEEP_DEDUP=1 in sleep.env after watching one pass.
   if (env['RECENSE_SLEEP_DEDUP'] === '1') {
     runGraphHygiene(db, store, sink, config, realClock, log);
+  }
+
+  // Phase 41 (PERF-01, D-05/D-06): rebuild + persist the exact vector index sidecar.
+  // Placed AFTER consolidation + graph hygiene so it reflects the LAST completed pass
+  // (D-05) — all build cost stays offline. The cold online callers (SessionStart inject,
+  // recall-cli, ambient-recall) read this ready artifact instead of re-marshaling ~10k
+  // embedding BLOB rows per invocation (the D-06 cold win). It is a DERIVED cache: a build
+  // failure is logged, NEVER thrown, and never aborts the pass (mirrors the graph-hygiene
+  // error posture). The offline consolidator is NOT repointed at it — its retriever stays
+  // brute-force (D-07), running mid-pass before this end-of-pass index exists.
+  try {
+    const indexPath = vectorIndexPath(config.dbPath);
+    const n = buildVectorIndex(db, indexPath);
+    log(`index: rebuilt ${n} vectors -> ${indexPath}`);
+  } catch (err) {
+    log(`index: rebuild FAILED (${String(err).slice(0, 120)}) — derived cache, pass continues (graph is source of truth)`);
   }
 
   log('Sleep pass complete');
