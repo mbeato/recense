@@ -540,3 +540,50 @@ describe('DEDUP-01: embed-on-mint intra-pass visibility', () => {
     expect(provider.judgeCalls).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// FIX-EMBED-POISON: reembedDirty must never feed an empty-value node to the
+// embedder. CorpusPromoter mints doc stubs with value='' (prose generated
+// lazily); OpenAI rejects an empty string with a 400 that fails the WHOLE atomic
+// batch, aborting the sleep pass before any episode is consolidated → permanent
+// consolidation stall. Regression: an empty-value dirty node present in the
+// graph must not crash consolidate(), and the good dirty node must still embed.
+// ---------------------------------------------------------------------------
+
+describe('FIX-EMBED-POISON: reembedDirty skips empty-value / tombstoned nodes', () => {
+  it('an empty-value dirty doc stub does not poison the embed batch', async () => {
+    const h = makeHarness();
+
+    // embedFn mimics the OpenAI embeddings API: an empty/whitespace input throws,
+    // exactly as `400 Invalid 'input[N]': input cannot be an empty string` would.
+    const provider = new MockModelProvider({
+      embedFn: (t: string) => {
+        if (t.trim().length === 0) {
+          throw new Error("400 Invalid 'input': input cannot be an empty string");
+        }
+        return new Float32Array(h.config.embeddingDimensions);
+      },
+    });
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    // Poison: an empty-value doc stub (mirrors corpus-promoter.ts:323 — value:'',
+    // origin:'inferred', born dirty with embedded_hash IS NULL).
+    const emptyDocId = newId();
+    h.store.upsertNode({ id: emptyDocId, type: 'doc', value: '', origin: 'inferred' });
+    // A healthy dirty node that SHOULD still be embedded in the same pass.
+    const goodId = newId();
+    h.store.upsertNode({ id: goodId, type: 'fact', value: 'recense uses better-sqlite3', origin: 'observed' });
+
+    // Before the fix this rejects with the 400; after the fix the empty stub is
+    // filtered out of the SELECT so the embedder never sees an empty string.
+    await expect(consolidator.consolidate()).resolves.toBeUndefined();
+
+    // The empty stub stays dirty (never embedded); the good node gets embedded.
+    const emptyRow = h.db.prepare('SELECT embedded_hash FROM node WHERE id = ?').get(emptyDocId) as { embedded_hash: string | null };
+    const goodRow = h.db.prepare('SELECT embedded_hash FROM node WHERE id = ?').get(goodId) as { embedded_hash: string | null };
+    expect(emptyRow.embedded_hash).toBeNull();
+    expect(goodRow.embedded_hash).not.toBeNull();
+  });
+});

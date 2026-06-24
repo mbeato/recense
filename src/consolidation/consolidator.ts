@@ -397,8 +397,16 @@ export class Consolidator {
     // (e.g. a concurrent reconcile) could update the node's value, making the freshly-
     // computed embedding stale. Passing expectedValueHash lets setEmbedding no-op if that
     // happens — the node stays dirty (embedded_hash IS NULL) and will be re-embedded next pass.
+    // FIX-EMBED-POISON: exclude empty-value stubs and tombstoned nodes. Corpus
+    // promotion mints doc stubs with value='' (prose generated lazily on first
+    // access); embedding an empty string makes OpenAI 400 the whole atomic batch
+    // (`input[N] cannot be an empty string`), aborting the entire sleep pass here —
+    // before any episode is consolidated — and stalling indefinitely because the
+    // poison stub stays dirty. Empty stubs are FTS-suppressed and not meant to embed
+    // until they have prose; tombstoned nodes are dead.
     const dirtyRows = this.db
-      .prepare('SELECT id, value, value_hash FROM node WHERE embedded_hash IS NULL')
+      .prepare(`SELECT id, value, value_hash FROM node
+                WHERE embedded_hash IS NULL AND TRIM(value) <> '' AND tombstoned = 0`)
       .all() as Array<{ id: string; value: string; value_hash: string }>;
 
     if (dirtyRows.length === 0) return;
