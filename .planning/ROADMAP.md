@@ -651,9 +651,7 @@ Plans:
 
 **Plans:** 0 plans (run `/gsd-plan-phase 43`)
 
-## Backlog
-
-### Phase 999.1: Bundled-App Settings & Cost Controls (BACKLOG)
+### Phase 44: Bundled-App Settings & Cost Controls
 
 **Goal:** User-facing settings/toggles so a bundled-app user can control which *token-spending* features run — without a re-architecture. Token cost is recense's only real marginal cost and it's wildly uneven across features; a distributable app needs both control (toggle off what you don't value) and transparency (see what's spending).
 
@@ -679,6 +677,12 @@ Plans:
 
 **Cheap MVP (~a day, if wanted before the full phase):** surface just `RECENSE_CORPUS_GEN` + sleep frequency + salience threshold via a `recense config` command. Full presets + usage readout + tray UI is the phase.
 
+**Depends on:** Nothing in 40–43 — orthogonal productization/distribution-track phase (independent of the perf/parity line). Promoted from backlog 2026-06-24; sequenced as the next actionable phase while Phase 43 is deferred behind Phase 42's reset-window eval. Standalone (not folded into the v8.0 perf milestone), same pattern as the inserted Phase 39.2.
+
 **Requirements:** TBD
 
-**Plans:** 0 plans (promote with /gsd-review-backlog when ready)
+**Plans:** 0 plans (run `/gsd-discuss-phase 44`, then `/gsd-plan-phase 44`)
+
+## Backlog
+
+_(empty — no backlog items)_
