@@ -679,9 +679,16 @@ Plans:
 
 **Depends on:** Nothing in 40–43 — orthogonal productization/distribution-track phase (independent of the perf/parity line). Promoted from backlog 2026-06-24; sequenced as the next actionable phase while Phase 43 is deferred behind Phase 42's reset-window eval. Standalone (not folded into the v8.0 perf milestone), same pattern as the inserted Phase 39.2.
 
-**Requirements:** TBD
+**Requirements:** none (no Phase-44 IDs in REQUIREMENTS.md; plans trace to locked decisions D-01..D-12 in 44-CONTEXT.md)
 
-**Plans:** 0 plans (run `/gsd-discuss-phase 44`, then `/gsd-plan-phase 44`)
+**Plans:** 6 plans (3 waves)
+
+- [ ] 44-01-PLAN.md — Settings types + merge loader (settings.json, env>file>preset>DEFAULT precedence, D-12 core guardrail)
+- [ ] 44-02-PLAN.md — Wire merged config into sleep-pass + ingest call sites (corpus-gen + schema-induction gating, env still wins)
+- [ ] 44-03-PLAN.md — Token-usage ledger table + feature-tagged live sink (best-effort, never aborts the pass)
+- [ ] 44-04-PLAN.md — `recense config` CLI (show/get/set/preset/apply) + launchd frequency regen
+- [ ] 44-05-PLAN.md — viz-server GET/POST /settings + GET /usage routes (localhost-only, key-whitelisted)
+- [ ] 44-06-PLAN.md — viz frontend settings panel + token readout (no new IPC; human visual check)
 
 ## Backlog
 
