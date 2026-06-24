@@ -545,6 +545,33 @@ export interface EngineConfig {
    */
   insightSurfacingEnabled: boolean;
 
+  // --- Phase 44: settings surface cost levers (D-04/D-06/D-11/D-12) ---
+
+  /**
+   * Whether corpus-doc generation runs in the sleep pass (D-04, D-06).
+   * Corresponds to RECENSE_CORPUS_GEN !== '0'. Default true (matches current behaviour).
+   * Env var RECENSE_CORPUS_GEN still wins over this field (D-05 precedence).
+   * The lite preset sets this to false — only extract + reconsolidation run.
+   * The most expensive optional feature (~42s Sonnet/doc); turn off first when saving tokens.
+   */
+  corpusGen: boolean;
+
+  /**
+   * Max number of corpus docs generated per sleep-pass cycle (D-04, D-06).
+   * Corresponds to RECENSE_CORPUS_GEN_MAX. Default 25.
+   * Env var RECENSE_CORPUS_GEN_MAX still wins over this field (D-05 precedence).
+   * Relevant only when corpusGen=true.
+   */
+  corpusGenMax: number;
+
+  /**
+   * Whether schema-abstraction (schema induction) runs in the sleep pass (D-04, D-06).
+   * Default true (current behaviour). The lite preset sets this to false.
+   * Schema abstraction is the optional learning layer; the core
+   * (extract + PE-gated reconsolidation) has no toggle at all (D-12).
+   */
+  schemaInductionEnabled: boolean;
+
   // --- Phase 39.1: subject doc exhaust-gate tunables (D-06/D-07) ---
 
   /**
@@ -818,4 +845,75 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   // On-write sleep-pass trigger (L8N-01)
   dirtySentinelPath: '', // empty = disabled; set RECENSE_DIRTY_SENTINEL or configure
 
+  // Phase 44: settings surface cost levers (D-04/D-06)
+  corpusGen: true,             // default on — matches existing RECENSE_CORPUS_GEN behaviour; env still wins (D-05)
+  corpusGenMax: 25,            // default 25 — matches RECENSE_CORPUS_GEN_MAX default
+  schemaInductionEnabled: true, // default on — schema abstraction runs unless preset/override disables it
+
+};
+
+// ---------------------------------------------------------------------------
+// Phase 44: settings surface — preset model (D-04/D-11/D-12)
+// ---------------------------------------------------------------------------
+
+/**
+ * The three user-selectable presets for the optional cost-bearing sleep-pass features.
+ * The core (extract + prediction-error-gated reconsolidation) is always on — it is not
+ * an optional layer and has no toggle in any preset (D-12).
+ */
+export type PresetName = 'lite' | 'standard' | 'full';
+
+/**
+ * The settings.json persisted format (D-04).
+ * Stores the chosen preset name plus an explicit overrides map.
+ * Effective config = preset defaults with overrides applied (D-11).
+ * `sleepFrequencyHours` is a settings-only artifact applied by `recense config apply`
+ * (regenerates the launchd plist); it is NOT read at sleep-pass runtime (D-07).
+ */
+export interface SettingsFile {
+  preset: PresetName;
+  overrides: Partial<
+    Pick<
+      EngineConfig,
+      | 'consolSkipThreshold'
+      | 'consolSkipThresholdAssistant'
+      | 'corpusSubjectDriftThreshold'
+      | 'corpusGen'
+      | 'corpusGenMax'
+      | 'schemaInductionEnabled'
+    >
+  > & {
+    /** Applied by `recense config apply` → scheduler reinstall; NOT read at sleep-pass runtime (D-07). */
+    sleepFrequencyHours?: number;
+  };
+}
+
+/**
+ * Preset baseline configs (D-11). Each preset expresses only the OPTIONAL layer.
+ * The core (extract + PE-gated reconsolidation) runs regardless of preset (D-12).
+ *
+ * lite:     extract + reconsolidation only — fastest / lowest token spend.
+ * standard: + schema abstraction; DEFAULT_CONFIG consolSkipThreshold values.
+ * full:     + readable corpus docs; highest token spend.
+ *
+ * IMPORTANT: no preset sets consolSkipThreshold / consolSkipThresholdAssistant to a
+ * value that disables extraction (>=1 or <0). That path is guarded in the loader (D-12).
+ */
+export const PRESET_CONFIGS: Record<PresetName, Partial<Omit<EngineConfig, 'dbPath'>>> = {
+  /** Minimum spend: extract + reconsolidation only. */
+  lite: {
+    corpusGen: false,
+    schemaInductionEnabled: false,
+  },
+  /** Mid spend: + schema abstraction. No extra corpus docs. */
+  standard: {
+    corpusGen: false,
+    schemaInductionEnabled: true,
+  },
+  /** Full spend: + readable corpus docs. */
+  full: {
+    corpusGen: true,
+    corpusGenMax: 25,
+    schemaInductionEnabled: true,
+  },
 };
