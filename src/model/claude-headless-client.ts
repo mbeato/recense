@@ -60,6 +60,8 @@ export const NEUTRAL_SYSTEM =
  */
 export interface HeadlessUsage {
   model: string;
+  /** Phase/stage tag identifying which sleep-pass feature made this call (D-09). */
+  feature_tag?: string;
   usage?: Record<string, number>;
   total_cost_usd?: number;
   duration_ms?: number;
@@ -79,6 +81,32 @@ let usageSink: ((u: HeadlessUsage) => void) | null = null;
  */
 export function setHeadlessUsageSink(fn: ((u: HeadlessUsage) => void) | null): void {
   usageSink = fn;
+}
+
+/**
+ * Ambient feature tag for the current sleep-pass phase (D-09).
+ *
+ * When set, this tag is included in every HeadlessUsage emitted to the sink, overriding
+ * the model-derived fallback. Use setHeadlessFeature('corpus_gen') / setHeadlessFeature(null)
+ * to bracket phases where the Sonnet model is doing corpus-doc generation rather than
+ * judging — which the model name alone cannot distinguish.
+ *
+ * Reset to null in a finally block around each bracketed phase so a mid-phase error
+ * cannot mistag later calls (T-44-10).
+ *
+ * Values: 'extract' | 'judge' | 'corpus_gen' | 'schema_abstract' | 'unknown' | null
+ */
+let currentFeature: string | null = null;
+
+export function setHeadlessFeature(tag: string | null): void {
+  currentFeature = tag;
+}
+
+/** Derive a feature_tag from the resolved model name (Haiku→extract, Sonnet→judge). */
+function deriveFeatureTag(model: string): string {
+  if (model.includes('haiku')) return 'extract';
+  if (model.includes('sonnet')) return 'judge';
+  return 'unknown';
 }
 
 /** Default per-call timeout; env-overridable via RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS. */
@@ -240,6 +268,7 @@ export function createClaudeHeadlessSurveyClient(config: EngineConfig, surveyDir
                 try {
                   usageSink({
                     model: useModel,
+                    feature_tag: currentFeature ?? deriveFeatureTag(useModel),
                     usage: envelope.usage,
                     total_cost_usd: envelope.total_cost_usd,
                     duration_ms: envelope.duration_ms,
@@ -343,6 +372,7 @@ export function createClaudeHeadlessClient(config: EngineConfig): { client: Anth
                 try {
                   usageSink({
                     model: useModel,
+                    feature_tag: currentFeature ?? deriveFeatureTag(useModel),
                     usage: envelope.usage,
                     total_cost_usd: envelope.total_cost_usd,
                     duration_ms: envelope.duration_ms,
