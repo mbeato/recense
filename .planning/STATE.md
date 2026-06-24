@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v8.0
 milestone_name: Performance, Efficiency & Competitive Parity
 status: executing
-stopped_at: Phase 41 context gathered
-last_updated: "2026-06-24T02:27:43.975Z"
-last_activity: 2026-06-24 -- Phase 41 execution started
+stopped_at: Phase 41 Plan 03 complete (gates measured; PERF-03(b) harness re-run open)
+last_updated: "2026-06-24T03:47:00.000Z"
+last_activity: 2026-06-24 -- Phase 41 Plan 03 complete -- PERF-02 win + PERF-03 equivalence locked
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 13
-  completed_plans: 11
-  percent: 38
+  completed_plans: 12
+  percent: 42
 ---
 
 # Project State
@@ -36,11 +36,11 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 ## Current Position
 
 Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
-Phase: 41 (vector-index-and-hot-path-latency) — EXECUTING
-Plan: 3 of 3 (41-01 spike + 41-02 index build COMPLETE)
-Status: Executing Phase 41
-Last activity: 2026-06-24 -- Phase 41 Plan 02 complete; persisted zero-dep flat-buffer exact index behind CandidateRetriever (built end-of-sleep-pass, read by 3 cold callers, brute-force fallback; consolidator/topkTombstoned stay brute-force)
-Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async.
+Phase: 41 (vector-index-and-hot-path-latency) — Plans 01–03 COMPLETE (one gate open)
+Plan: 3 of 3 done (41-01 spike + 41-02 build + 41-03 gates)
+Status: Phase 41 gates measured; PERF-03(b) end-to-end harness re-run OPEN (needs founder call)
+Last activity: 2026-06-24 -- Phase 41 Plan 03 complete. PERF-02 PASS (live brain: warm 13/14 ms ~3.4× under the 45/46 ms baseline; cold SessionStart-inject 72/77 ms, −24/−22 ms vs same-run brute-force, stable over 4 runs — the persisted .vindex sidecar delivered the D-06 cold win the spike's from-scratch build could not). PERF-03(a) PASS (indexed topk byte-identical to brute-force, 40/40, max|Δscore|=0). PERF-03(b) 3-harness end-to-end re-run NOT completed (hours-scale LLM consolidation; harnesses run brute-force anyway) — recorded OPEN in 41-PERF-REPORT.md, needs approval to run or to defer to Phase 43.
+Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async. Live recense.db opened read-only throughout; only the .vindex sidecar was written.
 
 ## Performance Metrics
 
@@ -259,9 +259,9 @@ Carried forward from v4.0 close (2026-06-17):
 
 ## Session Continuity
 
-Last session: 2026-06-24T02:05:16.239Z
-Stopped at: Phase 41 context gathered
-Resume file: .planning/phases/41-vector-index-and-hot-path-latency/41-CONTEXT.md
+Last session: 2026-06-24T03:47:00.000Z
+Stopped at: Phase 41 Plan 03 complete (PERF-02 + PERF-03(a) PASS; PERF-03(b) harness re-run OPEN)
+Resume file: .planning/phases/41-vector-index-and-hot-path-latency/41-PERF-REPORT.md
 
 ## Key Decisions (Phase 28)
 

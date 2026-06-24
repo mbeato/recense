@@ -607,7 +607,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 41-03-PLAN.md — Gates: top-k equivalence + 3-harness no-regression (PERF-03) and cold+warm latency delta vs Phase 40 baseline (PERF-02)
+- [x] 41-03-PLAN.md — Gates: top-k equivalence (PERF-03(a) PASS, byte-exact 40/40) + cold+warm latency delta vs Phase 40 baseline (PERF-02 PASS — warm 13/14ms ~3.4×, cold 72/77ms −24ms). PERF-03(b) 3-harness end-to-end re-run OPEN (hours-scale consolidation; needs user approval — see 41-PERF-REPORT.md)
 
 ### Phase 42: Token / Cost Efficiency Audit
 
