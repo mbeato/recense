@@ -622,13 +622,13 @@ Plans:
   3. The token-efficiency claim vs competitors (e.g. mem0's ~90% / claude-mem's ~10x retrieval savings) is stated with both recense's reproduced number and the cited competitor figure — no inflated comparison — COST-03
   4. Progressive-disclosure retrieval (index-first → detail-on-demand) is benchmarked against recense's schema-prior compression on the token axis; adopted into the recall/MCP surface only if it shows a measured token win with no accuracy regression, else explicitly declined with the numbers — COST-04
 
-**Plans:** 4 plans
+**Plans:** 2/4 plans executed
 
 Plans:
 **Wave 1** *(parallel — no file overlap)*
 
-- [ ] 42-01-PLAN.md — Lever-sweep harness: greedy one-at-a-time per-lever token attribution + KU inner-loop gate (cheap parts run now; write-side instrumented but deferred) (COST-01, COST-02)
-- [ ] 42-02-PLAN.md — Progressive-disclosure A/B harness: claude-mem fact-index→detail vs recense one-shot inject, oracle + fixed-top-K brackets; LLM-free $0 run now; decline-with-numbers valid (COST-04)
+- [x] 42-01-PLAN.md — Lever-sweep harness: greedy one-at-a-time per-lever token attribution + KU inner-loop gate (cheap parts run now; write-side instrumented but deferred) (COST-01, COST-02)
+- [x] 42-02-PLAN.md — Progressive-disclosure A/B harness: claude-mem fact-index→detail vs recense one-shot inject, oracle + fixed-top-K brackets; LLM-free $0 run now; decline-with-numbers valid (COST-04)
 
 **Wave 2** *(blocked on Wave 1)*
 
