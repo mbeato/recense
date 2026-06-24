@@ -7,8 +7,178 @@
  *  - Seam: swap to sqlite-vec/HNSW only when measured latency hurts (v1.3 roadmap).
  *  - Pitfall 5: Float32Array decoded with byteOffset + length (Buffer slices may have nonzero byteOffset).
  */
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { effectiveStrength } from '../strength/decay';
+
+/**
+ * Phase 41 (PERF-01, D-04/D-06): the persisted exact vector index.
+ *
+ * The spike (41-SPIKE-FINDINGS.md) chose the ZERO-DEP contiguous flat-`Float32Array`
+ * exact scan over sqlite-vec: ~3.4× faster warm, byte-exact (20/20 top-k set-identical),
+ * net-zero new deps. The COLD win (SessionStart-inject, recall-cli) only materializes when
+ * the cold process reads a PRE-BUILT persisted sidecar instead of re-marshaling ~10k
+ * embedding BLOB rows (D-06). This module is that sidecar.
+ *
+ * The index is a DERIVED cache (PERF-01): the graph is source of truth, the sidecar is
+ * rebuildable from `node.embedding` at any time. It is built at the END of the offline
+ * sleep pass (D-05) and read read-only by the online CandidateRetriever. On any load
+ * failure (missing / corrupt / stale / dim-mismatch) the retriever falls back to the
+ * brute-force scan — a corrupt artifact NEVER becomes authoritative (T-41-04).
+ *
+ * Sidecar binary layout (little-endian, one contiguous file next to the DB):
+ *   [0..4)   magic   = "RVIX"            (4 bytes)
+ *   [4..8)   version = INDEX_VERSION     (uint32)
+ *   [8..12)  dim                          (uint32)  embedding dimensionality
+ *   [12..16) count                        (uint32)  number of vectors
+ *   then `count` id records:  uint16 byteLength + UTF-8 id bytes
+ *   then count*dim float32 (row-major):   the contiguous embedding buffer
+ *   then count float64:                    precomputed L2 row norms
+ *
+ * Norms are precomputed so a query scan is one dot product + one sqrt of the query norm
+ * per row — the same `dot / (||q|| · ||row||)` as cosineSimF32, just without re-decoding a
+ * Float32Array view per row per query.
+ */
+const INDEX_MAGIC = 'RVIX';
+const INDEX_VERSION = 1;
+
+/** Loaded sidecar: parallel id array + contiguous f32 buffer + precomputed f64 norms. */
+interface LoadedIndex {
+  dim: number;
+  count: number;
+  ids: string[];
+  /** length = count * dim, row-major. */
+  data: Float32Array;
+  /** length = count; ||row_i||. */
+  norms: Float64Array;
+}
+
+/**
+ * Serialize the live (non-tombstoned) embedded nodes into the flat-buffer sidecar and
+ * persist it to `indexPath` (atomic: write to a temp file then rename). Returns the
+ * number of vectors written.
+ *
+ * Mirrors the topk row filter exactly: `embedding IS NOT NULL AND tombstoned = 0`.
+ * Rows whose decoded length differs from the first row's dim are SKIPPED (the same L-2
+ * dim-mismatch guard the brute-force scan applies), so a legacy/mismatched vector never
+ * corrupts the contiguous buffer.
+ *
+ * Offline only — called at the end of the sleep pass (D-05). Never called on the online
+ * path. The graph stays source of truth; this is a rebuildable derived cache (PERF-01).
+ */
+export function buildVectorIndex(db: Database.Database, indexPath: string): number {
+  const rows = db
+    .prepare('SELECT id, embedding FROM node WHERE embedding IS NOT NULL AND tombstoned = 0')
+    .all() as Array<{ id: string; embedding: Buffer }>;
+
+  // First pass: determine dim from the first decodable row and collect kept rows.
+  const kept: Array<{ id: string; v: Float32Array }> = [];
+  let dim = 0;
+  for (const row of rows) {
+    // Pitfall 5: byteOffset + length (Buffer slices may have a nonzero byteOffset).
+    const v = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
+    if (dim === 0) dim = v.length;
+    // L-2: skip dimension-mismatched vectors so the contiguous buffer stays uniform.
+    if (v.length !== dim) continue;
+    // Copy out of the Buffer-backed view — the underlying Buffer may be reused by sqlite.
+    kept.push({ id: row.id, v: Float32Array.from(v) });
+  }
+
+  const count = kept.length;
+  const ids = kept.map(r => r.id);
+
+  // Compute id-section byte length.
+  const idBytes = ids.map(id => Buffer.byteLength(id, 'utf8'));
+  const idSectionLen = idBytes.reduce((sum, b) => sum + 2 + b, 0);
+
+  const headerLen = 16;
+  const dataLen = count * dim * 4;
+  const normsLen = count * 8;
+  const buf = Buffer.allocUnsafe(headerLen + idSectionLen + dataLen + normsLen);
+
+  buf.write(INDEX_MAGIC, 0, 'ascii');
+  buf.writeUInt32LE(INDEX_VERSION, 4);
+  buf.writeUInt32LE(dim, 8);
+  buf.writeUInt32LE(count, 12);
+
+  let off = headerLen;
+  for (let i = 0; i < count; i++) {
+    const idLen = idBytes[i]!;
+    buf.writeUInt16LE(idLen, off);
+    off += 2;
+    buf.write(ids[i]!, off, 'utf8');
+    off += idLen;
+  }
+
+  // Contiguous f32 data + precomputed f64 norms.
+  const dataView = new Float32Array(count * dim);
+  const normsView = new Float64Array(count);
+  for (let i = 0; i < count; i++) {
+    const v = kept[i]!.v;
+    let norm = 0;
+    const base = i * dim;
+    for (let j = 0; j < dim; j++) {
+      const x = v[j]!;
+      dataView[base + j] = x;
+      norm += x * x;
+    }
+    normsView[i] = Math.sqrt(norm);
+  }
+  Buffer.from(dataView.buffer, dataView.byteOffset, dataLen).copy(buf, off);
+  off += dataLen;
+  Buffer.from(normsView.buffer, normsView.byteOffset, normsLen).copy(buf, off);
+
+  // Atomic publish: write temp then rename so a reader never sees a half-written file.
+  const tmpPath = `${indexPath}.tmp`;
+  writeFileSync(tmpPath, buf);
+  renameSync(tmpPath, indexPath);
+  return count;
+}
+
+/**
+ * Load a sidecar from disk. Returns null on any failure (missing, corrupt, wrong magic /
+ * version, truncated) — the caller falls back to brute-force. A corrupt artifact NEVER
+ * becomes authoritative (T-41-04: graph is source of truth, index is a derived cache).
+ */
+function loadVectorIndex(indexPath: string): LoadedIndex | null {
+  try {
+    if (!existsSync(indexPath)) return null;
+    const buf = readFileSync(indexPath);
+    if (buf.length < 16) return null;
+    if (buf.toString('ascii', 0, 4) !== INDEX_MAGIC) return null;
+    if (buf.readUInt32LE(4) !== INDEX_VERSION) return null;
+    const dim = buf.readUInt32LE(8);
+    const count = buf.readUInt32LE(12);
+    if (dim === 0 || count === 0) return { dim, count: 0, ids: [], data: new Float32Array(0), norms: new Float64Array(0) };
+
+    let off = 16;
+    const ids: string[] = new Array(count);
+    for (let i = 0; i < count; i++) {
+      if (off + 2 > buf.length) return null;
+      const idLen = buf.readUInt16LE(off);
+      off += 2;
+      if (off + idLen > buf.length) return null;
+      ids[i] = buf.toString('utf8', off, off + idLen);
+      off += idLen;
+    }
+
+    const dataLen = count * dim * 4;
+    const normsLen = count * 8;
+    if (off + dataLen + normsLen > buf.length) return null;
+
+    // Copy into freshly-aligned typed arrays (readFileSync's Buffer has no alignment guarantee
+    // for a 4/8-byte typed-array view at an arbitrary byteOffset).
+    const data = new Float32Array(count * dim);
+    Buffer.from(data.buffer).set(buf.subarray(off, off + dataLen));
+    off += dataLen;
+    const norms = new Float64Array(count);
+    Buffer.from(norms.buffer).set(buf.subarray(off, off + normsLen));
+
+    return { dim, count, ids, data, norms };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Compute cosine similarity between two Float32Array vectors.
@@ -101,7 +271,15 @@ export class CandidateRetriever {
   // node by id; the pool already excludes tombstoned ids.
   private readonly stmtPoolStrength: Database.Statement;
 
-  constructor(db: Database.Database) {
+  // Phase 41 (PERF-01/D-06): OPT-IN persisted exact index. Null = brute-force mode.
+  // Loaded ONCE in the constructor when `opts.indexPath` points at a valid sidecar.
+  // EXISTING callers that pass no opts (e.g. the offline consolidator, consolidator.ts
+  // ~682) stay brute-force — D-07. On a missing/corrupt artifact this stays null and
+  // topk falls back to the brute-force scan (the index is a derived cache, never
+  // authoritative — graph is source of truth).
+  private readonly index: LoadedIndex | null;
+
+  constructor(db: Database.Database, opts?: { indexPath?: string }) {
     // Select only nodes that have been embedded AND are not tombstoned (T-02-STALE)
     this.stmtSelectEmbedded = db.prepare(
       'SELECT id, embedding FROM node WHERE embedding IS NOT NULL AND tombstoned = 0'
@@ -122,6 +300,21 @@ export class CandidateRetriever {
     this.stmtPoolStrength = db.prepare(
       'SELECT id, s, last_access FROM node WHERE id IN (SELECT value FROM json_each(?))'
     );
+
+    // Phase 41: load the persisted exact index when a path is supplied AND the artifact is
+    // valid. loadVectorIndex returns null on any failure → brute-force fallback. A one-line
+    // warning is emitted to stderr (never stdout — the hot path emits structured output) so a
+    // missing/corrupt sidecar is visible without ever breaking recall.
+    if (opts?.indexPath) {
+      this.index = loadVectorIndex(opts.indexPath);
+      if (this.index === null) {
+        process.stderr.write(
+          `[recense] vector index unavailable at ${opts.indexPath} — falling back to brute-force scan\n`,
+        );
+      }
+    } else {
+      this.index = null;
+    }
   }
 
   /**
@@ -135,6 +328,15 @@ export class CandidateRetriever {
    * this guard handles any pre-existing ones.
    */
   topk(queryVec: Float32Array, k: number): Array<{ id: string; score: number }> {
+    // Phase 41 (PERF-01): index-backed exact scan over the persisted flat buffer when
+    // loaded. Returns the SAME real cosine scores as cosineSimF32 (D-01 exact, byte-
+    // equivalent — the spike proved 20/20 top-k set-identical). When the index is null
+    // (no artifact / corrupt / not opted-in) this drops through to the brute-force scan
+    // below — zero behavior change for the consolidator and any indexless caller (D-07).
+    if (this.index !== null) {
+      return this.topkIndexed(queryVec, k);
+    }
+
     const rows = this.stmtSelectEmbedded.all() as Array<{ id: string; embedding: Buffer }>;
 
     return rows
@@ -151,6 +353,42 @@ export class CandidateRetriever {
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, k);
+  }
+
+  /**
+   * Phase 41: index-backed exact top-k over the persisted flat buffer.
+   *
+   * Computes `dot / (||q|| · ||row||)` against the contiguous `Float32Array` using the
+   * precomputed row norms — the identical cosine formula as cosineSimF32, so the returned
+   * scores are byte-equivalent (PERF-03 by construction). Preserves the L-2 dim-mismatch
+   * skip: when the query length differs from the indexed dim, returns [] (a cosine across
+   * different dims is meaningless — matches the brute-force scan's skip).
+   *
+   * Only called when `this.index !== null`.
+   */
+  private topkIndexed(queryVec: Float32Array, k: number): Array<{ id: string; score: number }> {
+    const idx = this.index!;
+    // L-2: dim mismatch → no valid cosine. The brute-force scan skips per-row; here the
+    // whole buffer is uniform-dim, so a query-dim mismatch means nothing scores.
+    if (queryVec.length !== idx.dim) return [];
+
+    // Precompute the query norm once.
+    let qNorm = 0;
+    for (let j = 0; j < idx.dim; j++) qNorm += queryVec[j]! * queryVec[j]!;
+    qNorm = Math.sqrt(qNorm);
+
+    const { dim, count, data, norms, ids } = idx;
+    const scored: Array<{ id: string; score: number }> = new Array(count);
+    for (let i = 0; i < count; i++) {
+      const base = i * dim;
+      let dot = 0;
+      for (let j = 0; j < dim; j++) dot += queryVec[j]! * data[base + j]!;
+      const denom = qNorm * norms[i]!;
+      // Same denom guard as cosineSimF32 (0 → score 0, never NaN/Infinity).
+      scored[i] = { id: ids[i]!, score: denom === 0 ? 0 : dot / denom };
+    }
+
+    return scored.sort((a, b) => b.score - a.score).slice(0, k);
   }
 
   /**
