@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "eval": "progressive-disclosure",
+    "date": "2026-06-24T19:09:46.986Z",
+    "commit": "7ad0f6c",
+    "engine_version": "0.1.0",
+    "db_path": "/Users/vtx/.config/recense/recense.db",
+    "top_k": 5,
+    "n_live_nodes": 10603,
+    "mechanism": "fact-index-to-fact-detail",
+    "surface": "mcp-pull-challenger-vs-session-start-push-incumbent",
+    "prototype_depth": "harness-only-ab"
+  },
+  "incumbent": {
+    "policy": "one-shot-bounded-inject",
+    "tokens": 496,
+    "source": "session-start-cli"
+  },
+  "challenger": {
+    "oracle": {
+      "policy": "oracle-expansion-1-of-top-k",
+      "thin_index_tokens": 119,
+      "expansion_tokens": 30,
+      "total_tokens": 149,
+      "reduction_pct": 69.96
+    },
+    "top_k": {
+      "policy": "fixed-top-5-expansion",
+      "thin_index_tokens": 119,
+      "expansion_tokens": 115,
+      "total_tokens": 234,
+      "reduction_pct": 52.82
+    }
+  },
+  "verdict": "challenger-wins-top-k",
+  "caveats": [
+    "Token counts use chars/4 proxy (EVAL-03 convention) — not a real tokenizer.",
+    "Incumbent arm measured from real session-start-cli spawn (actual injected payload).",
+    "Challenger arms are simulated from live DB node rows sorted by last_access DESC — no real MCP calls made.",
+    "Oracle policy = expand only 1 of 5 candidates (progressive disclosure best case; assumes agent needs exactly 1 detail).",
+    "Fixed-top-K policy = expand all 5 candidates (realistic case; governs the adopt/decline call per D-09).",
+    "A documented decline (verdict=incumbent-wins-decline-documented) is a valid, expected outcome (D-10).",
+    "Subscription marginal cost ≈ $0 (LLM-free harness; no paid API calls made)."
+  ]
+}
