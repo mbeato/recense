@@ -31,6 +31,7 @@
 import Database, { type Statement } from 'better-sqlite3';
 import { realClock, type Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
+import { setHeadlessFeature } from '../model/claude-headless-client';
 import type { EpisodicStore } from '../db/episode-store';
 import type { SemanticStore } from '../db/semantic-store';
 import type { StrengthDecayManager } from '../strength/decay';
@@ -920,7 +921,15 @@ export class Consolidator {
     await this.reembedDirty();
     // D-37: schema induction after Phase C reembedDirty(), before eviction.
     // Schemas depend on fresh embeddings; tombstoned schemas must be swept in the same pass.
-    await this.inducer.induceSchemas();
+    // D-09: tag schema-induction LLM calls as 'schema_abstract' so the ledger breaks them
+    // out from default Sonnet 'judge' calls. Reset in finally so a mid-induction error
+    // cannot mistag later calls (T-44-10).
+    setHeadlessFeature('schema_abstract');
+    try {
+      await this.inducer.induceSchemas();
+    } finally {
+      setHeadlessFeature(null);
+    }
     // D-07: schema-relation derivation after induceSchemas() (needs fresh centroids + schema nodes),
     // before runEvictionSweep(). Artifacts are disposable derived cache — a mid-derive crash
     // leaves wipe-then-rebuild-clean state on the next pass; no extra try/catch needed.

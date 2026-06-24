@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -169,6 +169,21 @@ export const DDL = `
     anchor_schema_id TEXT   NOT NULL,   -- schema node id this insight was derived from
     generated_at    INTEGER NOT NULL,   -- epoch ms; set once on first generate, write-once (never updated on conflict)
     updated_at      INTEGER NOT NULL    -- epoch ms; always updated
+  );
+
+  -- COST-01: token-usage ledger (append-only, single-writer: sleep pass only).
+  -- One row per LLM call; feature_tag identifies the sleep-pass phase (extract/judge/corpus_gen/schema_abstract).
+  -- ts stores Date.now() ms so any window (rolling 30d, all-time) is a cheap aggregate query (D-08/D-09/D-10).
+  CREATE TABLE IF NOT EXISTS token_usage_ledger (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                  INTEGER NOT NULL,
+    feature_tag         TEXT    NOT NULL,
+    model               TEXT    NOT NULL,
+    input_tokens        INTEGER NOT NULL DEFAULT 0,
+    output_tokens       INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd      REAL    NOT NULL DEFAULT 0
   );
 
   -- SURF-02: operational surface-outcome log (append-only, single-writer: serve path only).
@@ -577,6 +592,16 @@ export function initSchema(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_node_insight_anchor
       ON node_insight(anchor_schema_id);
+  `);
+
+  // v14 migration: token_usage_ledger + ts index (Phase 44, COST-01, D-08/D-09/D-10).
+  // Table uses CREATE TABLE IF NOT EXISTS in DDL above → idempotent on fresh DBs.
+  // Existing v13 DBs: token_usage_ledger absent → DDL above creates it (IF NOT EXISTS catches it).
+  // No ALTER TABLE needed — the whole table is new (no column additions to existing tables).
+  // idx_token_usage_ledger_ts: cheap window queries (rolling 30d / all-time aggregate by ts range).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_token_usage_ledger_ts
+      ON token_usage_ledger (ts);
   `);
 
   // Stamp schema version — read first to guard against downgrade (M-9).

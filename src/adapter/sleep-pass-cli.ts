@@ -24,6 +24,8 @@ import { initSchema } from '../db/schema';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { acquireLock, releaseLock, heartbeatLock } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
+import { setHeadlessUsageSink } from '../model/claude-headless-client';
+import type { HeadlessUsage } from '../model/claude-headless-client';
 
 // Back-compat re-exports: resolveProviderOverlay, ProviderOverlay, and VALID_PROVIDERS
 // were originally defined here and are imported by tests/sleep-pass-provider.test.ts.
@@ -100,6 +102,34 @@ async function main(): Promise<void> {
     db = new Database(dbPath);
     initSchema(db);
 
+    // ── 3b. Install the production token-usage ledger sink (D-08/D-09/D-10) ──
+    // Best-effort: sink body is wrapped in its own try/catch (belt-and-suspenders
+    // on top of the headless client's own emit guard). A failing INSERT MUST NEVER
+    // abort or slow the sleep pass. Logs nothing on failure to avoid secret leakage
+    // (T-44-09). Only token counts + model + feature_tag are persisted — never
+    // prompt/secret contents.
+    const stmtLedgerInsert = db.prepare(`
+      INSERT INTO token_usage_ledger
+        (ts, feature_tag, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, total_cost_usd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    setHeadlessUsageSink((u: HeadlessUsage) => {
+      try {
+        stmtLedgerInsert.run(
+          Date.now(),
+          u.feature_tag ?? 'unknown',
+          u.model,
+          u.usage?.['input_tokens'] ?? 0,
+          u.usage?.['output_tokens'] ?? 0,
+          u.usage?.['cache_creation_input_tokens'] ?? 0,
+          u.usage?.['cache_read_input_tokens'] ?? 0,
+          u.total_cost_usd ?? 0,
+        );
+      } catch {
+        // Swallowed — ledger write failure must never abort or slow the sleep pass (D-08).
+      }
+    });
+
     // ── 4+5+6. Run the full Consolidator dependency graph ───────────────────
     // (wiring, consolidate(), SEAM-02 event summary — shared with ingest-cli)
     await runConsolidation(db, dbPath, process.env, log);
@@ -107,11 +137,15 @@ async function main(): Promise<void> {
     const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
     log(`Sleep pass error: ${detail}`);
   } finally {
-    // ── 7. Stop heartbeat, close the DB, then release the lock (DEBT-02/03/CR-02/WR-03) ──
+    // ── 7. Stop heartbeat, clear sink, close the DB, then release the lock ────
+    // (DEBT-02/03/CR-02/WR-03)
     // Clear the heartbeat first so it cannot refresh (and thus resurrect) the lock
-    // mtime after releaseLock() removes the file. Close DB next (flushes the WAL
-    // checkpoint, releases the read lock); release lock last (O_EXCL unlock).
+    // mtime after releaseLock() removes the file.
+    // Belt-and-suspenders: clear the ledger sink on both success and error paths so
+    // no stale sink reference outlives the DB lifetime (T-44-08).
+    // Close DB next (flushes the WAL checkpoint, releases the read lock); release lock last.
     clearInterval(heartbeat);
+    setHeadlessUsageSink(null);
     db?.close();
     releaseLock();
   }

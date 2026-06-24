@@ -18,6 +18,7 @@
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, basename } from 'node:path';
 import Database from 'better-sqlite3';
+import { setHeadlessFeature } from '../model/claude-headless-client';
 import { DEFAULT_CONFIG } from '../lib/config';
 import type { EngineConfig } from '../lib/config';
 import { realClock } from '../lib/clock';
@@ -619,6 +620,10 @@ export async function runConsolidation(
     }
 
     const maxDocs = parseInt(env['RECENSE_CORPUS_GEN_MAX'] ?? '25', 10) || 25;
+    // D-09: tag corpus-gen LLM calls as 'corpus_gen' so the ledger breaks them out
+    // from default Sonnet 'judge' calls. Reset in finally so a mid-generation error
+    // cannot mistag later calls (T-44-10).
+    setHeadlessFeature('corpus_gen');
     try {
       const corpusGenResult = await generateCorpusDocs(
         { db, store, provider: inducerProvider },
@@ -632,6 +637,8 @@ export async function runConsolidation(
       // Best-effort: corpus generation failure MUST NOT abort the sleep pass
       // (which has already successfully run consolidation). Log and continue.
       log(`CORPUS-06: corpus generation threw unexpectedly: ${err}`);
+    } finally {
+      setHeadlessFeature(null);
     }
   }
 
