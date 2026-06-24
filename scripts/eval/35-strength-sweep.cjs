@@ -64,6 +64,11 @@ const IS_HEADLESS = argv.includes('--headless');
 const weightsArg = arg('--weights', '0,0.25,0.5,1.0,2.0');
 const W_GRID     = weightsArg.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
 
+// --max-cases <N>: directional runs over the first N cases (passed through to the KU harness).
+// --parallel-cases <N>: process N cases concurrently in the KU harness sweep (Phase 38.1 follow-up).
+const MAX_CASES_ARG      = arg('--max-cases', null);
+const PARALLEL_CASES_ARG = arg('--parallel-cases', null);
+
 const RESULTS_DIR = path.resolve(__dirname, 'results');
 
 // ---- API key guard ----------------------------------------------------------
@@ -150,6 +155,8 @@ function runKuSweepHarness() {
     harnessPath,
     '--sweep-weights', W_GRID.join(','),
   ];
+  if (MAX_CASES_ARG !== null)      args.push('--max-cases', String(MAX_CASES_ARG));
+  if (PARALLEL_CASES_ARG !== null) args.push('--parallel-cases', String(PARALLEL_CASES_ARG));
   // --dry-run: harness uses legacy single-weight path (zero API calls) and writes --out skeleton.
   // In dry-run the sweep output files are not written, but the comparison table still reads them
   // (they may not exist yet — each row will show ERR). This preserves --dry-run wiring-check intent.

@@ -70,6 +70,18 @@ const SWEEP_WEIGHTS = sweepWeightsArg
   ? sweepWeightsArg.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n))
   : null;
 
+// --max-cases <N>: limit the joined case set to the first N (directional runs). 0/unset = all.
+const MAX_CASES = parseInt(arg('--max-cases', '0'), 10) || 0;
+
+// --parallel-cases <N>: process up to N cases concurrently in sweep mode (Phase 38.1 follow-up).
+// Each case is fully independent (own scratch DB, own consolidation, own eval); the long pole is
+// the ASYNC headless-judge wait, so overlapping cases while each awaits its judge yields ~N×
+// speedup even though better-sqlite3 is synchronous (DB ops are short vs. judge I/O). JS is
+// single-threaded async, so the shared per-weight accumulators are pushed only inside await
+// continuations that never run simultaneously — no locking needed. Default 1 = prior sequential
+// behaviour. Only affects the --sweep-weights path.
+const PARALLEL_CASES = Math.max(1, parseInt(arg('--parallel-cases', '1'), 10) || 1);
+
 // --insight-mode: Phase 38-04, REFLECT-02 compose-token measurement.
 // When set, each case is evaluated TWICE: insight-OFF (baseline, insightSurfacingEnabled=false)
 // and insight-ON (insightSurfacingEnabled=true). The insight-ON path checks the consolidated
@@ -575,20 +587,24 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
   const perWeightContradicts   = weights.map(() => 0);
   const perWeightDupMints      = weights.map(() => 0);
 
-  console.log(`\nSweep mode: ${weights.length} weights [${weights.join(', ')}], ${total} cases`);
+  const workerCount = Math.min(PARALLEL_CASES, caseIds.length);
+  console.log(`\nSweep mode: ${weights.length} weights [${weights.join(', ')}], ${total} cases, ${workerCount} concurrent`);
   console.log('Consolidation runs ONCE per case; retrieve+answer+score re-runs per weight.\n');
 
-  for (const qid of caseIds) {
+  // Process one case: consolidate-once, then evaluate at every weight. Pushes into the shared
+  // per-weight accumulators. Safe under the pool because JS async is single-threaded — a push
+  // only ever runs inside an await continuation, never concurrently with another push.
+  const processCase = async (qid, ordinal) => {
     const attr   = attributionByQid.get(qid);
     const kuCase = kuGoldByQid.get(qid);
 
-    process.stdout.write(`  [consolidate] ${qid} (${attr.claims.length} claims)...\r`);
+    console.log(`  [consolidate] (${ordinal}/${total}) ${qid} (${attr.claims.length} claims)...`);
 
     let consolidated;
     let consolidateError = null;
     try {
       consolidated = await consolidateCase(kuCase, attr.claims, embedder, anthropicClient);
-      process.stdout.write(`  [consolidate] ${qid} done (tomb=${consolidated.tombstones} contra=${consolidated.contradicts} dup=${consolidated.duplicateMints})\n`);
+      console.log(`  [consolidate] ${qid} done (tomb=${consolidated.tombstones} contra=${consolidated.contradicts} dup=${consolidated.duplicateMints})`);
     } catch (e) {
       consolidateError = String(e.message || e).slice(0, 300);
       console.error(`  [consolidate] ERROR on ${qid}: ${consolidateError}`);
@@ -623,7 +639,7 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
         kuCorrect     = result.kuCorrect;
         hypothesis    = result.hypothesis;
         composeTokens = result.composeTokens;
-        process.stdout.write(`  [w=${w}] ${qid}: ${kuCorrect ? 'correct' : 'incorrect'}\n`);
+        console.log(`  [w=${w}] ${qid}: ${kuCorrect ? 'correct' : 'incorrect'}`);
       } catch (e) {
         scoreError = String(e.message || e).slice(0, 300);
         console.error(`  [w=${w}] ERROR scoring ${qid}: ${scoreError}`);
@@ -657,7 +673,20 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
       consolidated.scratch.cleanup();
       consolidated = undefined;
     }
-  }
+  };
+
+  // Bounded-concurrency pool: workerCount workers pull from a shared cursor until cases run out.
+  // nextIdx++ is atomic w.r.t. the event loop (no await between read and increment), so no two
+  // workers ever claim the same case.
+  let nextIdx = 0;
+  const worker = async () => {
+    while (true) {
+      const i = nextIdx++;
+      if (i >= caseIds.length) break;
+      await processCase(caseIds[i], i + 1);
+    }
+  };
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   // Write one results file per weight (same schema + paths that 35-strength-sweep.cjs reads).
   for (let wi = 0; wi < weights.length; wi++) {
@@ -733,7 +762,12 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
 
   // Join on question_id: only process cases present in BOTH files.
   // n20-attribution.jsonl has 18 cases; eval20-ku.jsonl has 20 — join gives 18.
-  const caseIds = [...attributionByQid.keys()].filter(id => kuGoldByQid.has(id));
+  let caseIds = [...attributionByQid.keys()].filter(id => kuGoldByQid.has(id));
+  // --max-cases <N>: directional runs over the first N joined cases (deterministic order).
+  if (MAX_CASES > 0 && caseIds.length > MAX_CASES) {
+    caseIds = caseIds.slice(0, MAX_CASES);
+    console.log(`(--max-cases ${MAX_CASES}: limiting to first ${caseIds.length} of joined cases)`);
+  }
   const total   = caseIds.length;
 
   if (total === 0) {
