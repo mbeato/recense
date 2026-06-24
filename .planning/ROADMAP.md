@@ -622,7 +622,7 @@ Plans:
   3. The token-efficiency claim vs competitors (e.g. mem0's ~90% / claude-mem's ~10x retrieval savings) is stated with both recense's reproduced number and the cited competitor figure — no inflated comparison — COST-03
   4. Progressive-disclosure retrieval (index-first → detail-on-demand) is benchmarked against recense's schema-prior compression on the token axis; adopted into the recall/MCP surface only if it shows a measured token win with no accuracy regression, else explicitly declined with the numbers — COST-04
 
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 **Wave 1** *(parallel — no file overlap)*
@@ -636,7 +636,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2; autonomous: false)*
 
-- [ ] 42-04-PLAN.md — Deferred-run runbook + cost-probe hard gate: documented reset-window procedure for the write-side breakdown + LOCOMO/LongMemEval no-regression confirm (D-06 defer-the-run) (COST-01, COST-02)
+- [x] 42-04-PLAN.md — Deferred-run runbook + cost-probe hard gate: documented reset-window procedure for the write-side breakdown + LOCOMO/LongMemEval no-regression confirm (D-06 defer-the-run) (COST-01, COST-02)
 
 ### Phase 43: Eval Regression Gates
 
