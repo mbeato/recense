@@ -37,9 +37,9 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 
 Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
 Phase: 41 (vector-index-and-hot-path-latency) — EXECUTING
-Plan: 2 of 3 (41-01 spike COMPLETE)
+Plan: 3 of 3 (41-01 spike + 41-02 index build COMPLETE)
 Status: Executing Phase 41
-Last activity: 2026-06-24 -- Phase 41 Plan 01 (mechanism spike) complete; decision = zero-dep flat-buffer sidecar
+Last activity: 2026-06-24 -- Phase 41 Plan 02 complete; persisted zero-dep flat-buffer exact index behind CandidateRetriever (built end-of-sleep-pass, read by 3 cold callers, brute-force fallback; consolidator/topkTombstoned stay brute-force)
 Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async.
 
 ## Performance Metrics

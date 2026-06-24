@@ -603,7 +603,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 41-02-PLAN.md — Build the chosen exact index behind CandidateRetriever (real cosine scores, persisted, end-of-pass build; consolidator stays brute-force) (PERF-01)
+- [x] 41-02-PLAN.md — Build the chosen exact index behind CandidateRetriever (real cosine scores, persisted, end-of-pass build; consolidator stays brute-force) (PERF-01)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
