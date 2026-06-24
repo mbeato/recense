@@ -84,6 +84,21 @@ const INSIGHT_MODE = process.argv.includes('--insight-mode');
 // Insight-ON KU score may dip at most this many pts below insight-OFF before regression=true.
 const TOLERANCE_BAND_PTS = 2;
 
+// ---- Phase 42 lever-sweep gate (COST-01/02): config-override flags ----------
+// --config-override-key / --config-override-value: inject a single lever override
+// into the scratch DB config so recall-side levers (candidateK, injectionTokenBudget,
+// recallNeighborhoodBudget, recallSidewaysHopBudget) are NOT no-ops in the KU gate.
+// The override is applied via { ...DEFAULT_CONFIG, [key]: value } spread in makeScratchDb
+// and echoed into meta.config_override so the sweep harness can verify propagation.
+// Safe under --dry-run (zero API calls; override echoed in dry-run skeleton).
+// T-42-03: override is in-memory only; src/lib/config.ts is never written.
+const CONFIG_OVERRIDE_KEY       = arg('--config-override-key',   null);
+const CONFIG_OVERRIDE_VALUE_RAW = arg('--config-override-value', null);
+// Coerce value: numeric string → Number; else leave as string.
+const CONFIG_OVERRIDE_VALUE = CONFIG_OVERRIDE_VALUE_RAW !== null
+  ? (isNaN(Number(CONFIG_OVERRIDE_VALUE_RAW)) ? CONFIG_OVERRIDE_VALUE_RAW : Number(CONFIG_OVERRIDE_VALUE_RAW))
+  : null;
+
 // ---- compose-token count helper (REFLECT-02 / T-38-10) ----------------------
 // Uses chars/4 proxy — same convention as EVAL-03 injection-efficiency harness.
 // This is NOT a real tokenizer; it is consistent with the session-start-cli char cap proxy.
@@ -224,7 +239,16 @@ function makeScratchDb(rankStrengthWeight) {
   const db = new Database(dbPath);
   initSchema(db);
   // rankStrengthWeight: inject so engine.retrieveRanked → hybridTopk reads it.
-  const config = { ...DEFAULT_CONFIG, dbPath, rankStrengthWeight: w };
+  let config = { ...DEFAULT_CONFIG, dbPath, rankStrengthWeight: w };
+  // Phase 42: apply --config-override-key/value lever if set (T-42-03: in-memory only).
+  if (CONFIG_OVERRIDE_KEY !== null && CONFIG_OVERRIDE_VALUE !== null) {
+    if (CONFIG_OVERRIDE_KEY === 'consolSkipThresholdBySource') {
+      // Nested inside config.salience; must deep-merge to avoid clobbering other salience keys.
+      config = { ...config, salience: { ...DEFAULT_CONFIG.salience, consolSkipThresholdBySource: CONFIG_OVERRIDE_VALUE } };
+    } else {
+      config = { ...config, [CONFIG_OVERRIDE_KEY]: CONFIG_OVERRIDE_VALUE };
+    }
+  }
   const episodes = new EpisodicStore(db, realClock, config);
   return {
     db,
@@ -643,6 +667,11 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
     const correct  = perWeightCorrect[wi];
     const kuScore  = scored.length > 0 ? +(correct / scored.length).toFixed(3) : null;
 
+    // Phase 42: config_override echo for lever-sweep propagation verification.
+    const sweepConfigOverride = CONFIG_OVERRIDE_KEY !== null
+      ? { key: CONFIG_OVERRIDE_KEY, value: CONFIG_OVERRIDE_VALUE }
+      : undefined;
+
     const envelope = {
       meta: {
         eval:            'replay-ku',
@@ -656,6 +685,8 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
         total_claims:    totalClaims,
         sweep_mode:      true,
         sweep_weights:   weights,
+        // Phase 42 lever-sweep gate: echo applied config override (T-42-03 / COST-02)
+        ...(sweepConfigOverride ? { config_override: sweepConfigOverride } : {}),
         // T-26-03: keys never written to results
       },
       scores: {
@@ -788,6 +819,11 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
       dryRunMeta.kuScoreOn                = null;
       dryRunMeta.regression               = null;
       dryRunMeta.tolerance_band_pts       = TOLERANCE_BAND_PTS;
+    }
+    // Phase 42 lever-sweep: echo config_override so the sweep harness can verify
+    // the lever value propagated into this process (T-42-03 / COST-02 gate).
+    if (CONFIG_OVERRIDE_KEY !== null) {
+      dryRunMeta.config_override = { key: CONFIG_OVERRIDE_KEY, value: CONFIG_OVERRIDE_VALUE };
     }
     const dryRunResult = {
       meta:     dryRunMeta,
@@ -1000,6 +1036,8 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
         kuScoreOn,
         regression,
         tolerance_band_pts:      TOLERANCE_BAND_PTS,
+        // Phase 42 lever-sweep gate: echo applied config override (T-42-03 / COST-02)
+        ...(CONFIG_OVERRIDE_KEY !== null ? { config_override: { key: CONFIG_OVERRIDE_KEY, value: CONFIG_OVERRIDE_VALUE } } : {}),
         // T-26-03: keys never written to results
       },
       scores: {
@@ -1125,6 +1163,8 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
       total_cases:     total,
       total_claims:    totalClaims,
       composeTokens:   avgComposeTokens,
+      // Phase 42 lever-sweep gate: echo applied config override (T-42-03 / COST-02)
+      ...(CONFIG_OVERRIDE_KEY !== null ? { config_override: { key: CONFIG_OVERRIDE_KEY, value: CONFIG_OVERRIDE_VALUE } } : {}),
       // T-26-03: keys never written to results
     },
     scores: {
