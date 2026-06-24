@@ -255,4 +255,28 @@ describe('heartbeatLock — L-11: mtime heartbeat', () => {
     // Should not throw
     expect(() => heartbeatLock()).not.toThrow();
   });
+
+  it('DEBT-02: heartbeat keeps a live long-running lock from being false-stale reclaimed', () => {
+    // Holder is THIS process (provably alive via process.kill(pid, 0)).
+    const holder = String(process.pid);
+    const age = (): void => {
+      const t = new Date(Date.now() - (LOCK_STALE_MS + 60_000));
+      utimesSync(HEARTBEAT_LOCK_PATH, t, t);
+    };
+
+    // Without a heartbeat, an aged lock IS reclaimed even though its holder is alive —
+    // the DEBT-02 bug a >30-min drain hits: stale-by-mtime wins before the PID-liveness
+    // check, so a concurrent launchd/stop-cli spawn steals a live pass's lock.
+    writeFileSync(HEARTBEAT_LOCK_PATH, holder);
+    age();
+    expect(acquireLock()).toBe(true); // false-stale reclaim of a live holder
+    releaseLock();
+
+    // The fix: heartbeatLock() refreshes the mtime, so the same live holder's lock now
+    // looks fresh and a concurrent acquire DECLINES instead of reclaiming it.
+    writeFileSync(HEARTBEAT_LOCK_PATH, holder);
+    age();
+    heartbeatLock();
+    expect(acquireLock()).toBe(false); // fresh + live holder → declined, no double-writer
+  });
 });

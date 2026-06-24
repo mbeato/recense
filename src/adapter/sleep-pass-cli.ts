@@ -22,7 +22,7 @@ import { appendFileSync } from 'fs';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
-import { acquireLock, releaseLock } from './lockfile';
+import { acquireLock, releaseLock, heartbeatLock } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 
 // Back-compat re-exports: resolveProviderOverlay, ProviderOverlay, and VALID_PROVIDERS
@@ -32,6 +32,13 @@ export type { ProviderOverlay } from '../consolidation/run-sleep-pass';
 export { VALID_PROVIDERS, resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 
 const LOG_PATH = '/tmp/recense-sleep.log';
+
+/**
+ * DEBT-02: lock-mtime heartbeat interval. Must be comfortably below LOCK_STALE_MS
+ * (30 min) so a long pass refreshes its lock several times before it could ever be
+ * judged stale. 5 min gives a 6× margin.
+ */
+const LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
 
 /** Append a timestamped line to the log file (never stdout). */
 const log = (msg: string): void =>
@@ -73,6 +80,17 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // ── 2b. Lock heartbeat (DEBT-02) ────────────────────────────────────────────
+  // A full backlog drain makes per-episode headless-Haiku calls and can exceed
+  // LOCK_STALE_MS (30 min) under rate-limiting. Without a heartbeat the lock's mtime
+  // stays frozen at acquisition time, so a concurrent launchd/stop-cli spawn judges
+  // this *live* pass stale and reclaims the lock → multiple concurrent graph writers
+  // (duplicate extraction, wasted subscription tokens). Refresh the mtime on a timer
+  // ≪ the stale window so the lock always looks fresh while we're alive. unref() so the
+  // timer never keeps the process alive past main(); cleared in finally on every path.
+  const heartbeat = setInterval(heartbeatLock, LOCK_HEARTBEAT_MS);
+  heartbeat.unref();
+
   // DEBT-03: declare db outside try so finally can close it on every path (CR-02/WR-03).
   let db: Database.Database | undefined;
   try {
@@ -89,9 +107,11 @@ async function main(): Promise<void> {
     const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
     log(`Sleep pass error: ${detail}`);
   } finally {
-    // ── 7. Always close the DB, then release the lock (DEBT-03/CR-02/WR-03) ──
-    // Close first: flushes the WAL checkpoint and releases the read lock.
-    // Release lock second: O_EXCL unlock after DB handle is gone.
+    // ── 7. Stop heartbeat, close the DB, then release the lock (DEBT-02/03/CR-02/WR-03) ──
+    // Clear the heartbeat first so it cannot refresh (and thus resurrect) the lock
+    // mtime after releaseLock() removes the file. Close DB next (flushes the WAL
+    // checkpoint, releases the read lock); release lock last (O_EXCL unlock).
+    clearInterval(heartbeat);
     db?.close();
     releaseLock();
   }
