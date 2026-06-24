@@ -29,6 +29,9 @@ const EXPAND_SENTINEL = 'http://127.0.0.1:7810/__recense/expand';
 /** Sentinel for the pinned strip's close button: unpin + hide (back to ambient). */
 const UNPIN_SENTINEL = 'http://127.0.0.1:7810/__recense/unpin-hide';
 
+/** Sentinel for the unpinned popover's pin button: pin (promote to floating). */
+const PIN_SENTINEL = 'http://127.0.0.1:7810/__recense/pin';
+
 /** Injected expand affordance — top-right ↗, subtle, no-drag. */
 const EXPAND_BTN_JS = `(() => {
   if (document.getElementById('recense-expand-btn')) return;
@@ -145,9 +148,14 @@ export function createPopover(): BrowserWindow {
     }
     if (url.startsWith(UNPIN_SENTINEL)) {
       event.preventDefault();
-      setPinned(win, false); // removes the strip
+      setPinned(win, false); // removes the strip; restores the pin button
       win.hide();            // back to ambient; tray icon remains
       return;
+    }
+    if (url.startsWith(PIN_SENTINEL)) {
+      event.preventDefault();
+      setPinned(win, true); // swaps the pin button for the drag strip + × close
+      return;               // stay visible — pinning promotes to a floating surface
     }
     if (url.startsWith(EXPAND_SENTINEL)) {
       event.preventDefault();
@@ -170,9 +178,10 @@ export function createPopover(): BrowserWindow {
   win.webContents.on('did-finish-load', () => {
     clearLoadRetry(); // cancel any pending retry — load succeeded
     win.webContents.executeJavaScript(EXPAND_BTN_JS).catch(() => {});
-    if (_pinned) {
-      win.webContents.executeJavaScript(DRAG_STRIP_ADD).catch(() => {});
-    }
+    // Restore the top-left affordance for the current pin state: the drag strip
+    // (with × close) when pinned, otherwise the pin button in the same spot. A
+    // reload would otherwise drop whichever one was injected.
+    win.webContents.executeJavaScript(_pinned ? DRAG_STRIP_ADD : PIN_BTN_ADD).catch(() => {});
   });
 
   // D-04: blur-dismiss — hide the popover on loss of focus unless pinned.
@@ -282,23 +291,60 @@ const DRAG_STRIP_REMOVE = `(() => {
 })();`;
 
 /**
+ * Pin button injected while UNPINNED (founder request): the unpinned popover shows a
+ * pin icon in the SAME top-left slot the × close occupies when pinned (top:6px,left:8px,
+ * 26×26) — they are mutually exclusive, so the corner reads as a single toggle. Clicking
+ * it navigates to PIN_SENTINEL; the will-navigate guard intercepts that and pins the
+ * window (setPinned(win,true) then swaps in the drag strip + × and removes this button).
+ * Mirrors the × styling (muted glyph in a translucent rounded square), but uses a
+ * monochrome SVG pushpin so it inherits the muted color instead of rendering as a
+ * colored emoji. No-drag so the click always lands on the button.
+ */
+const PIN_BTN_ADD = `(() => {
+  if (document.getElementById('recense-pin-btn')) return;
+  const btn = document.createElement('div');
+  btn.id = 'recense-pin-btn';
+  btn.title = 'Pin (keep floating on top)';
+  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
+  btn.style.cssText = 'position:fixed;top:6px;left:8px;z-index:70;width:26px;height:26px;'
+    + 'display:flex;align-items:center;justify-content:center;border-radius:6px;cursor:pointer;'
+    + 'color:#d9cbc0;background:rgba(26,18,32,0.7);'
+    + 'opacity:0.65;-webkit-app-region:no-drag;user-select:none;';
+  btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });
+  btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.65'; });
+  btn.addEventListener('click', () => { location.href = '${PIN_SENTINEL}'; });
+  document.body.appendChild(btn);
+})();`;
+const PIN_BTN_REMOVE = `(() => {
+  document.getElementById('recense-pin-btn')?.remove();
+})();`;
+
+/**
  * Set the pin state.
  *
  * Pinned → window becomes always-on-top; blur no longer hides it; a drag
- *   strip appears along the top edge so the window can be moved off the
- *   tray anchor. Promotes the popover to an all-day ambient floating
- *   window (D-04).
- * Unpinned → reverts to blur-dismiss behavior; drag strip removed; stays
- *   visible until next blur and re-anchors under the tray on next open.
+ *   strip appears along the top edge (with the × close at top-left) so the
+ *   window can be moved off the tray anchor. Promotes the popover to an
+ *   all-day ambient floating window (D-04). The unpinned pin button is removed.
+ * Unpinned → reverts to blur-dismiss behavior; drag strip removed; the pin
+ *   button is restored in the same top-left slot; stays visible until next
+ *   blur and re-anchors under the tray on next open.
  */
 export function setPinned(win: BrowserWindow, pinned: boolean): void {
   _pinned = pinned;
   win.setAlwaysOnTop(pinned);
-  const applyStrip = () =>
-    win.webContents.executeJavaScript(pinned ? DRAG_STRIP_ADD : DRAG_STRIP_REMOVE);
-  applyStrip().catch(() => {
+  // Swap the top-left affordance to match the new state — the two are mutually
+  // exclusive in the same slot: pinned shows the drag strip + × (and removes the
+  // pin button); unpinned removes the strip and restores the pin button. Both
+  // snippets are self-contained IIFEs, so concatenating them runs as one atomic
+  // executeJavaScript call (no flicker between the remove and add).
+  const apply = () =>
+    win.webContents.executeJavaScript(
+      pinned ? DRAG_STRIP_ADD + PIN_BTN_REMOVE : DRAG_STRIP_REMOVE + PIN_BTN_ADD,
+    );
+  apply().catch(() => {
     // Page may still be loading — retry once; did-finish-load also restores.
-    setTimeout(() => { applyStrip().catch(() => {}); }, 400);
+    setTimeout(() => { apply().catch(() => {}); }, 400);
   });
 }
 
