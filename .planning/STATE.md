@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v8.0
 milestone_name: Performance, Efficiency & Competitive Parity
-status: completed
+status: executing
 stopped_at: Phase 44 context gathered
-last_updated: "2026-06-24T22:25:08.721Z"
-last_activity: 2026-06-24 -- Phase 42 marked complete
+last_updated: "2026-06-24T23:09:44.868Z"
+last_activity: 2026-06-24 -- Phase 44 planning complete
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 17
+  total_plans: 23
   completed_plans: 17
   percent: 67
 ---
@@ -38,9 +38,9 @@ See: .planning/PROJECT.md (updated 2026-06-17)
 Milestone: v8.0 Performance, Efficiency & Competitive Parity (Phases 40–43)
 Phase: 42 — COMPLETE
 Plan: 4 of 4
-Status: Phase 42 complete
+Status: Ready to execute
 Decision (founder, 2026-06-24): PERF-03(b) the 3-harness end-to-end re-run is DEFERRED to the Phase 43 CI regression gate. Rationale: the harnesses don't use the index, so re-running them (hours-scale KU consolidation + paid-API spend over the $3 gate) corroborates an already-proven result and buys no new assurance. Both executor and verifier recommended deferral.
-Last activity: 2026-06-24 -- Phase 42 marked complete
+Last activity: 2026-06-24 -- Phase 44 planning complete
 Note: phase dirs preserved (no clear); 39.1-05 doc-verification still deferred async. Live recense.db opened read-only throughout; only the .vindex sidecar was written.
 
 ## Performance Metrics
