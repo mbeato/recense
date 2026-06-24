@@ -23,8 +23,8 @@ function makeDb(): Database.Database {
 }
 
 describe('SCHEMA_VERSION', () => {
-  it('is 13 (v13 adds insight node type, derived_from edge kind, node_insight sidecar)', () => {
-    expect(SCHEMA_VERSION).toBe(13);
+  it('is 14 (v14 adds token_usage_ledger)', () => {
+    expect(SCHEMA_VERSION).toBe(14);
   });
 });
 

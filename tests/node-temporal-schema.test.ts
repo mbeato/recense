@@ -22,8 +22,8 @@ function makeDb(): Database.Database {
 }
 
 describe('SCHEMA_VERSION', () => {
-  it('is 13 (v13: insight + derived_from + node_insight)', () => {
-    expect(SCHEMA_VERSION).toBe(13);
+  it('is 14 (v14: token_usage_ledger)', () => {
+    expect(SCHEMA_VERSION).toBe(14);
   });
 });
 

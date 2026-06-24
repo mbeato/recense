@@ -48,7 +48,7 @@ describe('activation_trace table', () => {
       .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string } | undefined;
     expect(row?.value).toBe(String(SCHEMA_VERSION));
-    expect(SCHEMA_VERSION).toBe(13);
+    expect(SCHEMA_VERSION).toBe(14);
   });
 
   it('activation_trace has expected columns (id, ts, query_id, seeds, hops)', () => {
@@ -88,8 +88,8 @@ describe('activation_trace table', () => {
     expect(epCount.cnt).toBe(1);
   });
 
-  it('SCHEMA_VERSION constant equals 13 (v13: insight + derived_from + node_insight sidecar)', () => {
-    expect(SCHEMA_VERSION).toBe(13);
+  it('SCHEMA_VERSION constant equals 14 (v14: token_usage_ledger)', () => {
+    expect(SCHEMA_VERSION).toBe(14);
   });
 });
 
