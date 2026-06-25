@@ -367,7 +367,9 @@ export function initSettings(_ctx) {
     let totalCost = 0;
     for (const row of rows30d) {
       if (featureTags.indexOf(row.feature_tag) !== -1) {
-        totalTokens += row.total_tokens || 0;
+        // /usage rows carry input_tokens + output_tokens (no combined field) —
+        // sum them the same way the route computes the headline totalTokens.
+        totalTokens += (row.input_tokens || 0) + (row.output_tokens || 0);
         totalCost   += row.total_cost_usd || 0;
       }
     }
@@ -442,7 +444,9 @@ export function initSettings(_ctx) {
 
     for (const { tag, label } of FEATURE_LABELS) {
       const row = byFeature.find(r => r.feature_tag === tag);
-      const tokens = (row && row.total_tokens)   || 0;
+      // /usage rows carry input_tokens + output_tokens (no combined field) — sum
+      // them like the route's headline totalTokens so per-feature lines aren't 0.
+      const tokens = row ? (row.input_tokens || 0) + (row.output_tokens || 0) : 0;
       const cost   = (row && row.total_cost_usd) || 0;
 
       const lineEl = document.createElement('div');

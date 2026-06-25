@@ -204,11 +204,13 @@ function makeUsageResponse() {
   return {
     window_days: 30,
     rolling_30d: {
+      // Mirror the real /usage route shape: per-feature rows carry input_tokens +
+      // output_tokens (no combined total_tokens field). The panel must sum them.
       byFeature: [
-        { feature_tag: 'extract',         total_tokens: 12000, total_cost_usd: 0.0036 },
-        { feature_tag: 'judge',           total_tokens: 8000,  total_cost_usd: 0.024  },
-        { feature_tag: 'schema_abstract', total_tokens: 4000,  total_cost_usd: 0.012  },
-        { feature_tag: 'corpus_gen',      total_tokens: 0,     total_cost_usd: 0      },
+        { feature_tag: 'extract',         input_tokens: 5000, output_tokens: 7000, total_cost_usd: 0.0036 },
+        { feature_tag: 'judge',           input_tokens: 3000, output_tokens: 5000, total_cost_usd: 0.024  },
+        { feature_tag: 'schema_abstract', input_tokens: 1000, output_tokens: 3000, total_cost_usd: 0.012  },
+        { feature_tag: 'corpus_gen',      input_tokens: 0,    output_tokens: 0,    total_cost_usd: 0      },
       ],
       totalTokens: 24000,
       totalCostUsd: 0.0396,
@@ -612,7 +614,7 @@ describe('initSettings — token-usage readout (Task 2)', () => {
       window_days: 30,
       rolling_30d: {
         byFeature: [
-          { feature_tag: 'extract', total_tokens: 1_500_000, total_cost_usd: 0.45 },
+          { feature_tag: 'extract', input_tokens: 500_000, output_tokens: 1_000_000, total_cost_usd: 0.45 },
         ],
         totalTokens: 1_500_000,
         totalCostUsd: 0.45,
