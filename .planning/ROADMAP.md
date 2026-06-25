@@ -681,14 +681,14 @@ Plans:
 
 **Requirements:** none (no Phase-44 IDs in REQUIREMENTS.md; plans trace to locked decisions D-01..D-12 in 44-CONTEXT.md)
 
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 - [x] 44-01-PLAN.md — Settings types + merge loader (settings.json, env>file>preset>DEFAULT precedence, D-12 core guardrail)
 - [x] 44-02-PLAN.md — Wire merged config into sleep-pass + ingest call sites (corpus-gen + schema-induction gating, env still wins)
 - [x] 44-03-PLAN.md — Token-usage ledger table + feature-tagged live sink (best-effort, never aborts the pass)
 - [x] 44-04-PLAN.md — `recense config` CLI (show/get/set/preset/apply) + launchd frequency regen
 - [x] 44-05-PLAN.md — viz-server GET/POST /settings + GET /usage routes (localhost-only, key-whitelisted)
-- [ ] 44-06-PLAN.md — viz frontend settings panel + token readout (no new IPC; human visual check)
+- [x] 44-06-PLAN.md — viz frontend settings panel + token readout (no new IPC; human visual check)
 
 ## Backlog
 

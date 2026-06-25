@@ -146,3 +146,7 @@ None — no new network endpoints, no new auth paths, no schema changes. All set
 - [x] Commit ed585a4 exists in git log: confirmed
 - [x] 23/23 tests pass: confirmed
 - [x] tsc --noEmit exits 0: confirmed
+
+## Task 3 — Human visual verification: APPROVED (2026-06-24)
+
+Operator verified the live panel at http://127.0.0.1:7810: panel opens, preset/toggle round-trips with "(modified)" divergence label, Save persists, core shown always-on with no toggle, and the token readout populates by feature. A bug found during verify (per-feature lines rendered 0 because settings.js read a phantom `row.total_tokens`; the /usage route emits `input_tokens`+`output_tokens`) was fixed and re-verified — extraction ~2.5M (~$11.28), judging ~54k (~$0.70), schema/corpus legitimately 0 (no ledger rows yet).
