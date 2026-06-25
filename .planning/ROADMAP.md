@@ -617,8 +617,8 @@ Plans:
 **Depends on:** Phase 40 (baseline). Independent of Phase 41 — can run in parallel.
 **Success Criteria** (what must be TRUE):
 
-  1. Token cost is measured per write (extract+judge) and per recall (inject), broken down by lever, against the Phase 40 baseline — COST-01
-  2. Levers (`consolSkipThreshold`, inject budget, recall caps, v7.0 ranking/reflection wins) are tuned to a measured net token reduction with no accuracy regression on the harness — COST-02
+  1. ✅ **COST-01 (measured 2026-06-25, deferred-run battery):** marginal write path (Haiku extract+judge) = **~7,118 tok/turn, 0% Sonnet escalation** (27 Haiku calls / 99,647 tok / $0.33); corpus-gen is a separate backlog subsystem (Sonnet 28 calls / 271,288 tok / $1.54 / 22 docs) and the naive 26,495 tok/turn headline overstates marginal write ~3.7×. Clean breakeven ~6.2 sessions (vs naive 22.9). Source: `scripts/eval/results/42-writeside-breakdown-measured.json`.
+  2. ✅ **COST-02 (validated 2026-06-25 by $0 live-brain inspection, NOT synthetic benchmarks — KU/LoCoMo/LongMemEval all force salience=1.0, lever no-op):** global 0.5 rejected as UNSAFE (drops project-survey [8 high-band] + project-doc [42 high-band] knowledge). **Per-source `consolSkipThreshold: { 'claude-code': 0.5 }` applied** (2,444 affected claude-code episodes are conversational noise) — captures ~87% of the token win with near-zero knowledge loss. STEP 4 (LoCoMo/LongMemEval no-regression confirm) **SKIPPED** per founder decision (lever-blind + ~7.4hr/OpenAI-$ to reproduce the frozen v7.0 baseline while proving nothing about the lever).
   3. The token-efficiency claim vs competitors (e.g. mem0's ~90% / claude-mem's ~10x retrieval savings) is stated with both recense's reproduced number and the cited competitor figure — no inflated comparison — COST-03
   4. Progressive-disclosure retrieval (index-first → detail-on-demand) is benchmarked against recense's schema-prior compression on the token axis; adopted into the recall/MCP surface only if it shows a measured token win with no accuracy regression, else explicitly declined with the numbers — COST-04
 

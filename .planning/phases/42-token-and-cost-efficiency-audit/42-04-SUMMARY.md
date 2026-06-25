@@ -125,3 +125,66 @@ and D-06 honored). The deferred run battery — including the cheap KU-replay ac
 - `grep -c 'out-dir' 42-DEFERRED-RUN-RUNBOOK.md` == 0: CONFIRMED
 - All 6 automated verification checks: PASS (exit=0)
 - No founder WIP files touched or staged
+
+---
+
+## Deferred-run execution (2026-06-25)
+
+The deferred battery was executed on 2026-06-25 after the founder's **second Max subscription**
+cleared the subscription-token-headroom constraint that forced the original defer-to-reset. COST-01
+and COST-02 are now closed; STEP 4 (LoCoMo/LongMemEval) was SKIPPED per founder decision (lever-blind).
+Sources: `scripts/eval/results/42-writeside-breakdown-measured.json` (STEP 3 measured) + live-brain
+`~/.config/recense/recense.db` inspection (COST-02).
+
+### Cost-probe decision (runbook STEP 1)
+
+Founder approved the battery after the second Max plan cleared the weekly-reset constraint.
+Cost-probe (`cost-benefit-harness --sample 1`) = **38,231 tok/ep** at threshold 0.2 (all Haiku,
+0 Sonnet escalations). Full-battery projection **~897,672 tok** (write-side ~458k subscription +
+LOCOMO answer-gen ~439k OpenAI-$).
+
+### COST-01 — write-side breakdown (MEASURED, `measured:true`)
+
+Tool = `cost-benefit-harness.cjs --sample 14` over the 14 unconsolidated live episodes; result in
+`scripts/eval/results/42-writeside-breakdown-measured.json`. The full sleep pass folds in a
+corpus-generation backlog, so the raw per-turn figure is contaminated — decompose:
+
+- **Marginal write path (extract + judge):** Haiku 27 calls / 99,647 tok / $0.33 = **~7,118 tok/turn**,
+  **0% Sonnet escalation** under the two-tier judge (18 claims triaged, 0 escalated).
+- **Corpus generation** (separate subsystem, backlog-driven, NOT per-turn): Sonnet 28 calls /
+  271,288 tok / $1.54 / 22 docs.
+- The naive harness headline (26,495 tok/turn) overstates marginal write **~3.7×**. Clean per-turn
+  (~7,118 tok) → breakeven **~6.2 sessions** of inject-reuse (vs naive 22.9). Inject-savings floor only.
+
+### COST-02 — accuracy no-regression (validated by live-brain inspection, NOT synthetic benchmarks)
+
+The lever could not be tested on KU/LoCoMo/LongMemEval (all force salience=1.0 → consolSkipThreshold
+is a no-op). Validated instead by **$0 live-brain inspection** of episodes in the newly-skipped band
+[0.2, 0.5) (role-aware + bySource-aware skip logic):
+
+- Global 0.5 would newly skip **2,795 / 3,110** affected episodes. By source:
+  - **claude-code: 2,444** (100% of affected) — conversational noise (acks/commands/boilerplate) → SAFE
+  - **project-survey: 270** (8 in high-band ≥0.40) — architectural knowledge → mostly safe, 8 at-risk
+  - **project-doc: 80** (**42 in high-band ≥0.40**) — doc-ingestion knowledge → RISKY
+  - mcp/http: 1 each → negligible
+- Verdict: **global 0.5 UNSAFE** (drops project-survey + project-doc knowledge). **Per-source
+  `claude-code:0.5` is the safe win** — ~87% of the savings, near-zero knowledge loss. Applied to
+  `src/lib/config.ts` `consolSkipThresholdBySource` (quick task 260625-nkt, this run).
+
+### Four runbook errors found in 42-DEFERRED-RUN-RUNBOOK.md (annotated in the runbook)
+
+1. **STEP 2 KU-replay is lever-blind** — `replay-ku-harness.cjs:376-377` hardcodes salience=1.0 /
+   hard_keep=1; the skip gate `consolidator.ts:96` (`salience<threshold && hard_keep===0`) never fires.
+   The lever has no effect; ku_score is identical at any threshold. (Ran 2h45m at ~29s/headless-call
+   before kill — not stalled, just judging every claim serially; vacuous gate.)
+2. **STEP 3 named the wrong harness** — `42-lever-sweep-harness.cjs` hardcodes
+   `write_ledger.measured=false` (lines 335-349) even with headless active; the real measured tool is
+   `cost-benefit-harness.cjs` (the one STEP 1 used).
+3. **The per-turn write figure is contaminated by corpus-gen backlog** (see COST-01 decomposition).
+4. **STEP 4 is lever-blind too** — `locomo-harness.cjs` (376/412) and `longmemeval-harness.cjs`
+   (497/509/546/560) also force salience=1.0 and accept no threshold override; running it would cost
+   ~7.4hr + OpenAI-$ to reproduce the frozen v7.0 baseline (J 86.0 / R@5 77.3 / R@10 82.2) while
+   proving nothing about the lever. **SKIPPED per founder decision.**
+
+**Note:** the runbook's "~88% skip at 0.5" assumption was sample-specific; observed **71.4%** on the
+current 14-episode unconsolidated sample (analytical sweep, `scripts/eval/results/42-skipsplit-sweep.json`).

@@ -57,6 +57,26 @@ Measured from `scripts/eval/cost-benefit-harness.cjs` on a 5-episode sample (202
 
 **Source:** `scripts/eval/results/cost-benefit-probe.json` (committed; `write_ledger.measured: true`)
 
+### Measured 2026-06-25 (cost-benefit-harness --sample 14)
+
+The deferred-run battery (Phase 42-04) was executed on 2026-06-25 with headless providers active.
+The naive per-turn headline is **contaminated** by a corpus-generation backlog folded into the same
+sleep pass, so the marginal write path is decomposed from the corpus-gen subsystem:
+
+| Cost axis | Value | Notes |
+|---|---|---|
+| Marginal write path (Haiku extract + judge) | 27 calls / 99,647 tok / $0.33 = **~7,118 tok/turn** | clean per-turn marginal write |
+| Sonnet escalation rate | **0%** | 18 claims triaged, 0 escalated under the two-tier judge |
+| Corpus generation (separate subsystem, NOT per-turn) | Sonnet 28 calls / 271,288 tok / $1.54 / 22 docs | backlog-driven; excluded from marginal write |
+| Naive harness headline | 26,495 tok/turn | overstates marginal write **~3.7×** (corpus-gen contamination) |
+
+**Breakeven correction:** clean per-turn (~7,118 tok) → breakeven **~6.2 sessions** of inject-reuse
+(vs the naive contaminated figure's 22.9). This is an inject-savings floor only. The §2 amortized
+figure above (3,139 tok/episode, breakeven N=3) used a different 5-episode sample and includes
+skip-gated episodes; the 2026-06-25 marginal write path isolates extract+judge over 14 episodes.
+
+**Source:** `scripts/eval/results/42-writeside-breakdown-measured.json` (committed; `write_ledger.measured: true`)
+
 ### Breakeven Session Count
 
 How many sessions until cumulative recall savings exceed the one-time write cost:

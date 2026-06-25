@@ -9,6 +9,31 @@ date: 2026-06-24
 
 # Deferred-Run Runbook — Phase 42 Reset-Window Battery
 
+> ## ⚠️ CORRECTIONS (2026-06-25 execution) — DO NOT TRUST THIS RUNBOOK AS-IS
+>
+> The deferred battery was executed on 2026-06-25 (founder's 2nd Max plan cleared the reset
+> constraint). Execution surfaced **four errors** in the procedure below. COST-01 + COST-02 are
+> CLOSED; the corrected findings live in `42-04-SUMMARY.md` (§ "Deferred-run execution (2026-06-25)")
+> and `42-COST-SAVINGS-REPORT.md` §2. On any future re-run, fix these first:
+>
+> 1. **STEP 2 KU-replay is LEVER-BLIND.** `replay-ku-harness.cjs:376-377` hardcodes salience=1.0 /
+>    hard_keep=1, so the skip gate `consolidator.ts:96` (`salience<threshold && hard_keep===0`) never
+>    fires. ku_score is identical at any threshold — the run proves nothing about the lever. (Ran
+>    2h45m at ~29s/headless-call before kill; not stalled, just a vacuous gate.)
+> 2. **STEP 3 names the WRONG harness.** `42-lever-sweep-harness.cjs` hardcodes
+>    `write_ledger.measured=false` (lines 335-349) even with headless active. The real measured tool
+>    is **`cost-benefit-harness.cjs`** (the one STEP 1 uses). Use `cost-benefit-harness.cjs --sample N`.
+> 3. **The per-turn write figure is CONTAMINATED by a corpus-gen backlog.** Decompose: marginal write
+>    (Haiku extract+judge) ~7,118 tok/turn @ 0% Sonnet escalation; corpus-gen (Sonnet, backlog-driven)
+>    is a separate subsystem. The naive 26,495 tok/turn headline overstates marginal write ~3.7×.
+> 4. **STEP 4 is LEVER-BLIND too.** `locomo-harness.cjs` (376/412) and `longmemeval-harness.cjs`
+>    (497/509/546/560) also force salience=1.0 and accept no threshold override. Running it costs
+>    ~7.4hr + OpenAI-$ to reproduce the frozen v7.0 baseline (J 86.0 / R@5 77.3 / R@10 82.2) while
+>    proving nothing about the lever. **SKIPPED 2026-06-25 per founder decision.**
+>
+> Also: the "~88% skip at 0.5" assumption below was sample-specific; observed **71.4%** on the
+> 14-episode unconsolidated sample (`scripts/eval/results/42-skipsplit-sweep.json`).
+
 **Status:** Documented procedure — NOT executed. All steps run at the next weekly subscription
 reset after the founder clears the cost-probe gate (STEP 1).
 
