@@ -220,13 +220,17 @@ export function startVizServer(
   );
 
   // Compile /doc?slug= prepared statements once (READER-02, T-27-11 — read-only only).
-  // Returns the live doc node for the given scope (slug); tombstoned docs are excluded.
+  // Resolve by node_doc.slug — the canonical doc identifier the client passes. The
+  // prior version keyed on node_scope.scope, which only worked for docs whose scope
+  // happened to equal their slug (hubs, and subject docs left on the stale slug-scope).
+  // Subject docs correctly scoped to the bare project root (e.g. brain-memory's) were
+  // unresolvable by slug. Keying on the slug decouples resolution from node_scope so
+  // scope can be the project root for coloring/containment without breaking /doc.
   const stmtGetDoc = db.prepare(`
     SELECT n.id, n.value, nd.generated_at
     FROM node n
     JOIN node_doc nd ON nd.node_id = n.id
-    JOIN node_scope ns ON ns.node_id = n.id
-    WHERE n.type = 'doc' AND ns.scope = ? AND n.tombstoned = 0
+    WHERE n.type = 'doc' AND nd.slug = ? AND n.tombstoned = 0
     LIMIT 1
   `);
 

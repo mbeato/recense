@@ -142,6 +142,16 @@ beforeEach(async () => {
   store.upsertNodeDoc({ node_id: stubId, slug: 'emptystub', generated_at: 1000, updated_at: 1000 });
   store.upsertNodeScope({ node_id: stubId, scope: 'emptystub', updated_at: 1000 });
 
+  // Regression (2026-06-25): a subject doc whose node_scope is the bare PROJECT ROOT
+  // ('vtx') but whose slug is the full 'project:subject' ('vtx:athlete-management').
+  // This is the real-world pattern (subject docs scoped to root for coloring/containment);
+  // the old scope-keyed resolver could not open it because scope != slug. /doc must key
+  // on the slug.
+  const subjId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  store.upsertNode({ id: subjId, type: 'doc', value: '# Athlete Management\n\nbody', origin: 'inferred', s: 0, c: 1.0, last_access: 1000 });
+  store.upsertNodeDoc({ node_id: subjId, slug: 'vtx:athlete-management', generated_at: 1000, updated_at: 1000 });
+  store.upsertNodeScope({ node_id: subjId, scope: 'vtx', updated_at: 1000 }); // ROOT scope, deliberately != slug
+
   writeDb.close();
 
   // Start the viz server (read-only handle).
@@ -166,6 +176,12 @@ describe('GET /doc?slug=', () => {
     expect(r.headers['content-type']).toContain('text/plain');
     expect(r.body).toContain('# Tonos');
     expect(r.body).toContain('recense://fact/');
+  });
+
+  it('resolves a subject doc whose node_scope (root) differs from its slug (regression: scope-keyed resolver missed these)', async () => {
+    const r = await makeRequest(port, `/doc?slug=${encodeURIComponent('vtx:athlete-management')}`);
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toContain('# Athlete Management');
   });
 
   it('returns 202 {status:generating} for a missing slug and triggers spawn', async () => {
