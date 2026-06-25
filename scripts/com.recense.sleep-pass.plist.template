@@ -52,16 +52,13 @@
     <integer>120</integer>
 
     <!--
-        StartCalendarInterval: hourly floor — run once per hour (at :00) after any wake.
-        Kept alongside WatchPaths so the sleep pass still runs even when no writes occur
-        (e.g. strength decay, eviction). launchd catches missed runs after sleep.
-        Minute=0 only (no Hour key) means: fire at the top of every hour.
+        StartInterval: periodic floor — kept alongside WatchPaths so the sleep pass still
+        runs even when no writes occur (e.g. strength decay, eviction). launchd catches
+        missed runs after sleep. Value is substituted by `recense scheduler install` from
+        settings.json sleepFrequencyHours (via `recense config apply`); default = 3600s (1h).
     -->
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <key>StartInterval</key>
+    <integer>__FREQUENCY__</integer>
 
     <!-- RunAtLoad false: do not fire immediately on launchctl load -->
     <key>RunAtLoad</key>
