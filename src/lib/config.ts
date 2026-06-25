@@ -721,6 +721,12 @@ const DEFAULT_SALIENCE_CONFIG: SalienceConfig = {
   // Per-source consolidation skip threshold (D-60, mirrors consolSkipThresholdAssistant).
   // Sources not listed fall back to the per-role default (consolSkipThreshold / consolSkipThresholdAssistant).
   consolSkipThresholdBySource: {
+    'claude-code': 0.5, // COST-02 (Phase 42-04, 2026-06-25): claude-code/user turns in [0.2,0.5)
+                        // are conversational noise (acks, commands, boilerplate) — 2,444 live episodes,
+                        // safe to skip. A GLOBAL 0.5 was rejected: it also drops project-survey (8) +
+                        // project-doc (42) high-salience knowledge. Per-source bump captures ~87% of the
+                        // token win with near-zero knowledge loss. project-survey/project-doc intentionally
+                        // omitted → they fall back to the global 0.2 default.
     gmail: 0.4,         // higher bar: email is lower-signal; aggressive skip saves LLM budget
     granola: 0.25,      // slightly above global 0.2; transcripts denser but noisier than conversation
     obsidian: 0.2,      // curated vault content — same as global default; low skip justified
