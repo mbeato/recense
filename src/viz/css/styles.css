@@ -788,6 +788,220 @@ html.reader-open #graph { filter: saturate(0.7) brightness(0.82); }
   letter-spacing: 0.02em;
 }
 
+/* ── Settings panel (44-06) — right-edge slide-in mirroring #reader ──────────
+   Left-anchored, same width as the reader, slides in from the left.
+   Amber is activation/hover only (CLAUDE.md viz rule) — palette uses muted mauve/slate. */
+#settings-panel {
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  width: min(520px, 92vw);
+  z-index: 41; /* one above reader (40) so it renders in front when both could open */
+  background: rgba(20, 14, 26, 0.95);
+  border-right: 1px solid rgba(170, 150, 180, 0.14);
+  backdrop-filter: blur(14px);
+  box-shadow: 2px 0 28px rgba(0, 0, 0, 0.35);
+  transform: translateX(-102%);
+  transition: transform 0.22s ease;
+  overflow-y: auto;
+  padding: 0 26px 40px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(170, 150, 180, 0.28) transparent;
+}
+#settings-panel.open { transform: translateX(0); }
+html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
+
+#settings-panel::-webkit-scrollbar { width: 8px; }
+#settings-panel::-webkit-scrollbar-track { background: transparent; }
+#settings-panel::-webkit-scrollbar-thumb {
+  background: rgba(170, 150, 180, 0.28);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+#settings-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(170, 150, 180, 0.45);
+  background-clip: content-box;
+}
+
+#settings-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  background: rgba(20, 14, 26, 0.97);
+  margin-left: -26px;
+  margin-right: -26px;
+  padding-left: 26px;
+  padding-right: 28px;
+  padding-top: 20px;
+  padding-bottom: 12px;
+  margin-bottom: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: #9a90a4;
+}
+#settings-kicker { color: #6b5f73; }
+
+#settings-close {
+  flex: none;
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: #8b7090;          /* muted mauve at rest */
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+#settings-close:hover {
+  color: #c8cfd8;          /* slate on hover — never amber (palette rule) */
+  background: rgba(170, 150, 180, 0.1);
+}
+
+/* ── Settings panel body ─────────────────────────────────────────────────── */
+#settings-body { color: #c2bac9; font-size: 13px; line-height: 1.55; }
+
+.settings-section-head {
+  font-size: 14px;
+  font-weight: 500;
+  color: #e0d6e8;
+  margin: 4px 0 10px;
+}
+
+.settings-section-subhead {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #6b5f73;
+  margin: 14px 0 6px;
+}
+
+.settings-divider {
+  border: 0;
+  border-top: 1px solid rgba(170, 150, 180, 0.1);
+  margin: 12px 0;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 5px 0;
+  min-height: 24px;
+}
+
+.settings-core-row { opacity: 0.7; }  /* visually receded — always-on, no control */
+
+.settings-label {
+  flex: 1;
+  font-size: 12.5px;
+  color: #b9aec5;
+}
+
+.settings-toggle {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: #8b8098;  /* muted mauve — amber is activation-only */
+}
+
+.settings-number-input {
+  flex: none;
+  width: 72px;
+  background: rgba(170, 150, 180, 0.07);
+  border: 1px solid rgba(170, 150, 180, 0.18);
+  border-radius: 5px;
+  color: #c2bac9;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 3px 6px;
+  text-align: right;
+}
+
+.settings-select {
+  flex: none;
+  background: rgba(170, 150, 180, 0.07);
+  border: 1px solid rgba(170, 150, 180, 0.18);
+  border-radius: 5px;
+  color: #c2bac9;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
+.settings-error {
+  color: #9a7080;
+  font-size: 12px;
+  font-style: italic;
+  margin: 8px 0;
+}
+
+.settings-save-btn {
+  margin-top: 8px;
+  width: 100%;
+  background: rgba(170, 150, 180, 0.12);
+  border: 1px solid rgba(170, 150, 180, 0.25);
+  border-radius: 7px;
+  color: #c2bac9;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 7px 0;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.settings-save-btn:hover {
+  background: rgba(140, 150, 165, 0.18);
+  border-color: rgba(170, 150, 180, 0.4);
+}
+
+/* ── Usage readout ───────────────────────────────────────────────────────── */
+.settings-usage-section { margin: 4px 0 8px; }
+
+.settings-usage-line {
+  font-size: 11px;
+  color: #6b5f73;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin: 1px 0 4px 4px;
+  letter-spacing: 0.01em;
+}
+
+.settings-usage-headline {
+  font-size: 12.5px;
+  color: #9a90a4;
+  margin: 6px 0 4px;
+}
+
+.settings-usage-feature-line {
+  font-size: 11.5px;
+  color: #6b5f73;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin: 2px 0 2px 8px;
+}
+
+.settings-usage-alltime {
+  font-size: 11px;
+  color: #57505e;
+  margin: 6px 0 2px;
+}
+
+.settings-usage-empty {
+  font-size: 12px;
+  color: #57505e;
+  font-style: italic;
+  margin: 4px 0 8px;
+}
+
 /* ── Corpus toggle — icon-only fixed button, matches recenter cluster (C1, 34-02) ──
    Expanded Brain Window ONLY — hidden in popover/tray by default.
    Position: top:46px places it between the collapse button (top:10+30+6) and the

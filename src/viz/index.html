@@ -39,6 +39,7 @@
   <div class="row actions-row">
     <button id="btn-tombstones">Show tombstones</button>
     <button id="btn-reader" class="btn-sm">Reader</button>
+    <button id="btn-settings" class="btn-sm">Settings</button>
     <button id="btn-log" class="btn-sm">Log</button>
   </div>
   <div id="detail-loading">Initializing graph…</div>
@@ -113,6 +114,15 @@
   <div id="detail-conns-head">Connections</div>
   <div id="detail-conns"></div>
   <div id="detail-conns-more"></div>
+</div>
+
+<!-- Settings panel (44-06): in-app cost-controls surface — D-02 (no IPC), D-03 (frontend consumer) -->
+<div id="settings-panel">
+  <div id="settings-head">
+    <span id="settings-kicker">settings ·</span>
+    <button id="settings-close" type="button" aria-label="Close settings" title="Close settings">×</button>
+  </div>
+  <div id="settings-body"></div>
 </div>
 
 <!-- Reader overlay (slice): generated project deep-dive; inline fact-refs select graph atoms -->
