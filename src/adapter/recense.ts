@@ -75,6 +75,13 @@ switch (cmd) {
     break;
   }
 
+  // ── Config (exports runConfigCommand; not auto-invoking) ──────────────────
+  case 'config': {
+    const cfg = require('./config-cli') as { runConfigCommand: (s: string | undefined, r: string[]) => void };
+    cfg.runConfigCommand(sub, rest);
+    break;
+  }
+
   // ── CLIs with require.main guard — dispatch via subprocess ───────────────────
   // H-1: forward argv[3..] (process.argv.slice(3)) so the child receives all
   // positional args and flags (e.g. `recense ingest gmail` or `recense seed --db /x`).
@@ -142,7 +149,7 @@ switch (cmd) {
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, remember, viz, sleep-pass, seed, ingest, import-memory, ingest-project, dedup-entities, dedup-facts, cleanup-corpus, generate-doc, promote-corpus, generate-corpus, derive-doc-graph, backfill-subjects, snapshot, scheduler, mcp, serve\n',
+      'Commands: hook, init, doctor, recall, remember, viz, sleep-pass, seed, ingest, import-memory, ingest-project, dedup-entities, dedup-facts, cleanup-corpus, generate-doc, promote-corpus, generate-corpus, derive-doc-graph, backfill-subjects, snapshot, scheduler, config, mcp, serve\n',
     );
     process.exit(1);
 }
