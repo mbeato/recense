@@ -670,6 +670,20 @@ export async function runConsolidation(
     } finally {
       setHeadlessFeature(null);
     }
+
+    // DOC-GRAPH ordering fix: the consolidator already ran deriveDocGraph() inside
+    // consolidate() — but that was BEFORE this corpus block created new hub/subject stubs
+    // (consumePendingCorpusMarkers + the scope sweep). Without re-deriving, a freshly-
+    // promoted project's hub→chapter containment and doc↔doc references would not appear
+    // until the NEXT pass (every new project perpetually one pass behind on its edges).
+    // Re-derive now so newly-promoted projects get their edges in the SAME pass. The deriver
+    // is LLM-free, idempotent (wipe-and-rebuild), and sub-second at this scale.
+    try {
+      const dg = await docGraphDeriver.deriveDocGraph();
+      log(`DOC-GRAPH: re-derived after corpus promotion — containment=${dg.containment} reference=${dg.reference}`);
+    } catch (err) {
+      log(`DOC-GRAPH: re-derive after corpus promotion threw (non-fatal): ${err}`);
+    }
   }
 
   // Phase 999.3 (SCOPE-01, D-S3): stamp single-tenant provenance scope on the nodes this
