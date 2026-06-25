@@ -46,7 +46,7 @@ import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 import { newId } from '../lib/hash';
-import { cwdToScope, resolveNodeScope } from '../lib/scope';
+import { cwdToScope, resolveNodeScope, GLOBAL_SCOPE } from '../lib/scope';
 
 /**
  * Phase 19 cascade tunables (Item 2 transport (b): the pass spaces emits).
@@ -584,19 +584,46 @@ export async function runConsolidation(
     // induction for this pass is complete — Pitfall 6) and BEFORE generateCorpusDocs (so
     // the new hub/subject stubs exist before the fill loop runs).
     //
-    // scope = cwdToScope() resolves the active project scope for this pass.
-    // Best-effort: a promoter failure MUST NOT abort the sleep pass — log and continue.
-    // T-39.1-09: exhaust-gate failure is non-fatal; consolidation + hygiene still complete.
-    const scope = cwdToScope(process.cwd());
-    try {
-      const subjectResult = await subjectPromoter.promoteSubjects(scope);
-      log(
-        `EXHAUST-GATE: proposed=${subjectResult.proposed.length} ` +
-        `created=${subjectResult.created} refreshQueued=${subjectResult.refreshQueued.length} ` +
-        `scope=${scope}`,
-      );
-    } catch (err) {
-      log(`EXHAUST-GATE: subjectPromoter threw (non-fatal): ${err}`);
+    // Promote subjects for the active (cwd) scope FIRST, then sweep the OTHER project scopes
+    // so a project surfaces its hub/subjects even when no pass ever runs in its cwd. Before
+    // this, only cwdToScope(process.cwd()) ran, so projects you don't actively develop in
+    // (putyouon, conway, …) never got hubs, and the launchd hourly pass (cwd=home → global)
+    // promoted nothing. The Stage-1 gate inside promoteSubjects is LLM-free; Stage-2 (the LLM
+    // proposal) fires only when a CREATE/REFRESH gate is open — so ungated scopes are cheap.
+    // Bound the number of scopes that make that LLM call per pass
+    // (RECENSE_SUBJECT_PROMOTIONS_PER_PASS, default 4) so a first sweep over many ungated
+    // projects can't burst; the rest are picked up next pass as earlier gates close.
+    // Best-effort: a promoter failure for one scope MUST NOT abort the pass or the others.
+    const cwdScope = cwdToScope(process.cwd());
+    const otherScopes = (db
+      .prepare(
+        `SELECT DISTINCT scope FROM node_scope
+         WHERE scope IS NOT NULL AND scope != ?
+           AND instr(scope, ':') = 0
+           AND scope NOT GLOB '????????-????-????-????-????????????'`,
+      )
+      .all(GLOBAL_SCOPE) as Array<{ scope: string }>)
+      .map(r => r.scope)
+      .filter(s => s && s !== cwdScope);
+    const subjectScopes = (cwdScope && cwdScope !== GLOBAL_SCOPE ? [cwdScope] : []).concat(otherScopes);
+    const maxPromotions = parseInt(env['RECENSE_SUBJECT_PROMOTIONS_PER_PASS'] ?? '4', 10) || 4;
+    let promotions = 0;
+    for (const s of subjectScopes) {
+      if (promotions >= maxPromotions) break;
+      try {
+        const r = await subjectPromoter.promoteSubjects(s);
+        // A scope that opened a gate did real work (and consumed an LLM call) — count it
+        // toward the per-pass budget. Ungated no-op scopes (SQL-only) stay free.
+        if (r.proposed.length > 0 || r.created > 0 || r.refreshQueued.length > 0) {
+          log(
+            `EXHAUST-GATE: scope=${s} proposed=${r.proposed.length} ` +
+            `created=${r.created} refreshQueued=${r.refreshQueued.length}`,
+          );
+          promotions++;
+        }
+      } catch (err) {
+        log(`EXHAUST-GATE: subjectPromoter threw for scope=${s} (non-fatal): ${err}`);
+      }
     }
 
     // Plan 39.1-03 (D-07): Drain pending-subject-doc-gen markers written by generateCorpusDocs
