@@ -44,6 +44,7 @@ import { chunkNote, noteTitle } from '../source/obsidian-adapter';
 import { redactSecrets } from '../source/redact';
 import { acquireLock, releaseLock } from './lockfile';
 import { resolveDbPath, resolveDirtySentinelPath } from './runtime-config';
+import { loadMergedConfig } from './settings-loader';
 import { createClaudeHeadlessSurveyClient } from '../model/claude-headless-client';
 import { runConsolidation, resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 import { CorpusPromoter } from '../consolidation/corpus-promoter';
@@ -648,7 +649,9 @@ async function main(): Promise<void> {
   fileLog(`start: dir=${args.dir} scope=${scope} db=${dbPath} dryRun=${args.dryRun} consolidate=${args.consolidate}`);
 
   // ── Build the survey transport ────────────────────────────────────────────────
-  const config: EngineConfig = { ...DEFAULT_CONFIG, dbPath, dirtySentinelPath: resolveDirtySentinelPath() };
+  // D-06: loadMergedConfig merges settings.json over DEFAULT_CONFIG with env overrides on top (D-05).
+  // dirtySentinelPath is an ingest-specific path override not stored in settings.json.
+  const config: EngineConfig = { ...loadMergedConfig(dbPath), dirtySentinelPath: resolveDirtySentinelPath() };
   const judgeConfig: EngineConfig = { ...config, ...resolveProviderOverlay(process.env, 'RECENSE_JUDGE_PROVIDER') };
 
   const surveyAreaFn = async (area: string, repoDir: string, repoDescStr: string): Promise<string> => {
@@ -766,7 +769,8 @@ async function main(): Promise<void> {
       // T-32-LOCK: no second acquireLock — the existing finally at the end releases it.
       // Best-effort (try/catch): a corpus generation failure must NOT abort the completed
       // consolidation. Mirror the best-effort posture from run-sleep-pass.ts CORPUS-06 block.
-      if (process.env['RECENSE_CORPUS_GEN'] !== '0') {
+      // D-06: config.corpusGen already reflects settings.json merged with env (env wins — D-05).
+      if (config.corpusGen) {
         try {
           const inlineJudgeConfig: EngineConfig = {
             ...config,
@@ -792,7 +796,7 @@ async function main(): Promise<void> {
           const promoteResult = await inlinePromoter.promoteScope(scope);
           fileLog(`corpus: promoteScope scope=${scope} promoted=${promoteResult.promoted.length} containment=${promoteResult.containment}`);
           // generateCorpusDocs fills the stubs created by promoteScope
-          const maxDocs = parseInt(process.env['RECENSE_CORPUS_GEN_MAX'] ?? '25', 10) || 25;
+          const maxDocs = config.corpusGenMax;
           const corpusResult = await generateCorpusDocs(
             { db, store: semanticStore, provider: corpusProvider },
             { maxDocs, log: fileLog, now: realClock.nowMs() },

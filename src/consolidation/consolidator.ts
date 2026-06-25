@@ -919,21 +919,29 @@ export class Consolidator {
 
     // ── Phase C: Re-embed nodes dirtied by this pass, then eviction sweep ──
     await this.reembedDirty();
-    // D-37: schema induction after Phase C reembedDirty(), before eviction.
-    // Schemas depend on fresh embeddings; tombstoned schemas must be swept in the same pass.
-    // D-09: tag schema-induction LLM calls as 'schema_abstract' so the ledger breaks them
-    // out from default Sonnet 'judge' calls. Reset in finally so a mid-induction error
-    // cannot mistag later calls (T-44-10).
-    setHeadlessFeature('schema_abstract');
-    try {
-      await this.inducer.induceSchemas();
-    } finally {
-      setHeadlessFeature(null);
+    // D-11 (Phase 44): schema induction + derivation are gated on config.schemaInductionEnabled.
+    // Lite preset sets this to false → skips the optional schema-abstraction layer entirely.
+    // Default-on (undefined treated as true): old callers without the field keep existing behaviour.
+    // Only the optional layer is gated — extract + PE-reconsolidation (Phase A/B) never toggle (D-12).
+    if (this.config.schemaInductionEnabled !== false) {
+      // D-37: schema induction after Phase C reembedDirty(), before eviction.
+      // Schemas depend on fresh embeddings; tombstoned schemas must be swept in the same pass.
+      // D-09: tag schema-induction LLM calls as 'schema_abstract' so the ledger breaks them
+      // out from default Sonnet 'judge' calls. Reset in finally so a mid-induction error
+      // cannot mistag later calls (T-44-10).
+      setHeadlessFeature('schema_abstract');
+      try {
+        await this.inducer.induceSchemas();
+      } finally {
+        setHeadlessFeature(null);
+      }
+      // D-07: schema-relation derivation after induceSchemas() (needs fresh centroids + schema nodes),
+      // before runEvictionSweep(). Artifacts are disposable derived cache — a mid-derive crash
+      // leaves wipe-then-rebuild-clean state on the next pass; no extra try/catch needed.
+      await this.deriver.deriveSchemaRelations();
+    } else {
+      this.log('schema induction skipped (preset=lite / schemaInductionEnabled=false)');
     }
-    // D-07: schema-relation derivation after induceSchemas() (needs fresh centroids + schema nodes),
-    // before runEvictionSweep(). Artifacts are disposable derived cache — a mid-derive crash
-    // leaves wipe-then-rebuild-clean state on the next pass; no extra try/catch needed.
-    await this.deriver.deriveSchemaRelations();
     // D-04 (Phase 28, CORPUS-02/03/05): corpus promotion after schema-relation derivation
     // (needs fresh schema_rel / super-schema edges), before eviction so the new s=0 doc stubs
     // are present (eviction leaves lifecycle-exempt s=0 nodes alone). LLM-free + idempotent.
