@@ -74,3 +74,18 @@ export function resolveNodeScope(scopes: string[]): string {
   }
   return GLOBAL_SCOPE;
 }
+
+/**
+ * Project-root of a doc slug/scope: strip any ':subject' suffix so a subject doc
+ * ('vtx:athlete-management') and its hub ('vtx') share one project scope.
+ *
+ * A doc's node_scope is provenance/grouping (drives corpus coloring + DocGraphDeriver
+ * containment), so it must be the bare PROJECT, not the per-subject slug. Stamping the
+ * full slug fragments a project into one scope per subject (the corpus-rainbow bug).
+ * Hub slugs ('vtx') and schema-chapter UUID slugs (no ':') pass through unchanged.
+ */
+export function rootScope(scope: string | undefined): string {
+  if (!scope) return GLOBAL_SCOPE;
+  const colon = scope.indexOf(':');
+  return colon === -1 ? scope : scope.slice(0, colon);
+}

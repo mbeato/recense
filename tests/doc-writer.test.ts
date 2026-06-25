@@ -198,6 +198,30 @@ describe('writeDoc', () => {
     expect(scope!.scope).toBe('tonos');
   });
 
+  test('subject doc (slug=project:subject) is scoped to the PROJECT ROOT, not the full slug', () => {
+    // Regression: doc-writer stamped node_scope = slug, fragmenting each project into one
+    // scope per subject (the corpus-rainbow bug) and silently re-introducing the stale
+    // scope whenever a subject doc was regenerated. node_scope must be the bare project.
+    const { db, store } = makeStore();
+    seedFact(store, 'fact-subj');
+
+    writeDoc(store, db, {
+      docId: 'doc-subj',
+      slug: 'vtx:athlete-management',
+      markdown: '# Athlete Management',
+      citedFactIds: ['fact-subj'],
+      now: 3000,
+    });
+
+    const scope = db.prepare('SELECT scope FROM node_scope WHERE node_id = ?').get('doc-subj') as
+      | { scope: string }
+      | undefined;
+    expect(scope!.scope).toBe('vtx'); // project root, NOT 'vtx:athlete-management'
+    // slug is unchanged — resolution + supersede still key on the full slug
+    const slug = db.prepare('SELECT slug FROM node_doc WHERE node_id = ?').get('doc-subj') as { slug: string };
+    expect(slug.slug).toBe('vtx:athlete-management');
+  });
+
   // ── Supersede: at most ONE live doc per slug (--force retires the prior) ───
 
   test('(supersede) regenerating a slug retires the prior live doc node', () => {

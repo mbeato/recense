@@ -21,6 +21,7 @@
  */
 import type Database from 'better-sqlite3';
 import type { SemanticStore } from '../db/semantic-store';
+import { rootScope } from '../lib/scope';
 
 /** Parameters for writeDoc. */
 export interface WriteDocParams {
@@ -182,8 +183,13 @@ export function writeDoc(
     //    For the fresh-node path (effectiveDocId = docId): generated_at = now on first write.
     store.upsertNodeDoc({ node_id: effectiveDocId, slug, generated_at: now, updated_at: now });
 
-    // 4. Attribute the doc node to the project slug via node_scope (SCOPE-01 provenance).
-    store.upsertNodeScope({ node_id: effectiveDocId, scope: slug, updated_at: now });
+    // 4. Attribute the doc node to its PROJECT-ROOT scope via node_scope (SCOPE-01 provenance).
+    //    Use rootScope(slug), not the raw slug: a subject doc's slug is 'project:subject',
+    //    but its node_scope must be the bare project ('vtx') so the corpus colors + groups it
+    //    with its hub. Stamping the full slug fragmented each project into one scope-per-subject
+    //    (the corpus-rainbow bug) and regenerating a doc here would silently re-introduce it.
+    //    Hub slugs and schema-chapter UUID slugs (no ':') are unchanged.
+    store.upsertNodeScope({ node_id: effectiveDocId, scope: rootScope(slug), updated_at: now });
 
     // 5. Write one kind='cites' edge per unique cited fact.
     //    src = doc node (use effectiveDocId so fill-in-place edges point to the live id).

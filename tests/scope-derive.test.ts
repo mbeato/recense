@@ -11,7 +11,7 @@
  * empty/unknown cwd → 'global'; a node spanning >1 project → 'global'.
  */
 import { describe, it, expect } from 'vitest';
-import { cwdToScope, resolveNodeScope } from '../src/lib/scope';
+import { cwdToScope, resolveNodeScope, rootScope } from '../src/lib/scope';
 
 describe('cwdToScope', () => {
   it('maps a known project root to its slug', () => {
@@ -83,5 +83,26 @@ describe('resolveNodeScope', () => {
 
   it('keeps the single project scope when mixed with global (global is not a project)', () => {
     expect(resolveNodeScope(['vtx', 'global'])).toBe('vtx');
+  });
+});
+
+describe('rootScope', () => {
+  it('strips a :subject suffix to the bare project root', () => {
+    expect(rootScope('vtx:athlete-management')).toBe('vtx');
+    expect(rootScope('tonos:project-overview')).toBe('tonos');
+  });
+
+  it('passes through hub slugs and UUID schema-chapter slugs (no colon) unchanged', () => {
+    expect(rootScope('vtx')).toBe('vtx');
+    expect(rootScope('2b8f5a25-3b90-4251-a995-cfed1d7e08f1')).toBe('2b8f5a25-3b90-4251-a995-cfed1d7e08f1');
+  });
+
+  it('takes only the FIRST segment when multiple colons are present', () => {
+    expect(rootScope('vtx:a:b')).toBe('vtx');
+  });
+
+  it('falls back to global for empty/undefined', () => {
+    expect(rootScope('')).toBe('global');
+    expect(rootScope(undefined)).toBe('global');
   });
 });
