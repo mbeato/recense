@@ -51,6 +51,15 @@ const TOP_K = 7;
  */
 const ADJACENCY_WEIGHT = 0.3;
 
+/**
+ * DOC-01b: weight for a shared entity NAME between two subjects (cross-project bridge).
+ * The same tech/tool/person surfaces as a DISTINCT node per project, so node-id sharing
+ * never links them — the normalized name does. Multiplied by the name's IDF so a rare
+ * substantive entity (a specific tool/person) dominates while ubiquitous process-exhaust
+ * names (gsd-phase, plan, …) contribute ~0 (and df ≥ N/2 names are dropped outright).
+ */
+const ENTITY_NAME_WEIGHT = 0.5;
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -119,6 +128,9 @@ export class DocGraphDeriver {
   /** Expand a schema's members via abstracts edges (one row per member). */
   private readonly stmtGetSchemaMembers: Database.Statement;
 
+  /** DOC-01b: live observed entity id → value, for the shared-entity-name reference bridge. */
+  private readonly stmtGetEntityNames: Database.Statement;
+
   /** Read a meta value by key (for subject-schema-ids:<slug>). */
   private readonly stmtGetMeta: Database.Statement;
 
@@ -159,6 +171,12 @@ export class DocGraphDeriver {
     // Schema members via abstracts edges (one row per member)
     this.stmtGetSchemaMembers = db.prepare(
       "SELECT dst FROM edge WHERE src = ? AND kind = 'abstracts'"
+    );
+
+    // DOC-01b: live observed entity names (id → value) for the cross-project name bridge.
+    this.stmtGetEntityNames = db.prepare(
+      "SELECT id, value FROM node " +
+      "WHERE type = 'entity' AND tombstoned = 0 AND origin != 'inferred' AND TRIM(value) <> ''"
     );
 
     // subject-schema-ids meta per subject slug
@@ -256,11 +274,21 @@ export class DocGraphDeriver {
     const clusterableRows = this.stmtGetClusterableNodes.all() as ClusterableNodeRow[];
     const clusterableIds = new Set<string>(clusterableRows.map(r => r.id));
 
+    // DOC-01b: entity id → normalized name, so references can bridge on shared entity NAMES
+    // across projects (the same tool/tech/person is a DISTINCT node per project; the name is
+    // the only thing they share). IDF weighting (below) suppresses ubiquitous exhaust names.
+    const entityNameById = new Map<string, string>();
+    for (const row of this.stmtGetEntityNames.all() as Array<{ id: string; value: string }>) {
+      const norm = row.value.trim().toLowerCase();
+      if (norm) entityNameById.set(row.id, norm);
+    }
+
     // 3. For each subject doc, resolve its schema member set (D-37 gated)
     interface SubjectInfo {
       node: DocNodeRow;
       schemaIds: string[];
       memberIds: Set<string>; // gated member ids
+      entityNames: Set<string>; // DOC-01b: normalized entity names among members (cross-project bridge)
     }
 
     const subjects: SubjectInfo[] = [];
@@ -275,18 +303,21 @@ export class DocGraphDeriver {
         continue;
       }
 
-      // Expand each schema to its gated members
+      // Expand each schema to its gated members (and collect member entity names — DOC-01b)
       const memberIds = new Set<string>();
+      const entityNames = new Set<string>();
       for (const schemaId of schemaIds) {
         const memberRows = this.stmtGetSchemaMembers.all(schemaId) as EdgeDst[];
         for (const { dst } of memberRows) {
           if (clusterableIds.has(dst)) {
             memberIds.add(dst);
+            const ename = entityNameById.get(dst);
+            if (ename) entityNames.add(ename);
           }
         }
       }
 
-      subjects.push({ node, schemaIds, memberIds });
+      subjects.push({ node, schemaIds, memberIds, entityNames });
     }
 
     // ── Reference edge derivation (D-01..D-05) ──────────────────────────
@@ -305,6 +336,21 @@ export class DocGraphDeriver {
     const idf = (memberId: string): number => {
       const df = memberDocFreq.get(memberId) ?? 0;
       if (df === 0 || N === 0) return 0;
+      return Math.log(N / df);
+    };
+
+    // DOC-01b: entity-name document frequency + IDF for the cross-project name bridge.
+    const nameDocFreq = new Map<string, number>();
+    for (const sub of subjects) {
+      for (const ename of sub.entityNames) {
+        nameDocFreq.set(ename, (nameDocFreq.get(ename) ?? 0) + 1);
+      }
+    }
+    const nameIdf = (ename: string): number => {
+      const df = nameDocFreq.get(ename) ?? 0;
+      // Drop ubiquitous names (df ≥ N/2) entirely — process-exhaust noise (gsd-phase, plan…)
+      // that would otherwise link every project to every other. ln(N/df) handles the rest.
+      if (df === 0 || N === 0 || df >= N / 2) return 0;
       return Math.log(N / df);
     };
 
@@ -370,6 +416,15 @@ export class DocGraphDeriver {
         for (const memberId of subA.memberIds) {
           if (subB.memberIds.has(memberId)) {
             score += idf(memberId);
+          }
+        }
+
+        // DOC-01b: shared entity-NAME bridge (cross-project). IDF-weighted by name rarity
+        // and scaled by ENTITY_NAME_WEIGHT so substantive shared entities link projects
+        // while exhaust names contribute ~0.
+        for (const ename of subA.entityNames) {
+          if (subB.entityNames.has(ename)) {
+            score += nameIdf(ename) * ENTITY_NAME_WEIGHT;
           }
         }
 
