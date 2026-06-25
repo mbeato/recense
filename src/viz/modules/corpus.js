@@ -63,6 +63,17 @@ const SCOPE_SAT = 28;           // % saturation — muted (founder-locked band)
 const SCOPE_LIGHT = 52;         // % lightness — mid, not garish
 const scopeColorCache = new Map(); // scope string → hsl string
 
+// Project-root of a scope string: strip any ':subject' suffix so a hub ('vtx') and
+// its subject docs ('vtx:athlete-management', ...) collapse to one key. Without this,
+// projects whose subject docs are scoped to the full 'project:subject' slug (vtx/tonos)
+// render every subject as a distinct hue — a rainbow — while a project whose docs all
+// share the bare root scope (brain-memory) renders uniform. Coloring by root restores
+// the D-16 intent ("each PROJECT gets a distinct muted tint") regardless of how the
+// underlying node_scope was stamped. Null/empty passes through unchanged.
+function rootScope(scope) {
+  return scope ? scope.split(':')[0] : scope;
+}
+
 // D-16: return the muted scope tint for a given scope string.
 // Null/empty scope → falls back to REST_NODE (the legacy uniform rose).
 function scopeColor(scope) {
@@ -208,7 +219,7 @@ export function initCorpus(ctx) {
     // which nodes get a project tint vs the muted rose fallback (chapters / isolated / malformed).
     projectScopes = new Set();
     for (const node of (data.nodes || [])) {
-      if ((node.slug || '').includes(':') && node.scope) projectScopes.add(node.scope);
+      if ((node.slug || '').includes(':') && node.scope) projectScopes.add(rootScope(node.scope));
     }
     for (const node of (data.nodes || [])) {
       if (node.slug) nodeSlugs[node.id] = node.slug;
@@ -243,7 +254,7 @@ export function initCorpus(ctx) {
         // D-16: scope-keyed tint for recognized PROJECT scopes only; hover stays amber
         // (activation-only). Chapter / isolated / malformed-scope docs → muted rose REST_NODE
         // (founder direction: no random per-scope colors for non-project docs).
-        const baseColor = projectScopes.has(node.scope) ? scopeColor(node.scope) : REST_NODE;
+        const baseColor = projectScopes.has(rootScope(node.scope)) ? scopeColor(rootScope(node.scope)) : REST_NODE;
         // Circle fill
         canvasCtx.beginPath();
         canvasCtx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
@@ -306,7 +317,7 @@ export function initCorpus(ctx) {
           // node objects after layout init; before that they are string ids with no scope).
           const srcScope = (typeof link.source === 'object' ? link.source.scope : null);
           const dstScope = (typeof link.target === 'object' ? link.target.scope : null);
-          const isCrossProject = srcScope && dstScope && srcScope !== dstScope;
+          const isCrossProject = srcScope && dstScope && rootScope(srcScope) !== rootScope(dstScope);
           return isCrossProject ? CROSS_PROJECT_REF : LINK_REST;
         }
         return LINK_REST; // doc_link
@@ -320,7 +331,7 @@ export function initCorpus(ctx) {
         if (link.kind === 'doc_reference') {
           const srcScope = (typeof link.source === 'object' ? link.source.scope : null);
           const dstScope = (typeof link.target === 'object' ? link.target.scope : null);
-          const isCrossProject = srcScope && dstScope && srcScope !== dstScope;
+          const isCrossProject = srcScope && dstScope && rootScope(srcScope) !== rootScope(dstScope);
           return isCrossProject ? [4, 3] : [2, 2]; // longer dash for cross-project bridges
         }
         return null; // containment and doc_link: solid
@@ -404,7 +415,7 @@ export function initCorpus(ctx) {
             const slug = n.slug || '';
             const isHub = slug && !slug.includes(':') && !UUID_RE.test(slug);
             if (isHub && n.scope) {
-              hubPos[n.scope] = { x: n.x || 0, y: n.y || 0 };
+              hubPos[rootScope(n.scope)] = { x: n.x || 0, y: n.y || 0 };
             }
           }
           // Pull same-scope non-hub nodes gently toward their hub.
@@ -414,7 +425,7 @@ export function initCorpus(ctx) {
             const slug = n.slug || '';
             const isHub = slug && !slug.includes(':') && !UUID_RE.test(slug);
             if (isHub) continue; // hub anchors itself
-            const hub = n.scope && hubPos[n.scope];
+            const hub = n.scope && hubPos[rootScope(n.scope)];
             if (!hub) continue;
             n.vx = (n.vx || 0) + (hub.x - (n.x || 0)) * k;
             n.vy = (n.vy || 0) + (hub.y - (n.y || 0)) * k;
