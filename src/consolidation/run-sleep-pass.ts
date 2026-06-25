@@ -21,6 +21,7 @@ import Database from 'better-sqlite3';
 import { setHeadlessFeature } from '../model/claude-headless-client';
 import { DEFAULT_CONFIG } from '../lib/config';
 import type { EngineConfig } from '../lib/config';
+import { loadMergedConfig } from '../adapter/settings-loader';
 import { realClock } from '../lib/clock';
 import type { Clock } from '../lib/clock';
 import { EpisodicStore } from '../db/episode-store';
@@ -410,8 +411,9 @@ export async function runConsolidation(
   opts?: { replayExtract?: (content: string) => ExtractedClaim[] },
 ): Promise<void> {
   // ── 4. Instantiate the full Consolidator dependency graph ─────────────────
-  // Base config (no model-provider overlay — stores/retriever are LLM-free).
-  const config = { ...DEFAULT_CONFIG, dbPath };
+  // Base config: settings.json merged with env overrides (D-05 / D-06).
+  // env wins over settings.json wins over preset wins over DEFAULT_CONFIG.
+  const config = loadMergedConfig(dbPath, env);
   // EVAL-04 cost lever (A/B toggle): two-tier judge (Haiku triage → Sonnet on contradict).
   // Applied to the base config BEFORE the judgeConfig spread so the judge head inherits it.
   if (env['RECENSE_TWO_TIER_JUDGE'] === '1') config.twoTierJudge = true;
@@ -560,10 +562,11 @@ export async function runConsolidation(
   // never pays the ~42s LLM cost. Runs AFTER consolidate() so CorpusPromoter (Phase C
   // inside the consolidator) has already created any new stubs this pass produced.
   //
-  // Env gates:
-  //   RECENSE_CORPUS_GEN=0   → skip entirely (default: on)
-  //   RECENSE_CORPUS_GEN_MAX → override the per-pass maxDocs cap (default: 25)
-  if (env['RECENSE_CORPUS_GEN'] !== '0') {
+  // Gate: config.corpusGen — resolved from settings.json (D-06) with env still winning (D-05).
+  //   RECENSE_CORPUS_GEN=0  env var → corpusGen=false (env wins; founder's sleep.env unbroken)
+  //   settings.json lite preset     → corpusGen=false (when no env var set)
+  //   default / full preset         → corpusGen=true
+  if (config.corpusGen) {
     // Plan 32-03 D-05: Consume pending-corpus-promotion:<scope> markers BEFORE generateCorpusDocs
     // so that force-promoted scope stubs (landing + chapters) are filled in the SAME pass.
     // Crash-safe order: promoteScope first, deleteMeta only on success (T-32-MARK).
@@ -619,7 +622,7 @@ export async function runConsolidation(
       log(`EXHAUST-GATE: pending-marker count failed (non-fatal): ${err}`);
     }
 
-    const maxDocs = parseInt(env['RECENSE_CORPUS_GEN_MAX'] ?? '25', 10) || 25;
+    const maxDocs = config.corpusGenMax;
     // D-09: tag corpus-gen LLM calls as 'corpus_gen' so the ledger breaks them out
     // from default Sonnet 'judge' calls. Reset in finally so a mid-generation error
     // cannot mistag later calls (T-44-10).
