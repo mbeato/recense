@@ -281,24 +281,32 @@ describe('generateDoc', () => {
     store.upsertNodeScope({ node_id: id, scope: slug, updated_at: 400 });
   }
 
-  test('(sibling) RELATED DOCS block is included when other live docs exist', async () => {
+  test('(sibling) RELATED DOCS block is included when a graph-neighbor doc exists', async () => {
     const { db, store } = makeStore();
     seedFact(store, '44444444-4444-4444-4444-444444444444', 'a fact about vtx');
     store.upsertNodeScope({ node_id: '44444444-4444-4444-4444-444444444444', scope: 'vtx', updated_at: 500 });
-    // A sibling doc (tonos) already exists
-    seedDocNode(store, 'aaaa1111-2222-4333-8444-555566667777', 'tonos', '# Tonos — Project Deep-Dive\n\nbody');
+    // The doc being generated already exists as a stub (production: promoted before gen).
+    const vtxDocId = 'eeee2222-3333-4444-8555-666677778888';
+    seedDocNode(store, vtxDocId, 'vtx', '# VTX\n\nbody');
+    // A neighbor doc (tonos) connected to vtx via a derived doc_reference edge (Feature B:
+    // only graph-connected docs are offered as inline-link candidates, not every live doc).
+    const tonosDocId = 'aaaa1111-2222-4333-8444-555566667777';
+    seedDocNode(store, tonosDocId, 'tonos', '# Tonos — Project Deep-Dive\n\nbody');
+    store.upsertEdge({ src: vtxDocId, dst: tonosDocId, rel: 'doc_reference', kind: 'doc_reference', w: 1 });
 
     const capturePrompt = { value: '' };
     const provider = makeStubProvider('# VTX\n', capturePrompt);
     await generateDoc({ db, store, provider: provider as any }, 'vtx');
 
-    expect(capturePrompt.value).toContain('RELATED PROJECT DOCS');
+    expect(capturePrompt.value).toContain('RELATED DOCS');
     // Lists the sibling by id + slug + extracted H1 title
     expect(capturePrompt.value).toContain('aaaa1111-2222-4333-8444-555566667777');
     expect(capturePrompt.value).toContain('tonos');
     expect(capturePrompt.value).toContain('Tonos — Project Deep-Dive');
     // Instructs the recense://doc/<docId> link form
     expect(capturePrompt.value).toContain('recense://doc/');
+    // Feature B: the block instructs INLINE-in-context linking (not a trailing list)
+    expect(capturePrompt.value).toContain('INLINE');
   });
 
   test('(sibling) RELATED DOCS block is OMITTED when no other docs exist', async () => {
@@ -310,7 +318,7 @@ describe('generateDoc', () => {
     const provider = makeStubProvider('# Lonely\n', capturePrompt);
     await generateDoc({ db, store, provider: provider as any }, 'lonely');
 
-    expect(capturePrompt.value).not.toContain('RELATED PROJECT DOCS');
+    expect(capturePrompt.value).not.toContain('RELATED DOCS');
   });
 
   test('(sibling) the doc being generated is NOT listed as its own sibling', async () => {
@@ -324,8 +332,9 @@ describe('generateDoc', () => {
     const provider = makeStubProvider('# Self v2\n', capturePrompt);
     await generateDoc({ db, store, provider: provider as any }, 'self');
 
-    // No RELATED DOCS block (only doc is the same-slug one, excluded)
-    expect(capturePrompt.value).not.toContain('RELATED PROJECT DOCS');
+    // No RELATED DOCS block: the only doc is this doc itself (excluded), and it has no
+    // graph-neighbor edges → gatherNeighborDocs returns nothing.
+    expect(capturePrompt.value).not.toContain('RELATED DOCS');
   });
 
   test('(sibling) full doc-ref resolves to the sibling and is canonicalized + reported', async () => {
@@ -387,12 +396,13 @@ describe('generateDoc', () => {
     expect(result.linkedDocRefs).toHaveLength(0);
   });
 
-  test('source: doc-generator gathers sibling docs + canonicalizes doc-refs', () => {
+  test('source: doc-generator gathers graph-neighbor docs + canonicalizes doc-refs', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.resolve(__dirname, '../src/reader/doc-generator.ts'), 'utf8');
-    expect(src).toContain('gatherSiblingDocs');
-    expect(src).toContain('RELATED PROJECT DOCS');
+    // Feature B: link candidates are the doc's graph neighbors, not every live doc.
+    expect(src).toContain('gatherNeighborDocs');
+    expect(src).toContain('RELATED DOCS');
     // doc-refs resolved against LIVE doc nodes only
     expect(src).toContain("type = 'doc' AND tombstoned = 0");
   });
@@ -442,15 +452,17 @@ describe('buildSchemaDocPrompt', () => {
   test('includes RELATED DOCS block when siblings exist', () => {
     const siblings = [{ id: 'doc-id-1', slug: 'tonos', title: 'Tonos Deep-Dive' }];
     const prompt = buildSchemaDocPrompt('Schema label', 'facts...', siblings);
-    expect(prompt).toContain('RELATED PROJECT DOCS');
+    expect(prompt).toContain('RELATED DOCS');
     expect(prompt).toContain('doc-id-1');
     expect(prompt).toContain('tonos');
     expect(prompt).toContain('Tonos Deep-Dive');
+    // Feature B: instructs inline-in-context linking
+    expect(prompt).toContain('INLINE');
   });
 
   test('omits RELATED DOCS block when no siblings exist', () => {
     const prompt = buildSchemaDocPrompt('Schema label', 'facts...', []);
-    expect(prompt).not.toContain('RELATED PROJECT DOCS');
+    expect(prompt).not.toContain('RELATED DOCS');
   });
 });
 

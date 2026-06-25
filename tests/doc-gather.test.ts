@@ -16,7 +16,7 @@ import { SemanticStore } from '../src/db/semantic-store';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { ModelProvider } from '../src/model/provider';
-import { gatherFacts, gatherFactsForSchema, gatherSiblingDocs } from '../src/reader/doc-gather';
+import { gatherFacts, gatherFactsForSchema, gatherSiblingDocs, gatherNeighborDocs } from '../src/reader/doc-gather';
 import type { GatherSchemaParams } from '../src/reader/doc-gather';
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -420,5 +420,80 @@ describe('gatherSiblingDocs', () => {
     seedDocNode(store, 'doc-only', 'only', '# Only');
     // Generating for the same slug → its own doc is excluded → no siblings
     expect(gatherSiblingDocs(db, 'only')).toHaveLength(0);
+  });
+});
+
+// ── gatherNeighborDocs (Feature B) ──────────────────────────────────────────
+//
+// Unlike gatherSiblingDocs (ALL live docs), gatherNeighborDocs returns ONLY the docs
+// connected to the current doc via kind IN ('doc_containment','doc_reference') — so the
+// generator offers genuinely-related chapters/subjects as inline-link candidates, not a
+// flood of every doc.
+
+describe('gatherNeighborDocs', () => {
+  /** Seed a live doc node with node_doc sidecar + body. */
+  function seedDocNode(store: SemanticStore, id: string, slug: string, body: string): void {
+    store.upsertNode({ id, type: 'doc', value: body, origin: 'inferred', s: 0, c: 1.0, last_access: 5000 });
+    store.upsertNodeDoc({ node_id: id, slug, generated_at: 4000, updated_at: 4000 });
+    store.upsertNodeScope({ node_id: id, scope: slug, updated_at: 4000 });
+  }
+
+  test('returns only containment/reference neighbors — NOT every live doc', () => {
+    const { db, store } = makeGatherDeps();
+    seedDocNode(store, 'doc-hub', 'brain-memory', '# Brain Memory — Hub');
+    seedDocNode(store, 'doc-sub', 'brain-memory:sleep pass', '# Sleep Pass');
+    seedDocNode(store, 'doc-peer', 'tonos', '# Tonos');
+    // Unconnected doc — gatherSiblingDocs would include it; gatherNeighborDocs must NOT.
+    seedDocNode(store, 'doc-noise', 'unrelated', '# Unrelated');
+    // hub contains the subject; hub references the peer.
+    store.upsertEdge({ src: 'doc-hub', dst: 'doc-sub', rel: 'doc_containment', kind: 'doc_containment', w: 1 });
+    store.upsertEdge({ src: 'doc-hub', dst: 'doc-peer', rel: 'doc_reference', kind: 'doc_reference', w: 1 });
+
+    const neighbors = gatherNeighborDocs(db, 'brain-memory');
+    const ids = neighbors.map(n => n.id);
+    expect(ids).toContain('doc-sub');
+    expect(ids).toContain('doc-peer');
+    expect(ids).not.toContain('doc-noise'); // the key difference from gatherSiblingDocs
+    expect(ids).not.toContain('doc-hub');   // never lists itself
+    // Title comes from the neighbor's first H1.
+    expect(neighbors.find(n => n.id === 'doc-sub')!.title).toBe('Sleep Pass');
+  });
+
+  test('resolves neighbors regardless of edge direction (parent or child end)', () => {
+    const { db, store } = makeGatherDeps();
+    seedDocNode(store, 'doc-hub', 'brain-memory', '# Hub');
+    seedDocNode(store, 'doc-sub', 'brain-memory:retrieval', '# Retrieval');
+    // Edge is hub→sub; querying from the CHILD slug must still find the hub.
+    store.upsertEdge({ src: 'doc-hub', dst: 'doc-sub', rel: 'doc_containment', kind: 'doc_containment', w: 1 });
+
+    const neighbors = gatherNeighborDocs(db, 'brain-memory:retrieval');
+    expect(neighbors.map(n => n.id)).toContain('doc-hub');
+  });
+
+  test('excludes tombstoned neighbor docs', () => {
+    const { db, store } = makeGatherDeps();
+    seedDocNode(store, 'doc-a', 'alpha', '# Alpha');
+    seedDocNode(store, 'doc-dead', 'beta', '# Beta');
+    store.upsertEdge({ src: 'doc-a', dst: 'doc-dead', rel: 'doc_reference', kind: 'doc_reference', w: 1 });
+    store.tombstone('doc-dead');
+
+    expect(gatherNeighborDocs(db, 'alpha')).toHaveLength(0);
+  });
+
+  test('returns [] when the slug has no live doc node (graph not derivable yet)', () => {
+    const { db, store } = makeGatherDeps();
+    seedDocNode(store, 'doc-x', 'exists', '# Exists');
+    // 'missing' has no doc node → cannot resolve self → []
+    expect(gatherNeighborDocs(db, 'missing')).toHaveLength(0);
+  });
+
+  test('respects the limit cap', () => {
+    const { db, store } = makeGatherDeps();
+    seedDocNode(store, 'doc-hub', 'hub', '# Hub');
+    for (let i = 0; i < 5; i++) {
+      seedDocNode(store, `doc-c${i}`, `hub:child${i}`, `# Child ${i}`);
+      store.upsertEdge({ src: 'doc-hub', dst: `doc-c${i}`, rel: 'doc_containment', kind: 'doc_containment', w: 1 });
+    }
+    expect(gatherNeighborDocs(db, 'hub', { limit: 2 })).toHaveLength(2);
   });
 });

@@ -534,6 +534,12 @@ export interface SiblingDoc {
   title: string;
 }
 
+/** First markdown H1 (`# ...`) of a doc body, falling back to the slug. */
+function docTitle(value: string | null | undefined, slug: string): string {
+  const m = (value ?? '').match(/^#\s+(.+?)\s*$/m);
+  return m && m[1] ? m[1].trim() : slug;
+}
+
 /**
  * Gather the OTHER live docs the current doc can cross-link to (READER-04).
  *
@@ -555,11 +561,61 @@ export function gatherSiblingDocs(db: Database.Database, slug: string): SiblingD
   `);
   const rows = stmt.all(slug) as Array<{ id: string; slug: string; value: string }>;
 
-  return rows.map(r => {
-    // Title = first markdown H1 in the doc body, else the slug.
-    let title = r.slug;
-    const m = (r.value ?? '').match(/^#\s+(.+?)\s*$/m);
-    if (m && m[1]) title = m[1].trim();
-    return { id: r.id, slug: r.slug, title };
-  });
+  return rows.map(r => ({ id: r.id, slug: r.slug, title: docTitle(r.value, r.slug) }));
+}
+
+/**
+ * Gather the doc's GRAPH-NEIGHBOR docs as inline-link candidates (Feature B).
+ *
+ * Unlike gatherSiblingDocs (which returns ALL live docs and floods the generation prompt
+ * with an arbitrary catalog), this returns only the docs the DocGraphDeriver has actually
+ * connected to this one via `kind IN ('doc_containment','doc_reference')` — i.e. its
+ * chapter children / hub parent and its semantic-peer references. Feeding the generator
+ * these genuinely-related neighbors (instead of every doc) is what lets the model link
+ * sibling chapters INLINE in context rather than treating links as a trailing catalog.
+ *
+ * Resolution by `slug` mirrors gatherSiblingDocs's call shape (drop-in replacement). If
+ * the slug has no live doc node yet (first generation before the stub exists) OR the doc
+ * graph hasn't been derived, returns [] — the caller then omits the RELATED DOCS block
+ * (graceful: no links beats noise).
+ *
+ * Read-only — no DB writes. All SQL uses bound ? params (T-01-SQL). Capped to `opts.limit`
+ * (default 15) so a hub with many chapters doesn't flood the prompt.
+ *
+ * @param db    Database handle (read-only use).
+ * @param slug  Slug of the doc being generated (its own node is excluded).
+ * @param opts  Optional cap (default 15 neighbors).
+ */
+export function gatherNeighborDocs(
+  db: Database.Database,
+  slug: string,
+  opts: { limit?: number } = {},
+): SiblingDoc[] {
+  const limit = opts.limit ?? 15;
+
+  // Resolve THIS doc's node id from its slug (live doc only).
+  const selfRow = db
+    .prepare(
+      "SELECT n.id AS id FROM node n JOIN node_doc nd ON nd.node_id = n.id " +
+        "WHERE nd.slug = ? AND n.type = 'doc' AND n.tombstoned = 0",
+    )
+    .get(slug) as { id: string } | undefined;
+  if (!selfRow) return [];
+  const selfId = selfRow.id;
+
+  // Neighbor docs across containment + reference edges (either direction). The neighbor is
+  // the OTHER endpoint; resolve to a live doc node with its slug + body for the title.
+  const rows = db
+    .prepare(`
+      SELECT DISTINCT n.id AS id, nd.slug AS slug, n.value AS value
+      FROM edge e
+      JOIN node n ON n.id = (CASE WHEN e.src = ? THEN e.dst ELSE e.src END)
+      JOIN node_doc nd ON nd.node_id = n.id
+      WHERE (e.src = ? OR e.dst = ?)
+        AND e.kind IN ('doc_containment','doc_reference')
+        AND n.type = 'doc' AND n.tombstoned = 0 AND n.id != ?
+    `)
+    .all(selfId, selfId, selfId, selfId) as Array<{ id: string; slug: string; value: string }>;
+
+  return rows.slice(0, limit).map(r => ({ id: r.id, slug: r.slug, title: docTitle(r.value, r.slug) }));
 }

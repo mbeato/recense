@@ -36,7 +36,7 @@ import Database from 'better-sqlite3';
 import { newId } from '../lib/hash';
 import type { SemanticStore } from '../db/semantic-store';
 import type { ModelProvider } from '../model/provider';
-import { gatherFacts, gatherFactsForSchema, gatherFactsForSubject, gatherSiblingDocs } from './doc-gather';
+import { gatherFacts, gatherFactsForSchema, gatherFactsForSubject, gatherNeighborDocs } from './doc-gather';
 import type { GatherSchemaParams, GatherSubjectParams, SiblingDoc } from './doc-gather';
 
 // ── Shared citation-verify + canonicalize helper ──────────────────────────
@@ -192,10 +192,10 @@ function verifyCitations(db: Database.Database, md: string): VerifyResult {
 
 function buildRelatedDocsBlock(siblings: SiblingDoc[]): string {
   if (siblings.length === 0) return '';
-  return `\n\nRELATED PROJECT DOCS (other deep-dives that already exist): each line is [<docId>] <slug>: <title>.
+  return `\n\nRELATED DOCS (deep-dives connected to this one — chapters, subjects, and project hubs): each line is [<docId>] <slug>: <title>.
 ${siblings.map(s => `[${s.id}] ${s.slug}: ${s.title}`).join('\n')}
 
-When this deep-dive references one of these other projects, link to it inline as [the project name](recense://doc/<docId>) using the EXACT id. Only link to a project that genuinely relates to the facts; do not invent links.`;
+When the prose discusses a topic that one of these related docs covers, link to it INLINE at the first point you mention that topic, written as [the phrase in context](recense://doc/<docId>) using the EXACT id above. Weave the links into the sentences themselves — do NOT collect them into a trailing "related"/"references" section. Only link a doc that genuinely relates to what you are writing; never invent a link or an id.`;
 }
 
 // ── Prompt builders ───────────────────────────────────────────────────────
@@ -332,9 +332,10 @@ export async function generateDoc(
   // Build the factBlock: one line per fact, format "[<uuid>] <value>" (verbatim from slice)
   const factBlock = facts.map(f => `[${f.id}] ${f.value}`).join('\n');
 
-  // Gather the OTHER live docs so the model can cross-link (READER-04). Without this the
-  // prompt never mentions recense://doc refs → doc_link edges never form organically.
-  const siblingDocs = gatherSiblingDocs(db, slug);
+  // Gather this doc's GRAPH-NEIGHBOR docs (containment/reference) as inline-link candidates
+  // (Feature B). Feeding only genuinely-related neighbors — not every doc — is what lets the
+  // model link sibling chapters inline in context instead of treating links as a trailing list.
+  const siblingDocs = gatherNeighborDocs(db, slug);
 
   // ── 2. Build generation prompt (incl. RELATED DOCS block when siblings exist) ──
   const prompt = buildDocPrompt(slug, factBlock, siblingDocs);
@@ -401,7 +402,11 @@ export function buildHubDocPrompt(
   siblings: SiblingDoc[],
   subjectDocs: Array<{ name: string; docId: string }>,
 ): string {
-  const relatedBlock = buildRelatedDocsBlock(siblings);
+  // Exclude the index-listed subjects from the related block so a chapter isn't double-listed
+  // (it already appears, with its link form, in the SUBJECT DOCS index below). The related
+  // block then carries only the hub's OTHER neighbors (e.g. cross-project references).
+  const indexedIds = new Set(subjectDocs.map(s => s.docId));
+  const relatedBlock = buildRelatedDocsBlock(siblings.filter(s => !indexedIds.has(s.id)));
 
   const subjectIndexBlock = subjectDocs.length > 0
     ? `\n\nSUBJECT DOCS (named deep-dives for this project — MUST link to each using recense://doc/<docId>):
@@ -409,7 +414,8 @@ ${subjectDocs.map(s => `  [${s.docId}] ${s.name}`).join('\n')}
 
 When writing the index section, include ONE line per subject formatted EXACTLY as:
   [subject name](recense://doc/<docId>)
-using the exact docId shown above. Do NOT write bare subject names without a recense://doc/ link — the link is how this index becomes navigable.`
+using the exact docId shown above. Do NOT write bare subject names without a recense://doc/ link — the link is how this index becomes navigable.
+Additionally, when the OVERVIEW prose first discusses a subject's topic, link that subject INLINE in the sentence (same [name](recense://doc/<docId>) form) — the subjects must appear inline in context, not only collected in the index list.`
     : '';
 
   return `You are generating a human-readable PROJECT HUB OVERVIEW from a set of atomic memory facts.
@@ -505,7 +511,9 @@ export async function generateDocForHub(
   // ── 1. Gather facts + sibling docs ────────────────────────────────────────
   const facts = await gatherFacts({ db, store, provider }, scope, { semanticK: opts.semanticK });
   const factBlock = facts.map(f => `[${f.id}] ${f.value}`).join('\n');
-  const siblingDocs = gatherSiblingDocs(db, scope);
+  // Graph-neighbor docs (Feature B) — the hub's chapter children + cross-project references.
+  // buildHubDocPrompt excludes the index-listed subjects so they aren't double-listed.
+  const siblingDocs = gatherNeighborDocs(db, scope);
 
   // ── 2. Build hub prompt (overview + navigable subject index) ──────────────
   const prompt = buildHubDocPrompt(scope, factBlock, siblingDocs, subjectDocs);
@@ -568,11 +576,10 @@ export async function generateDocForSubject(
 
   const factBlock = facts.map(f => `[${f.id}] ${f.value}`).join('\n');
 
-  // Gather sibling docs so the subject can cross-link to hub or other subjects.
-  // Pass the subjectName as a discriminant for the exclude check is not applicable here
-  // (subject docs are identified by their slug scope:name, not a raw name string);
-  // pass an empty string so nothing is excluded — the subject doc doesn't exist yet.
-  const siblingDocs = gatherSiblingDocs(db, '');
+  // Graph-neighbor docs (Feature B) — this subject's hub parent + sibling-subject references,
+  // resolved by the subject's own slug ('scope:name'). When the doc graph hasn't been derived
+  // yet (or the stub doesn't exist), gatherNeighborDocs returns [] and the block is omitted.
+  const siblingDocs = gatherNeighborDocs(db, `${scope}:${subjectName}`);
 
   // ── 2. Build subject-thesis prompt ────────────────────────────────────────
   const prompt = buildSubjectDocPrompt(scope, subjectName, factBlock, siblingDocs);
@@ -634,9 +641,9 @@ export async function generateDocForSchema(
 
   const factBlock = facts.map(f => `[${f.id}] ${f.value}`).join('\n');
 
-  // Gather sibling docs — the schema doc can cross-link to other deep-dives (RESEARCH OQ3).
-  // Pass the schemaId as the "current slug" so the schema's own doc (if it exists) is excluded.
-  const siblingDocs = gatherSiblingDocs(db, params.schemaId);
+  // Graph-neighbor docs (Feature B) — the schema-chapter's containment/reference neighbors,
+  // resolved by its slug (= schemaId). Excludes its own node; [] when no graph derived yet.
+  const siblingDocs = gatherNeighborDocs(db, params.schemaId);
 
   // ── 2. Build schema-thesis prompt ──────────────────────────────────────────
   const prompt = buildSchemaDocPrompt(params.schemaLabel, factBlock, siblingDocs);
