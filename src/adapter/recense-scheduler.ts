@@ -31,6 +31,49 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { acquireLock, releaseLock } from './lockfile';
+import { defaultSettingsPath, loadSettingsFile } from './settings-loader';
+
+// ---------------------------------------------------------------------------
+// Frequency helpers (D-07) — exported for testing
+// ---------------------------------------------------------------------------
+
+/** Default StartInterval in seconds — mirrors the prior StartCalendarInterval hourly cadence. */
+const DEFAULT_INTERVAL_SECONDS = 3600;
+
+/**
+ * Read sleepFrequencyHours from settings.json and convert to integer seconds.
+ * Falls back to DEFAULT_INTERVAL_SECONDS (3600) when the file is absent or the
+ * field is not set — preserves the founder's hourly cadence with no regression (D-07).
+ *
+ * T-44-14: result is parseInt'd to an integer, ensuring a numeric value is always
+ * substituted into the plist (no raw user string ever reaches the XML).
+ */
+export function getSchedulerIntervalSeconds(settingsPath: string = defaultSettingsPath()): number {
+  const sf = loadSettingsFile(settingsPath);
+  const hours = sf?.overrides?.sleepFrequencyHours;
+  if (hours === undefined || hours === null) return DEFAULT_INTERVAL_SECONDS;
+  const seconds = parseInt(String(hours * 3600), 10);
+  return isNaN(seconds) || seconds <= 0 ? DEFAULT_INTERVAL_SECONDS : seconds;
+}
+
+/**
+ * Render the plist template string by substituting all three placeholders.
+ * Exported for unit tests so the rendering can be verified without calling launchctl.
+ *
+ * T-44-14: intervalSeconds is a positive integer (coerced by getSchedulerIntervalSeconds);
+ * it is the only user-derived value substituted into the plist — no shell interpolation.
+ */
+export function renderPlistContent(
+  template: string,
+  wrapperPath: string,
+  envFilePath: string,
+  intervalSeconds: number,
+): string {
+  return template
+    .replace(/__WRAPPER__/g, wrapperPath)
+    .replace(/__ENV_FILE__/g, envFilePath)
+    .replace(/__FREQUENCY__/g, String(intervalSeconds));
+}
 
 const LOG_PATH = '/tmp/recense-sleep.log';
 
@@ -72,10 +115,16 @@ function installMacOSScheduler(): void {
   const launchAgentsDir = join(home, 'Library', 'LaunchAgents');
   const plistDst = join(launchAgentsDir, `${label}.plist`);
 
-  // Substitute plist template — mirrors setup-dogfood.sh lines 168-171
-  const plistContent = readFileSync(plistTemplate, 'utf8')
-    .replace(/__WRAPPER__/g, wrapperPath)
-    .replace(/__ENV_FILE__/g, envFilePath);
+  // Derive sleep frequency from settings.json (D-07); default 3600s = 1 hour (T-44-14)
+  const intervalSeconds = getSchedulerIntervalSeconds();
+
+  // Substitute plist template — three placeholders: WRAPPER, ENV_FILE, FREQUENCY (in seconds)
+  const plistContent = renderPlistContent(
+    readFileSync(plistTemplate, 'utf8'),
+    wrapperPath,
+    envFilePath,
+    intervalSeconds,
+  );
   writeFileSync(plistDst, plistContent);
   console.log(`  Plist written: ${plistDst}`);
 
