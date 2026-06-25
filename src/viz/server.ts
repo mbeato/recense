@@ -15,8 +15,11 @@
  *   GET /doc/staleness?slug= → {generated_at, stale:[{factId,prev_value,value}], tombstoned:[id,...]} (READER-03)
  *   GET /doc/backlinks?slug= → {backlinks:[{srcId,slug,label,kind}]} incoming doc wiki refs (WIKI-02, 39-01)
  *   GET /doc/backlinks?fact= → {citedByDocs:[{srcId,slug,label}]} docs citing a fact (WIKI-02, 39-01)
+ *   GET /settings            → {preset, overrides, effective} merged config (44-05, D-03)
+ *   POST /settings           → write settings.json with key-whitelisted payload (44-05, D-03)
+ *   GET /usage               → 30d + all-time token readout by feature (44-05, D-09/D-10)
  *
- * Security invariants (threat model T-10-07/08/09/10/11, T-27-08/09/10/11):
+ * Security invariants (threat model T-10-07/08/09/10/11, T-27-08/09/10/11, T-44-15..18):
  *   T-10-07: path-traversal guard — resolves absolute path and asserts it stays
  *            inside __dirname (src/viz/) or vendor subdirectory; 403 on escape.
  *   T-10-08: DB opened { readonly: true } — no writes possible from this process.
@@ -26,6 +29,10 @@
  *   T-27-10: in-flight-slug Set prevents duplicate concurrent generate spawns; slug sanitized.
  *   T-27-11: viz server DB handle stays read-only; all writes happen inside the spawned CLI.
  *   T-27-13: /doc/staleness is read-only SELECT; never touches last_access of cited facts.
+ *   T-44-15: POST /settings whitelists override keys; unknown/dangerous keys → 400.
+ *   T-44-16: /settings + /usage inherit the DNS-rebinding 403 guard (loopback bind only).
+ *   T-44-17: all handlers catch → 500 'internal error'; never echo stack/SQL/values.
+ *   T-44-18: settings writes are filesystem-only (settings.json); DB handle stays read-only.
  */
 
 import * as http from 'node:http';
@@ -34,6 +41,13 @@ import * as path from 'node:path';
 import * as child_process from 'node:child_process';
 import Database from 'better-sqlite3';
 import { ftsQueryFromText } from '../retrieval/topk';
+import {
+  defaultSettingsPath,
+  loadMergedConfig,
+  loadSettingsFile,
+  writeSettingsFile,
+} from '../adapter/settings-loader';
+import type { PresetName, SettingsFile } from '../lib/config';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -41,6 +55,27 @@ import { ftsQueryFromText } from '../retrieval/topk';
 
 const POLL_MS = 250;  // polling interval for activation_trace SSE broadcast
 const SEARCH_LIMIT = 20;  // BM25 result cap for /search?q= endpoint (T-19-03)
+
+// ---------------------------------------------------------------------------
+// POST /settings — key whitelist (T-44-15)
+// ---------------------------------------------------------------------------
+
+/**
+ * Override keys accepted by POST /settings. Matches the keys allowed in SettingsFile.overrides
+ * (src/lib/config.ts). Any key not in this set → 400 'unknown key' (T-44-15).
+ */
+const SETTABLE_OVERRIDE_KEYS = new Set<string>([
+  'consolSkipThreshold',
+  'consolSkipThresholdAssistant',
+  'corpusSubjectDriftThreshold',
+  'corpusGen',
+  'corpusGenMax',
+  'schemaInductionEnabled',
+  'sleepFrequencyHours',
+]);
+
+/** Override keys that expect boolean JSON values (all others expect number). */
+const BOOLEAN_OVERRIDE_KEYS = new Set<string>(['corpusGen', 'schemaInductionEnabled']);
 
 // ---------------------------------------------------------------------------
 // /graph link-key contract (LOCKED — Plan 04 frontend depends on this shape)
@@ -134,9 +169,17 @@ function safeVendorPath(segment: string): string | null {
  *
  * @param dbPath - Absolute path to recense.db; opened read-only (D-95, T-10-08).
  * @param port   - TCP port to listen on (bound to 127.0.0.1 only, T-10-09).
+ * @param opts   - Optional overrides for test isolation (e.g. settingsPath for tmp file).
  * @returns The http.Server instance (call .close() to stop).
  */
-export function startVizServer(dbPath: string, port: number): http.Server {
+export function startVizServer(
+  dbPath: string,
+  port: number,
+  opts?: { settingsPath?: string },
+): http.Server {
+  // Resolve the settings file path — callers can supply a tmp path for test isolation
+  // so the founder's live ~/.config/recense/settings.json is never touched in tests.
+  const settingsPath = opts?.settingsPath ?? defaultSettingsPath();
   // D-95: open our OWN read-only handle — never share a write-enabled instance.
   const db = new Database(dbPath, { readonly: true });
 
@@ -282,6 +325,33 @@ export function startVizServer(dbPath: string, port: number): http.Server {
     FROM node_fts f JOIN node n ON n.id = f.node_id AND n.tombstoned = 0
     WHERE node_fts MATCH ?
     ORDER BY rank LIMIT ?
+  `);
+
+  // Compile /usage aggregate prepared statements once (44-05, D-09/D-10, T-44-18 read-only).
+  // Rolling-30d: WHERE ts > ? (caller passes Date.now() - 30d cutoff ms).
+  // All-time: no WHERE clause.
+  // Each row: feature_tag + per-token-column sums + total_cost_usd sum.
+  // GROUP BY feature_tag so each row maps 1:1 to a cost-bearing toggle in the panel (D-09).
+  const stmtUsage30d = db.prepare(`
+    SELECT feature_tag,
+           SUM(input_tokens)       AS input_tokens,
+           SUM(output_tokens)      AS output_tokens,
+           SUM(cache_write_tokens) AS cache_write_tokens,
+           SUM(cache_read_tokens)  AS cache_read_tokens,
+           SUM(total_cost_usd)     AS total_cost_usd
+    FROM token_usage_ledger
+    WHERE ts > ?
+    GROUP BY feature_tag
+  `);
+  const stmtUsageAllTime = db.prepare(`
+    SELECT feature_tag,
+           SUM(input_tokens)       AS input_tokens,
+           SUM(output_tokens)      AS output_tokens,
+           SUM(cache_write_tokens) AS cache_write_tokens,
+           SUM(cache_read_tokens)  AS cache_read_tokens,
+           SUM(total_cost_usd)     AS total_cost_usd
+    FROM token_usage_ledger
+    GROUP BY feature_tag
   `);
 
   // Compile /events polling statement once.
@@ -845,6 +915,175 @@ export function startVizServer(dbPath: string, port: number): http.Server {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ projects, schemas }));
       } catch (err) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── GET /settings, POST /settings (44-05, D-03) ───────────────────────────
+    // GET: returns {preset, overrides, effective} from settings.json + loadMergedConfig.
+    // POST: validates + whitelists override payload, writes settings.json, returns same shape.
+    // Writes are filesystem-only (settings.json) — the DB handle stays read-only (T-44-18).
+    // Both paths inherit the loopback-only Host guard above (T-44-16).
+    if (url === '/settings') {
+      if (req.method === 'GET') {
+        try {
+          const sf = loadSettingsFile(settingsPath) ??
+            ({ preset: 'standard' as PresetName, overrides: {} } satisfies SettingsFile);
+          const effective = loadMergedConfig(dbPath, process.env, settingsPath);
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ preset: sf.preset, overrides: sf.overrides, effective }));
+        } catch {
+          res.writeHead(500, { 'content-type': 'text/plain' });
+          res.end('internal error');
+        }
+        return;
+      }
+
+      if (req.method === 'POST') {
+        // Collect body chunks (req body is NOT yet read anywhere else in this handler).
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        req.on('end', () => {
+          try {
+            const rawBody = Buffer.concat(chunks).toString('utf8');
+            let body: unknown;
+            try {
+              body = JSON.parse(rawBody);
+            } catch {
+              res.writeHead(400, { 'content-type': 'text/plain' });
+              res.end('bad json');
+              return;
+            }
+            if (typeof body !== 'object' || body === null) {
+              res.writeHead(400, { 'content-type': 'text/plain' });
+              res.end('bad json');
+              return;
+            }
+            const patch = body as Record<string, unknown>;
+
+            // Validate top-level preset if provided.
+            let newPreset: PresetName | undefined;
+            if ('preset' in patch) {
+              const p = patch['preset'];
+              if (p !== 'lite' && p !== 'standard' && p !== 'full') {
+                res.writeHead(400, { 'content-type': 'text/plain' });
+                res.end('invalid preset');
+                return;
+              }
+              newPreset = p as PresetName;
+            }
+
+            // Validate overrides if provided — key whitelist (T-44-15).
+            let newOverrides: SettingsFile['overrides'] | undefined;
+            if ('overrides' in patch) {
+              const ov = patch['overrides'];
+              if (typeof ov !== 'object' || ov === null) {
+                res.writeHead(400, { 'content-type': 'text/plain' });
+                res.end('bad json');
+                return;
+              }
+              const ovMap = ov as Record<string, unknown>;
+              const validated: Record<string, unknown> = {};
+              for (const [key, val] of Object.entries(ovMap)) {
+                if (!SETTABLE_OVERRIDE_KEYS.has(key)) {
+                  res.writeHead(400, { 'content-type': 'text/plain' });
+                  res.end('unknown key');
+                  return;
+                }
+                // Type coercion: boolean fields or number fields.
+                if (BOOLEAN_OVERRIDE_KEYS.has(key)) {
+                  if (typeof val !== 'boolean') {
+                    res.writeHead(400, { 'content-type': 'text/plain' });
+                    res.end('invalid type');
+                    return;
+                  }
+                } else {
+                  if (typeof val !== 'number') {
+                    res.writeHead(400, { 'content-type': 'text/plain' });
+                    res.end('invalid type');
+                    return;
+                  }
+                }
+                validated[key] = val;
+              }
+              newOverrides = validated as SettingsFile['overrides'];
+            }
+
+            // Merge onto current SettingsFile (preset-or-current, overrides merged in).
+            const current = loadSettingsFile(settingsPath) ??
+              ({ preset: 'standard' as PresetName, overrides: {} } satisfies SettingsFile);
+            const updated: SettingsFile = {
+              preset: newPreset ?? current.preset,
+              overrides: newOverrides !== undefined
+                ? { ...current.overrides, ...newOverrides }
+                : current.overrides,
+            };
+
+            // Ensure ~/.config/recense/ exists before first write (D-04).
+            const dir = path.dirname(settingsPath);
+            fs.mkdirSync(dir, { recursive: true });
+            writeSettingsFile(updated, settingsPath);
+
+            // Return updated state — same shape as GET /settings.
+            const effective = loadMergedConfig(dbPath, process.env, settingsPath);
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ preset: updated.preset, overrides: updated.overrides, effective }));
+          } catch {
+            res.writeHead(500, { 'content-type': 'text/plain' });
+            res.end('internal error');
+          }
+        });
+        return;
+      }
+
+      // Non-GET/POST on /settings → 405 (method guard T-44-15).
+      res.writeHead(405, { 'content-type': 'text/plain' });
+      res.end('method not allowed');
+      return;
+    }
+
+    // ── GET /usage (44-05, D-09/D-10) ────────────────────────────────────────
+    // Returns rolling-30d + all-time token totals broken down by feature_tag.
+    // Each feature_tag maps 1:1 to a cost-bearing toggle so the panel shows cost-per-lever.
+    // Uses the read-only DB handle (T-44-18). Empty ledger → zeroed aggregates, not error.
+    if (url === '/usage') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'content-type': 'text/plain' });
+        res.end('method not allowed');
+        return;
+      }
+      try {
+        type LedgerRow = {
+          feature_tag: string;
+          input_tokens: number;
+          output_tokens: number;
+          cache_write_tokens: number;
+          cache_read_tokens: number;
+          total_cost_usd: number;
+        };
+        const cutoff30d = Date.now() - 30 * 86_400_000;
+        const rows30d = stmtUsage30d.all(cutoff30d) as LedgerRow[];
+        const rowsAll = stmtUsageAllTime.all() as LedgerRow[];
+
+        const summarise = (rows: LedgerRow[]) => {
+          let totalTokens = 0;
+          let totalCostUsd = 0;
+          for (const r of rows) {
+            totalTokens += (r.input_tokens ?? 0) + (r.output_tokens ?? 0);
+            totalCostUsd += r.total_cost_usd ?? 0;
+          }
+          return { byFeature: rows, totalTokens, totalCostUsd };
+        };
+
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          window_days: 30,
+          rolling_30d: summarise(rows30d),
+          all_time: summarise(rowsAll),
+        }));
+      } catch {
         res.writeHead(500, { 'content-type': 'text/plain' });
         res.end('internal error');
       }
