@@ -307,6 +307,28 @@ describe('POST /doc/generate?slug=', () => {
     const r = await makeRequest(port, '/doc/generate?slug=', 'POST');
     expect(r.statusCode).toBe(400);
   });
+
+  // Regenerate flow (RGS-01): after a force-regen is POSTed, the slug is in-flight. A
+  // subsequent GET /doc must return 202 so the reader polls and shows the phase stepper —
+  // even though the OLD doc row still exists in the DB (the force-regen replaces it only
+  // when the CLI finishes). Without this, GET /doc serves the stale doc with 200 and the
+  // stepper never appears: the regenerate button just flickers back to the old content.
+  it('GET /doc returns 202 (not stale 200) while a force-regen is in flight for a seeded slug', async () => {
+    // 1. Sanity: with nothing in flight, the seeded doc serves 200.
+    const before = await makeRequest(port, `/doc?slug=${DOC_SLUG}`);
+    expect(before.statusCode).toBe(200);
+    expect(before.body).toBe(DOC_MARKDOWN);
+
+    // 2. Force-regen: marks the slug in-flight (mocked spawn never fires 'close', so it stays in-flight).
+    const post = await makeRequest(port, `/doc/generate?slug=${DOC_SLUG}`, 'POST');
+    expect(post.statusCode).toBe(202);
+
+    // 3. GET /doc must now report generating, not re-serve the stale doc.
+    const during = await makeRequest(port, `/doc?slug=${DOC_SLUG}`);
+    expect(during.statusCode).toBe(202);
+    const json = JSON.parse(during.body) as { status: string };
+    expect(json.status).toBe('generating');
+  });
 });
 
 describe('Host-header loopback guard (T-10-09)', () => {

@@ -118,14 +118,6 @@ const VENDOR_ROOT = path.resolve(VIZ_ROOT, 'vendor');
 const MODULES_ROOT = path.resolve(VIZ_ROOT, 'modules');
 const CSS_ROOT = path.resolve(VIZ_ROOT, 'css');
 
-// T-27-10: track in-flight slug generations to prevent duplicate concurrent spawns.
-// Key = slug, Value = Date.now() when the generate-doc CLI was first spawned for it.
-// Storing the start time (not just a boolean) lets the 202 payload report the REAL
-// elapsed generation time, so a reader reopened mid-generation resumes its progress bar
-// from where the backend actually is instead of restarting at 0s (the detached child
-// keeps running across reader close/reopen; only the UI used to forget).
-const inFlightSlugs = new Map<string, number>();
-
 /**
  * Serve a file from the filesystem with:
  *   - MIME type enforcement (.html → text/html, .js/.mjs → text/javascript, else text/plain)
@@ -186,6 +178,16 @@ export function startVizServer(
   const settingsPath = opts?.settingsPath ?? defaultSettingsPath();
   // D-95: open our OWN read-only handle — never share a write-enabled instance.
   const db = new Database(dbPath, { readonly: true });
+
+  // T-27-10: track in-flight slug generations to prevent duplicate concurrent spawns.
+  // Key = slug, Value = Date.now() when the generate-doc CLI was first spawned for it.
+  // Storing the start time (not just a boolean) lets the 202 payload report the REAL
+  // elapsed generation time, so a reader reopened mid-generation resumes its progress bar
+  // from where the backend actually is instead of restarting at 0s (the detached child
+  // keeps running across reader close/reopen; only the UI used to forget).
+  // Per-instance (not module-level) so multiple servers in one process — e.g. tests — don't
+  // leak in-flight state into each other now that GET /doc consults this map (RGS-01).
+  const inFlightSlugs = new Map<string, number>();
 
   // Compile /graph prepared statements once (T-01-SQL pattern).
   const stmtNodes = db.prepare(
@@ -652,14 +654,19 @@ export function startVizServer(
       }
       try {
         const row = stmtGetDoc.get(slug) as { id: string; value: string; generated_at: number } | undefined;
+        // RGS-01 regenerate fix: if a (re)generation is already in flight for this slug, the
+        // OLD doc row still exists (the force-regen replaces it only when the CLI finishes).
+        // Serving it with 200 here makes the reader's regenerate button flicker back to the
+        // stale doc and never show the phase stepper. Report 202 so the reader polls instead.
         // BUG-2a fix (28-04): an empty-value stub (value='') must be treated as a miss so
         // the CorpusPromoter's eager-but-empty placeholder triggers lazy generation. A stub
         // with non-empty prose is served normally.
-        if (row && row.value.trim().length > 0) {
+        if (!inFlightSlugs.has(slug) && row && row.value.trim().length > 0) {
           res.writeHead(200, { 'content-type': 'text/plain' });
           res.end(row.value);
         } else {
-          // No row OR empty-stub row — spawn CLI and return 202.
+          // No row, empty-stub row, OR regeneration in flight — spawn (self-guards against
+          // a double-spawn while in flight) and return 202 so the client polls.
           spawnGenerateDoc(slug);
           send202Generating(res, slug);
         }
