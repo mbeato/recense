@@ -16,6 +16,8 @@
  *  T-27-07  All writes through SemanticStore + writeDoc (single-writer invariant).
  *  WR-02  Validate DB path BEFORE acquireLock — process.exit() with the lock held leaks it.
  *  T-25-07  Lock released in finally on every path (the shared write-lock pattern).
+ *  T-39.3-04  Lock-wait is bounded by RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS (default 600000);
+ *             on budget expiry → writeStatus('failed', 'engine stayed busy') + exit.
  *  require.main guard: importing this module never auto-runs main() (test isolation).
  *
  * Entry point: dispatched by recense.ts via spawnScript('generate-doc-cli.js', ...).
@@ -35,6 +37,7 @@ import { computeSchemaCentroid } from '../reader/doc-gather';
 import { writeDoc } from '../consolidation/doc-writer';
 import { DocGraphDeriver } from '../consolidation/doc-graph-deriver';
 import { acquireLock, releaseLock } from './lockfile';
+import { writeStatus, clearStatus } from './gen-status';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 
@@ -43,6 +46,68 @@ const LOG_PATH = '/tmp/recense-generate-doc.log';
 /** Append a timestamped line to the log file. */
 const fileLog = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] generate-doc: ${msg}\n`);
+
+// Poll interval for the lock-wait loop (~2s per D-2 guidance; exported for tests).
+export const POLL_MS = 2000;
+
+// ── waitForLock — bounded lock-wait helper (D-2, T-39.3-04) ─────────────────
+//
+// Factored out of main() so the budget/poll logic is unit-testable without
+// spawning a child process. The loop:
+//   1. Call writeQueued() to stamp 'queued' (first iteration and every retry).
+//   2. Try acquire() — if true, return true (caller proceeds to generate).
+//   3. If elapsed >= budget, call writeFailedBusy() then return false.
+//   4. Sleep pollMs, then repeat from step 1.
+//
+// Design: writeQueued is re-stamped each iteration to keep updatedAt fresh so
+// readStatus treats an in-progress wait as non-stale (STALE_MS = 15min >> pollMs).
+
+export interface WaitForLockOpts {
+  /** Try to acquire the lock — non-blocking, returns true on success. */
+  acquire: () => boolean;
+  /** Write phase='queued' status (may be called multiple times). */
+  writeQueued: () => void;
+  /** Write phase='failed' with error='engine stayed busy' and exit signal. */
+  writeFailedBusy: () => void;
+  /** Async sleep for pollMs between attempts. */
+  sleep: (ms: number) => Promise<void>;
+  /** Return monotonic time in ms (injectable for tests). */
+  now: () => number;
+  /** Give-up deadline in ms from start. */
+  budgetMs: number;
+  /** Poll interval in ms. */
+  pollMs: number;
+}
+
+/**
+ * Wait for the write lock within the given budget.
+ *
+ * Returns true when the lock is acquired; returns false when budget expires
+ * (after calling writeFailedBusy). Calls writeQueued before each acquire attempt
+ * to keep the status file's updatedAt fresh.
+ */
+export async function waitForLock(opts: WaitForLockOpts): Promise<boolean> {
+  const { acquire, writeQueued, writeFailedBusy, sleep, now, budgetMs, pollMs } = opts;
+  const start = now();
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    // Re-stamp 'queued' before each attempt to keep updatedAt fresh.
+    writeQueued();
+
+    if (acquire()) {
+      return true;
+    }
+
+    // Check budget AFTER a failed acquire (not before the first attempt).
+    if (now() - start >= budgetMs) {
+      writeFailedBusy();
+      return false;
+    }
+
+    await sleep(pollMs);
+  }
+}
 
 async function main(): Promise<void> {
   const argv = process.argv;
@@ -68,9 +133,37 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ── 3. Acquire the shared write lock (T-25-08 / T-27-07) ─────────────────
-  if (!acquireLock()) {
-    process.stderr.write('recense generate-doc: Lock held by another process — exiting\n');
+  // ── 3. Raise timeouts BEFORE reading the budget for the lock-wait loop ─────
+  // Set these before reading the budget value so the lock-wait uses the same
+  // 600s headroom as the generation call itself.
+  if (!process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS']) {
+    process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS'] = '600000';
+  }
+  if (!process.env['RECENSE_SDK_TIMEOUT_MS']) {
+    process.env['RECENSE_SDK_TIMEOUT_MS'] = '600000';
+  }
+
+  // ── 4. Bounded lock-wait loop (D-2, T-39.3-04) ───────────────────────────
+  // Replaces the old instant bail: `if (!acquireLock()) { stderr; process.exit(0) }`.
+  // Budget = doc-gen timeout (defaults to 600000ms = 10min) so the wait never outlasts
+  // the generation itself.
+  const budgetMs = Number(process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS'] ?? '600000');
+
+  const lockAcquired = await waitForLock({
+    acquire: acquireLock,
+    writeQueued: () => writeStatus(slug, 'queued'),
+    writeFailedBusy: () => {
+      writeStatus(slug, 'failed', { error: 'engine stayed busy' });
+      fileLog(`give up: lock held for entire budget (${budgetMs}ms) — slug=${slug}`);
+    },
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    now: () => Date.now(),
+    budgetMs,
+    pollMs: POLL_MS,
+  });
+
+  if (!lockAcquired) {
+    // writeStatus('failed', ...) already called by writeFailedBusy above.
     process.exit(0);
   }
 
@@ -85,11 +178,17 @@ async function main(): Promise<void> {
     const config = { ...DEFAULT_CONFIG, dbPath };
     const store = new SemanticStore(db, realClock, config);
 
-    // ── 4. Idempotency: check for existing doc node (D-02 lazy-gen) ──────────
+    // ── 5. Idempotency: check for existing doc node (D-02 lazy-gen) ──────────
     // BUG-2b fix (28-04): only skip as "already done" when an existing live doc has
     // a NON-EMPTY value. An empty-value stub (CorpusPromoter's eager placeholder) must
     // proceed to generation — the stub's node id will be filled in place by writeDoc
     // (stable-edge invariant). --force bypasses this check as before.
+    //
+    // Plan 39.3-02 (sub-step 4): the wait loop writes 'queued' BEFORE the lock is
+    // acquired, and the idempotency cached-hit early-return runs AFTER the lock and
+    // after the DB handle is open (it needs db). BEFORE returning, write 'done' then
+    // clearStatus so the slug never leaves a dangling 'queued' status visible to the
+    // viz server for up to STALE_MS. DO NOT move the check before the wait loop.
     if (!isForce) {
       const existingDoc = db.prepare(
         `SELECT n.id, n.value, nd.generated_at
@@ -113,12 +212,15 @@ async function main(): Promise<void> {
             cached: true,
           }) + '\n',
         );
+        // Clear the 'queued' status left by the wait loop (cached-hit fast-path dangling fix).
+        writeStatus(slug, 'done');
+        clearStatus(slug);
         return;
       }
       // existingDoc with empty value → fall through to generation (stub fill-in-place path)
     }
 
-    // ── 5. Build the judge-tier provider (D-04 — generateConfig = judgeConfig) ─
+    // ── 6. Build the judge-tier provider (D-04 — generateConfig = judgeConfig) ─
     // Doc-gen produces ~4000 tokens of cited prose — far slower than the small judge
     // calls the shared headless client's 120s default was tuned for. A run that crosses
     // 120s gets SIGKILL'd and the headless client returns EMPTY content (its production
@@ -126,16 +228,7 @@ async function main(): Promise<void> {
     // doc-gen timeout to 600s (~10min headroom) when unset; env-overridable. Scoped to
     // this CLI only — the shared client's empty-on-failure fail-safe is unchanged (the
     // always-on sleep pass relies on it). Matches the sleep-pass slowness precedent.
-    if (!process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS']) {
-      process.env['RECENSE_CLAUDE_HEADLESS_TIMEOUT_MS'] = '600000';
-    }
-    // Same 10-min headroom for the CLOUD API path (Anthropic/Vertex/DeepSeek). The headless
-    // raise above only covers `claude -p`; when the judge tier resolves to the cloud SDK its
-    // timeout defaults to SDK_TIMEOUT_MS (60s), which a ~4000-token doc-gen call overruns →
-    // "Request timed out" → empty/unchanged doc. resolveSdkTimeoutMs() reads this at call time.
-    if (!process.env['RECENSE_SDK_TIMEOUT_MS']) {
-      process.env['RECENSE_SDK_TIMEOUT_MS'] = '600000';
-    }
+    // (Timeouts were already raised in step 3 above, before the lock-wait loop.)
 
     // The judge-tier config is the strong-model slot in any env — no new docModel var.
     const judgeConfig = { ...config, ...resolveProviderOverlay(process.env, 'RECENSE_JUDGE_PROVIDER') };
@@ -148,7 +241,7 @@ async function main(): Promise<void> {
 
     fileLog(`generating: slug=${slug} provider=${judgeConfig.modelProvider}`);
 
-    // ── 6. Generate ───────────────────────────────────────────────────────────
+    // ── 7. Generate ───────────────────────────────────────────────────────────
     // BUG-2b fix (28-04): a slug that resolves to a live schema node is a SCHEMA-anchored
     // doc (the CorpusPromoter's slug = schemaId). Route it through generateDocForSchema
     // (D-09 thesis framing); a non-schema slug is a project-scope doc → generateDoc. The
@@ -157,6 +250,9 @@ async function main(): Promise<void> {
     const schemaRow = db.prepare(
       "SELECT value FROM node WHERE id = ? AND type = 'schema' AND tombstoned = 0",
     ).get(slug) as { value: string } | undefined;
+
+    // Wire onPhase → writeStatus so gathering/generating/verifying land in the status file.
+    const onPhase = (phase: string) => writeStatus(slug, phase as Parameters<typeof writeStatus>[1]);
 
     let genResult;
     if (schemaRow) {
@@ -168,16 +264,21 @@ async function main(): Promise<void> {
       genResult = await generateDocForSchema(
         { db, store, provider },
         { schemaId: slug, centroid, schemaLabel: schemaRow.value },
+        { onPhase },
       );
     } else {
-      genResult = await generateDoc({ db, store, provider }, slug);
+      genResult = await generateDoc({ db, store, provider }, slug, { onPhase });
     }
 
     fileLog(
       `generated: citations=${genResult.citationCount} invented=${genResult.invented} tombstoned=${genResult.tombstoned}`,
     );
 
-    // ── 7. Write ──────────────────────────────────────────────────────────────
+    // ── 8. Write (finalizing phase) ───────────────────────────────────────────
+    // Write 'finalizing' immediately before writeDoc + DocGraphDeriver so the reader
+    // sees a meaningful phase during the DB write (covers both steps 8 and 8b).
+    writeStatus(slug, 'finalizing');
+
     // All writes through the single-writer path (T-27-07).
     const now = realClock.nowMs();
     writeDoc(store, db, {
@@ -191,7 +292,7 @@ async function main(): Promise<void> {
 
     fileLog(`written: nodeId=${genResult.docId}`);
 
-    // ── 7b. Re-derive the doc-graph (Phase 39.2 — keep regen from orphaning a doc) ──
+    // ── 8b. Re-derive the doc-graph (Phase 39.2 — keep regen from orphaning a doc) ──
     // Regeneration mints a NEW doc node id and tombstones the old one, stranding the
     // node-id-keyed doc_containment/doc_reference edges on the dead node — the regenerated doc
     // would render disjoint until the next sleep pass. DocGraphDeriver is the sole owner of those
@@ -206,7 +307,7 @@ async function main(): Promise<void> {
       fileLog(`doc-graph re-derive skipped (non-fatal): ${e}`);
     }
 
-    // ── 8. Emit result JSON ───────────────────────────────────────────────────
+    // ── 9. Emit result JSON ───────────────────────────────────────────────────
     process.stdout.write(
       JSON.stringify({
         nodeId: genResult.docId,
@@ -218,7 +319,13 @@ async function main(): Promise<void> {
         cached: false,
       }) + '\n',
     );
+
+    // Mark done and clean up the status file after a successful commit.
+    writeStatus(slug, 'done');
+    clearStatus(slug);
   } catch (err) {
+    // Report the real failure reason in the status file BEFORE stderr/exitCode handling.
+    writeStatus(slug, 'failed', { error: String(err) });
     fileLog(`error: ${err}`);
     process.stderr.write(`recense generate-doc: ${err}\n`);
     process.exitCode = 1;
