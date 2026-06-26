@@ -406,6 +406,58 @@ describe('generateDoc', () => {
     // doc-refs resolved against LIVE doc nodes only
     expect(src).toContain("type = 'doc' AND tombstoned = 0");
   });
+
+  // ── onPhase callback (Plan 39.3-02, D-3) ─────────────────────────────────
+  // generateDoc with an onPhase spy fires in gathering→generating→verifying order.
+
+  test('(onPhase) generateDoc fires onPhase in gathering→generating→verifying order', async () => {
+    const { db, store } = makeStore();
+    const factId = 'a1a1a1a1-b2b2-c3c3-d4d4-e5e5e5e5e5e5';
+    seedFact(store, factId, 'a fact about the project');
+    store.upsertNodeScope({ node_id: factId, scope: 'onphase-proj', updated_at: 500 });
+
+    const phases: string[] = [];
+    const markdown = `# OnPhase\n\n[Cited](recense://fact/${factId}).`;
+    const provider = makeStubProvider(markdown);
+
+    await generateDoc(
+      { db, store, provider: provider as any },
+      'onphase-proj',
+      { onPhase: (phase) => phases.push(phase) },
+    );
+
+    expect(phases).toEqual(['gathering', 'generating', 'verifying']);
+  });
+
+  test('(onPhase) generateDoc without onPhase behaves as before (no throw)', async () => {
+    const { db, store } = makeStore();
+    const factId = 'f0f0f0f0-f0f0-f0f0-f0f0-f0f0f0f0f0f0';
+    seedFact(store, factId, 'a fact');
+    store.upsertNodeScope({ node_id: factId, scope: 'nophase-proj', updated_at: 500 });
+
+    const markdown = `# NoPhase\n\n[Cited](recense://fact/${factId}).`;
+    const provider = makeStubProvider(markdown);
+
+    // Should not throw — onPhase is optional
+    const result = await generateDoc(
+      { db, store, provider: provider as any },
+      'nophase-proj',
+      // no onPhase supplied — opts is empty
+    );
+    expect(result.citationCount).toBe(1);
+  });
+
+  test('(onPhase) source: doc-generator has no new node:fs import', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/reader/doc-generator.ts'), 'utf8');
+    // doc-generator must stay FS-free (D-3 load-bearing invariant)
+    const fsImportMatches = (src.match(/from ['"](?:fs|node:fs)['"]/g) ?? []);
+    expect(fsImportMatches).toHaveLength(0);
+    // onPhase appears in the source (param on 2 fns + fire sites)
+    const onPhaseCount = (src.match(/onPhase/g) ?? []).length;
+    expect(onPhaseCount).toBeGreaterThanOrEqual(6);
+  });
 });
 
 // ── Schema-thesis generation (CORPUS-01) ──────────────────────────────────
@@ -584,5 +636,29 @@ describe('generateDocForSchema', () => {
     expect(src).toContain('empty output');
     // The thesis path must use gatherFactsForSchema
     expect(src).toContain('gatherFactsForSchema');
+  });
+
+  // ── onPhase callback (Plan 39.3-02, D-3) ─────────────────────────────────
+  // generateDocForSchema with an onPhase spy fires in gathering→generating→verifying order.
+
+  test('(onPhase) generateDocForSchema fires onPhase in gathering→generating→verifying order', async () => {
+    const { db, store } = makeStore();
+    const schemaId = 'schema-onphase-1';
+    const factId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    seedSchema(store, schemaId, 'onphase schema test');
+    seedFact(store, factId, 'a schema evidence fact');
+    seedAbstractsEdge(store, schemaId, factId);
+
+    const phases: string[] = [];
+    const markdown = `# Schema\n\n[Cited](recense://fact/${factId}).`;
+    const provider = makeStubProvider(markdown);
+
+    await generateDocForSchema(
+      { db, store, provider: provider as any },
+      { schemaId, schemaLabel: 'onphase schema test', centroid: null },
+      { onPhase: (phase) => phases.push(phase) },
+    );
+
+    expect(phases).toEqual(['gathering', 'generating', 'verifying']);
   });
 });
