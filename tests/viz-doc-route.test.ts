@@ -268,6 +268,20 @@ describe('GET /doc?id= (READER-04 doc-ref click)', () => {
     const r = await makeRequest(port, '/doc/meta?id=ffffffff-ffff-4fff-8fff-ffffffffffff');
     expect(r.statusCode).toBe(404);
   });
+
+  // RGS-01 parity with the slug branch: opening a doc by id whose resolved slug is mid-regen
+  // must report 202 so the reader polls + shows the stepper, not re-serve the stale doc.
+  it('returns 202 (not stale 200) for an id whose resolved slug is being regenerated', async () => {
+    const before = await makeRequest(port, `/doc?id=${DOC_NODE_ID}`);
+    expect(before.statusCode).toBe(200);
+
+    const post = await makeRequest(port, `/doc/generate?slug=${DOC_SLUG}`, 'POST');
+    expect(post.statusCode).toBe(202);
+
+    const during = await makeRequest(port, `/doc?id=${DOC_NODE_ID}`);
+    expect(during.statusCode).toBe(202);
+    expect((JSON.parse(during.body) as { status: string }).status).toBe('generating');
+  });
 });
 
 describe('GET /doc/meta?slug=', () => {

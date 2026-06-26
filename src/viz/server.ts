@@ -622,10 +622,15 @@ export function startVizServer(
         }
         try {
           const row = stmtGetDoc.get(resolvedSlug) as { id: string; value: string; generated_at: number } | undefined;
+          // RGS-01 (parity with the slug branch): a force-regen in flight for this slug means
+          // the old row is stale until the CLI finishes — report 202 so the reader polls and
+          // shows the phase stepper instead of re-serving the stale doc.
           // BUG-2a fix (28-04): an empty-value stub (value='') means the CorpusPromoter
           // created an eager placeholder but generation hasn't run yet. Treat it as a miss
           // → spawn + 202 so the reader can poll for the real content.
-          if (row && row.value.trim().length > 0) {
+          if (inFlightSlugs.has(resolvedSlug)) {
+            send202Generating(res, resolvedSlug);
+          } else if (row && row.value.trim().length > 0) {
             res.writeHead(200, { 'content-type': 'text/plain' });
             res.end(row.value);
           } else if (row && row.value.trim().length === 0) {
