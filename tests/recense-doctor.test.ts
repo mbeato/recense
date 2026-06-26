@@ -1,5 +1,6 @@
 /**
- * Unit tests for brain-doctor check helpers (INSTALL-04, Phase 9 Plan 04).
+ * Unit tests for brain-doctor check helpers (INSTALL-04, Phase 9 Plan 04;
+ * Phase 45 Plans 06 added checkBillingPosture + checkApiKeys D-11 + checkClaudeCli).
  *
  * Tests the exported pure check functions directly, without making live API
  * calls or requiring a production DB.
@@ -18,12 +19,34 @@
  *     (h) accepts the pre-migration recense/dist/src/adapter/ path form
  *   failure aggregation:
  *     (i) process.exitCode reflects non-zero when any check fails
+ *   checkBillingPosture (D-12):
+ *     (m1) subscription + key present in settings.json -> fail with remove-it message
+ *     (m2) subscription + no key in settings.json -> pass
+ *     (m3) direct-API mode -> pass regardless of key presence
+ *   checkApiKeys no-false-failure (D-11):
+ *     (n1) subscription mode + missing ANTHROPIC_API_KEY -> NOT a failure (pass note emitted)
+ *   checkClaudeCli (D-13):
+ *     (p1) RECENSE_CLAUDE_BIN pointing at an authenticated stub -> pass 'present and logged in'
+ *     (p2) RECENSE_CLAUDE_BIN pointing at a logged-out stub -> fail 'not logged in'
+ *     (p3) RECENSE_CLAUDE_BIN pointing at a nonexistent binary -> fail 'not found'
+ *     (p4) no claude -p spawned by any dimension or test
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll } from 'vitest';
+import { writeFileSync, mkdirSync, chmodSync, unlinkSync, rmSync, existsSync } from 'fs';
+import { join } from 'path';
+import { tmpdir, homedir } from 'os';
 import Database from 'better-sqlite3';
 import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
-import { checkDb, checkNodeAbi, checkHooks, checkServeToken } from '../src/adapter/recense-doctor';
+import {
+  checkDb,
+  checkNodeAbi,
+  checkHooks,
+  checkServeToken,
+  checkBillingPosture,
+  checkApiKeys,
+  checkClaudeCli,
+} from '../src/adapter/recense-doctor';
 
 // ---------------------------------------------------------------------------
 // checkDb
@@ -271,5 +294,223 @@ describe('failure aggregation', () => {
 
     // restore
     process.exitCode = origExitCode;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkBillingPosture (D-12)
+// ---------------------------------------------------------------------------
+
+describe('checkBillingPosture', () => {
+  const makeTempDir = (suffix: string) =>
+    join(tmpdir(), `doctor-billing-${process.pid}-${suffix}`);
+
+  /** Write a temp settings.json with optional ANTHROPIC_API_KEY in env block. */
+  function writeTempSettings(dir: string, withKey: boolean): string {
+    mkdirSync(dir, { recursive: true });
+    const settingsPath = join(dir, 'settings.json');
+    const content = withKey
+      ? JSON.stringify({ env: { ANTHROPIC_API_KEY: 'sk-ant-test-key' } })
+      : JSON.stringify({ env: {} });
+    writeFileSync(settingsPath, content, 'utf8');
+    return settingsPath;
+  }
+
+  /** Write a temp sleep.env with RECENSE_MODEL_PROVIDER. */
+  function writeTempEnv(dir: string, provider: string): string {
+    mkdirSync(dir, { recursive: true });
+    const envPath = join(dir, 'sleep.env');
+    writeFileSync(envPath, `RECENSE_MODEL_PROVIDER=${provider}\n`, 'utf8');
+    return envPath;
+  }
+
+  it('(m1) subscription + key present in settings.json -> fail with remove-it message', () => {
+    const dir = makeTempDir('sub-key');
+    const settingsPath = writeTempSettings(dir, /* withKey= */ true);
+    const envPath = writeTempEnv(dir, 'claude-headless');
+
+    const result = checkBillingPosture(settingsPath, envPath);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('ANTHROPIC_API_KEY in ~/.claude/settings.json');
+    expect(result.detail).toContain('remove it from the env block');
+    // T-45-01: key value must NOT appear in detail
+    expect(result.detail).not.toContain('sk-ant-test-key');
+
+    try { rmSync(dir, { recursive: true }); } catch { /* ignore */ }
+  });
+
+  it('(m2) subscription + no key in settings.json -> pass', () => {
+    const dir = makeTempDir('sub-nokey');
+    const settingsPath = writeTempSettings(dir, /* withKey= */ false);
+    const envPath = writeTempEnv(dir, 'claude-headless');
+
+    const result = checkBillingPosture(settingsPath, envPath);
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('subscription billing');
+
+    try { rmSync(dir, { recursive: true }); } catch { /* ignore */ }
+  });
+
+  it('(m3) direct-API mode -> pass regardless of key presence', () => {
+    const dir = makeTempDir('direct-api');
+    // Key present in settings, but provider is anthropic (direct-API) -> no footgun
+    const settingsPath = writeTempSettings(dir, /* withKey= */ true);
+    const envPath = writeTempEnv(dir, 'anthropic');
+
+    const result = checkBillingPosture(settingsPath, envPath);
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('direct-API mode');
+
+    try { rmSync(dir, { recursive: true }); } catch { /* ignore */ }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkApiKeys — no-false-failure under subscription mode (D-11)
+// ---------------------------------------------------------------------------
+
+describe('checkApiKeys D-11 no-false-failure', () => {
+  const origAnthropicKey = process.env['ANTHROPIC_API_KEY'];
+
+  afterEach(() => {
+    if (origAnthropicKey !== undefined) {
+      process.env['ANTHROPIC_API_KEY'] = origAnthropicKey;
+    } else {
+      delete process.env['ANTHROPIC_API_KEY'];
+    }
+  });
+
+  it('(n1) subscription mode + missing ANTHROPIC_API_KEY is NOT a failure', async () => {
+    // Remove the Anthropic key from env so checkApiKeys sees it as missing.
+    delete process.env['ANTHROPIC_API_KEY'];
+
+    // Write a temp env file with RECENSE_MODEL_PROVIDER=claude-headless
+    const dir = join(tmpdir(), `doctor-apikeys-sub-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    const envPath = join(dir, 'sleep.env');
+    writeFileSync(envPath, 'RECENSE_MODEL_PROVIDER=claude-headless\n', 'utf8');
+
+    // Under subscription mode, missing Anthropic key must NOT mark anyFail.
+    const result = await checkApiKeys(envPath);
+
+    // The detail should contain the subscription note, not 'ANTHROPIC missing'.
+    expect(result.detail).toContain('subscription mode (Anthropic API key not needed)');
+    expect(result.detail).not.toContain('ANTHROPIC missing');
+
+    // If OpenAI key is also missing (no OPENAI_API_KEY in env), the result will be
+    // fail due to OpenAI (still required). The point is the ANTHROPIC absence alone
+    // does NOT cause failure under subscription. We verify by checking the detail
+    // does not have the anthropic-missing marker.
+    // If OpenAI key IS present in env, result.ok should be true; if absent, ok may be
+    // false due to OpenAI — that's expected. The key assertion is the detail string above.
+
+    try { rmSync(dir, { recursive: true }); } catch { /* ignore */ }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkClaudeCli (D-13)
+// ---------------------------------------------------------------------------
+
+describe('checkClaudeCli', () => {
+  const origClaudeBin = process.env['RECENSE_CLAUDE_BIN'];
+
+  afterEach(() => {
+    if (origClaudeBin !== undefined) {
+      process.env['RECENSE_CLAUDE_BIN'] = origClaudeBin;
+    } else {
+      delete process.env['RECENSE_CLAUDE_BIN'];
+    }
+  });
+
+  /**
+   * Write a stub shell script that:
+   * - accepts `auth status --json` args
+   * - prints the given JSON body and exits with the given code.
+   */
+  function writeStubScript(dir: string, name: string, exitCode: number, jsonBody: string): string {
+    mkdirSync(dir, { recursive: true });
+    const scriptPath = join(dir, name);
+    // Build the script with actual newlines (not escape sequences in a string literal).
+    const escaped = jsonBody.replace(/'/g, "'\\''");
+    const lines = [
+      '#!/bin/sh',
+      `printf '${escaped}'`,
+      `exit ${exitCode}`,
+      '',
+    ];
+    writeFileSync(scriptPath, lines.join('\n'), { mode: 0o755 });
+    return scriptPath;
+  }
+
+  it('(p1) authenticated stub -> pass "claude CLI present and logged in"', () => {
+    const dir = join(tmpdir(), `doctor-cli-auth-${process.pid}`);
+    const stubPath = writeStubScript(
+      dir,
+      'claude-auth-ok.sh',
+      0,
+      '{"status":"logged_in"}',
+    );
+    process.env['RECENSE_CLAUDE_BIN'] = stubPath;
+
+    const result = checkClaudeCli();
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('present and logged in');
+
+    try { rmSync(dir, { recursive: true }); } catch { /* ignore */ }
+  });
+
+  it('(p2) logged-out stub -> fail "claude CLI not logged in"', () => {
+    const dir = join(tmpdir(), `doctor-cli-loggedout-${process.pid}`);
+    // Non-zero exit code OR JSON reporting logged-out → fail
+    const stubPath = writeStubScript(
+      dir,
+      'claude-auth-out.sh',
+      1,
+      '{"status":"logged_out"}',
+    );
+    process.env['RECENSE_CLAUDE_BIN'] = stubPath;
+
+    const result = checkClaudeCli();
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('not logged in');
+    expect(result.detail).toContain('claude login');
+
+    try { rmSync(dir, { recursive: true }); } catch { /* ignore */ }
+  });
+
+  it('(p3) nonexistent binary -> fail "claude CLI not found"', () => {
+    process.env['RECENSE_CLAUDE_BIN'] = '/nonexistent/path/to/claude-binary-99999';
+
+    const result = checkClaudeCli();
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('not found');
+    expect(result.detail).toContain('claude login');
+  });
+
+  it('(p4) stub is invoked with auth status args, NOT -p', () => {
+    // Write a stub that records the args it received and reports them back via exit code.
+    // If called with -p it exits with code 42 (detectable); otherwise exits 0 with auth JSON.
+    const dir = join(tmpdir(), `doctor-cli-nop-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    const stubPath = join(dir, 'claude-no-p.sh');
+    const noPScript = [
+      '#!/bin/sh',
+      'for arg in "$@"; do',
+      '  if [ "$arg" = "-p" ]; then exit 42; fi',
+      'done',
+      "printf '{\"status\":\"logged_in\"}'",
+      'exit 0',
+      '',
+    ].join('\n');
+    writeFileSync(stubPath, noPScript, { mode: 0o755 });
+    process.env['RECENSE_CLAUDE_BIN'] = stubPath;
+
+    const result = checkClaudeCli();
+    // Must NOT exit 42 (which would mean -p was passed); must pass.
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('present and logged in');
+
+    try { rmSync(dir, { recursive: true }); } catch { /* ignore */ }
   });
 });

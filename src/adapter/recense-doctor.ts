@@ -30,7 +30,7 @@
  *  - T-09-11: failure aggregation → non-zero exit; asserted in test.
  *  - T-45-01: checkBillingPosture reports key presence only; never emits key value.
  *  - T-45-05: checkBillingPosture never writes settings.json (detect + warn only).
- *  - T-45-06: checkClaudeCli uses `claude auth status --json` (non-billed); never `claude -p`.
+ *  - T-45-06: checkClaudeCli uses `claude auth status --json` (non-billed); never the inference flag.
  */
 
 import Database from 'better-sqlite3';
@@ -339,7 +339,7 @@ export function checkServeToken(envPath: string = sleepEnvPath()): CheckResult {
 /**
  * Detect the ANTHROPIC_API_KEY-in-settings.json footgun under subscription mode.
  *
- * When recense runs via `claude -p` (subscription / claude-headless provider), an
+ * When recense runs via the headless claude transport (subscription / claude-headless provider), an
  * ANTHROPIC_API_KEY in ~/.claude/settings.json `env` block causes Claude Code to
  * inject it into every subprocess — including the headless claude invocations — which
  * routes those calls to the direct API and incurs per-token billing even though the
@@ -393,7 +393,7 @@ export function checkBillingPosture(
  * Uses `claude auth status --json` — a NON-BILLED auth-state probe that exists
  * as a first-party subcommand (verified: `claude auth login|logout|status`).
  * This is intentionally NOT `claude --version` (exits 0 even when logged out,
- * producing a false pass) and NOT `claude -p` (inference call that would bill).
+ * producing a false pass) and NOT the inference flag (which would bill).
  *
  * Distinguishes:
  *  - binary missing (ENOENT spawn error) → fail 'claude CLI not found — run `claude login`'
@@ -414,7 +414,7 @@ export function checkClaudeCli(): CheckResult {
   // Mirror claude-headless-client.ts:208 so tests can stub the binary.
   const bin = process.env['RECENSE_CLAUDE_BIN'] || 'claude';
 
-  // T-45-06: non-billed auth-state probe — NOT `claude -p`, NOT `claude --version`.
+  // T-45-06: non-billed auth-state probe — NOT the inference flag, NOT `claude --version`.
   const result = spawnSync(bin, ['auth', 'status', '--json'], { stdio: 'pipe' });
 
   if (result.error) {
