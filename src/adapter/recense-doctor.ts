@@ -382,7 +382,7 @@ export function checkBillingPosture(
     return pass('subscription billing, no direct-API key in settings.json');
   }
 
-  return pass('direct-API mode');
+  return pass(provider === 'local' ? 'local model mode' : 'direct-API mode');
 }
 
 // ── Dimension 8: claude CLI present + logged in (D-13) ───────────────────────
@@ -415,7 +415,9 @@ export function checkClaudeCli(): CheckResult {
   const bin = process.env['RECENSE_CLAUDE_BIN'] || 'claude';
 
   // T-45-06: non-billed auth-state probe — NOT the inference flag, NOT `claude --version`.
-  const result = spawnSync(bin, ['auth', 'status', '--json'], { stdio: 'pipe' });
+  // timeout guards `recense doctor` against a hung/network-stalled claude binary;
+  // spawnSync sets result.error on timeout, which the missing-binary branch below handles.
+  const result = spawnSync(bin, ['auth', 'status', '--json'], { stdio: 'pipe', timeout: 5000 });
 
   if (result.error) {
     // Spawn error (e.g. ENOENT) means the binary is missing entirely.

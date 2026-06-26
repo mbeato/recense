@@ -112,10 +112,18 @@ export function captureNodeBin(): string {
  * Writes to a tmp file with mode 0o600, then rename()s to the final path (atomic).
  * Parent directories are created if they do not exist.
  */
-export function writeEnvFile(envPath: string, vars: Record<string, string>): void {
+export function writeEnvFile(
+  envPath: string,
+  vars: Record<string, string>,
+  removeKeys: readonly string[] = [],
+): void {
   // IN-03: preserve comments, blank lines, and unrecognized keys from an existing
   // file (e.g. the GMAIL_* placeholders + guidance comments written by setup-dogfood).
   // Known keys are updated in place; brand-new keys are appended at the end.
+  // T-45-07: keys in removeKeys are actively DROPPED from the output — required because
+  // "absent from vars" alone only preserves a stale line (the subscription path must be
+  // able to delete a leftover ANTHROPIC_API_KEY from a prior direct-api run).
+  const remove = new Set(removeKeys);
   const out: string[] = [];
   const written = new Set<string>();
   if (existsSync(envPath)) {
@@ -124,6 +132,7 @@ export function writeEnvFile(envPath: string, vars: Record<string, string>): voi
       if (!trimmed || trimmed.startsWith('#')) { out.push(line); continue; }
       const eq = trimmed.indexOf('=');
       const key = eq === -1 ? trimmed : trimmed.slice(0, eq);
+      if (remove.has(key)) { continue; } // explicitly removed — drop the line entirely
       if (Object.prototype.hasOwnProperty.call(vars, key)) {
         out.push(`${key}=${vars[key]}`);
         written.add(key);
@@ -478,7 +487,8 @@ async function main(): Promise<void> {
       console.log('  To stop the billing leak, remove ANTHROPIC_API_KEY from the `env` block');
       console.log('  in ~/.claude/settings.json. recense will NOT edit that file.');
       const ans = await ask(rl, '\n  Continue anyway? [y/N]', 'N');
-      if (ans.toLowerCase() !== 'y') {
+      const affirm = ans.trim().toLowerCase();
+      if (affirm !== 'y' && affirm !== 'yes') {
         console.log('\n  Aborting init. Remove ANTHROPIC_API_KEY from ~/.claude/settings.json and re-run.');
         rl.close();
         process.exit(1);
@@ -504,18 +514,30 @@ async function main(): Promise<void> {
   for (const [k, v] of existing) vars[k] = v;
   vars['RECENSE_NODE_BIN'] = nodeBin;
   vars['RECENSE_DB'] = dbPath;
+  // RECENSE_MODEL_PROVIDER is written on EVERY path. The in-code default is now
+  // 'claude-headless' (45-02), so a direct-api/local install that omitted the var would
+  // silently fall back to subscription via DEFAULT_CONFIG.modelProvider. Pinning the var
+  // per selection also clears a stale value left by a prior run with a different provider.
+  const removeKeys: string[] = [];
   if (provider === 'subscription') {
-    // D-06: Write RECENSE_MODEL_PROVIDER=claude-headless; do NOT write ANTHROPIC_API_KEY
-    // (T-45-07: subscription path must not leak the Anthropic key into the env file).
+    // D-06: route the sleep pass through claude -p (Max subscription).
     vars['RECENSE_MODEL_PROVIDER'] = 'claude-headless';
-    // If a prior run wrote ANTHROPIC_API_KEY, remove it from vars so it is not re-written.
+    // T-45-07: subscription path must not leave an Anthropic key in the env file.
+    // delete from vars (so it is not re-appended) AND remove any pre-existing line from a
+    // prior direct-api run — writeEnvFile preserves unrecognized keys unless told to drop.
     delete vars['ANTHROPIC_API_KEY'];
+    removeKeys.push('ANTHROPIC_API_KEY');
+  } else if (provider === 'direct-api') {
+    vars['RECENSE_MODEL_PROVIDER'] = 'anthropic';
+    if (anthropicKey) vars['ANTHROPIC_API_KEY'] = anthropicKey;
   } else {
+    // local
+    vars['RECENSE_MODEL_PROVIDER'] = 'local';
     if (anthropicKey) vars['ANTHROPIC_API_KEY'] = anthropicKey;
   }
   if (openaiKey) vars['OPENAI_API_KEY'] = openaiKey;
 
-  writeEnvFile(envPath, vars);
+  writeEnvFile(envPath, vars, removeKeys);
   console.log(`  Env file written: ${envPath} (chmod 600)`);
 
   // ── D-89 Step 6: Scheduler registration ───────────────────────────────────

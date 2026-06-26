@@ -176,6 +176,20 @@ describe('writeEnvFile', () => {
     expect(content).toContain('RECENSE_DB=/new/path.db'); // known key updated
     expect(content).not.toContain('/old/path.db');
   });
+
+  it('drops keys listed in removeKeys, even when absent from vars (T-45-07)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brain-init-test-'));
+    const envPath = join(dir, 'sleep.env');
+    // Simulate a prior direct-api run that wrote ANTHROPIC_API_KEY into sleep.env.
+    writeFileSync(envPath, 'RECENSE_DB=/db\nANTHROPIC_API_KEY=sk-ant-stale\n');
+    // Subscription re-run: write the provider, drop the stale Anthropic key.
+    writeEnvFile(envPath, { RECENSE_MODEL_PROVIDER: 'claude-headless' }, ['ANTHROPIC_API_KEY']);
+    const content = readFileSync(envPath, 'utf8');
+    expect(content).toContain('RECENSE_MODEL_PROVIDER=claude-headless');
+    expect(content).not.toContain('ANTHROPIC_API_KEY'); // stale leak key removed
+    expect(content).not.toContain('sk-ant-stale');
+    expect(content).toContain('RECENSE_DB=/db'); // unrelated key preserved
+  });
 });
 
 // ── validateApiKey ────────────────────────────────────────────────────────────
