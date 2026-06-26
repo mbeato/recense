@@ -266,6 +266,8 @@ npm run eval:correctness:dry
 
 ### Recorded results
 
+> **Note on the local-stack rows below:** the `granite4.1:8b + qwen3.6:35b-a3b` entries are historical baselines from 2026-06-12/13 runs using a local Ollama stack. The **current default** sleep-pass stack (as of 2026-06-17) is headless Haiku/Sonnet on a Claude subscription — extract via `claude-haiku-4-5`, judge via `claude-sonnet-4-6`, both through `claude -p`. Local model results are preserved as-is for longitudinal comparison; no numbers were recomputed.
+
 | System | Belief-correction rate | Stale-recall rate | Avg duplicates | Tombstone present | Run date | Commit |
 |--------|----------------------|------------------|---------------|-------------------|----------|--------|
 | recense (API config) | **92.3%** content-correct (12/13; 84.6–92.3% scorer-credited across runs — substring scorer under-credits correct paraphrases) | 7.7% | 1.76 | Yes (70.6%) | 2026-06-12 | 9293be7 |

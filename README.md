@@ -67,12 +67,18 @@ Reading the LongMemEval row: a model handed the entire conversation in-context s
 
 ### Prerequisites
 
-- **Node.js 22 or later** — required for the native module (better-sqlite3 ABI)
-- **Anthropic API key** — Claude compose + judge heads
-- **OpenAI API key** — embedding head
+**Required:**
 
-Optional (macOS only):
-- **Telegram bot token** — always-on query bot; create one via [@BotFather](https://t.me/BotFather)
+- **Node.js 22 or later** — required for the native module (better-sqlite3 ABI)
+- **`claude` CLI, logged into a Claude subscription** — the sleep-pass runs on `claude -p` (headless Haiku/Sonnet), so no Anthropic API billing needed; your subscription covers it
+- **OpenAI API key** — used for embeddings; still required
+
+**Optional:**
+
+- **Anthropic API key** — only needed if you choose direct-API mode instead of subscription billing; leave it out on the subscription path
+- **Telegram bot token** (macOS only) — always-on query bot; create one via [@BotFather](https://t.me/BotFather)
+
+> **Billing footgun:** if `ANTHROPIC_API_KEY` is present in the `env` block of `~/.claude/settings.json`, `claude -p` will bill the Anthropic API directly even on a subscription plan. Remove it from that env block to stay on subscription billing. `recense doctor` will warn you if it detects this.
 
 ### Install
 
@@ -112,8 +118,11 @@ recense doctor
 If you set it up manually, create `~/.config/recense/sleep.env` (`chmod 600`) with:
 
 ```sh
-ANTHROPIC_API_KEY=your-anthropic-key-here
+# Required
 OPENAI_API_KEY=your-openai-key-here
+
+# Optional — only needed for direct-API mode (not subscription billing)
+# ANTHROPIC_API_KEY=your-anthropic-key-here
 ```
 
 For the Telegram channel (macOS), also add:
