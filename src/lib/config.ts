@@ -128,12 +128,13 @@ export interface EngineConfig {
 
   /**
    * Selects the transport for the Judge/ClaimExtractor seams ONLY.
-   * Default 'anthropic' = ZERO behavior change.
+   * Default 'claude-headless' = subscription billing via `claude -p` on the founder's Max
+   * subscription (spike 003; QUICK-260617-qat) — sleep-pass Anthropic charges are covered
+   * by the subscription; an OpenAI key is still required for embeddings.
+   * 'anthropic' routes to the direct Anthropic API (opt-in via RECENSE_MODEL_PROVIDER=anthropic).
    * 'local' routes ALL Anthropic-family calls (judge/extractor/schema-naming/recall-compose)
    * to a local Ollama OpenAI-compatible endpoint (see localBaseUrl/localModel).
    * 'deepseek' routes judge calls to DeepSeek's OpenAI-compatible endpoint (ECR-01).
-   * 'claude-headless' shells out to the first-party `claude -p` binary on the founder's
-   * Max subscription (spike 003; QUICK-260617-qat) — opt-in via env ONLY, default unchanged.
    * Faithfulness note: narrow transport seam, NOT the Phase 5 SEAM-01 ModelProvider abstraction.
    */
   modelProvider: 'anthropic' | 'vertex' | 'local' | 'deepseek' | 'claude-headless';
@@ -754,7 +755,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   salience: DEFAULT_SALIENCE_CONFIG,
   coldStartMemoryDir: '', // empty = disabled; set RECENSE_COLD_START_MEMORY_DIR or configure (D-79)
   coldStartClaudeFile: '', // empty = disabled; set RECENSE_COLD_START_CLAUDE_FILE or configure (D-79)
-  modelProvider: 'anthropic',
+  modelProvider: 'claude-headless',
   anthropicModel: 'claude-haiku-4-5-20251001',
   vertexProjectId: '',
   vertexRegion: '',

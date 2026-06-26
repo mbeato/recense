@@ -18,7 +18,7 @@ describe('resolveProviderOverlay (sleep-pass provider resolution)', () => {
   it('unset env → DEFAULT_CONFIG provider, no local overrides', () => {
     const overlay = resolveProviderOverlay({});
     expect(overlay.modelProvider).toBe(DEFAULT_CONFIG.modelProvider);
-    expect(overlay.modelProvider).toBe('anthropic');
+    expect(overlay.modelProvider).toBe('claude-headless');
     expect(overlay.localModel).toBeUndefined();
     expect(overlay.localBaseUrl).toBeUndefined();
   });
@@ -110,7 +110,7 @@ describe('resolveProviderOverlay (per-role provider routing)', () => {
   it('neither role nor base set → DEFAULT_CONFIG provider', () => {
     const overlay = resolveProviderOverlay({}, 'RECENSE_JUDGE_PROVIDER');
     expect(overlay.modelProvider).toBe(DEFAULT_CONFIG.modelProvider);
-    expect(overlay.modelProvider).toBe('anthropic');
+    expect(overlay.modelProvider).toBe('claude-headless');
   });
 
   it('unknown role value → falls back to base', () => {
