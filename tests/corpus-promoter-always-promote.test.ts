@@ -8,10 +8,10 @@
  *    - out-of-scope schemas get NO stub
  *    - plain promote() still requires mass >= highMass (organic gate unchanged)
  *
- *  Test 2 (landing→chapter containment):
- *    - after promoteScope with 2 in-scope schemas, there is exactly 1 live landing doc (slug='usage')
- *    - doc_containment edges from landing doc node → each chapter doc node
- *    - src/dst are both type='doc' node ids (never schema ids)
+ *  Test 2 (landing→chapter containment): RETIRED — promoteScope no longer writes doc edges.
+ *    Edge derivation moved to the sole-owner DocGraphDeriver (D-11, commit 9e6f309); hub→subject→
+ *    chapter containment coverage lives in tests/doc-graph-deriver.test.ts. promoteScope here is
+ *    asserted only for the landing/chapter stubs it creates (Test 1).
  *
  *  Test 3 (organic gate untouched):
  *    - plain promote() returns the same promoted/containment/reference/tombstoned counts
@@ -177,65 +177,6 @@ describe('promoteScope — Test 1: bypass mass gate, bounded to scope', () => {
 
     // X1 was NOT promoted by the organic gate
     expect(result.promoted).not.toContain(schemaX1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Test 2: landing→chapter containment edges
-// ---------------------------------------------------------------------------
-
-describe('promoteScope — Test 2: landing→chapter containment edges', () => {
-  it('creates exactly one live landing doc and doc_containment edges from landing→chapter docs', async () => {
-    const { db, store, clock, schemaX1, schemaX2 } = buildScopedBrain('usage');
-    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
-
-    await promoter.promoteScope('usage');
-
-    // Exactly one live landing doc for 'usage'
-    const landingDocs = db.prepare(
-      "SELECT n.id FROM node n JOIN node_scope ns ON ns.node_id = n.id " +
-      "WHERE n.type = 'doc' AND n.tombstoned = 0 AND ns.scope = 'usage'"
-    ).all() as { id: string }[];
-    expect(landingDocs.length).toBe(1);
-    const landingId = landingDocs[0]!.id;
-
-    // Chapter doc stubs for X1 and X2
-    const docX1 = getLiveDocByScope(db, schemaX1);
-    const docX2 = getLiveDocByScope(db, schemaX2);
-    expect(docX1).toBeDefined();
-    expect(docX2).toBeDefined();
-
-    // doc_containment edges: landing → chapter for each in-scope schema
-    const containmentEdges = db.prepare(
-      "SELECT src, dst FROM edge WHERE kind = 'doc_containment'"
-    ).all() as { src: string; dst: string }[];
-
-    const edgeFromLandingToX1 = containmentEdges.find(
-      e => e.src === landingId && e.dst === docX1!.id
-    );
-    const edgeFromLandingToX2 = containmentEdges.find(
-      e => e.src === landingId && e.dst === docX2!.id
-    );
-    expect(edgeFromLandingToX1).toBeDefined();
-    expect(edgeFromLandingToX2).toBeDefined();
-  });
-
-  it('doc_containment edges from promoteScope have src and dst both as type=doc nodes', async () => {
-    const { db, store, clock } = buildScopedBrain('usage');
-    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
-    await promoter.promoteScope('usage');
-
-    const corpusEdges = db.prepare(
-      "SELECT e.src, e.dst, n_src.type as src_type, n_dst.type as dst_type FROM edge e " +
-      "JOIN node n_src ON n_src.id = e.src JOIN node n_dst ON n_dst.id = e.dst " +
-      "WHERE e.kind = 'doc_containment'"
-    ).all() as { src: string; dst: string; src_type: string; dst_type: string }[];
-
-    expect(corpusEdges.length).toBeGreaterThan(0);
-    for (const edge of corpusEdges) {
-      expect(edge.src_type).toBe('doc');
-      expect(edge.dst_type).toBe('doc');
-    }
   });
 });
 
