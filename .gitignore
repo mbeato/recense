@@ -19,6 +19,8 @@ sleep.env
 # --- Open-source hygiene (internal/private; kept local, never published) ---
 # GSD planning state — local working docs, not part of the public project
 .planning/
+# Internal agent context (cost/subscription details) — kept local, never published
+CLAUDE.md
 .DS_Store
 # personal DB snapshots
 recense.db.pre-unification-*
