@@ -136,7 +136,7 @@ describe('parseEnvInt helper', () => {
 });
 
 describe('resolveModelId', () => {
-  it('returns anthropicModel when modelProvider is anthropic (default)', () => {
+  it('returns anthropicModel when modelProvider is anthropic (explicit opt-in)', () => {
     const config: EngineConfig = { ...baseConfig, modelProvider: 'anthropic' };
     expect(resolveModelId(config)).toBe(config.anthropicModel);
   });
@@ -151,8 +151,8 @@ describe('resolveModelId', () => {
     expect(resolveModelId(config)).toBe(config.localModel);
   });
 
-  it('default config resolves to anthropicModel (zero behavior change)', () => {
-    expect(resolveModelId(baseConfig)).toBe(DEFAULT_CONFIG.anthropicModel);
+  it('default config resolves to claudeHeadlessModel (subscription default)', () => {
+    expect(resolveModelId(baseConfig)).toBe(DEFAULT_CONFIG.claudeHeadlessModel);
   });
 });
 

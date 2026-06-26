@@ -6,7 +6,7 @@
  * Haiku-API judge AND is ToS-clean on a subscription with NO API key. This transport
  * plugs in behind the existing AnthropicLike type so AnthropicJudge / the extractor /
  * DefaultModelProvider.generate are UNCHANGED — only createAnthropicClient routes to it
- * when modelProvider === 'claude-headless' (opt-in via env ONLY; default stays 'anthropic').
+ * when modelProvider === 'claude-headless' (the DEFAULT as of 45-02; direct-API 'anthropic' is now opt-in).
  *
  * BILLING SAFEGUARD (load-bearing): Claude Code prefers ANTHROPIC_API_KEY over the
  * subscription login when that env var is present — so forwarding process.env verbatim
