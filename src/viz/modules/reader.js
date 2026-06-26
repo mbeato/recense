@@ -264,19 +264,32 @@ export function initReader(ctx) {
           return;
         }
         if (res.status === 202) {
-          // D-03: single honest loading state — a real elapsed/ETA progress bar (built once
-          // on the first 202; it animates independently of the 2s poll cadence). The bar is
-          // SEEDED from the server-reported elapsed generation time so a reader reopened
-          // mid-generation resumes the true progress instead of restarting at 0s.
+          // D-04/D-05: read phase/error from the 202 envelope; advance the stepper.
+          // The bar is SEEDED from elapsedMs on first 202 so a reopened reader resumes
+          // true progress instead of restarting at 0s (D-03 preserved).
           attempts++;
+          let j = {};
+          try { j = await res.json(); } catch (_) { /* old payload / no body → treat as defaults */ }
+          if (myToken !== loadToken) return; // superseded while reading the envelope
+
+          // phase:'failed' is the authoritative stop signal (RGS-03).
+          // T-39.3-08: render error reason via textContent only (never innerHTML).
+          if (j.phase === 'failed') {
+            if (progress) progress.stop();
+            const reason = (typeof j.error === 'string' && j.error) ? j.error : 'engine stayed busy';
+            const failEl = document.createElement('div');
+            failEl.className = 'reader-loading';
+            failEl.textContent = 'generation failed: ' + reason;
+            body.textContent = '';
+            body.appendChild(failEl);
+            return; // stop polling — no loop continue, no throw
+          }
+
           if (!progress) {
-            let elapsedMs = 0;
-            try {
-              const j = await res.json();
-              if (typeof j.elapsedMs === 'number') elapsedMs = j.elapsedMs;
-            } catch (_) { /* missing/old payload → seed from 0 */ }
-            if (myToken !== loadToken) return; // superseded while reading the envelope
-            progress = startGenProgress(elapsedMs);
+            const elapsedMs = typeof j.elapsedMs === 'number' ? j.elapsedMs : 0;
+            progress = startGenProgress(elapsedMs, j.phase);
+          } else if (j.phase) {
+            progress.update(j.phase);
           }
           await sleep(POLL_MS);
           continue;
@@ -291,47 +304,156 @@ export function initReader(ctx) {
   }
 
   /**
-   * Build + animate the generation progress bar. There is no server-side progress signal
-   * for a single LLM generation, so the bar is a time-based ESTIMATE: it eases toward
-   * (but never reaches) 100% on an exponential curve calibrated to GEN_ESTIMATE_MS, and
-   * snaps to 100% only when the real doc arrives. Honest about the estimate via "~Ns left".
-   * Returns { stop, done } to tear down the animation interval.
+   * Build + animate the phase-aware generation stepper (D-05, RGS-01).
+   *
+   * Renders a row of the named generation phases: queued → gathering → generating →
+   * verifying → finalizing. The active phase is highlighted; prior phases are checked off.
+   * The 'generating' phase keeps an exponential time-estimate fill bar (the only phase
+   * worth estimating). All other phases are discrete check-off steps.
+   *
+   * Returns { stop, done, update(phase) }:
+   *   stop()  — tears down the animation interval (used on supersede / finally).
+   *   done()  — snaps generating fill to 100% (called when doc arrives).
+   *   update(phase) — advances the stepper to a new phase; safe to call after stop/done.
+   *
+   * All phase labels are set via textContent (T-39.3-08 / T-10-12).
    */
-  function startGenProgress(elapsedMs = 0) {
+  function startGenProgress(elapsedMs = 0, initialPhase) {
+    // The displayable phases (done/failed are terminal; the reader handles them separately).
+    const STEP_PHASES = ['queued', 'gathering', 'generating', 'verifying', 'finalizing'];
+    const STEP_LABELS = {
+      queued:     'queued',
+      gathering:  'gathering',
+      generating: 'generating',
+      verifying:  'verifying',
+      finalizing: 'finalizing',
+    };
+
     body.textContent = '';
     const wrap = document.createElement('div');
     wrap.className = 'doc-progress';
-    const track = document.createElement('div');
-    track.className = 'doc-progress-track';
-    const fill = document.createElement('div');
-    fill.className = 'doc-progress-fill';
-    track.appendChild(fill);
+
+    // ── Stepper row ──
+    const stepRow = document.createElement('div');
+    stepRow.className = 'doc-progress-steps';
+
+    // Build step nodes (for later update reference).
+    const stepEls = {}; // phase → { el, fill }
+    STEP_PHASES.forEach((phase, i) => {
+      const stepEl = document.createElement('div');
+      stepEl.className = 'doc-progress-step';
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'doc-progress-step-label';
+      labelEl.textContent = STEP_LABELS[phase]; // textContent only — T-39.3-08
+
+      const stepTrack = document.createElement('div');
+      stepTrack.className = 'doc-progress-step-track';
+
+      const stepFill = document.createElement('div');
+      stepFill.className = 'doc-progress-step-fill';
+      stepTrack.appendChild(stepFill);
+
+      stepEl.appendChild(labelEl);
+      stepEl.appendChild(stepTrack);
+      stepRow.appendChild(stepEl);
+      stepEls[phase] = { el: stepEl, fill: stepFill };
+
+      // Connector between steps (not after the last one).
+      if (i < STEP_PHASES.length - 1) {
+        const connector = document.createElement('div');
+        connector.className = 'doc-progress-connector';
+        stepRow.appendChild(connector);
+      }
+    });
+
+    // ── Elapsed clock label (below the stepper) ──
     const label = document.createElement('div');
     label.className = 'doc-progress-label';
-    wrap.appendChild(track);
+
+    wrap.appendChild(stepRow);
     wrap.appendChild(label);
     body.appendChild(wrap);
 
-    // Seed the clock from the server's real elapsed time (0 for a fresh generation) so a
-    // reopened reader resumes the bar where the backend actually is — not from 0s.
+    // ── State ──
+    // Seed the clock from the server's real elapsed time (D-03 preserved).
     const start = performance.now() - Math.max(0, elapsedMs);
-    const TAU = GEN_ESTIMATE_MS * 0.5; // ~87% at the estimate, ~98% at 2× it; never 100%.
+    const TAU = GEN_ESTIMATE_MS * 0.5; // ~87% at estimate, ~98% at 2×; never 100%.
+
+    let activePhase = initialPhase || 'queued';
+    let intervalId = null;
+    let stopped = false;
+
+    // Apply step visual state: checked (done), active, or idle.
+    function renderSteps() {
+      const activeIdx = STEP_PHASES.indexOf(activePhase);
+      STEP_PHASES.forEach((phase, i) => {
+        const { el, fill } = stepEls[phase];
+        el.classList.remove('doc-progress-step--active', 'doc-progress-step--done');
+        if (i < activeIdx) {
+          el.classList.add('doc-progress-step--done');
+          fill.style.width = '100%';
+        } else if (i === activeIdx) {
+          el.classList.add('doc-progress-step--active');
+          if (phase !== 'generating') {
+            // Discrete step: solid fill, no time estimate.
+            fill.style.width = '100%';
+          }
+          // 'generating' fill is driven by tick().
+        } else {
+          fill.style.width = '0%';
+        }
+      });
+    }
+
+    // Clock/estimate tick — only animates the generating-phase fill.
     function tick() {
       const elapsed = performance.now() - start;
-      const f = 1 - Math.exp(-elapsed / TAU);
-      fill.style.width = (f * 100).toFixed(1) + '%';
       const secs = Math.floor(elapsed / 1000);
-      const remain = Math.round((GEN_ESTIMATE_MS - elapsed) / 1000);
-      label.textContent = remain > 0
-        ? `generating · ${secs}s elapsed · ~${remain}s left`
-        : `generating · ${secs}s elapsed · finishing up…`;
+      if (activePhase === 'generating') {
+        const f = 1 - Math.exp(-elapsed / TAU);
+        const genFill = stepEls['generating'].fill;
+        genFill.style.width = (f * 100).toFixed(1) + '%';
+        const remain = Math.round((GEN_ESTIMATE_MS - elapsed) / 1000);
+        label.textContent = remain > 0
+          ? `generating · ${secs}s elapsed · ~${remain}s left`
+          : `generating · ${secs}s elapsed · finishing up…`;
+      } else {
+        label.textContent = activePhase + ' · ' + secs + 's elapsed';
+      }
     }
+
+    // Initial render.
+    renderSteps();
     tick();
-    const id = setInterval(tick, 150);
-    return {
-      stop() { clearInterval(id); },
-      done() { clearInterval(id); fill.style.width = '100%'; },
-    };
+    intervalId = setInterval(tick, 150);
+
+    function update(phase) {
+      if (!phase || !STEP_PHASES.includes(phase)) return;
+      if (phase === activePhase) return;
+      activePhase = phase;
+      renderSteps();
+      // Don't restart the interval — tick() reads activePhase dynamically.
+    }
+
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(intervalId);
+    }
+
+    function done() {
+      stop();
+      // Snap all steps to done state visually.
+      STEP_PHASES.forEach(phase => {
+        const { el, fill } = stepEls[phase];
+        el.classList.remove('doc-progress-step--active');
+        el.classList.add('doc-progress-step--done');
+        fill.style.width = '100%';
+      });
+    }
+
+    return { stop, done, update };
   }
 
   function sleep(ms) {
