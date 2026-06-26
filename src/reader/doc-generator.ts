@@ -322,11 +322,12 @@ export interface GenerateDocResult {
 export async function generateDoc(
   deps: GenerateDeps,
   slug: string,
-  opts: { semanticK?: number } = {},
+  opts: { semanticK?: number; onPhase?: (phase: string) => void } = {},
 ): Promise<GenerateDocResult> {
   const { db, store, provider } = deps;
 
   // ── 1. Gather facts + sibling docs ─────────────────────────────────────────
+  opts.onPhase?.('gathering');
   const facts = await gatherFacts({ db, store, provider }, slug, { semanticK: opts.semanticK });
 
   // Build the factBlock: one line per fact, format "[<uuid>] <value>" (verbatim from slice)
@@ -344,6 +345,7 @@ export async function generateDoc(
   // D-04: use provider.generate directly (the provider's generateConfig is set to judgeConfig
   // by the CLI caller via DefaultModelProvider({ generateConfig: judgeConfig, ... })).
   // No new docModel/genModel config var.
+  opts.onPhase?.('generating');
   const md = await provider.generate(prompt, { maxTokens: 4000 });
 
   // ── 3b. Fail loud on empty output — NEVER persist an empty doc ──────────────
@@ -360,6 +362,7 @@ export async function generateDoc(
   }
 
   // ── 4. Citation-verify + canonicalize (shared helper — NOT duplicated) ────
+  opts.onPhase?.('verifying');
   const verified = verifyCitations(db, md);
 
   return {
@@ -627,12 +630,13 @@ export async function generateDocForSubject(
 export async function generateDocForSchema(
   deps: GenerateDeps,
   params: GatherSchemaParams & { schemaLabel: string },
-  opts: { semanticK?: number } = {},
+  opts: { semanticK?: number; onPhase?: (phase: string) => void } = {},
 ): Promise<GenerateDocResult> {
   const { db, store, provider } = deps;
 
   // ── 1. Gather facts + sibling docs ────────────────────────────────────────
   // Uses gatherFactsForSchema (not gatherFacts): spine = abstracts-edges from schemaId.
+  opts.onPhase?.('gathering');
   const facts = await gatherFactsForSchema(
     { db, store, provider },
     { schemaId: params.schemaId, centroid: params.centroid, schemaLabel: params.schemaLabel },
@@ -649,6 +653,7 @@ export async function generateDocForSchema(
   const prompt = buildSchemaDocPrompt(params.schemaLabel, factBlock, siblingDocs);
 
   // ── 3. Generate via judge-tier model ──────────────────────────────────────
+  opts.onPhase?.('generating');
   const md = await provider.generate(prompt, { maxTokens: 4000 });
 
   // ── 3b. Fail loud on empty output — guard preserved from scope path ────────
@@ -659,6 +664,7 @@ export async function generateDocForSchema(
   }
 
   // ── 4. Citation-verify + canonicalize (shared helper — NOT duplicated) ────
+  opts.onPhase?.('verifying');
   const verified = verifyCitations(db, md);
 
   return {
