@@ -603,25 +603,23 @@ export function initReader(ctx) {
   // polls until the fresh doc is ready and reloads it (reusing the poll loop).
 
   async function regenerate() {
-    // Capture the current doc's generated_at BEFORE regenerating. A successful regen supersedes
-    // the doc node with a newer generated_at; if it fails/times out (the generate-doc CLI is
-    // spawned detached with stdio:'ignore', so the server can't see the failure) the doc is left
-    // unchanged. Comparing generated_at after the poll is how we detect that silent no-op.
-    const prevGeneratedAt = await fetchGeneratedAt();
+    // The authoritative failed phase from the 202 envelope (loadWithPoll) replaces the
+    // old generated_at comparison hack — if generation fails the poll loop stops and shows
+    // the real reason via textContent (RGS-03).
     try {
       // Remove the stale banner immediately to signal the action was taken.
-      const existingBanner = body.querySelector('.staleness-banner');
+      const existingBanner = body.querySelector(‘.staleness-banner’);
       if (existingBanner) existingBanner.remove();
       body.insertBefore(
-        Object.assign(document.createElement('div'), {
-          className: 'reader-loading',
-          textContent: 'regenerating doc…',
+        Object.assign(document.createElement(‘div’), {
+          className: ‘reader-loading’,
+          textContent: ‘regenerating doc…’,
         }),
         body.firstChild,
       );
 
       // POST /doc/generate — force-regen (returns 202 immediately).
-      await fetch('/doc/generate?slug=' + encodeURIComponent(currentSlug), { method: 'POST' });
+      await fetch(‘/doc/generate?slug=’ + encodeURIComponent(currentSlug), { method: ‘POST’ });
 
       // Clear the body and reload via the existing poll loop.
       // Regeneration supersedes the doc node (new id), so drop any id-addressing and
@@ -629,42 +627,18 @@ export function initReader(ctx) {
       // prior load if this doc was opened by id).
       currentDocId = null;
       loaded = false;
-      body.textContent = '';
+      body.textContent = ‘’;
       staleFactIds = new Set();
       staleFactPrevValues = new Map();
       ctx.staleFactIds = staleFactIds;
       ctx.staleFactPrevValues = staleFactPrevValues;
       await loadWithPoll();
-
-      // Detect a silent no-op: if generated_at did not advance, the generator failed or timed
-      // out and loadWithPoll just re-rendered the OLD doc. Surface it instead of pretending success.
-      const newGeneratedAt = await fetchGeneratedAt();
-      if (prevGeneratedAt != null && newGeneratedAt != null && newGeneratedAt <= prevGeneratedAt) {
-        const failEl = document.createElement('div');
-        failEl.className = 'reader-loading';
-        failEl.textContent =
-          'regeneration didn’t complete — the generator timed out or errored. The doc is unchanged; use “regenerate” to try again.';
-        body.insertBefore(failEl, body.firstChild);
-      }
     } catch (e) {
       // Non-fatal: show an inline error.
-      const errEl = document.createElement('div');
-      errEl.className = 'reader-loading';
-      errEl.textContent = 'regenerate failed: ' + String(e);
+      const errEl = document.createElement(‘div’);
+      errEl.className = ‘reader-loading’;
+      errEl.textContent = ‘regenerate failed: ‘ + String(e);
       body.insertBefore(errEl, body.firstChild);
-    }
-  }
-
-  // Fetch the live doc node's generated_at for the current slug (regen success detection).
-  // Returns a number, or null on any error / missing field (caller treats null as "unknown").
-  async function fetchGeneratedAt() {
-    try {
-      const res = await fetch('/doc/meta?slug=' + encodeURIComponent(currentSlug));
-      if (!res.ok) return null;
-      const d = await res.json();
-      return typeof d.generated_at === 'number' ? d.generated_at : null;
-    } catch (_) {
-      return null;
     }
   }
 
