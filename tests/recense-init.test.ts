@@ -1,5 +1,5 @@
 /**
- * Tests for brain-init helpers (INSTALL-01/02/03 + D-88/D-89/D-90/D-91).
+ * Tests for brain-init helpers (INSTALL-01/02/03 + D-88/D-89/D-90/D-91 + D-04..D-10).
  *
  * Tests exported helpers only — never runs main() (no real readline, no real API
  * calls, no real settings.json, no real recense.db).
@@ -7,7 +7,7 @@
  * All API provider calls are mocked. Env files and settings.json use temp paths.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, statSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -44,6 +44,8 @@ import {
   writeEnvFile,
   validateApiKey,
   mergeSettingsHooks,
+  parseProviderChoice,
+  shouldBlockOnLeak,
 } from '../src/adapter/recense-init';
 import { resolveDbPath } from '../src/adapter/runtime-config';
 
@@ -398,5 +400,112 @@ describe('mergeSettingsHooks', () => {
     expect(brainEntries[0]!.command).toContain(`--db ${FAKE_DB}`);
     const unmatched = groups.find(g => g.matcher === undefined)!;
     expect(unmatched.hooks.some(h => /recense.*hook/.test(h.command))).toBe(true);
+  });
+});
+
+// ── parseProviderChoice (D-04) ────────────────────────────────────────────────
+
+describe('parseProviderChoice', () => {
+  it('returns subscription for empty input (default pre-selection)', () => {
+    expect(parseProviderChoice('')).toBe('subscription');
+  });
+
+  it('returns subscription for "1"', () => {
+    expect(parseProviderChoice('1')).toBe('subscription');
+  });
+
+  it('returns subscription for "s"', () => {
+    expect(parseProviderChoice('s')).toBe('subscription');
+  });
+
+  it('returns subscription for "S" (case-insensitive)', () => {
+    expect(parseProviderChoice('S')).toBe('subscription');
+  });
+
+  it('returns subscription for "subscription"', () => {
+    expect(parseProviderChoice('subscription')).toBe('subscription');
+  });
+
+  it('returns direct-api for "2"', () => {
+    expect(parseProviderChoice('2')).toBe('direct-api');
+  });
+
+  it('returns direct-api for "d"', () => {
+    expect(parseProviderChoice('d')).toBe('direct-api');
+  });
+
+  it('returns direct-api for "direct"', () => {
+    expect(parseProviderChoice('direct')).toBe('direct-api');
+  });
+
+  it('returns direct-api for "direct-api"', () => {
+    expect(parseProviderChoice('direct-api')).toBe('direct-api');
+  });
+
+  it('returns local for "3"', () => {
+    expect(parseProviderChoice('3')).toBe('local');
+  });
+
+  it('returns local for "l"', () => {
+    expect(parseProviderChoice('l')).toBe('local');
+  });
+
+  it('returns local for "local"', () => {
+    expect(parseProviderChoice('local')).toBe('local');
+  });
+
+  it('falls back to subscription for unrecognized input', () => {
+    expect(parseProviderChoice('xyz')).toBe('subscription');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(parseProviderChoice('  2  ')).toBe('direct-api');
+  });
+});
+
+// ── shouldBlockOnLeak (D-07) ──────────────────────────────────────────────────
+
+describe('shouldBlockOnLeak', () => {
+  const makeSettingsFile = (content: string): string => {
+    const dir = mkdtempSync(tmpdir() + '/recense-init-gate-test-');
+    const file = join(dir, 'settings.json');
+    writeFileSync(file, content, 'utf8');
+    return file;
+  };
+
+  it('returns true when ANTHROPIC_API_KEY is set and non-empty in settings.json', () => {
+    const settingsPath = makeSettingsFile(
+      JSON.stringify({ env: { ANTHROPIC_API_KEY: 'sk-ant-api03-xxx' } }),
+    );
+    expect(shouldBlockOnLeak(settingsPath)).toBe(true);
+  });
+
+  it('returns false when ANTHROPIC_API_KEY is absent from settings.json', () => {
+    const settingsPath = makeSettingsFile(
+      JSON.stringify({ env: { OTHER_KEY: 'value' } }),
+    );
+    expect(shouldBlockOnLeak(settingsPath)).toBe(false);
+  });
+
+  it('returns false when env block is absent from settings.json', () => {
+    const settingsPath = makeSettingsFile(JSON.stringify({ hooks: {} }));
+    expect(shouldBlockOnLeak(settingsPath)).toBe(false);
+  });
+
+  it('returns false when ANTHROPIC_API_KEY is an empty string', () => {
+    const settingsPath = makeSettingsFile(
+      JSON.stringify({ env: { ANTHROPIC_API_KEY: '' } }),
+    );
+    expect(shouldBlockOnLeak(settingsPath)).toBe(false);
+  });
+
+  it('returns false when the settings file does not exist (T-45-02)', () => {
+    expect(shouldBlockOnLeak('/tmp/nonexistent-recense-gate-test-999.json')).toBe(false);
+  });
+
+  it('returns false for malformed JSON without throwing (T-45-02)', () => {
+    const settingsPath = makeSettingsFile('{not valid json');
+    expect(() => shouldBlockOnLeak(settingsPath)).not.toThrow();
+    expect(shouldBlockOnLeak(settingsPath)).toBe(false);
   });
 });
