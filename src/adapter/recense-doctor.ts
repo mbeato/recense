@@ -1,18 +1,20 @@
 #!/usr/bin/env node
 /**
- * recense doctor — 6-dimension install health audit (INSTALL-04; dimension 6 added in Phase 12).
+ * recense doctor — 8-dimension install health audit (INSTALL-04; dimensions 7-8 added in Phase 45).
  *
- * Checks six fixed dimensions and prints a human-readable pass/fail per
+ * Checks eight fixed dimensions and prints a human-readable pass/fail per
  * dimension. Exits non-zero if any dimension fails. `--json` is deferred
  * to INSTALL-07.
  *
- * Dimensions (INSTALL-04; 6 from Phase 12):
+ * Dimensions (INSTALL-04; 8 from Phase 45):
  *   1. DB reachability + schema version
  *   2. API key validity via live calls (Anthropic + OpenAI)
  *   3. Scheduler registered + running
  *   4. Hooks wired in ~/.claude/settings.json
  *   5. Node ABI match (RECENSE_NODE_BIN vs better-sqlite3 build)
  *   6. Serve token presence + env file mode (RECENSE_SERVE_TOKEN in chmod-600 sleep.env)
+ *   7. Billing posture (subscription + ANTHROPIC_API_KEY in settings.json = footgun; D-12)
+ *   8. claude CLI present + logged in via non-billed auth probe (D-13)
  *
  * Design invariants:
  *  - DB opened readonly only — never writes the graph (T-09-10).
@@ -20,11 +22,15 @@
  *  - Failures aggregated; process.exitCode set at the end (CR-02: no
  *    process.exit() inside try/finally).
  *  - RECENSE_NODE_BIN used for ABI check (not process.execPath).
+ *  - checkBillingPosture is READ-ONLY — never writes ~/.claude/settings.json (T-45-05).
  *
  * Threat mitigations:
  *  - T-09-09: live-key check reports valid/invalid only; never echoes key bytes.
  *  - T-09-10: DB opened { readonly: true }; never writes.
  *  - T-09-11: failure aggregation → non-zero exit; asserted in test.
+ *  - T-45-01: checkBillingPosture reports key presence only; never emits key value.
+ *  - T-45-05: checkBillingPosture never writes settings.json (detect + warn only).
+ *  - T-45-06: checkClaudeCli uses `claude auth status --json` (non-billed); never the inference flag.
  */
 
 import Database from 'better-sqlite3';
@@ -35,7 +41,8 @@ import { join } from 'path';
 import { SCHEMA_VERSION } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { resolveExistingEnv } from './recense-init';
-import { resolveDbPath, sleepEnvPath } from './runtime-config';
+import { loadConfiguredEnv, resolveDbPath, sleepEnvPath } from './runtime-config';
+import { settingsHasAnthropicKey } from './claude-settings-detector';
 
 // ── Check result type ─────────────────────────────────────────────────────────
 
@@ -46,6 +53,20 @@ export interface CheckResult {
 
 function pass(detail: string): CheckResult { return { ok: true,  detail }; }
 function fail(detail: string): CheckResult { return { ok: false, detail }; }
+
+// ── Shared provider resolution (D-11 + D-12 single source of truth) ──────────
+
+/**
+ * Resolve the active model provider from the configured env file (sleep.env).
+ * Reads RECENSE_MODEL_PROVIDER; falls back to DEFAULT_CONFIG.modelProvider.
+ * Treats 'claude-headless' as subscription mode.
+ *
+ * @param envPath - Override sleep.env path for testing (mirrors checkServeToken convention).
+ */
+export function resolveActiveProvider(envPath: string = sleepEnvPath()): string {
+  const env = loadConfiguredEnv(envPath);
+  return env['RECENSE_MODEL_PROVIDER'] ?? DEFAULT_CONFIG.modelProvider;
+}
 
 // ── Dimension 1: DB reachability + schema version ─────────────────────────────
 
@@ -83,9 +104,17 @@ export function checkDb(dbPath: string): CheckResult {
  * Perform minimal live calls to validate both API keys.
  * T-09-09: reports valid/invalid only; key bytes are never written to stdout.
  *
+ * D-11: under subscription mode ('claude-headless') a missing ANTHROPIC_API_KEY is
+ * expected — emits a pass-style note and does NOT mark anyFail.
+ *
+ * @param envPath - Override sleep.env path for testing, so the no-false-failure
+ *   test can point at a temp env file with RECENSE_MODEL_PROVIDER=claude-headless.
+ *   Mirrors the checkServeToken / checkHooks override-path convention.
  * @exported — exported for type reference; live calls mean tests mock/skip it.
  */
-export async function checkApiKeys(): Promise<CheckResult> {
+export async function checkApiKeys(envPath: string = sleepEnvPath()): Promise<CheckResult> {
+  const provider      = resolveActiveProvider(envPath);
+  const isSubscription = provider === 'claude-headless';
   const anthropicKey = process.env['ANTHROPIC_API_KEY'];
   const openaiKey    = process.env['OPENAI_API_KEY'];
   const results: string[] = [];
@@ -93,8 +122,13 @@ export async function checkApiKeys(): Promise<CheckResult> {
 
   // ── Anthropic ──────────────────────────────────────────────────────────────
   if (!anthropicKey) {
-    results.push('ANTHROPIC missing');
-    anyFail = true;
+    if (isSubscription) {
+      // D-11: missing Anthropic key is expected under subscription — not a failure.
+      results.push('subscription mode (Anthropic API key not needed)');
+    } else {
+      results.push('ANTHROPIC missing');
+      anyFail = true;
+    }
   } else {
     try {
       const { default: Anthropic } = require('@anthropic-ai/sdk') as typeof import('@anthropic-ai/sdk');
@@ -300,6 +334,124 @@ export function checkServeToken(envPath: string = sleepEnvPath()): CheckResult {
   return pass('RECENSE_SERVE_TOKEN set, env file mode 0600');
 }
 
+// ── Dimension 7: Billing posture (D-12) ──────────────────────────────────────
+
+/**
+ * Detect the ANTHROPIC_API_KEY-in-settings.json footgun under subscription mode.
+ *
+ * When recense runs via the headless claude transport (subscription / claude-headless provider), an
+ * ANTHROPIC_API_KEY in ~/.claude/settings.json `env` block causes Claude Code to
+ * inject it into every subprocess — including the headless claude invocations — which
+ * routes those calls to the direct API and incurs per-token billing even though the
+ * user chose subscription mode.
+ *
+ * Outcomes:
+ *  - subscription AND key present in settings.json → fail (footgun message with fix hint)
+ *  - subscription AND key absent → pass (no footgun)
+ *  - direct-API mode → pass (key is expected; different billing path)
+ *
+ * SCOPE FENCE (T-45-05): this function is READ-ONLY. It NEVER writes to
+ * ~/.claude/settings.json. It detects and warns only.
+ *
+ * T-45-01: detail string reports key PRESENCE only; never emits the key value.
+ *
+ * @param settingsOverridePath - Override ~/.claude/settings.json path for testing
+ *   (mirrors checkHooks convention).
+ * @param envPath - Override sleep.env path for testing (mirrors checkServeToken convention).
+ * @exported — used by tests with temp settings.json and temp env files.
+ */
+export function checkBillingPosture(
+  settingsOverridePath?: string,
+  envPath: string = sleepEnvPath(),
+): CheckResult {
+  const provider = resolveActiveProvider(envPath);
+  const isSubscription = provider === 'claude-headless';
+
+  // T-45-01: settingsHasAnthropicKey returns boolean only; key value never surfaces here.
+  const keyPresent = settingsHasAnthropicKey(settingsOverridePath);
+
+  if (isSubscription && keyPresent) {
+    // T-45-05: report the footgun and the fix; do NOT edit the file.
+    return fail(
+      'ANTHROPIC_API_KEY in ~/.claude/settings.json will bill direct API even on subscription' +
+      ' — remove it from the env block',
+    );
+  }
+
+  if (isSubscription) {
+    return pass('subscription billing, no direct-API key in settings.json');
+  }
+
+  return pass('direct-API mode');
+}
+
+// ── Dimension 8: claude CLI present + logged in (D-13) ───────────────────────
+
+/**
+ * Verify the claude CLI binary is present AND the user is logged in.
+ *
+ * Uses `claude auth status --json` — a NON-BILLED auth-state probe that exists
+ * as a first-party subcommand (verified: `claude auth login|logout|status`).
+ * This is intentionally NOT `claude --version` (exits 0 even when logged out,
+ * producing a false pass) and NOT the inference flag (which would bill).
+ *
+ * Distinguishes:
+ *  - binary missing (ENOENT spawn error) → fail 'claude CLI not found — run `claude login`'
+ *  - present but logged out (non-zero exit or JSON reports unauthenticated) →
+ *      fail 'claude CLI not logged in — run `claude login`'
+ *  - present and logged in (exit 0, JSON confirms authenticated) →
+ *      pass 'claude CLI present and logged in'
+ *
+ * Binary resolution mirrors claude-headless-client.ts:208 so tests can stub
+ * the probe by pointing RECENSE_CLAUDE_BIN at a stub script.
+ *
+ * T-45-06: probe is `auth status --json` (no inference, no billing); greps
+ * for absence of `-p` flag in acceptance tests enforce the constraint.
+ *
+ * @exported — used by tests with RECENSE_CLAUDE_BIN pointing at stub scripts.
+ */
+export function checkClaudeCli(): CheckResult {
+  // Mirror claude-headless-client.ts:208 so tests can stub the binary.
+  const bin = process.env['RECENSE_CLAUDE_BIN'] || 'claude';
+
+  // T-45-06: non-billed auth-state probe — NOT the inference flag, NOT `claude --version`.
+  const result = spawnSync(bin, ['auth', 'status', '--json'], { stdio: 'pipe' });
+
+  if (result.error) {
+    // Spawn error (e.g. ENOENT) means the binary is missing entirely.
+    return fail('claude CLI not found — run `claude login`');
+  }
+
+  // Parse the JSON output defensively. Treat any parse/ambiguity as logged-out.
+  const stdout = result.stdout?.toString() ?? '';
+  let authenticated = false;
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    // Claude auth status --json returns e.g. { "status": "logged_in" | "logged_out", ... }
+    // or { "logged_in": true } depending on version. Accept any truthy indication.
+    if (typeof parsed === 'object' && parsed !== null) {
+      const obj = parsed as Record<string, unknown>;
+      // Check common field shapes from claude CLI auth status output.
+      if (obj['status'] === 'logged_in') authenticated = true;
+      else if (obj['logged_in'] === true) authenticated = true;
+      else if (result.status === 0 && !('status' in obj) && !('logged_in' in obj)) {
+        // Unknown JSON shape but exit 0: treat as authenticated (forward-compat).
+        authenticated = true;
+      }
+    }
+  } catch {
+    // Unparseable output → treat as logged-out (never throw).
+    authenticated = false;
+  }
+
+  if (result.status === 0 && authenticated) {
+    return pass('claude CLI present and logged in');
+  }
+
+  // Non-zero exit or JSON reports unauthenticated → logged out.
+  return fail('claude CLI not logged in — run `claude login`');
+}
+
 // ── Main run ──────────────────────────────────────────────────────────────────
 
 interface DoctorDimension {
@@ -315,12 +467,14 @@ async function runDoctor(): Promise<void> {
   const dbPath = resolveDbPath();
 
   const dimensions: DoctorDimension[] = [
-    { name: 'DB',          result: checkDb(dbPath)      },
-    { name: 'API keys',    result: checkApiKeys()        },
-    { name: 'Scheduler',   result: checkScheduler()      },
-    { name: 'Hooks',       result: checkHooks()          },
-    { name: 'Node ABI',    result: checkNodeAbi()        },
-    { name: 'Serve token', result: checkServeToken()     },
+    { name: 'DB',          result: checkDb(dbPath)           },
+    { name: 'API keys',    result: checkApiKeys()             },
+    { name: 'Scheduler',   result: checkScheduler()           },
+    { name: 'Hooks',       result: checkHooks()               },
+    { name: 'Node ABI',    result: checkNodeAbi()             },
+    { name: 'Serve token', result: checkServeToken()          },
+    { name: 'Billing',     result: checkBillingPosture()      },
+    { name: 'claude CLI',  result: checkClaudeCli()           },
   ];
 
   process.stdout.write('recense doctor:\n');
