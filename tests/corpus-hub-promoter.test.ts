@@ -1,9 +1,11 @@
 /**
- * corpus-hub-promoter.test.ts — Hub stub + doc_containment edge tests (Plan 39.1-02, Task 3).
+ * corpus-hub-promoter.test.ts — Hub + subject stub tests (Plan 39.1-02, Task 3).
  *
  * Requirements covered (D-04 / D-03 / T-39.1-06 / BLOCKER-2):
  *  - After promoteSubjects, the hub doc exists with slug = scope.
- *  - Hub has one doc_containment edge per created subject stub.
+ *  - hub→subject doc_containment edge derivation is now owned by DocGraphDeriver (D-11);
+ *    that coverage lives in tests/doc-graph-deriver.test.ts. promoteSubjects here is asserted
+ *    only for the stubs + meta it produces (the deriver's inputs).
  *  - For each created/refreshed subject, store.getMeta('subject-schema-ids:<slug>') round-trips
  *    the JSON array equal to relatedSchemaIds (BLOCKER-2 contract for Plan 03).
  *  - Every created subject stub has length(value)=0, origin='inferred', no node_fts row.
@@ -96,7 +98,7 @@ function seedScopeWithSchema(
 // Hub stub: slug = scope, with doc_containment edges to subjects
 // ---------------------------------------------------------------------------
 
-describe('SubjectPromoter — hub stub + doc_containment edges (D-04)', () => {
+describe('SubjectPromoter — hub stub (D-04)', () => {
   it('after promoteSubjects, hub doc node exists with slug = scope', async () => {
     const { db, store, clock } = makeDb();
     const scope = 'hub-test-scope';
@@ -118,66 +120,6 @@ describe('SubjectPromoter — hub stub + doc_containment edges (D-04)', () => {
     expect(hubRow).toBeDefined();
     expect(hubRow!.slug).toBe(scope);
     expect(hubRow!.id).toBe(result.hubDocId);
-  });
-
-  it('hub has exactly one doc_containment edge per created subject stub', async () => {
-    const { db, store, clock } = makeDb();
-    const scope = 'hub-edges-scope';
-
-    seedScopeWithSchema(db, store, scope, 'schema-edge-A', 'Edge Schema A', 5);
-    seedScopeWithSchema(db, store, scope, 'schema-edge-B', 'Edge Schema B', 4);
-
-    const provider = makeMockProvider(
-      JSON.stringify([
-        { name: 'Edge Subject A', relatedSchemaIds: ['schema-edge-A'] },
-        { name: 'Edge Subject B', relatedSchemaIds: ['schema-edge-B'] },
-      ])
-    );
-    const promoter = new SubjectPromoter(db, store, clock, provider, DEFAULT_CONFIG);
-    const result = await promoter.promoteSubjects(scope);
-
-    expect(result.created).toBe(2);
-    expect(result.hubDocId).not.toBeNull();
-
-    // Count doc_containment edges from hub to subjects
-    const containmentEdges = db.prepare(
-      "SELECT src, dst FROM edge WHERE kind = 'doc_containment' AND src = ?"
-    ).all(result.hubDocId!) as Array<{ src: string; dst: string }>;
-
-    expect(containmentEdges).toHaveLength(2);
-
-    // Each edge destination must be one of the created subject doc ids
-    const subjectDocIdSet = new Set(result.subjectDocIds);
-    for (const edge of containmentEdges) {
-      expect(subjectDocIdSet.has(edge.dst)).toBe(true);
-    }
-  });
-
-  it('hub→subject doc_containment edges are between type="doc" nodes only', async () => {
-    const { db, store, clock } = makeDb();
-    const scope = 'hub-doc-type-scope';
-
-    seedScopeWithSchema(db, store, scope, 'schema-dt', 'Doc Type Schema', 5);
-
-    const provider = makeMockProvider(
-      JSON.stringify([{ name: 'Doc Type Subject', relatedSchemaIds: ['schema-dt'] }])
-    );
-    const promoter = new SubjectPromoter(db, store, clock, provider, DEFAULT_CONFIG);
-    await promoter.promoteSubjects(scope);
-
-    const edges = db.prepare(
-      "SELECT e.src, e.dst, n_src.type as src_type, n_dst.type as dst_type " +
-      "FROM edge e " +
-      "JOIN node n_src ON n_src.id = e.src " +
-      "JOIN node n_dst ON n_dst.id = e.dst " +
-      "WHERE e.kind = 'doc_containment'"
-    ).all() as Array<{ src: string; dst: string; src_type: string; dst_type: string }>;
-
-    expect(edges.length).toBeGreaterThan(0);
-    for (const edge of edges) {
-      expect(edge.src_type).toBe('doc');
-      expect(edge.dst_type).toBe('doc');
-    }
   });
 
   it('hub stub is empty (value="") and FTS-suppressed', async () => {

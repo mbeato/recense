@@ -4,9 +4,9 @@
  * Requirements covered:
  *  - CORPUS-02 (Req 2): LLM-free mass-gated promotion: gate returns ~15–60 candidates;
  *      noise filter excludes schemas with noise_frac ≥ 0.5; deterministic.
- *  - CORPUS-03 (Req 3): Schema→schema ladder enrichment via centroid-cosine + mass signal;
- *      doc_containment (directed, larger-mass = parent) + doc_reference edges between doc nodes;
- *      ≥1 parent→child containment; forest (each child ≤1 parent); idempotent.
+ *  - CORPUS-03 (Req 3): RETIRED here — doc_containment/doc_reference derivation moved out of
+ *      CorpusPromoter to the sole-owner DocGraphDeriver (D-11, commit 9e6f309). Edge derivation
+ *      coverage now lives in tests/doc-graph-deriver.test.ts.
  *  - CORPUS-05 (Req 5, D-43 BLOCKING): Self-confirmation guard — source schema s/c/incident
  *      edge weights and member set UNCHANGED after promote(); new nodes are exclusively type='doc';
  *      new edges are exclusively doc_containment/doc_reference/cites; FK-clean.
@@ -359,125 +359,6 @@ describe('CorpusPromoter — CORPUS-02: mass gate + noise filter', () => {
     // No corpus edges written
     const edgeCount = (db.prepare("SELECT COUNT(*) as n FROM edge WHERE kind IN ('doc_containment', 'doc_reference')").get() as { n: number }).n;
     expect(edgeCount).toBe(0);
-  });
-
-});
-
-// ---------------------------------------------------------------------------
-// CORPUS-03: cosine+mass ladder yields corpus edges
-// ---------------------------------------------------------------------------
-
-describe('CorpusPromoter — CORPUS-03: cosine+mass ladder yields corpus edges', () => {
-
-  it('doc_containment edge: larger-mass schema doc is parent of cosine-similar smaller-mass schema doc', async () => {
-    const { db, store, clock, schemas } = buildLiveShapedBrain();
-    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
-    await promoter.promote();
-
-    // schemaA (mass=12) and schemaB (mass=10) have similar embeddings [~0.9, 0.1, 0, 0]
-    // mass gap = 2 >= massGapMin=2 → schemaA should be parent of schemaB (containment)
-    // Their doc nodes are the ones in node_doc with slug=schemaA/schemaB
-
-    const docA = db.prepare(
-      "SELECT n.id FROM node n JOIN node_scope ns ON ns.node_id=n.id WHERE n.type='doc' AND n.tombstoned=0 AND ns.scope=?"
-    ).get(schemas.schemaA) as { id: string } | undefined;
-    const docB = db.prepare(
-      "SELECT n.id FROM node n JOIN node_scope ns ON ns.node_id=n.id WHERE n.type='doc' AND n.tombstoned=0 AND ns.scope=?"
-    ).get(schemas.schemaB) as { id: string } | undefined;
-
-    expect(docA).toBeDefined();
-    expect(docB).toBeDefined();
-
-    const containmentEdges = db.prepare(
-      "SELECT src, dst FROM edge WHERE kind='doc_containment'"
-    ).all() as Array<{ src: string; dst: string }>;
-
-    // At least one containment edge should exist
-    expect(containmentEdges.length).toBeGreaterThanOrEqual(1);
-
-    // schemaA (mass=12) doc should be parent of schemaB (mass=10) doc (directed: parent→child)
-    const parentChild = containmentEdges.find(
-      e => e.src === docA!.id && e.dst === docB!.id
-    );
-    expect(parentChild).toBeDefined();
-  });
-
-  it('each child has at most one parent (forest invariant — no hairball)', async () => {
-    const { db, store, clock } = buildLiveShapedBrain();
-    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
-    await promoter.promote();
-
-    const containmentEdges = db.prepare(
-      "SELECT src, dst FROM edge WHERE kind='doc_containment'"
-    ).all() as Array<{ src: string; dst: string }>;
-
-    // Count how many times each dst appears (child cannot have more than 1 parent)
-    const childParentCount = new Map<string, number>();
-    for (const { dst } of containmentEdges) {
-      childParentCount.set(dst, (childParentCount.get(dst) ?? 0) + 1);
-    }
-    for (const [, count] of childParentCount) {
-      expect(count).toBe(1);
-    }
-  });
-
-  it('corpus edges are written between doc nodes only — never between source schema nodes', async () => {
-    const { db, store, clock } = buildLiveShapedBrain();
-    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
-    await promoter.promote();
-
-    const corpusEdges = db.prepare(
-      "SELECT e.src, e.dst, n_src.type as src_type, n_dst.type as dst_type FROM edge e " +
-      "JOIN node n_src ON n_src.id=e.src JOIN node n_dst ON n_dst.id=e.dst " +
-      "WHERE e.kind IN ('doc_containment', 'doc_reference')"
-    ).all() as Array<{ src: string; dst: string; src_type: string; dst_type: string }>;
-
-    for (const edge of corpusEdges) {
-      expect(edge.src_type).toBe('doc');
-      expect(edge.dst_type).toBe('doc');
-    }
-  });
-
-  it('promote() on a brain with cosine-similar promoted schemas produces ≥1 corpus edge', async () => {
-    const { db, store, clock } = buildLiveShapedBrain();
-    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
-    await promoter.promote();
-
-    const corpusEdgeCount = (db.prepare(
-      "SELECT COUNT(*) as n FROM edge WHERE kind IN ('doc_containment', 'doc_reference')"
-    ).get() as { n: number }).n;
-
-    expect(corpusEdgeCount).toBeGreaterThanOrEqual(1);
-  });
-
-  it('wipe-and-rebuild: second promote() replaces old corpus edges (idempotent)', async () => {
-    const { db, store, clock } = buildLiveShapedBrain();
-    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
-
-    await promoter.promote();
-    const edgesAfterFirst = (db.prepare(
-      "SELECT src, dst, kind FROM edge WHERE kind IN ('doc_containment', 'doc_reference') ORDER BY src, dst, kind"
-    ).all() as Array<{ src: string; dst: string; kind: string }>);
-
-    await promoter.promote();
-    const edgesAfterSecond = (db.prepare(
-      "SELECT src, dst, kind FROM edge WHERE kind IN ('doc_containment', 'doc_reference') ORDER BY src, dst, kind"
-    ).all() as Array<{ src: string; dst: string; kind: string }>);
-
-    // Edge sets must be identical (wipe-and-rebuild determinism)
-    expect(edgesAfterSecond).toEqual(edgesAfterFirst);
-  });
-
-  it('promote() result containment count equals number of doc_containment edges in DB', async () => {
-    const { db, store, clock } = buildLiveShapedBrain();
-    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
-    const result = await promoter.promote();
-
-    const dbContainment = (db.prepare(
-      "SELECT COUNT(*) as n FROM edge WHERE kind='doc_containment'"
-    ).get() as { n: number }).n;
-
-    expect(result.containment).toBe(dbContainment);
   });
 
 });

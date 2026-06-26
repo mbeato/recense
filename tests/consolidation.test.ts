@@ -927,14 +927,21 @@ describe('Consolidator', () => {
   // ── Per-role skip threshold (consolSkipThresholdAssistant) ──────────────────
 
   it('per-role skip: user episode salience 0.3 is still processed (user threshold unchanged at 0.2)', async () => {
-    // 0.3 >= consolSkipThreshold(0.2) → processed for user role
+    // 0.3 >= consolSkipThreshold(0.2) → processed for user role.
+    // Clear the per-source override (DEFAULT_CONFIG sets claude-code:0.5, D-60/COST-02) so this
+    // test exercises the per-ROLE threshold; test episodes default to source='claude-code', which
+    // would otherwise apply the 0.5 per-source bar and skip a 0.3 episode.
+    const cfg: EngineConfig = {
+      ...h.config,
+      salience: { ...h.config.salience, consolSkipThresholdBySource: {} },
+    };
     const provider = new MockModelProvider({
       embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),  // auto-unrelated
       generateScript: [JSON.stringify([{ type: 'fact', value: 'user low-salience claim' }])],
       judgeScript: [],
     });
     const consolidator = new Consolidator(
-      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+      h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), cfg, h.clock,
     );
 
     h.episodes.append({
@@ -1036,7 +1043,13 @@ describe('Consolidator', () => {
 
   it('per-role skip: consolSkipThresholdAssistant=0.2 restores prior behavior (reversibility)', async () => {
     // Setting consolSkipThresholdAssistant=0.2 means the assistant 0.3 episode is now processed
-    const reversibleConfig: EngineConfig = { ...h.config, consolSkipThresholdAssistant: 0.2 };
+    // Clear the per-source override (DEFAULT_CONFIG sets claude-code:0.5) so the per-role assistant
+    // threshold governs; test episodes default to source='claude-code'.
+    const reversibleConfig: EngineConfig = {
+      ...h.config,
+      consolSkipThresholdAssistant: 0.2,
+      salience: { ...h.config.salience, consolSkipThresholdBySource: {} },
+    };
     const provider = new MockModelProvider({
       embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
       generateScript: [JSON.stringify([{ type: 'fact', value: 'reversibility claim' }])],
