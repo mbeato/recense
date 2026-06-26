@@ -47,6 +47,10 @@ import {
   loadSettingsFile,
   writeSettingsFile,
 } from '../adapter/settings-loader';
+import {
+  readStatus,
+  buildGeneratingEnvelope,
+} from '../adapter/gen-status';
 import type { PresetName, SettingsFile } from '../lib/config';
 
 // ---------------------------------------------------------------------------
@@ -443,8 +447,9 @@ export function startVizServer(
   function send202Generating(res: http.ServerResponse, slug: string): void {
     const startedAt = inFlightSlugs.get(slug);
     const elapsedMs = startedAt != null ? Math.max(0, Date.now() - startedAt) : 0;
+    const st = readStatus(slug);
     res.writeHead(202, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ status: 'generating', elapsedMs }));
+    res.end(JSON.stringify(buildGeneratingEnvelope(st, elapsedMs)));
   }
 
   const server = http.createServer((req, res) => {
