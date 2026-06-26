@@ -5,8 +5,13 @@
  * D-89 spine order:
  *   1. Parse existing env file (defaults for re-run)
  *   2. Prompt: DB path
- *   3. Prompt: ANTHROPIC_API_KEY + live validate if changed (D-90/D-91)
- *   4. Prompt: OPENAI_API_KEY + live validate if changed (D-90/D-91)
+ *   2a. Prompt: Provider/billing step (D-04) — Subscription pre-selected default
+ *       - Subscription (claude -p): skip Anthropic key prompt (D-05); write
+ *         RECENSE_MODEL_PROVIDER=claude-headless (D-06); acknowledge gate (D-07)
+ *       - Direct API: prompt + validate Anthropic key (D-08)
+ *       - Local: unchanged (D-09)
+ *   3. Prompt: ANTHROPIC_API_KEY + live validate if changed (D-90/D-91) — Direct-API only
+ *   4. Prompt: OPENAI_API_KEY + live validate if changed (D-90/D-91) — all paths (D-10)
  *   5. Capture RECENSE_NODE_BIN = process.execPath (INSTALL-03)
  *   6. Write env file chmod-600 (atomic tmp→rename, T-09-17)
  *   7. Register scheduler (recense scheduler install)
@@ -18,7 +23,7 @@
  *
  * Exported testable helpers (no readline, no real API calls in tests):
  *   resolveExistingEnv, isKeyUnchanged, captureNodeBin, writeEnvFile,
- *   validateApiKey, mergeSettingsHooks.
+ *   validateApiKey, mergeSettingsHooks, parseProviderChoice, shouldBlockOnLeak.
  *
  * Threat mitigations:
  *   T-09-17: env file written chmod-600 via atomic tmp→rename; keys never logged.
@@ -27,6 +32,11 @@
  *   T-09-19: live validation before complete; skip is opt-in only (D-91).
  *   T-09-20: seed step spawns seed-cli which acquires the single-writer lock and
  *            honours the D-81 unconfigured guard; seeded flag not burned.
+ *   T-45-01: acknowledge-gate warning output — reports presence only via boolean;
+ *            never prints the ANTHROPIC_API_KEY value.
+ *   T-45-05: gate is read-only (detect + warn); no writeFileSync against settings.json.
+ *   T-45-02: gate delegates to settingsHasAnthropicKey which never throws on missing/malformed.
+ *   T-45-07: subscription path does NOT set vars['ANTHROPIC_API_KEY'].
  */
 
 import { createHash } from 'crypto';
@@ -48,7 +58,8 @@ import { spawnSync } from 'child_process';
 // (lazy require inside validateApiKey was not interceptable in vitest forks/CJS mode)
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import { defaultDbPath } from './runtime-config';
+import { defaultDbPath, sleepEnvPath } from './runtime-config';
+import { settingsHasAnthropicKey } from './claude-settings-detector';
 
 const LOG_PATH = '/tmp/recense-init.log';
 
@@ -252,6 +263,43 @@ export function mergeSettingsHooks(
   renameSync(tmp, settingsPath);
 }
 
+/**
+ * Parse the provider/billing choice entered by the user during init (D-04).
+ *
+ * Accepted values (case-insensitive):
+ *   '1' | 's' | 'subscription' | '' (empty = default) → 'subscription'
+ *   '2' | 'd' | 'direct'       | 'direct-api'         → 'direct-api'
+ *   '3' | 'l' | 'local'                               → 'local'
+ *
+ * Any unrecognized input falls back to 'subscription' (safe default).
+ *
+ * Exported pure function — testable without readline.
+ */
+export function parseProviderChoice(raw: string): 'subscription' | 'direct-api' | 'local' {
+  const s = raw.trim().toLowerCase();
+  if (s === '' || s === '1' || s === 's' || s === 'subscription') return 'subscription';
+  if (s === '2' || s === 'd' || s === 'direct' || s === 'direct-api') return 'direct-api';
+  if (s === '3' || s === 'l' || s === 'local') return 'local';
+  return 'subscription'; // safe fallback to subscription (the pre-selected default)
+}
+
+/**
+ * Returns true iff the acknowledge gate should block the subscription-path install (D-07).
+ *
+ * The gate fires ONLY when ANTHROPIC_API_KEY is detected in ~/.claude/settings.json —
+ * that key causes direct-API billing even when the recense subscription transport is used.
+ *
+ * Delegates to settingsHasAnthropicKey (45-01) which never throws on missing/malformed
+ * files (T-45-02). The key value is never read or emitted (T-45-01).
+ *
+ * @param settingsPath Override path for testing. Defaults to ~/.claude/settings.json.
+ */
+export function shouldBlockOnLeak(
+  settingsPath: string = join(homedir(), '.claude', 'settings.json'),
+): boolean {
+  return settingsHasAnthropicKey(settingsPath);
+}
+
 // ── Interactive readline helpers ─────────────────────────────────────────────
 
 type Rl = ReturnType<typeof createInterface>;
@@ -378,9 +426,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const envPath =
-    process.env['RECENSE_SLEEP_ENV'] ??
-    join(homedir(), '.config', 'recense', 'sleep.env');
+  const envPath = sleepEnvPath();
 
   const existing = resolveExistingEnv(envPath);
 
@@ -394,14 +440,53 @@ async function main(): Promise<void> {
   const defaultDb = existing.get('RECENSE_DB') ?? defaultDbPath();
   const dbPath = await ask(rl, 'DB path', defaultDb);
 
-  // ── D-89 Steps 2-3: API keys with live validation ─────────────────────────
-  const anthropicKey = await promptAndValidateKey(
-    rl,
-    'ANTHROPIC_API_KEY',
-    existing.get('ANTHROPIC_API_KEY') ?? '',
-    'anthropic',
-  );
+  // ── D-04: Provider/billing step — Subscription pre-selected ───────────────
+  // Uses the plain ask() readline helper + bracket-default idiom (no new prompt lib).
+  // Subscription (claude -p) covers Anthropic billing on the Max plan — an OpenAI
+  // API key is still required for embeddings on every path.
+  console.log('\nBilling / provider:');
+  console.log('  1. Subscription (claude -p) — Anthropic billing via your Max plan [default]');
+  console.log('  2. Direct API   — enter an Anthropic API key');
+  console.log('  3. Local        — use a local model (no Anthropic key needed)');
+  const providerRaw = await ask(rl, 'Choice', '1');
+  const provider = parseProviderChoice(providerRaw);
 
+  // ── D-89 Steps 2-3: API keys with live validation ─────────────────────────
+  let anthropicKey = '';
+  if (provider === 'direct-api') {
+    // D-08: Direct-API path — prompt + live-validate the Anthropic key (unchanged behavior).
+    anthropicKey = await promptAndValidateKey(
+      rl,
+      'ANTHROPIC_API_KEY',
+      existing.get('ANTHROPIC_API_KEY') ?? '',
+      'anthropic',
+    );
+  }
+  // D-05: Subscription and Local paths skip the Anthropic key prompt entirely.
+
+  // ── D-07: Acknowledge gate (subscription path only) ───────────────────────
+  // Fires ONLY when ANTHROPIC_API_KEY is detected in ~/.claude/settings.json —
+  // that key causes direct-API billing even when the subscription transport is used.
+  // NO edits to settings.json (T-45-05: detect + warn only).
+  if (provider === 'subscription') {
+    const settingsPath = join(homedir(), '.claude', 'settings.json');
+    if (shouldBlockOnLeak(settingsPath)) {
+      console.log('\n  WARNING: ANTHROPIC_API_KEY found in ~/.claude/settings.json (env block).');
+      console.log('  Claude Code injects this key into every process it runs, including the');
+      console.log('  recense sleep pass. That key will cause direct-API billing even though');
+      console.log('  recense is configured to use your subscription (claude -p).');
+      console.log('  To stop the billing leak, remove ANTHROPIC_API_KEY from the `env` block');
+      console.log('  in ~/.claude/settings.json. recense will NOT edit that file.');
+      const ans = await ask(rl, '\n  Continue anyway? [y/N]', 'N');
+      if (ans.toLowerCase() !== 'y') {
+        console.log('\n  Aborting init. Remove ANTHROPIC_API_KEY from ~/.claude/settings.json and re-run.');
+        rl.close();
+        process.exit(1);
+      }
+    }
+  }
+
+  // D-10: OpenAI key prompt runs on ALL paths (embeddings; subscription covers Anthropic only).
   const openaiKey = await promptAndValidateKey(
     rl,
     'OPENAI_API_KEY',
@@ -419,7 +504,15 @@ async function main(): Promise<void> {
   for (const [k, v] of existing) vars[k] = v;
   vars['RECENSE_NODE_BIN'] = nodeBin;
   vars['RECENSE_DB'] = dbPath;
-  if (anthropicKey) vars['ANTHROPIC_API_KEY'] = anthropicKey;
+  if (provider === 'subscription') {
+    // D-06: Write RECENSE_MODEL_PROVIDER=claude-headless; do NOT write ANTHROPIC_API_KEY
+    // (T-45-07: subscription path must not leak the Anthropic key into the env file).
+    vars['RECENSE_MODEL_PROVIDER'] = 'claude-headless';
+    // If a prior run wrote ANTHROPIC_API_KEY, remove it from vars so it is not re-written.
+    delete vars['ANTHROPIC_API_KEY'];
+  } else {
+    if (anthropicKey) vars['ANTHROPIC_API_KEY'] = anthropicKey;
+  }
   if (openaiKey) vars['OPENAI_API_KEY'] = openaiKey;
 
   writeEnvFile(envPath, vars);
@@ -440,11 +533,11 @@ async function main(): Promise<void> {
   }
 
   // ── D-89 Step 7: Wire settings.json hooks (D-88) ──────────────────────────
-  const settingsPath = join(homedir(), '.claude', 'settings.json');
+  const hookSettingsPath = join(homedir(), '.claude', 'settings.json');
   const brainJs = resolve(__dirname, 'recense.js');
   console.log('\n  Wiring hooks in settings.json...');
   try {
-    mergeSettingsHooks(settingsPath, nodeBin, brainJs, dbPath);
+    mergeSettingsHooks(hookSettingsPath, nodeBin, brainJs, dbPath);
     console.log('  Hooks wired: SessionStart, UserPromptSubmit, Stop');
   } catch (e) {
     const msg = String(e);
