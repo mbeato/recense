@@ -608,18 +608,18 @@ export function initReader(ctx) {
     // the real reason via textContent (RGS-03).
     try {
       // Remove the stale banner immediately to signal the action was taken.
-      const existingBanner = body.querySelector(‘.staleness-banner’);
+      const existingBanner = body.querySelector('.staleness-banner');
       if (existingBanner) existingBanner.remove();
       body.insertBefore(
-        Object.assign(document.createElement(‘div’), {
-          className: ‘reader-loading’,
-          textContent: ‘regenerating doc…’,
+        Object.assign(document.createElement('div'), {
+          className: 'reader-loading',
+          textContent: 'regenerating doc…',
         }),
         body.firstChild,
       );
 
       // POST /doc/generate — force-regen (returns 202 immediately).
-      await fetch(‘/doc/generate?slug=’ + encodeURIComponent(currentSlug), { method: ‘POST’ });
+      await fetch('/doc/generate?slug=' + encodeURIComponent(currentSlug), { method: 'POST' });
 
       // Clear the body and reload via the existing poll loop.
       // Regeneration supersedes the doc node (new id), so drop any id-addressing and
@@ -627,7 +627,7 @@ export function initReader(ctx) {
       // prior load if this doc was opened by id).
       currentDocId = null;
       loaded = false;
-      body.textContent = ‘’;
+      body.textContent = '';
       staleFactIds = new Set();
       staleFactPrevValues = new Map();
       ctx.staleFactIds = staleFactIds;
@@ -635,9 +635,9 @@ export function initReader(ctx) {
       await loadWithPoll();
     } catch (e) {
       // Non-fatal: show an inline error.
-      const errEl = document.createElement(‘div’);
-      errEl.className = ‘reader-loading’;
-      errEl.textContent = ‘regenerate failed: ‘ + String(e);
+      const errEl = document.createElement('div');
+      errEl.className = 'reader-loading';
+      errEl.textContent = 'regenerate failed: ' + String(e);
       body.insertBefore(errEl, body.firstChild);
     }
   }
