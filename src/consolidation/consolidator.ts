@@ -36,7 +36,7 @@ import type { EpisodicStore } from '../db/episode-store';
 import type { SemanticStore } from '../db/semantic-store';
 import type { StrengthDecayManager } from '../strength/decay';
 import type { CandidateRetriever } from '../retrieval/topk';
-import { cosineSimF32 } from '../retrieval/topk';
+import { cosineSimF32, ftsQueryFromText } from '../retrieval/topk';
 import type { JudgeRelation } from '../model/judge';
 import type { ModelProvider } from '../model/provider';
 import type { ExtractedClaim, ActionType } from '../model/claim-extractor';
@@ -229,6 +229,12 @@ export class Consolidator {
   // a db.transaction). Mirrors the B2 stmtStaleEntityIds precedent in engine.ts:140-158.
   private readonly stmtProvenanceSiblingFacts: Statement<[string], { id: string; value: string }>;
   private readonly stmtLiveNodesForLinks: Statement<[], { id: string; value: string }>;
+  // Phase 46 (D-03): BM25 lexical candidate statement — compiled once (T-01-SQL).
+  // Mirrors CandidateRetriever.stmtBm25 SQL exactly; lives here because stmtBm25 is private.
+  // bm25() returns negative-is-better; ORDER BY rank ASC = best-first.
+  // JOIN node excludes tombstoned rows. MATCH arg MUST be ftsQueryFromText() output (T-17-02-T).
+  // Sync Phase A read — never inside db.transaction (T-02-ASYNC).
+  private readonly stmtBm25Candidates: Database.Statement;
 
   // Phase 37 Fix-2: typed-triple entity resolution lives in SemanticStore.resolveEntityByName
   // (ranked exact → entity-type → shortest-containing). The old stmtFindNodeByName used
@@ -287,6 +293,14 @@ export class Consolidator {
     this.stmtLiveNodesForLinks = db.prepare(
       `SELECT id, value FROM node WHERE tombstoned = 0`
     );
+    // Phase 46 (D-03): BM25 lexical candidate statement.
+    // SQL matches CandidateRetriever.stmtBm25 (topk.ts:301-306) exactly.
+    this.stmtBm25Candidates = db.prepare(`
+      SELECT f.node_id AS id
+      FROM node_fts f JOIN node n ON n.id = f.node_id AND n.tombstoned = 0
+      WHERE node_fts MATCH ?
+      ORDER BY rank LIMIT ?
+    `);
 
   }
 
@@ -548,6 +562,14 @@ export class Consolidator {
     // eligible episodes because the chunk covers exactly the sub-slice being processed.
     const prefetchedExtractions = new Map<string, { claims: ExtractedClaim[]; triples: Triple[] } | Error>();
 
+    // Phase 46 D-06: candidate-source counters (observability only — never gate behavior).
+    // Declared at consolidate() METHOD scope so they accumulate across all chunks and episodes.
+    // Verified via RECON-03: judgeFiredContradiction > 0 after adding BM25.
+    let cosineCandidateTotal = 0;
+    let anchorCandidateTotal = 0;
+    let bm25CandidateTotal = 0;
+    let judgeFiredContradiction = 0;
+
     // Process unconsolidated in chunks. Each chunk: prefetch → per-episode loop → next chunk.
     for (let chunkStart = 0; chunkStart < unconsolidated.length; chunkStart += prefetchBatchSize) {
       const chunk = unconsolidated.slice(chunkStart, chunkStart + prefetchBatchSize);
@@ -753,14 +775,43 @@ export class Consolidator {
               }
             }
 
-            // UPDATE-02 refined gate: auto-unrelated fires ONLY when cosine gate is true
-            // AND no anchor candidates exist. When anchors exist, fall through to judge
-            // escalation regardless of cosine score (M1 distant-contradiction rescue).
+            // Phase 46 (D-03): BM25 lexical candidate pass.
+            // Third union member: cosine ∪ M1-anchors (existing) ∪ BM25 (new).
+            // Phase A sync read — before any db.transaction (T-02-ASYNC invariant).
+            // ftsQueryFromText is the mandatory MATCH sanitizer (T-17-02-T — never pass raw text).
+            // Dark-knob: bm25CandidateK=0 reproduces today's exact behavior (D-07).
+            // FTS-absent fallback: try/catch mirrors topk.ts:hybridTopk lines 460-465.
+            const bm25Candidates: Array<{ id: string }> = [];
+            if (this.config.bm25CandidateK > 0) {
+              const ftsQuery = ftsQueryFromText(claim.value);
+              if (ftsQuery) {
+                try {
+                  const bm25Rows = this.stmtBm25Candidates.all(ftsQuery, this.config.bm25CandidateK) as Array<{ id: string }>;
+                  for (const row of bm25Rows) {
+                    if (!cosineIdSet.has(row.id) && !anchors.some(a => a.id === row.id)) {
+                      bm25Candidates.push(row);
+                    }
+                  }
+                } catch {
+                  // FTS table absent or MATCH syntax error — graceful degradation (mirrors topk.ts:hybridTopk)
+                }
+              }
+            }
+
+            // D-06: accumulate candidate-source counters after each source resolves.
+            cosineCandidateTotal += candidates.length;
+            anchorCandidateTotal += anchors.length;
+            bm25CandidateTotal += bm25Candidates.length;
+
+            // Phase 46 D-04: extend gate — auto-unrelated fires only when cosine is low,
+            // no anchors, AND no BM25 candidates. A BM25 lexical hit rescues a low-cosine
+            // claim into judge escalation exactly like an anchor does. This is the load-bearing
+            // change that lets the judge see cosine-0.48 contradictions it currently auto-drops.
             const cosineGate = candidates.length === 0 ||
               candidates[0]!.score < this.config.unrelatedSimilarityThreshold;
 
-            if (cosineGate && anchors.length === 0) {
-              // UPDATE-02 safe-direction: low cosine, no anchors → auto-unrelated, no judge call
+            if (cosineGate && anchors.length === 0 && bm25Candidates.length === 0) {
+              // low cosine, no anchors, no BM25 hits → auto-unrelated, no judge call
               decisionSlots[claimIdx] = {
                 claimValue: claim.value,
                 claimType: claim.type,
@@ -779,14 +830,19 @@ export class Consolidator {
                 claimVec: queryVec,              // DEDUP-01: embed-on-mint
               };
             } else {
-              // Escalate to judge — cosine candidates first (D-17 precedence), anchors appended.
-              // Reads current values from graph (UPDATE-01 "current value").
+              // Phase 46 D-02: extend union — cosine → anchors → BM25 (D-02 ordering).
+              // BM25 candidates are deduped from cosine+anchor ids already above; no additional
+              // dedup needed here. Value fetched via store (mirrors cosine candidate pattern).
               const judgeCandidates = [
                 ...candidates.map(c => ({
                   id: c.id,
                   value: this.store.getNode(c.id)?.value ?? '',
                 })),
                 ...anchors, // anchors carry value from SQL / stmtLiveNodesForLinks row
+                ...bm25Candidates.map(c => ({
+                  id: c.id,
+                  value: this.store.getNode(c.id)?.value ?? '',
+                })), // BM25 lexical hits (Phase 46 D-02)
               ];
               pendingJudges.push({
                 slotIdx: claimIdx,
@@ -889,6 +945,11 @@ export class Consolidator {
           resolvedTriples.push({ srcId, dstId, rel: triple.predicate });
         }
 
+        // D-06: count contradiction decisions before Phase B (applyDecision is a separate method
+        // and cannot see consolidate()-local counters — increment at the call site, not inside).
+        for (const decision of decisions) {
+          if (decision.relation === 'contradict') judgeFiredContradiction++;
+        }
         this.db.transaction(() => {
           for (const decision of decisions) {
             this.applyDecision(decision, episodeId);
@@ -916,6 +977,11 @@ export class Consolidator {
       }
       } // end per-episode loop for this chunk
     } // end chunked prefetch outer loop (FIX-STALL-01)
+
+    // Phase 46 D-06: emit accumulated candidate-source counters after all chunks complete.
+    this.log(
+      `RECON-03 candidates: cosine=${cosineCandidateTotal} anchors=${anchorCandidateTotal} bm25=${bm25CandidateTotal} | judgeFiredContradiction=${judgeFiredContradiction}`
+    );
 
     // ── Phase C: Re-embed nodes dirtied by this pass, then eviction sweep ──
     await this.reembedDirty();
