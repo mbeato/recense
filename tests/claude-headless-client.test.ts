@@ -44,6 +44,7 @@ vi.mock('node:child_process', () => ({
 import {
   createClaudeHeadlessClient,
   createClaudeHeadlessSurveyClient,
+  buildHeadlessArgs,
   buildSurveyHeadlessArgs,
   SURVEY_SYSTEM,
   setHeadlessUsageSink,
@@ -251,6 +252,32 @@ describe('createClaudeHeadlessClient', () => {
 
     // Sink was cleared — never called.
     expect(captured).toHaveLength(0);
+  });
+});
+
+// ── Judge/extract transport: buildHeadlessArgs (default vs --bare) ──────────
+
+describe('buildHeadlessArgs', () => {
+  afterEach(() => { delete process.env['RECENSE_HEADLESS_BARE']; });
+
+  it('default path: --setting-sources project + --tools none, NO --bare', () => {
+    delete process.env['RECENSE_HEADLESS_BARE'];
+    const args = buildHeadlessArgs('claude-haiku-4-5', 'sys');
+    expect(args).toContain('--tools');
+    expect(args).toContain('none');
+    expect(args).toContain('--setting-sources');
+    expect(args).not.toContain('--bare');
+  });
+
+  it('RECENSE_HEADLESS_BARE=1: adds --bare, drops --setting-sources + --exclude-dynamic', () => {
+    process.env['RECENSE_HEADLESS_BARE'] = '1';
+    const args = buildHeadlessArgs('claude-haiku-4-5', 'sys');
+    expect(args).toContain('--bare');
+    expect(args).toContain('--tools');
+    expect(args).toContain('none');
+    expect(args).toContain('--strict-mcp-config');
+    expect(args).not.toContain('--setting-sources');
+    expect(args).not.toContain('--exclude-dynamic-system-prompt-sections');
   });
 });
 

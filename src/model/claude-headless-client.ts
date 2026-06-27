@@ -122,15 +122,40 @@ const DEFAULT_TIMEOUT_MS = 120_000;
  * `UserPromptSubmit` turn-capture and `SessionStart` inject hooks. Without this, each
  * internal `claude -p` extract/judge call is itself captured as a new "user" episode
  * (self-ingestion loop) and gets recalled context injected into its prompt. The neutral
- * cwd alone does NOT prevent this — those hooks are global (cwd-independent). OAuth /
- * subscription auth is a SEPARATE source, unaffected (only `--bare` disables OAuth — which
- * is why `--bare` can't be used on the Max subscription).
+ * cwd alone does NOT prevent this — those hooks are global (cwd-independent).
  *
  * `--tools none` + `--strict-mcp-config` + `--exclude-dynamic-system-prompt-sections`
- * trim the Claude Code harness (~28.6K → ~5.5K tokens/call) and make the remainder
+ * trim the Claude Code harness (~28.6K → ~2.8K tokens/call) and make the remainder
  * cacheable; the judge/extractor need no tools and no MCP.
+ *
+ * OPT-IN `--bare` mode (RECENSE_HEADLESS_BARE=1): see the in-body comment. `--bare` skips
+ * ALL hooks (so it replaces the `--setting-sources project` self-ingestion guard) AND
+ * strips residual scaffolding (~2.8K → ~150 tokens/call). Verified quality-neutral on
+ * EVAL-02 (84.6% belief-correction, case-for-case identical to the default path) with no
+ * Stop-hook recursion. CAVEAT (correctness-critical): `--bare` authenticates only from a
+ * TRUSTED cwd — from a neutral cwd it returns "Not logged in", which degrades silently to
+ * empty extraction (0 nodes). It therefore requires RECENSE_HEADLESS_CWD set to a trusted
+ * dir, and remains opt-in (not default) until a "Not logged in" detection/fallback guard
+ * exists, since an untrusted cwd would silently stop the memory from learning.
  */
 export function buildHeadlessArgs(model: string, systemPrompt: string): string[] {
+  // EXPERIMENTAL (opt-in via RECENSE_HEADLESS_BARE=1): `--bare` strips the residual Claude
+  // Code scaffolding, cutting per-call input from ~2,800 to ~150 tokens. It also skips ALL
+  // hooks (the self-ingestion/Stop-hook guard, replacing `--setting-sources project`). BUT
+  // `--bare` cannot authenticate from a neutral cwd (`/tmp` → "Not logged in"); it requires
+  // a trusted/project cwd, so it MUST be paired with RECENSE_HEADLESS_CWD pointing at a
+  // trusted dir (see the spawn site). Default (env unset) = unchanged production flags.
+  if (process.env['RECENSE_HEADLESS_BARE'] === '1') {
+    return [
+      '-p',
+      '--bare',
+      '--output-format', 'json',
+      '--model', model,
+      '--system-prompt', systemPrompt,
+      '--tools', 'none',
+      '--strict-mcp-config',
+    ];
+  }
   return [
     '-p',
     '--output-format', 'json',
@@ -330,8 +355,11 @@ export function createClaudeHeadlessClient(config: EngineConfig): { client: Anth
 
           const child = spawn(bin, args, {
             // Neutral cwd: no project CLAUDE.md, no brain-memory hooks (incl. the recense
-            // Stop-hook sleep pass — running in-repo would recurse).
-            cwd: os.tmpdir(),
+            // Stop-hook sleep pass — running in-repo would recurse). EXPERIMENTAL override
+            // (RECENSE_HEADLESS_CWD): the `--bare` mode needs a trusted cwd to authenticate,
+            // and relies on `--bare` (not the neutral cwd) to skip hooks; only set this in
+            // tandem with RECENSE_HEADLESS_BARE=1.
+            cwd: process.env['RECENSE_HEADLESS_CWD'] || os.tmpdir(),
             env: childEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
           });
