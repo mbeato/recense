@@ -248,6 +248,16 @@ export interface EngineConfig {
   entityAnchorK: number;
 
   /**
+   * Phase 46 (D-03): max BM25 lexical candidates appended after cosine+anchor candidates
+   * for contradiction detection in the offline sleep pass.
+   * BM25 runs over node_fts (FTS5) using ftsQueryFromText(claim.value) — never raw text
+   * (T-17-02-T). Deduped against cosine+anchor ids before being appended to judgeCandidates.
+   * Default 5 mirrors candidateK/entityAnchorK calibration placeholders (D-03).
+   * Dark isolation switch: set to 0 to reproduce pre-Phase-46 behavior exactly (D-07).
+   */
+  bm25CandidateK: number;
+
+  /**
    * Salience below which a non-hard-keep episode is skipped in consolidation replay (CONSOL-01).
    * 0.2 means episodes with <20% salience are skipped unless force-kept.
    * Calibrate against real transcript cadence — too low wastes LLM budget on noise.
@@ -772,6 +782,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   embeddingDimensions: 1536,
   candidateK: 5,
   entityAnchorK: 5,
+  bm25CandidateK: 5,   // Phase 46 D-03: default ON; set 0 to reproduce pre-46 behavior (D-07)
   consolSkipThreshold: 0.2,
   consolSkipThresholdAssistant: 0.5,
   unrelatedSimilarityThreshold: 0.3,
