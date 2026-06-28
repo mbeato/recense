@@ -392,6 +392,17 @@ export class SemanticStore {
       );
     }
 
+    // HARD-04 (L-2): stamp embedding model on first write; assert consistency on subsequent writes
+    const model = this.config.openaiEmbedModel;
+    const storedModel = this.getMeta('embedding_model');
+    if (storedModel === null) {
+      this.setMeta('embedding_model', model);
+    } else if (storedModel !== model) {
+      throw new Error(
+        `embedding_model mismatch: stored=${storedModel}, received=${model} for node ${id} — embedding provider model changed`
+      );
+    }
+
     // Float32Array → Buffer: preserve byteOffset so the round-trip is correct (Pitfall 5)
     const buf = Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength);
     this.stmtSetEmbedding.run({
