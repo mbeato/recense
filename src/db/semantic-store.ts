@@ -373,6 +373,12 @@ export class SemanticStore {
    *
    * L-2: embedding dims stamp — first call writes `embedding_dims` to meta; subsequent calls
    * assert the same dimensionality. Throws on mismatch to catch misconfigured providers early.
+   *
+   * HARD-04 (L-2): embedding model stamp — first call writes `embedding_model` (from
+   * `config.openaiEmbedModel`) to meta; subsequent calls assert the same model. Throws on
+   * mismatch so a provider/model swap fails closed instead of silently producing NaN cosines
+   * across mixed-model vectors. Callers changing embedding providers MUST account for BOTH
+   * meta keys (`embedding_dims` and `embedding_model`), not dims alone.
    */
   setEmbedding(id: string, vec: Float32Array, expectedValueHash?: string): void {
     const existing = this.stmtGetNode.get(id) as NodeRow | undefined;

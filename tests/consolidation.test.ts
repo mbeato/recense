@@ -1758,15 +1758,21 @@ describe('Consolidator sink events per applyDecision branch (SEAM-02, D-49)', ()
   // Both Phase-B transactions (markSkipped at :507 and the per-episode graph write at
   // :953-969) must be opened .immediate() to prevent SQLITE_BUSY_SNAPSHOT aborting
   // the sleep pass when a concurrent episode writer holds a shared WAL lock.
-  // The test asserts the call path (spy on db.transaction → count .immediate() calls)
-  // rather than a flaky real-concurrency race (D-04).
+  // The test asserts the call path (spy on db.transaction → count .immediate() calls) rather
+  // than a flaky real-concurrency race (D-04). A single consolidate() pass over two episodes
+  // exercises BOTH Phase-B paths: a high-salience episode mints a node via the per-episode
+  // write txn, and a sub-threshold-salience episode hits markSkipped. The IMMEDIATE count is
+  // tied to confirmed Phase-B effects (node minted + both episodes consolidated) so it cannot
+  // pass vacuously, and the counter is reset immediately before the pass.
 
-  it('HARD-02 (M-5): Phase-B write transaction runs in IMMEDIATE mode (.immediate() call path)', async () => {
-    // Spy: replace h.db.transaction with a wrapper that intercepts .immediate() calls.
-    // The Consolidator holds a reference to h.db, so it picks up the patch at call time.
-    // better-sqlite3 Transaction objects have non-configurable native properties —
-    // we wrap the native txn in a plain JS function whose .immediate is an own writable
-    // property, so the count increments without needing Proxy or Object.defineProperty.
+  it('HARD-02 (M-5): both Phase-B write paths (per-episode write + markSkipped) run in IMMEDIATE mode', async () => {
+    // Spy: replace h.db.transaction with a wrapper that intercepts .immediate() calls. The
+    // Consolidator holds a reference to h.db, so it picks up the patch at call time. Harness
+    // components (h.store/h.episodes) were built in beforeEach() BEFORE this patch and cache
+    // their own bound transactions at construction, so they bypass the wrapper — only the
+    // Consolidator's Phase-B transactions, created via this.db at consolidate() time, are counted.
+    // better-sqlite3 Transaction objects have non-configurable native properties — we wrap the
+    // native txn in a plain JS function whose mode methods are own writable properties.
     let immediateCallCount = 0;
     const origTransaction = (h.db as any).transaction.bind(h.db);
     (h.db as any).transaction = function(fn: unknown) {
@@ -1788,7 +1794,7 @@ describe('Consolidator sink events per applyDecision branch (SEAM-02, D-49)', ()
     };
 
     // Use makeZeroEmbedFn so the new claim is unrelated to any existing node —
-    // it mints a new node via the Phase-B per-episode write transaction.
+    // the high-salience episode mints a new node via the Phase-B per-episode write transaction.
     const provider = new MockModelProvider({
       embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
       generateScript: [JSON.stringify([{ type: 'fact', value: 'some-new-fact-for-m5' }])],
@@ -1799,6 +1805,7 @@ describe('Consolidator sink events per applyDecision branch (SEAM-02, D-49)', ()
       provider, makeNoOpSchemaInducer(h), h.config, h.clock,
     );
 
+    // Path 1 — per-episode write: salience above consolSkipThreshold (default 0.2).
     h.episodes.append({
       content: 'test episode for M-5 IMMEDIATE guard',
       origin: 'observed',
@@ -1807,11 +1814,33 @@ describe('Consolidator sink events per applyDecision branch (SEAM-02, D-49)', ()
       role: 'user',
       session_id: 'session-hard02-m5',
     });
+    // Path 2 — markSkipped: salience BELOW consolSkipThreshold so the episode is skip-filtered
+    // and consolidated via the markSkipped() Phase-B transaction (zero graph effects).
+    h.episodes.append({
+      content: 'sub-threshold episode for M-5 markSkipped path',
+      origin: 'observed',
+      salience: 0.05,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-hard02-m5-skip',
+    });
+
+    // Reset right before the pass so the count reflects ONLY this consolidate() call.
+    immediateCallCount = 0;
 
     await consolidator.consolidate();
 
-    // At least one IMMEDIATE transaction must have fired (the Phase-B per-episode write).
-    expect(immediateCallCount).toBeGreaterThanOrEqual(1);
+    // Tie the IMMEDIATE count to confirmed Phase-B effects so it cannot pass vacuously:
+    // the high-salience claim must have minted a node (per-episode write ran), and BOTH
+    // episodes must be consolidated (the sub-threshold one via markSkipped).
+    const minted = h.db
+      .prepare('SELECT count(*) AS c FROM node WHERE value = ?')
+      .get('some-new-fact-for-m5') as { c: number };
+    expect(minted.c).toBe(1);
+    expect(h.episodes.listUnconsolidated().length).toBe(0);
+
+    // Both Phase-B write paths (per-episode write + markSkipped) fired in IMMEDIATE mode.
+    expect(immediateCallCount).toBeGreaterThanOrEqual(2);
   });
 
   it('D-48: sink.emit is called inside the transaction (Consolidator emits synchronously with graph write)', async () => {
