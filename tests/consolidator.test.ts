@@ -587,3 +587,141 @@ describe('FIX-EMBED-POISON: reembedDirty skips empty-value / tombstoned nodes', 
     expect(goodRow.embedded_hash).not.toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 46 RECON-01/D-04: BM25 lexical rescue
+//
+// Proves the two load-bearing behaviors from Phase 46:
+//   Test A (bm25CandidateK=5): a claim whose cosine score is below
+//     unrelatedSimilarityThreshold but whose value shares lexical tokens with an
+//     existing live node must be rescued into judge escalation by BM25 (D-04 gate
+//     extension). Judge must fire and the existing node must appear in candidates.
+//   Test B (bm25CandidateK=0): the SAME claim and graph must be auto-classified
+//     unrelated — bm25CandidateK=0 is the dark isolation switch that reproduces
+//     pre-Phase-46 behavior exactly (D-07).
+//
+// Fixture design:
+//   The existing node has embedding IS NULL (topk skips it — embedding IS NOT NULL
+//   filter) but embedded_hash IS NOT NULL (reembedDirty skips it — embedded_hash IS
+//   NULL filter). node_fts IS populated (store.upsertNode syncs stmtFtsInsert).
+//   The claim query vector is all-zeros → cosine=0 against anything → cosineGate fires
+//   via the candidates.length===0 branch (no embedded candidates to surface).
+//   With bm25CandidateK=5, stmtBm25Candidates finds the existing node via shared
+//   tokens → bm25Candidates non-empty → D-04 gate does NOT fire → judge escalates.
+// ---------------------------------------------------------------------------
+
+/**
+ * Judge-capturing provider bound to judgeBatch (the actual code path used when
+ * RECENSE_ENABLE_JUDGE_BATCH is not set). Records invocation count and captured
+ * candidate lists. Returns 'unrelated' to avoid minting/tombstoning side-effects.
+ */
+class BM25CapturingProvider extends MockModelProvider {
+  judgeCalls = 0;
+  capturedCandidates: Array<Array<{ id: string; value: string }>> = [];
+
+  override async judgeBatch(
+    items: Array<{ claim: string; candidates: Array<{ id: string; value: string }> }>,
+  ): Promise<JudgeVerdict[]> {
+    this.judgeCalls += items.length;
+    for (const item of items) {
+      this.capturedCandidates.push(item.candidates);
+    }
+    // 'unrelated' verdict avoids write side-effects while confirming judge escalation occurred
+    return items.map(() => ({
+      relation: 'unrelated' as const,
+      best_candidate_id: null,
+      magnitude: 0,
+      contradicted_ids: [],
+    }));
+  }
+}
+
+describe('Phase 46 RECON-01/D-04: BM25 lexical rescue', () => {
+  let savedTypedMode: string | undefined;
+  beforeEach(() => {
+    savedTypedMode = process.env['RECENSE_TYPED_EXTRACTION_MODE'];
+    delete process.env['RECENSE_TYPED_EXTRACTION_MODE'];
+  });
+  afterEach(() => {
+    if (savedTypedMode === undefined) {
+      delete process.env['RECENSE_TYPED_EXTRACTION_MODE'];
+    } else {
+      process.env['RECENSE_TYPED_EXTRACTION_MODE'] = savedTypedMode;
+    }
+  });
+
+  /**
+   * Runs one consolidation pass with the BM25 rescue fixture.
+   * bm25K controls whether BM25 candidate broadening is active.
+   *
+   * Graph: one fact node ("recense stores facts in memory") with no embedding
+   *   (invisible to topk, visible to stmtBm25Candidates via node_fts).
+   * Episode: one claim ("recense retrieves facts from memory") — shares tokens
+   *   "recense", "facts", "in", "memory" with the existing node.
+   * embedFn: always returns a zero vector → cosine 0 with any embedded node →
+   *   cosineGate fires via the candidates.length===0 branch.
+   */
+  async function runFixture(
+    bm25K: number,
+  ): Promise<{ provider: BM25CapturingProvider; existingNodeId: string }> {
+    const h = makeHarness();
+    const existingValue = 'recense stores facts in memory';
+    const claimValue = 'recense retrieves facts from memory';
+
+    // Seed the existing node: appears in node_fts (via upsertNode stmtFtsInsert sync)
+    // but NOT in topk (embedding IS NULL → topk WHERE embedding IS NOT NULL skips it).
+    const existingNodeId = newId();
+    h.store.upsertNode({ id: existingNodeId, type: 'fact', value: existingValue, origin: 'observed' });
+    // Set embedded_hash to a sentinel so reembedDirty (WHERE embedded_hash IS NULL)
+    // does not embed this node during consolidation, leaving embedding IS NULL intact.
+    h.db.prepare("UPDATE node SET embedded_hash = 'bm25-test-sentinel' WHERE id = ?").run(existingNodeId);
+
+    const config: EngineConfig = {
+      ...h.config,
+      bm25CandidateK: bm25K,
+    };
+
+    const provider = new BM25CapturingProvider({
+      // Zero embedding vector: cosine(zeros, anything) = 0 (zero-vector guard in cosineSimF32).
+      // Guarantees cosineGate fires regardless of what ends up in the graph.
+      embedFn: () => new Float32Array(h.config.embeddingDimensions),
+      generateScript: [
+        // Extracted claim shares "recense", "facts", "in", "memory" tokens with existingValue.
+        JSON.stringify([{ type: 'fact', value: claimValue }]),
+      ],
+      judgeScript: [],
+    });
+
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), config, h.clock,
+    );
+
+    h.episodes.append({
+      content: claimValue,
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-recon01-bm25',
+    });
+
+    await consolidator.consolidate();
+    return { provider, existingNodeId };
+  }
+
+  it('bm25CandidateK=5: low-cosine claim with lexical overlap escalates to judge (D-04 BM25 rescue)', async () => {
+    const { provider, existingNodeId } = await runFixture(5);
+    // D-04: BM25 rescues the low-cosine claim into judge escalation
+    expect(provider.judgeCalls).toBeGreaterThan(0);
+    // The existing node must appear in the judge candidate set (BM25 surfaced it)
+    const allCandidateIds = provider.capturedCandidates.flat().map(c => c.id);
+    expect(allCandidateIds).toContain(existingNodeId);
+  });
+
+  it('bm25CandidateK=0: same claim auto-classified unrelated (isolation switch, reproduces pre-Phase-46 behavior)', async () => {
+    const { provider } = await runFixture(0);
+    // D-07: bm25CandidateK=0 is the dark isolation switch — no BM25, no rescue, no judge
+    expect(provider.judgeCalls).toBe(0);
+  });
+});
