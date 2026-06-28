@@ -222,6 +222,37 @@ describe('SemanticStore', () => {
       // Different dims — must throw
       expect(() => store.setEmbedding('n2', new Float32Array(4))).toThrow(/embedding_dims mismatch/);
     });
+
+    it('HARD-04 (L-2): first setEmbedding stamps embedding_model in meta', () => {
+      const customConfig = { ...testConfig, openaiEmbedModel: 'test-model-v1' };
+      const store2 = new SemanticStore(db, clock, customConfig);
+      store2.upsertNode({ id: 'm1', type: 'fact', value: 'model stamp test', origin: 'observed' });
+      store2.setEmbedding('m1', new Float32Array(8));
+      expect(store2.getMeta('embedding_model')).toBe('test-model-v1');
+    });
+
+    it('HARD-04 (L-2): setEmbedding with mismatched model throws fail-closed', () => {
+      // First write with model-A stamps meta
+      const configA = { ...testConfig, openaiEmbedModel: 'model-a' };
+      const storeA = new SemanticStore(db, clock, configA);
+      storeA.upsertNode({ id: 'ma1', type: 'fact', value: 'a', origin: 'observed' });
+      storeA.setEmbedding('ma1', new Float32Array(8)); // stamps embedding_model='model-a'
+
+      // Second write with model-B on SAME db — mismatch must throw
+      const configB = { ...testConfig, openaiEmbedModel: 'model-b' };
+      const storeB = new SemanticStore(db, clock, configB);
+      storeB.upsertNode({ id: 'ma2', type: 'fact', value: 'b', origin: 'observed' });
+      expect(() => storeB.setEmbedding('ma2', new Float32Array(8))).toThrow(/embedding_model mismatch/);
+    });
+
+    it('HARD-04 (L-2): setEmbedding with matching model succeeds (happy path)', () => {
+      const customConfig = { ...testConfig, openaiEmbedModel: 'same-model' };
+      const store2 = new SemanticStore(db, clock, customConfig);
+      store2.upsertNode({ id: 'sm1', type: 'fact', value: 'a', origin: 'observed' });
+      store2.upsertNode({ id: 'sm2', type: 'fact', value: 'b', origin: 'observed' });
+      store2.setEmbedding('sm1', new Float32Array(8)); // stamps model
+      expect(() => store2.setEmbedding('sm2', new Float32Array(8))).not.toThrow();
+    });
   });
 
   // ── training_eligible ───────────────────────────────────────────────────
