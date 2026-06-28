@@ -342,6 +342,15 @@ export interface EngineConfig {
   rankStrengthWeight: number;
 
   /**
+   * Phase 47 RETR-02: BM25 fusion weight for the rrfFuse call in hybridTopk.
+   * Controls how strongly lexical (BM25) matches contribute relative to cosine (fixed at 1.0).
+   * Dark isolation switch: weight=0 reproduces exactly today's pure-cosine behavior
+   * (mirrors bm25CandidateK=0 and rankStrengthWeight=0 conventions — D-02).
+   * Tune via held-out LoCoMo sweep; ship w* = argmax(R@5) with zero per-category regression (D-04/D-05).
+   */
+  bm25FusionWeight: number;
+
+  /**
    * Phase 37: min cosine for query→predicate confident match (D-07).
    * Below threshold → schema-neighborhood fallback (D-06); at or above → typed-path mode.
    *
@@ -792,6 +801,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   rankWeightS: 1.0,
   rankWeightR: 0.0,
   rankStrengthWeight: 0,  // D-04: dark default — ships w=0; no behavior change at merge
+  bm25FusionWeight: 0,  // Phase 47 D-02: dark default — w=0 reproduces pure-cosine; flip to w* after held-out tune
   // Phase 37: min cosine for query→predicate confident match (D-07, RESEARCH §2).
   // Below threshold → schema-neighborhood fallback (D-06); calibrate against D-05 harness.
   predicateGlossThreshold: 0.35,

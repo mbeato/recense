@@ -449,6 +449,7 @@ export class CandidateRetriever {
     strengthWeight = 0,
     nowMs?: number,
     lambda?: number,
+    bm25FusionWeight = 1,
   ): Array<{ id: string; score: number }> {
     // Cosine list (pre-k for fusion input)
     const cosineList = this.topk(queryVec, preK);
@@ -491,7 +492,9 @@ export class CandidateRetriever {
       );
     } else {
       // D-04 dark default: strengthWeight=0 → exact current behavior, no DB strength query
-      fused = rrfFuse([cosineList, bm25List], 60, k);
+      // Phase 47 D-02: thread bm25FusionWeight as the BM25-list weight; cosine fixed at 1.0.
+      // bm25FusionWeight=0 → BM25 contributes 0·1/(k+rank+1)=0 → pure-cosine order (isolation switch).
+      fused = rrfFuse([cosineList, bm25List], 60, k, [1, bm25FusionWeight]);
     }
 
     // Resolve cosine score for each fused result (needed by retrieveRanked's floor gate).

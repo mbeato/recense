@@ -403,6 +403,7 @@ export class RetrievalEngine {
           this.config.rankStrengthWeight,
           this.clock.nowMs(),
           this.config.lambda,
+          this.config.bm25FusionWeight,  // Phase 47 D-02: tunable BM25-list weight (dark=0 → pure cosine)
         )
       : this.retriever.topk(queryVec, k);
 
