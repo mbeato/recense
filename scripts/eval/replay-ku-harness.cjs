@@ -111,6 +111,16 @@ const CONFIG_OVERRIDE_VALUE = CONFIG_OVERRIDE_VALUE_RAW !== null
   ? (isNaN(Number(CONFIG_OVERRIDE_VALUE_RAW)) ? CONFIG_OVERRIDE_VALUE_RAW : Number(CONFIG_OVERRIDE_VALUE_RAW))
   : null;
 
+// --only-cases <csv>: restrict the run to an explicit set of question_ids (comma-separated,
+// exact match). Unlike --max-cases (first N), this selects specific case ids — used to re-run
+// cases corrupted by a mid-run rate-limit without touching the others, then splice the fresh
+// rows back into an existing result JSON. Measurement-neutral: each case is independent (own
+// scratch DB), so a subset run produces identical per-case values to the full run.
+const ONLY_CASES_RAW = arg('--only-cases', null);
+const ONLY_CASES = ONLY_CASES_RAW !== null
+  ? ONLY_CASES_RAW.split(',').map(s => s.trim()).filter(Boolean)
+  : null;
+
 // ---- compose-token count helper (REFLECT-02 / T-38-10) ----------------------
 // Uses chars/4 proxy — same convention as EVAL-03 injection-efficiency harness.
 // This is NOT a real tokenizer; it is consistent with the session-start-cli char cap proxy.
@@ -763,6 +773,14 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
   // Join on question_id: only process cases present in BOTH files.
   // n20-attribution.jsonl has 18 cases; eval20-ku.jsonl has 20 — join gives 18.
   let caseIds = [...attributionByQid.keys()].filter(id => kuGoldByQid.has(id));
+  // --only-cases <csv>: restrict to an explicit set of question_ids (exact match, order preserved).
+  if (ONLY_CASES && ONLY_CASES.length > 0) {
+    const wanted  = new Set(ONLY_CASES);
+    const before  = caseIds.length;
+    caseIds = caseIds.filter(id => wanted.has(id));
+    const missing = ONLY_CASES.filter(id => !caseIds.includes(id));
+    console.log(`(--only-cases: selected ${caseIds.length} of ${before} joined cases${missing.length ? `; NOT FOUND: ${missing.join(', ')}` : ''})`);
+  }
   // --max-cases <N>: directional runs over the first N joined cases (deterministic order).
   if (MAX_CASES > 0 && caseIds.length > MAX_CASES) {
     caseIds = caseIds.slice(0, MAX_CASES);
