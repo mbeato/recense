@@ -1123,11 +1123,22 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
   console.log('\n  case         | claims | ku | tomb | contradict | dup-mints | compose-tok');
   console.log('  ------------ | ------ | -- | ---- | ---------- | --------- | -----------');
 
-  for (const qid of caseIds) {
+  // Bounded-concurrency pool (mirrors runSweep's pool, lines ~678-689). Each case is fully
+  // independent: runRealCase builds and cleans up its OWN scratch DB (unique pid+ts+rand name,
+  // see makeScratchDb) and the headless judge transport is async spawn — so overlapping cases
+  // overlaps their judge waits for ~N× speedup. Measurement-neutral: results are stored BY INDEX
+  // (deterministic per_case order) and aggregates are summed AFTER the pool, so the totals are
+  // identical to the prior sequential run. PARALLEL_CASES defaults to 1 → identical to before
+  // unless --parallel-cases <N> is passed.
+  const indexedResults = new Array(caseIds.length);
+  const realWorkerCount = Math.min(PARALLEL_CASES, caseIds.length);
+  if (realWorkerCount > 1) {
+    console.log(`  (--parallel-cases ${PARALLEL_CASES}: up to ${realWorkerCount} cases concurrent; rows print as cases finish)\n`);
+  }
+
+  const processRealCase = async (qid, idx) => {
     const attr   = attributionByQid.get(qid);
     const kuCase = kuGoldByQid.get(qid);
-
-    process.stdout.write(`  ... running ${qid}...\r`);
 
     let result;
     try {
@@ -1146,16 +1157,7 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
       };
     }
 
-    perCase.push(result);
-
-    if (result.ku_correct !== null)      kuCorrectCount     += result.ku_correct;
-    if (result.tombstones !== null)      totalTombstones    += result.tombstones;
-    if (result.contradicts !== null)     totalContradicts   += result.contradicts;
-    if (result.duplicate_mints !== null) totalDuplicateMints += result.duplicate_mints;
-    if (result.composeTokens  !== null && result.composeTokens !== undefined) {
-      totalComposeTokens += result.composeTokens;
-      composeTokenCases++;
-    }
+    indexedResults[idx] = result;
 
     const kuStr     = result.error ? 'ERR' : result.ku_correct ? 'YES' : 'no ';
     const tombStr   = result.tombstones  !== null ? String(result.tombstones).padStart(4)  : ' ERR';
@@ -1164,6 +1166,31 @@ async function runSweep(caseIds, attributionByQid, kuGoldByQid, embedder, anthro
     const tokStr    = result.composeTokens   !== undefined && result.composeTokens !== null
       ? String(result.composeTokens).padStart(11) : '        n/a';
     console.log(`  ${qid.padEnd(12)} | ${String(result.claim_count).padStart(6)} | ${kuStr} | ${tombStr} | ${contrStr} | ${dupStr} | ${tokStr}`);
+  };
+
+  // Shared-cursor pool: nextIdx++ is atomic w.r.t. the event loop (no await between read and
+  // increment), so no two workers ever claim the same case.
+  let nextRealIdx = 0;
+  const realWorker = async () => {
+    while (true) {
+      const i = nextRealIdx++;
+      if (i >= caseIds.length) break;
+      await processRealCase(caseIds[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: realWorkerCount }, () => realWorker()));
+
+  // Aggregate AFTER the pool — deterministic, order-independent sums (identical to sequential).
+  for (const result of indexedResults) {
+    perCase.push(result);
+    if (result.ku_correct !== null)      kuCorrectCount     += result.ku_correct;
+    if (result.tombstones !== null)      totalTombstones    += result.tombstones;
+    if (result.contradicts !== null)     totalContradicts   += result.contradicts;
+    if (result.duplicate_mints !== null) totalDuplicateMints += result.duplicate_mints;
+    if (result.composeTokens  !== null && result.composeTokens !== undefined) {
+      totalComposeTokens += result.composeTokens;
+      composeTokenCases++;
+    }
   }
 
   // ---- aggregate scores -------------------------------------------------------
