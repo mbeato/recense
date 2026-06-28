@@ -1292,10 +1292,13 @@ describe('Consolidator', () => {
     // The original engineerNodeId remains tombstoned (it was tombstoned in pass 1)
     expect(allNodesAfterPass2.find(n => n.id === engineerNodeId)!.tombstoned).toBe(1);
   });
-  // ── C-2: assistant-role episodes never strengthen (self-confirmation guard) ────
+  // ── HARD-01 (C-2): assistant-role episodes never strengthen (self-confirmation guard) ────
   //
   // An assistant-role episode whose claim exact-matches an existing node must NOT
   // increase s or c (the memory's own restated output cannot strengthen itself).
+  // Covers the D-17 normalized-exact-match fast path: episodeRole is threaded into the
+  // ClaimDecision struct at line 730 so the applyDecision gate at line 1082 fires for
+  // ALL confirm decisions (fast path and judge path alike).
   // A user-role episode with the same exact match MUST increase s (regression guard).
   // In both cases a 'confirm' sink event is emitted (for audit trail).
 

@@ -71,6 +71,8 @@ describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
     }
   });
 
+  // HARD-03 (M-9): downgrade guard — initSchema reads stored schema_version first and
+  // throws when stored > SCHEMA_VERSION so a stale binary cannot re-stamp a future DB.
   it('throws "newer than this binary" when stored schema_version > SCHEMA_VERSION (M-9 downgrade guard)', () => {
     const db = new Database(':memory:');
     try {
