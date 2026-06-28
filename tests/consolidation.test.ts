@@ -1753,6 +1753,67 @@ describe('Consolidator sink events per applyDecision branch (SEAM-02, D-49)', ()
 
   // ── D-48 in-transaction: no await between mutation and emit ───────────────
 
+  // ── HARD-02 (M-5): Phase-B write transactions run in IMMEDIATE mode ─────────
+  //
+  // Both Phase-B transactions (markSkipped at :507 and the per-episode graph write at
+  // :953-969) must be opened .immediate() to prevent SQLITE_BUSY_SNAPSHOT aborting
+  // the sleep pass when a concurrent episode writer holds a shared WAL lock.
+  // The test asserts the call path (spy on db.transaction → count .immediate() calls)
+  // rather than a flaky real-concurrency race (D-04).
+
+  it('HARD-02 (M-5): Phase-B write transaction runs in IMMEDIATE mode (.immediate() call path)', async () => {
+    // Spy: replace h.db.transaction with a wrapper that intercepts .immediate() calls.
+    // The Consolidator holds a reference to h.db, so it picks up the patch at call time.
+    // better-sqlite3 Transaction objects have non-configurable native properties —
+    // we wrap the native txn in a plain JS function whose .immediate is an own writable
+    // property, so the count increments without needing Proxy or Object.defineProperty.
+    let immediateCallCount = 0;
+    const origTransaction = (h.db as any).transaction.bind(h.db);
+    (h.db as any).transaction = function(fn: unknown) {
+      const txn = origTransaction(fn) as any;
+      function wrappedTxn(...callArgs: unknown[]) {
+        return txn(...callArgs);
+      }
+      wrappedTxn.immediate = function(...iArgs: unknown[]) {
+        immediateCallCount++;
+        return txn.immediate.apply(txn, iArgs);
+      };
+      wrappedTxn.deferred = function(...iArgs: unknown[]) {
+        return txn.deferred.apply(txn, iArgs);
+      };
+      wrappedTxn.exclusive = function(...iArgs: unknown[]) {
+        return txn.exclusive.apply(txn, iArgs);
+      };
+      return wrappedTxn;
+    };
+
+    // Use makeZeroEmbedFn so the new claim is unrelated to any existing node —
+    // it mints a new node via the Phase-B per-episode write transaction.
+    const provider = new MockModelProvider({
+      embedFn: makeZeroEmbedFn(h.config.embeddingDimensions),
+      generateScript: [JSON.stringify([{ type: 'fact', value: 'some-new-fact-for-m5' }])],
+      judgeScript: [],
+    });
+    const consolidator = new Consolidator(
+      h.db, h.episodes, h.store, h.strength, h.retriever,
+      provider, makeNoOpSchemaInducer(h), h.config, h.clock,
+    );
+
+    h.episodes.append({
+      content: 'test episode for M-5 IMMEDIATE guard',
+      origin: 'observed',
+      salience: 0.8,
+      hard_keep: 0,
+      role: 'user',
+      session_id: 'session-hard02-m5',
+    });
+
+    await consolidator.consolidate();
+
+    // At least one IMMEDIATE transaction must have fired (the Phase-B per-episode write).
+    expect(immediateCallCount).toBeGreaterThanOrEqual(1);
+  });
+
   it('D-48: sink.emit is called inside the transaction (Consolidator emits synchronously with graph write)', async () => {
     // This test uses a sink that verifies the emit happens during the transaction body.
     // We track whether a node was written by the time emit() fires by reading the DB
