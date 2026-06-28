@@ -70,10 +70,16 @@ const arg = (k, d) => {
   return i !== -1 ? process.argv[i + 1] : d;
 };
 
-const IS_DRY_RUN = process.argv.includes('--dry-run');
-const IS_PROBE   = process.argv.includes('--probe');
-const IS_RUN     = process.argv.includes('--run');
-const KEEP_DBS   = process.argv.includes('--keep-dbs');
+const IS_DRY_RUN      = process.argv.includes('--dry-run');
+const IS_PROBE        = process.argv.includes('--probe');
+const IS_RUN          = process.argv.includes('--run');
+const KEEP_DBS        = process.argv.includes('--keep-dbs');
+const RETRIEVAL_ONLY  = process.argv.includes('--retrieval-only');
+const SPLIT           = arg('--split', 'all');  // tune | test | all
+const SWEEP_ARG       = arg('--sweep', null);   // e.g. "0,0.25,0.5,0.75,1.0,1.5,2.0"
+const SWEEP_WEIGHTS   = SWEEP_ARG
+  ? SWEEP_ARG.split(',').map(s => parseFloat(s.trim())).filter(w => !isNaN(w))
+  : null;
 
 // Gate: refuse to run full 10-conversation paid run unless --run/--probe/--dry-run is explicit (T-40-03)
 if (!IS_DRY_RUN && !IS_PROBE && !IS_RUN) {
@@ -304,8 +310,24 @@ async function runBoundedPool(items, concurrency, fn) {
     process.exit(1);
   }
 
-  const limit         = IS_PROBE ? PROBE_LIMIT : allConversations.length;
-  const conversations = allConversations.slice(0, limit);
+  const limit = IS_PROBE ? PROBE_LIMIT : allConversations.length;
+
+  // Deterministic tune/test split: sort by sample_id ascending, even sorted-index → TUNE, odd → TEST.
+  // For the 10-conversation LoCoMo set this gives a 5/5 partition.
+  const _sortedIds = [...allConversations]
+    .sort((a, b) => String(a.sample_id || '').localeCompare(String(b.sample_id || '')))
+    .map(c => String(c.sample_id || ''));
+
+  function getSplit(sampleId) {
+    const idx = _sortedIds.indexOf(String(sampleId || ''));
+    return idx % 2 === 0 ? 'tune' : 'test';
+  }
+
+  const conversations = (() => {
+    const limited = allConversations.slice(0, limit);
+    if (SPLIT === 'all') return limited;
+    return limited.filter(c => getSplit(c.sample_id) === SPLIT);
+  })();
 
   if (IS_DRY_RUN) {
     console.log(`[dry-run] Loaded ${conversations.length} conversation(s) from ${EVAL_FILE} (zero API mode)`);
@@ -344,6 +366,12 @@ async function runBoundedPool(items, concurrency, fn) {
   // ---- telemetry state ------------------------------------------------------
   let completedConvCount = 0;
   const wallStart = Date.now();
+
+  // ---- per-category R@K accumulators (D-04 gate hook) ----------------------
+  // globalCatAgg: category -> { n, hit5Sum, hit10Sum }  (primary / single weight)
+  const globalCatAgg = new Map();
+  // globalSweepAgg: weight -> Map(category -> { n, hit5Sum, hit10Sum })  (sweep mode)
+  const globalSweepAgg = SWEEP_WEIGHTS ? new Map() : null;
 
   // ---- per-conversation pipeline --------------------------------------------
   async function processConversation(conv) {
@@ -429,8 +457,21 @@ async function runBoundedPool(items, concurrency, fn) {
         );
 
         // Step 3–5: inner QA loop — embed, retrieve (timed), answer
-        const evalRetriever = new CandidateRetriever(scratch.db);
-        const evalStore     = new SemanticStore(scratch.db, realClock, { ...DEFAULT_CONFIG, dbPath: scratch.dbPath });
+        // Hybrid arm (D-08): build one RetrievalEngine per sweep weight over the once-built scratch brain.
+        // buildRetrievalEngine wires the full LEVER 2 temporal sort path, mirroring the responder.
+        const evalStore = new SemanticStore(scratch.db, realClock, { ...DEFAULT_CONFIG, dbPath: scratch.dbPath });
+        const sweepWeights = SWEEP_WEIGHTS || [DEFAULT_CONFIG.bm25FusionWeight];
+        const weightEngines = sweepWeights.map(w => {
+          const wCfg     = { ...DEFAULT_CONFIG, dbPath: scratch.dbPath, bm25FusionWeight: w };
+          const retriever = new CandidateRetriever(scratch.db);
+          const store     = new SemanticStore(scratch.db, realClock, wCfg);
+          const strength  = new StrengthDecayManager(scratch.db, realClock, wCfg);
+          const gate      = new AllocationGate(wCfg);
+          const traceSink = new NoopActivationTraceSink();
+          return { w, engine: new RetrievalEngine(scratch.db, realClock, wCfg, retriever, store, strength, gate, traceSink) };
+        });
+        // primaryEngine = first weight (non-sweep path uses this for topkIds/hit5/hit10/output)
+        const primaryEngine = weightEngines[0].engine;
 
         // Bounded-concurrency answer-gen: pool the per-QA answer calls to hide claude -p
         // cold-start. Results are written by index (qaResults) to preserve output order
@@ -458,10 +499,11 @@ async function runBoundedPool(items, concurrency, fn) {
             const [queryVec] = await embedder.embed([questionText]);
             embedMs = Date.now() - embedStart;
 
-            // Step 4: retrieve top-K nodes — retrieval-only timing (excludes embed + answer)
-            // D-06a: t0/t1 wraps ONLY the topk call
+            // Step 4: retrieve top-K nodes — hybrid arm (D-08), retrieval-only timing (excludes embed + answer)
+            // D-06a: t0/t1 wraps ONLY the retrieveRanked call; floor=0 lets all fused results through.
+            // questionText flows through retrieveRanked → hybridTopk → ftsQueryFromText (T-47-01 mitigated).
             const retrievalStart = Date.now();
-            const topkResults    = evalRetriever.topk(queryVec, TOP_K);
+            const topkResults    = primaryEngine.retrieveRanked(queryVec, TOP_K, 0, questionText);
             retrievalMs          = Date.now() - retrievalStart;
 
             topkIds    = topkResults.map(r => r.id);
@@ -503,7 +545,36 @@ async function runBoundedPool(items, concurrency, fn) {
             hit5  = [...sessionsAt5].some(s => hitSessions.has(s));
             hit10 = [...sessionsAt10].some(s => hitSessions.has(s));
 
+            // Accumulate per-category R@K for the primary weight (D-04 gate hook)
+            {
+              const cat = qa.category;
+              if (!globalCatAgg.has(cat)) globalCatAgg.set(cat, { n: 0, hit5Sum: 0, hit10Sum: 0 });
+              const e = globalCatAgg.get(cat);
+              e.n++; e.hit5Sum += hit5 ? 1 : 0; e.hit10Sum += hit10 ? 1 : 0;
+            }
+
+            // Sweep mode: run retrieval for each additional weight over the same scratch brain (D-06).
+            // retrievedSessionsForIds is in scope (defined above); hitSessions is in scope.
+            // All calls are synchronous (no await) — JS single-thread makes Map mutations safe under pool.
+            if (SWEEP_WEIGHTS) {
+              for (const { w, engine: sweepEng } of weightEngines) {
+                const wResults = sweepEng.retrieveRanked(queryVec, TOP_K, 0, questionText);
+                const wIds     = wResults.map(r => r.id);
+                const wAt5     = retrievedSessionsForIds(wIds.slice(0, 5));
+                const wAt10    = retrievedSessionsForIds(wIds.slice(0, 10));
+                const wHit5    = [...wAt5].some(s => hitSessions.has(s));
+                const wHit10   = [...wAt10].some(s => hitSessions.has(s));
+                const cat = qa.category;
+                if (!globalSweepAgg.has(w)) globalSweepAgg.set(w, new Map());
+                const wMap = globalSweepAgg.get(w);
+                if (!wMap.has(cat)) wMap.set(cat, { n: 0, hit5Sum: 0, hit10Sum: 0 });
+                const we = wMap.get(cat);
+                we.n++; we.hit5Sum += wHit5 ? 1 : 0; we.hit10Sum += wHit10 ? 1 : 0;
+              }
+            }
+
             // Step 5: format retrieved nodes and generate answer (answer_ms separate)
+            if (!RETRIEVAL_ONLY) {
             const resolvedEntries = topkResults
               .map(r => ({ id: r.id, node: evalStore.getNode(r.id) }))
               .filter(({ node }) => node !== null);
@@ -554,6 +625,7 @@ async function runBoundedPool(items, concurrency, fn) {
               probeStats.inputTokens  += answerResponse.usage.input_tokens  || 0;
               probeStats.outputTokens += answerResponse.usage.output_tokens || 0;
             }
+            } // end if (!RETRIEVAL_ONLY)
 
           } catch (qaErr) {
             hypothesis = DRY_RUN_STUB_ANSWER;
@@ -562,6 +634,7 @@ async function runBoundedPool(items, concurrency, fn) {
 
           qaResults[qaIdx] = {
             sample_id:    sampleId,
+            split:        getSplit(sampleId),
             question:     questionText,
             gold_answer:  goldAnswer,
             category:     qa.category,
@@ -643,4 +716,39 @@ async function runBoundedPool(items, concurrency, fn) {
   }
 
   console.log(`Done. ${completedConvCount} conversation(s) processed. Output: ${OUT_FILE}. Elapsed: ${(elapsedMs / 1000).toFixed(1)}s`);
+
+  // ---- per-category R@K tables (D-04 gate hook) --------------------------------
+  function printCatTable(label, catAgg) {
+    if (catAgg.size === 0) return;
+    let totalN = 0, totalH5 = 0, totalH10 = 0;
+    const CATEGORY_NAMES = {
+      1: 'single-hop',
+      2: 'multi-hop',
+      3: 'temporal-reasoning',
+      4: 'open-domain',
+      // category 5 (adversarial) excluded from scoring
+    };
+    const rows = [...catAgg.entries()].sort(([a], [b]) => a - b);
+    console.log(`\n${label} — Per-category R@K (split=${SPLIT}):`);
+    console.log(`  ${'Cat'.padEnd(6)} ${'Name'.padEnd(20)} ${'N'.padStart(4)} ${'R@5'.padStart(7)} ${'R@10'.padStart(7)}`);
+    console.log(`  ${'-'.repeat(50)}`);
+    for (const [cat, { n, hit5Sum, hit10Sum }] of rows) {
+      const name = CATEGORY_NAMES[cat] || `cat-${cat}`;
+      console.log(`  ${String(cat).padEnd(6)} ${name.padEnd(20)} ${String(n).padStart(4)} ${(hit5Sum / n * 100).toFixed(1).padStart(6)}% ${(hit10Sum / n * 100).toFixed(1).padStart(6)}%`);
+      totalN += n; totalH5 += hit5Sum; totalH10 += hit10Sum;
+    }
+    console.log(`  ${'-'.repeat(50)}`);
+    console.log(`  ${'OVERALL'.padEnd(6)} ${''.padEnd(20)} ${String(totalN).padStart(4)} ${(totalH5 / totalN * 100).toFixed(1).padStart(6)}% ${(totalH10 / totalN * 100).toFixed(1).padStart(6)}%`);
+  }
+
+  if (!IS_DRY_RUN && !IS_PROBE) {
+    if (SWEEP_WEIGHTS && globalSweepAgg) {
+      // Print per-weight tables in grid order
+      for (const w of SWEEP_WEIGHTS) {
+        printCatTable(`w=${w}`, globalSweepAgg.get(w) || new Map());
+      }
+    } else {
+      printCatTable('Primary', globalCatAgg);
+    }
+  }
 })();
