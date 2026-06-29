@@ -113,6 +113,7 @@ interface SseTracePayload {
   query_id: string;
   seeds: unknown;
   hops: unknown;
+  kind: string | null;
 }
 
 function collectTraceEvent(
@@ -294,6 +295,26 @@ describe('GET /events — trace payload shape (CR-01 regression)', () => {
     // hops likewise an array; the honest null score survives serialization.
     expect(Array.isArray(parsed.hops)).toBe(true);
     expect(parsed.hops).toEqual(hops);
+
+    // kind: null when omitted from emit() — back-compat recall row (Plan 04, D-09).
+    expect(parsed.kind).toBeNull();
+  });
+
+  it('ships kind when set on the emit — back-compat: null for recall, string for ingestion', async () => {
+    const seeds = [{ node_id: 'n1', score: 0.9 }];
+    const hops: Array<{ node_id: string; score: number | null; hop: number }> = [];
+
+    const parsed = await collectTraceEvent(port, () => {
+      const writeDb = new Database(tmpDbPath);
+      const sink = new SQLiteActivationTraceSink(writeDb, new FakeClock(2000));
+      sink.emit({ query_id: 'q2', seeds, hops, kind: 'new_node' });
+      writeDb.close();
+    });
+
+    // kind must arrive as the string written on the emit.
+    expect(parsed.kind).toBe('new_node');
+    // seeds are post-52 objects — server ships them verbatim, no flattening (D-07-seedshape).
+    expect(parsed.seeds).toEqual(seeds);
   });
 });
 
