@@ -3,7 +3,7 @@
  *
  * Coverage:
  *   - initSchema creates activation_trace idempotently
- *   - schema_version meta stamps SCHEMA_VERSION (9) after initSchema
+ *   - schema_version meta stamps SCHEMA_VERSION (15) after initSchema
  *   - activation_trace columns: id, ts, query_id, seeds, hops
  *   - existing v3 node/edge/episode data is untouched by migration
  *   - SQLiteActivationTraceSink.emit writes a row; seeds/hops round-trip as JSON
@@ -48,10 +48,10 @@ describe('activation_trace table', () => {
       .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string } | undefined;
     expect(row?.value).toBe(String(SCHEMA_VERSION));
-    expect(SCHEMA_VERSION).toBe(14);
+    expect(SCHEMA_VERSION).toBe(15);
   });
 
-  it('activation_trace has expected columns (id, ts, query_id, seeds, hops)', () => {
+  it('activation_trace has expected columns (id, ts, query_id, seeds, hops, kind)', () => {
     const db = new Database(':memory:');
     initSchema(db);
     const cols = (db.pragma('table_info(activation_trace)') as Array<{ name: string }>)
@@ -61,6 +61,51 @@ describe('activation_trace table', () => {
     expect(cols).toContain('query_id');
     expect(cols).toContain('seeds');
     expect(cols).toContain('hops');
+    expect(cols).toContain('kind');
+  });
+
+  it('kind column has notnull=0 and no default (D-09: nullable, additive, no DEFAULT)', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const kindCol = (db.pragma('table_info(activation_trace)') as Array<{
+      name: string; notnull: number; dflt_value: string | null;
+    }>).find(r => r.name === 'kind');
+    expect(kindCol).toBeDefined();
+    expect(kindCol!.notnull).toBe(0);
+    expect(kindCol!.dflt_value).toBeNull();
+  });
+
+  it('pre-52 DB (activation_trace without kind) gains kind column via v15 ALTER migration', () => {
+    // Simulate a pre-52 DB by creating activation_trace WITHOUT kind, then running initSchema.
+    const db = new Database(':memory:');
+    // Create the old schema manually (no kind column).
+    db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS activation_trace (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts        INTEGER NOT NULL,
+        query_id  TEXT    NOT NULL,
+        seeds     TEXT    NOT NULL,
+        hops      TEXT    NOT NULL
+      );
+    `);
+    // Insert a row without kind (simulates a pre-52 recall row).
+    db.prepare(
+      "INSERT INTO activation_trace (ts, query_id, seeds, hops) VALUES (?, ?, ?, ?)"
+    ).run(1000, 'q-old', '[]', '[]');
+    // Run initSchema — should migrate additively.
+    initSchema(db);
+    // kind column now present.
+    const cols = (db.pragma('table_info(activation_trace)') as Array<{ name: string }>)
+      .map(r => r.name);
+    expect(cols).toContain('kind');
+    // Pre-existing row reads back kind === null (NULL backfill).
+    const row = db.prepare('SELECT kind FROM activation_trace').get() as { kind: string | null };
+    expect(row.kind).toBeNull();
+    // Re-running initSchema must not throw (idempotent ALTER guard).
+    expect(() => initSchema(db)).not.toThrow();
   });
 
   it('v3 DB (episode has cwd) gains activation_trace without data loss to node/edge/episode', () => {
@@ -88,8 +133,8 @@ describe('activation_trace table', () => {
     expect(epCount.cnt).toBe(1);
   });
 
-  it('SCHEMA_VERSION constant equals 14 (v14: token_usage_ledger)', () => {
-    expect(SCHEMA_VERSION).toBe(14);
+  it('SCHEMA_VERSION constant equals 15 (v15: activation_trace kind column)', () => {
+    expect(SCHEMA_VERSION).toBe(15);
   });
 });
 
@@ -186,6 +231,107 @@ describe('MockActivationTraceSink', () => {
     expect(sink.traces).toHaveLength(1);
     sink.reset();
     expect(sink.traces).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: kind round-trip + seeds back-compat union (TDD — RED/GREEN/REFACTOR)
+// ---------------------------------------------------------------------------
+
+describe('SQLiteActivationTraceSink kind + seeds-union (Task 2)', () => {
+  it('emit with kind set → row.kind equals that kind string', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({ query_id: 'q-kind', seeds: [], hops: [], kind: 'new_node' });
+    const row = db.prepare('SELECT kind FROM activation_trace').get() as { kind: string | null };
+    expect(row.kind).toBe('new_node');
+  });
+
+  it('emit without kind → row.kind is SQL NULL', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({ query_id: 'q-nokind', seeds: [], hops: [] });
+    const row = db.prepare('SELECT kind FROM activation_trace').get() as { kind: string | null };
+    expect(row.kind).toBeNull();
+  });
+
+  it('emit with kind: null → row.kind is SQL NULL', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({ query_id: 'q-nullkind', seeds: [], hops: [], kind: null });
+    const row = db.prepare('SELECT kind FROM activation_trace').get() as { kind: string | null };
+    expect(row.kind).toBeNull();
+  });
+
+  it('object-seed {node_id, score} round-trips through the JSON seeds column', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    const objectSeed = { node_id: 'A', score: 0.8 };
+    sink.emit({ query_id: 'q-obj', seeds: [objectSeed], hops: [] });
+    const row = db.prepare('SELECT seeds FROM activation_trace').get() as { seeds: string };
+    expect(JSON.parse(row.seeds)).toEqual([{ node_id: 'A', score: 0.8 }]);
+  });
+
+  it('bare-string seed (legacy/ingestion shape) still round-trips — back-compat union', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({ query_id: 'q-str', seeds: ['node-x'], hops: [] });
+    const row = db.prepare('SELECT seeds FROM activation_trace').get() as { seeds: string };
+    expect(JSON.parse(row.seeds)).toEqual(['node-x']);
+  });
+
+  it('mixed seeds array (string + object) round-trips', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    const mixed: ActivationTraceInput['seeds'] = ['node-bare', { node_id: 'node-scored', score: 0.5 }];
+    sink.emit({ query_id: 'q-mix', seeds: mixed, hops: [] });
+    const row = db.prepare('SELECT seeds FROM activation_trace').get() as { seeds: string };
+    expect(JSON.parse(row.seeds)).toEqual(['node-bare', { node_id: 'node-scored', score: 0.5 }]);
+  });
+
+  it('seeds round-trip and hops round-trip with kind present in the same row', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({
+      query_id: 'q-full',
+      seeds: [{ node_id: 'seed-A', score: 0.9 }],
+      hops: [{ node_id: 'hop-B', score: 0.4, hop: 1 }],
+      kind: 'reconsolidation',
+    });
+    const row = db.prepare('SELECT seeds, hops, kind FROM activation_trace').get() as {
+      seeds: string; hops: string; kind: string | null;
+    };
+    expect(JSON.parse(row.seeds)).toEqual([{ node_id: 'seed-A', score: 0.9 }]);
+    expect(JSON.parse(row.hops)).toEqual([{ node_id: 'hop-B', score: 0.4, hop: 1 }]);
+    expect(row.kind).toBe('reconsolidation');
+  });
+
+  it('ring eviction still works with kind present — COUNT stays at RING_CAP after 60 emits', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const clock = new FakeClock(1);
+    const sink = new SQLiteActivationTraceSink(db, clock);
+    for (let i = 0; i < 60; i++) {
+      sink.emit({ query_id: `q-${i}`, seeds: [], hops: [], kind: i % 2 === 0 ? 'new_node' : null });
+      clock.advanceMs(1);
+    }
+    const count = db.prepare('SELECT COUNT(*) as cnt FROM activation_trace').get() as { cnt: number };
+    expect(count.cnt).toBe(RING_CAP);
+  });
+
+  it('MockActivationTraceSink captures the kind field on the input object', () => {
+    const sink = new MockActivationTraceSink();
+    sink.emit({ query_id: 'q-1', seeds: ['a'], hops: [], kind: 'oscillation' });
+    sink.emit({ query_id: 'q-2', seeds: [], hops: [] });
+    expect(sink.traces[0]?.kind).toBe('oscillation');
+    expect(sink.traces[1]?.kind).toBeUndefined();
   });
 });
 
