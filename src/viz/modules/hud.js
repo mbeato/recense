@@ -147,9 +147,13 @@ export function initHud(ctx) {
       logEvent('sse', 'bad trace payload: ' + String(e));
       return;
     }
-    logEvent('sse-trace', '#' + row.id + ' seeds=[' + (row.seeds || []).join(',') + ']');
+    // Log seed ids (normalize the union type — seeds may be bare strings or {node_id,score})
+    const seedLog = (row.seeds || []).map(s => typeof s === 'string' ? s : s.node_id).join(',');
+    logEvent('sse-trace', '#' + row.id + ' seeds=[' + seedLog + ']');
     if (typeof ctx.applyTrace === 'function') {
-      ctx.applyTrace(row.seeds || []);
+      // Phase 52: pass the full row ({seeds, hops, kind}) so applyTrace can
+      // drive the animation from the honest server payload (not just seeds).
+      ctx.applyTrace(row);
     }
   });
 
