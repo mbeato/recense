@@ -106,6 +106,61 @@ export const TOMBSTONE_COLOR = 0x2b2530;
 export const HOT = 0xffb866;
 
 // ============================================================================
+// Activation decay envelope (D-06)
+// ============================================================================
+// Replaces the old flat `node.__act -= dt * 0.6` (~1.6 s linear decay).
+// Three named phases: fast attack → hold at peak → exponential fade to floor.
+// Values are designer-tunable constants; adjust at the founder visual checkpoint.
+
+/** Fast brightness ramp after a node fires (ms). */
+export const DECAY_ATTACK_MS = 140;
+
+/** How long the node stays at peak brightness before fading (ms). */
+export const DECAY_HOLD_MS = 600;
+
+/** Exponential fade duration from peak → DECAY_FLOOR (ms). */
+export const DECAY_FADE_MS = 2500;
+
+/**
+ * Activation floor — the node lingers at this fraction of peak after the
+ * fade tail rather than snapping to zero. Low enough to be nearly invisible;
+ * high enough to avoid a jarring hard-off at the end of the envelope.
+ */
+export const DECAY_FLOOR = 0.04;
+
+// ============================================================================
+// Per-event kind colour palette (D-07 / D-04)
+// ============================================================================
+// Single source of truth: every renderer reads KIND_COLOR instead of defining
+// its own hex literals.  Keys match the `kind` column in activation_trace
+// (plus `recall_seed` / `recall_hop` for the two visual roles in a recall row).
+//
+// Palette constraints:
+//   recall_seed = HOT amber  — the primary retrieval-activation signal
+//   recall_hop  = cyan       — subordinate 1-hop associations (thinner / dimmer)
+//   neutral     ≠ amber      — D-04 guard: amber is reserved for retrieval/hover
+//                              ONLY; neutral MUST use a different hue
+
+/**
+ * Per-event kind colours for the activation animation.
+ * @type {{recall_seed: number, recall_hop: number, new_node: number, reconsolidation: number, oscillation: number, neutral: number}}
+ */
+export const KIND_COLOR = {
+  /** Retrieval seed — amber (same as HOT; seeds are the primary activation) */
+  recall_seed:     0xffb866,
+  /** 1-hop association — cyan (subordinate; thinner / dimmer than seeds) */
+  recall_hop:      0x66d9ff,
+  /** New node encoding — green */
+  new_node:        0x66ff99,
+  /** Reconsolidation hero — magenta (belief-update-in-place flash) */
+  reconsolidation: 0xff3b6b,
+  /** Oscillation / instability — orange */
+  oscillation:     0xff7a1a,
+  /** Non-hero cascade events — muted slate (NON-amber per D-04) */
+  neutral:         0x8a93a6,
+};
+
+// ============================================================================
 // Sizing
 // ============================================================================
 
@@ -181,17 +236,32 @@ export const HULL_ROT_Z = 0;
 // ============================================================================
 // Spreading-activation / trace timing
 // ============================================================================
+// NOTE (Phase 52): The client-side BFS that used MAX_HOPS / TRACE_FANOUT as
+// CONTENT GENERATORS has been deleted.  applyTrace is now driven entirely by
+// the server-emitted seeds + hops payload (honest 1-hop neighbours).
+// These constants are retained as DEFENSIVE SAFETY CAPS only — in practice
+// the honest payload from the engine is already within bounds.
 
-/** Spreading-activation BFS depth (max hops outward from seed nodes) */
+/**
+ * DEFENSIVE CAP ONLY — max hop depth accepted from the server payload.
+ * (No longer drives a client BFS — the BFS was deleted in Phase 52.)
+ */
 export const MAX_HOPS = 4;
 
 /** Delay between hop waves (ms) — energy propagates outward at this cadence */
 export const HOP_MS = 780;
 
-/** Max edges followed per node per hop (prevents runaway on dense graphs) */
+/**
+ * DEFENSIVE CAP ONLY — max edges processed per node from the server payload.
+ * (No longer drives a client BFS — the BFS was deleted in Phase 52.)
+ */
 export const TRACE_FANOUT = 5;
 
-/** Total pulse budget per trace (hard cap on GPU draw calls) */
+/**
+ * DEFENSIVE CAP ONLY — total lit edges per trace (hard cap on GPU draw calls).
+ * traceEdgesFromHops clamps to this as a last-resort guard; honest payloads
+ * from the engine are already within this limit.
+ */
 export const TRACE_MAX_EDGES = 80;
 
 /**
