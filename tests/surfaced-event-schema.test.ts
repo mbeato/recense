@@ -73,14 +73,14 @@ describe('surfaced_event schema (21-01)', () => {
     }
   });
 
-  it('schema_version meta is "14" after initSchema (v14: token_usage_ledger)', () => {
+  it('schema_version meta is "15" after initSchema (v15: activation_trace.kind)', () => {
     tmpDbPath = makeTempDbPath();
     const db = new Database(tmpDbPath);
     try {
       initSchema(db);
       const row = db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as { value: string } | undefined;
       expect(row).toBeDefined();
-      expect(row!.value).toBe('14');
+      expect(row!.value).toBe('15');
     } finally {
       db.close();
     }

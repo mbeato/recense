@@ -22,8 +22,8 @@ function makeDb(): Database.Database {
 }
 
 describe('SCHEMA_VERSION', () => {
-  it('is 14 (v14: token_usage_ledger)', () => {
-    expect(SCHEMA_VERSION).toBe(14);
+  it('is 15 (v15: activation_trace.kind)', () => {
+    expect(SCHEMA_VERSION).toBe(15);
   });
 });
 
