@@ -8,26 +8,34 @@
  * stats.js master rAF loop, Plan 06). This module registers its tick with
  * the central loop and does not own its own frame scheduling.
  *
- * Locked semantics (D-102 / D-09):
- *   - applyTrace runs multi-hop BFS spreading activation: seeds pulse, hop
- *     waves propagate outward, the pathway is revealed through the LOD then
- *     fades.
- *   - The per-frame activation loop touches ONLY the active Set, never the
- *     full graph, and never calls Graph.refresh().
- *   - spawnPulse lights a traveling segment along each edge as energy
- *     propagates source→dest.
+ * Phase 52 semantics (D-102 / honest-trace rewrite):
+ *   - applyTrace(row) accepts a full SSE row {seeds, hops, kind, query_id}.
+ *     It lights EVERY seed in row.seeds (brightness ∝ retrieval score) and
+ *     EVERY real 1-hop neighbour in row.hops (subordinate / dimmer, score-gated).
+ *     NO client-side BFS — the BFS was deleted; the server payload is the
+ *     authoritative lit set (D-08 honesty guarantee).
+ *   - Per-frame tick implements the D-06 attack→hold→exponential-fade envelope
+ *     instead of the old flat linear decay.
+ *   - spawnPulse is preserved for detail.js ripple use; it is NOT called from
+ *     applyTrace (no honest source-seed→hop edge exists to animate).
  *   - The same applyTrace serves both SSE traces and the local test trigger
- *     (D-102 proof).
+ *     (D-102 proof): the test trigger builds a synthetic row from ctx.adj so
+ *     both paths share the identical rendering code path.
+ *
+ * Exported helpers (testable, THREE-free):
+ *   - normalizeSeed(s)         — shape-normalise seed union → {node_id, score}
+ *   - traceEdgesFromHops(row, idMap) — resolve lit hop set from payload only
  */
 
 import * as THREE from 'three';
 import {
   HOT,
-  MAX_HOPS,
-  HOP_MS,
-  TRACE_FANOUT,
   TRACE_MAX_EDGES,
   PULSE_MS,
+  DECAY_ATTACK_MS,
+  DECAY_HOLD_MS,
+  DECAY_FADE_MS,
+  DECAY_FLOOR,
 } from './constants.js';
 
 // ── Reusable scratch objects for pulse orientation (avoid per-frame alloc) ─
@@ -63,8 +71,6 @@ const WAVEFRONT_FRAG = `
   }
 `;
 // Asymmetric timing (ms): fast attack, head sweep, long ease-out decay.
-// Sweep slowed (520→850) so the light visibly travels the wire rather than
-// snapping; decay lengthened (900→1150) so each trace lingers longer on screen.
 const WF_ATTACK = 140;
 const WF_SWEEP  = 850;
 const WF_DECAY  = 1150;
@@ -72,6 +78,95 @@ const WF_LIFE   = WF_SWEEP + WF_DECAY;
 
 /** Clamped smoothstep on [0,1]. */
 function _smooth01(x) { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); }
+
+// ============================================================================
+// Exported pure helpers — THREE-free, usable in unit tests
+// ============================================================================
+
+/**
+ * Normalise a seed from the ActivationTraceInput union type to a consistent
+ * {node_id, score} object.  Accepts both shapes:
+ *   - bare string id  (legacy / ingestion-kind producers)
+ *   - {node_id, score} (post-52 recall path; score may be null per WR-02)
+ *
+ * score: null → the caller should apply the fixed mid-intensity fallback (0.5).
+ * This helper is exported so Plan 03 (ingestion colours) can reuse it.
+ *
+ * @param {string | {node_id: string, score: number | null}} s
+ * @returns {{ node_id: string, score: number | null }}
+ */
+export function normalizeSeed(s) {
+  if (typeof s === 'string') return { node_id: s, score: null };
+  return { node_id: s.node_id, score: (typeof s.score === 'number') ? s.score : null };
+}
+
+/**
+ * Pure helper: resolve the lit hop-node set from the SERVER PAYLOAD only.
+ *
+ * Each entry in row.hops (a real 1-hop neighbour as emitted by the engine)
+ * is looked up in idMap.  Nodes absent from the map are skipped.  The
+ * returned set is clamped to TRACE_MAX_EDGES as a defensive cap — honest
+ * payloads are already within this limit; the cap guards against an
+ * unexpectedly oversized row (T-52-04).
+ *
+ * CONTRACT: this function MUST NOT traverse ctx.adj, MAX_HOPS, or TRACE_FANOUT
+ * inside hop resolution — those were the BFS tools; their use here would
+ * reintroduce the dishonesty this phase kills (D-08 #1 regression guard).
+ *
+ * @param {{ hops: Array<{node_id: string, score: number|null, hop: number}> }} row
+ * @param {Map<string, any>} idMap
+ * @returns {Array<{node_id: string, score: number|null}>}
+ */
+export function traceEdgesFromHops(row, idMap) {
+  const hops = row.hops || [];
+  const result = [];
+  for (const hop of hops) {
+    if (!idMap.has(hop.node_id)) continue;  // skip nodes not in the render graph
+    if (result.length >= TRACE_MAX_EDGES) break; // defensive cap (T-52-04)
+    result.push({ node_id: hop.node_id, score: hop.score ?? null });
+  }
+  return result;
+}
+
+// ============================================================================
+// D-06 activation envelope evaluator
+// ============================================================================
+
+/**
+ * Compute the current activation level for a node given its envelope state.
+ *
+ * Three phases:
+ *   [0, ATTACK)      → linear ramp  0 → peak
+ *   [ATTACK, +HOLD)  → hold at peak
+ *   [+HOLD, +FADE)   → exponential decay: peak → DECAY_FLOOR
+ *   >= total         → returns 0 (caller should remove from active set)
+ *
+ * @param {number} now      - performance.now() at tick time (ms)
+ * @param {number} t0       - when activate() was called (ms)
+ * @param {number} peak     - activation level at the moment of firing (0–1)
+ * @returns {number}        - current level (0 = expired)
+ */
+function evalEnvelope(now, t0, peak) {
+  const elapsed = now - t0;
+  if (elapsed < DECAY_ATTACK_MS) {
+    // Linear attack: 0 → peak
+    return peak * (elapsed / DECAY_ATTACK_MS);
+  }
+  const afterAttack = elapsed - DECAY_ATTACK_MS;
+  if (afterAttack < DECAY_HOLD_MS) {
+    // Hold at peak
+    return peak;
+  }
+  const fadeT = afterAttack - DECAY_HOLD_MS;
+  if (fadeT >= DECAY_FADE_MS) {
+    // Fully expired
+    return 0;
+  }
+  // Exponential fade: peak → DECAY_FLOOR over DECAY_FADE_MS
+  // k=4 gives exp(-4)≈0.018 at the tail — well into the floor territory.
+  const ratio = fadeT / DECAY_FADE_MS;
+  return DECAY_FLOOR + (peak - DECAY_FLOOR) * Math.exp(-ratio * 4);
+}
 
 // ============================================================================
 // initTrace(ctx) — entry point
@@ -89,11 +184,14 @@ export function initTrace(ctx) {
   // Active node Set — the tick callback walks ONLY this set, never allNodes
   const active = new Set();
 
-  // In-flight traveling pulse records
+  // In-flight traveling pulse records (detail.js ripple path)
   const pulses = [];
 
   // ── activate(node, level) ─────────────────────────────────────────────────
   // Raises the node's activation level and enqueues it for animation.
+  // Records __actT0 + __actPeak for the D-06 envelope evaluator in tick().
+  // If the new level is higher than the current peak, the envelope restarts.
+  //
   // Haze nodes (InstancedMesh, have __hazeIdx but no __mat) get a color-only
   // branch that drives ctx.hazeMesh.setColorAt — no per-frame setMatrixAt so
   // the 6k-instance matrix buffer stays untouched (performance constraint).
@@ -101,7 +199,11 @@ export function initTrace(ctx) {
   function activate(node, level) {
     if (!node) return;
     if (node.__mat == null && node.__hazeIdx == null) return;
-    node.__act = Math.max(node.__act || 0, level);
+    if ((node.__act || 0) < level) {
+      node.__act    = level;
+      node.__actT0  = performance.now();
+      node.__actPeak = level;
+    }
     active.add(node);
   }
 
@@ -109,7 +211,8 @@ export function initTrace(ctx) {
   // Ignites a full-edge wavefront: a band of amber light races from→to and the
   // wire glows then decays (see WAVEFRONT_* shader above). Uses the shared
   // _pulseGeo; each wavefront owns only its (cheap) ShaderMaterial, disposed on
-  // completion. Name kept for callers (trace BFS + detail.js ripple).
+  // completion. Preserved for detail.js ripple — NOT called from applyTrace
+  // (no honest source-seed→hop edge available from the server payload).
   function spawnPulse(from, to) {
     if (!ctx.pulseGroup || !from || !to) return;
     const mat = new THREE.ShaderMaterial({
@@ -142,9 +245,20 @@ export function initTrace(ctx) {
     for (const node of [...active]) {
       // ── Haze (InstancedMesh) branch: color-only, no __mat / __mesh ──────────
       if (node.__hazeIdx != null && node.__hazeBase && ctx.hazeMesh) {
-        node.__act -= dt * 0.6; // same ~1.6 s decay as regular nodes
-        if (node.__act <= 0.001) {
-          node.__act = 0;
+        // D-06 envelope (or legacy fallback if __actT0 absent)
+        if (node.__actT0 != null) {
+          node.__act = evalEnvelope(now, node.__actT0, node.__actPeak || node.__act || 1);
+        } else {
+          node.__act -= dt * 0.6; // legacy fallback (~1.6 s linear)
+        }
+        const elapsed = node.__actT0 != null ? (now - node.__actT0) : Infinity;
+        const expired = node.__actT0 != null
+          ? elapsed >= DECAY_ATTACK_MS + DECAY_HOLD_MS + DECAY_FADE_MS
+          : node.__act <= 0.001;
+        if (expired || node.__act <= 0) {
+          node.__act     = 0;
+          node.__actT0   = undefined;
+          node.__actPeak = undefined;
           active.delete(node);
           // Restore rest color — copy __hazeBase into the instance color buffer
           ctx.hazeMesh.setColorAt(node.__hazeIdx, node.__hazeBase);
@@ -164,9 +278,20 @@ export function initTrace(ctx) {
         active.delete(node);
         continue;
       }
-      node.__act -= dt * 0.6; // ~1.6 s full decay
-      if (node.__act <= 0.001) {
-        node.__act = 0;
+      // D-06 envelope (or legacy fallback if __actT0 absent)
+      if (node.__actT0 != null) {
+        node.__act = evalEnvelope(now, node.__actT0, node.__actPeak || node.__act || 1);
+      } else {
+        node.__act -= dt * 0.6; // legacy fallback (~1.6 s linear)
+      }
+      const elapsed = node.__actT0 != null ? (now - node.__actT0) : Infinity;
+      const expired = node.__actT0 != null
+        ? elapsed >= DECAY_ATTACK_MS + DECAY_HOLD_MS + DECAY_FADE_MS
+        : node.__act <= 0.001;
+      if (expired || node.__act <= 0) {
+        node.__act     = 0;
+        node.__actT0   = undefined;
+        node.__actPeak = undefined;
         active.delete(node);
         // Restore base appearance — scale restores to __baseR, NOT 1: node radius
         // lives in mesh.scale (shared unit geometry, D-05), so setScalar(1) would
@@ -230,118 +355,101 @@ export function initTrace(ctx) {
   // The central loop governs all idle throttling — trace registers here only.
   ctx.registerTick(tick);
 
-  // Expose on ctx so callers (app.js, hud.js) can reach them
+  // Expose on ctx so callers (app.js, hud.js, detail.js) can reach them
   ctx.activate   = activate;
   ctx.spawnPulse = spawnPulse;
 
-  // ── applyTrace(seedIds) — BFS spreading activation ────────────────────────
-  // Locked semantics: resolve seeds → BFS hop-waves → reveal pathway through
-  // LOD → animate pulses per hop → fade pathway back.
+  // ── applyTrace(row) — honest payload-driven activation ────────────────────
+  // Phase 52 rewrite: lights EVERY seed in row.seeds (brightness ∝ score) and
+  // EVERY real 1-hop neighbour in row.hops (subordinate / dimmer, score-gated).
+  // NO client BFS. NO seeds[0]-anchoring. NO edge.w term (not in honest payload).
+  //
+  // Back-compat: if a bare string[] is passed (legacy before Phase 52), wraps it
+  // into {seeds: arr, hops: []} so the same code path handles both shapes.
+  //
   // Called by both the SSE trace listener (hud.js) and the local test trigger
   // — the same function in both cases (D-102 proof).
-  function applyTrace(seedIds) {
+  function applyTrace(row) {
+    // Back-compat: bare string[] → synthetic row (legacy SSE shape before Phase 52)
+    if (Array.isArray(row)) {
+      row = { seeds: row, hops: [] };
+    }
+
+    const rawSeeds = row.seeds || [];
+    const seedLog = rawSeeds.map(s => typeof s === 'string' ? s : s.node_id);
     if (ctx.logEvent) {
-      ctx.logEvent('trace', `seeds=[${(seedIds || []).join(',')}]`);
+      ctx.logEvent('trace', `seeds=[${seedLog.join(',')}] hops=${(row.hops || []).length}`);
     }
 
-    // Resolve and deduplicate seed ids → node objects
+    // ── Resolve seeds against the idMap ──────────────────────────────────────
+    // Normalize seed union type → {node_id, score} at the client boundary.
+    // intensity ∝ score (D-07): null score → fixed mid intensity (WR-02).
     const visited = new Set();
-    const seeds = [];
-    for (const sid of (seedIds || [])) {
-      const s = ctx.idMap.get(sid);
-      if (s && !visited.has(sid)) {
-        visited.add(sid);
-        seeds.push(s);
-      }
-    }
-    if (!seeds.length) return;
+    const seedEntries = []; // {node, intensity}
 
-    // BFS outward — build hop-ordered waves
-    const waves = [];
-    let frontier = seeds;
-    let budget = TRACE_MAX_EDGES;
-
-    for (let hop = 1; hop <= MAX_HOPS && frontier.length && budget > 0; hop++) {
-      const wave = [];
-      const next = [];
-
-      for (const node of frontier) {
-        const edges = (ctx.adj.get(node.id) || []).slice(0, TRACE_FANOUT);
-        for (const edge of edges) {
-          // ctx.adj lists each edge under BOTH endpoints, so the neighbor is
-          // whichever endpoint is NOT the frontier node (same pattern as
-          // detail.js getConnections) — always taking edge.target would drop
-          // every incoming edge as a self-visit.
-          const sid = typeof edge.source === 'object' ? edge.source.id : edge.source;
-          const tid = typeof edge.target === 'object' ? edge.target.id : edge.target;
-          const nbId = sid === node.id ? tid : sid;
-          const nb = ctx.idMap.get(nbId);
-          if (!nb || visited.has(nb.id)) continue;
-          // Spend budget only on edges actually traversed, not on skips
-          if (budget-- <= 0) break;
-          visited.add(nb.id);
-          wave.push({ edge, from: node, to: nb });
-          next.push(nb);
-        }
-      }
-      if (wave.length) waves.push(wave);
-      frontier = next;
+    for (const raw of rawSeeds) {
+      const { node_id, score } = normalizeSeed(raw);
+      if (!node_id || visited.has(node_id)) continue;
+      const node = ctx.idMap.get(node_id);
+      if (!node) continue;
+      visited.add(node_id);
+      // Map score to [0.2, 1.0]; null → 0.5 mid-intensity fallback (WR-02)
+      const intensity = typeof score === 'number'
+        ? Math.max(0.2, Math.min(1.0, score))
+        : 0.5;
+      seedEntries.push({ node, intensity });
     }
 
-    // Hold full framerate for the whole trace window WITHOUT resetting the
-    // idle timer (D-07) — covers hop scheduling + final pulse + pathway
-    // fade-back (waves.length*HOP_MS + 2800) + activation decay tail (~1.6s,
-    // rounded up). Over-estimating only costs full-rate frames.
-    if (ctx.markAnimating) ctx.markAnimating(waves.length * HOP_MS + PULSE_MS + 2800 + 1800);
+    if (!seedEntries.length) return;
 
-    // Reveal pathway through the LOD before pulses start. Collect the bounded
-    // pathway object set (seeds + every BFS-revealed node/edge) so revealTrace
-    // can delta-sync .visible on just these objects instead of re-digesting
-    // the full graph (the old full re-eval caused a visible frame hitch).
-    const pathNodes = [...seeds];
-    const pathLinks = [];
-    seeds.forEach(s => ctx.traceNodes.add(s.id));
-    for (const wave of waves) {
-      for (const { edge, to } of wave) {
-        ctx.traceNodes.add(to.id);
-        ctx.traceLinks.add(ctx.linkKey(edge));
-        pathNodes.push(to);
-        pathLinks.push(edge);
-      }
-    }
-    ctx.revealTrace(pathNodes, pathLinks);
+    // ── Resolve hop nodes from the honest server payload (traceEdgesFromHops) ─
+    // NO ctx.adj traversal — hop nodes come from row.hops ONLY.
+    // Hop brightness gated on hop score ALONE (no edge.w — not in the honest
+    // payload; deriving it would re-invent client adjacency, which this kills).
+    const hopEntries = traceEdgesFromHops(row, ctx.idMap)
+      .map(({ node_id, score }) => {
+        const node = ctx.idMap.get(node_id);
+        if (!node) return null;
+        const intensity = typeof score === 'number'
+          ? Math.max(0.1, Math.min(0.5, score * 0.55))
+          : 0.3; // mid fallback for null-score hops (schema-recall path)
+        return { node, intensity };
+      })
+      .filter(Boolean);
 
-    // Activate all seeds immediately at full intensity
-    seeds.forEach(s => activate(s, 1.0));
+    // ── Mark framerate hold for the decay window ──────────────────────────────
+    const decayWindowMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS;
+    if (ctx.markAnimating) ctx.markAnimating(decayWindowMs);
 
-    // Schedule per-hop waves: HOP_MS between hops, 35 ms intra-wave stagger
-    waves.forEach((wave, h) => {
-      const intensity = Math.max(0.3, 1 - (h + 1) * 0.18);
-      setTimeout(() => {
-        wave.forEach(({ from, to }, i) => {
-          setTimeout(() => {
-            spawnPulse(from, to);
-            setTimeout(() => activate(to, intensity), PULSE_MS * 0.6);
-          }, i * 35);
-        });
-      }, h * HOP_MS);
-    });
+    // ── Reveal pathway through the LOD ────────────────────────────────────────
+    // Only nodes — no links (we have no honest seed→hop edges to reveal).
+    const pathNodes = seedEntries.map(e => e.node)
+      .concat(hopEntries.map(e => e.node));
+    seedEntries.forEach(e => ctx.traceNodes.add(e.node.id));
+    hopEntries.forEach(e => ctx.traceNodes.add(e.node.id));
+    if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
 
-    // Fade the pathway back after all pulses have had time to complete.
-    // Re-evaluating the SAME bounded object set after clearing the sets hides
-    // exactly what the trace revealed (schemas expanded mid-trace stay visible).
+    // ── Activate all seeds at score-proportional intensity (D-07) ─────────────
+    seedEntries.forEach(({ node, intensity }) => activate(node, intensity));
+
+    // ── Activate hop nodes at subordinate (dimmer) intensity ──────────────────
+    // Gated on hop score alone; thinner/dimmer than seeds per spec.
+    hopEntries.forEach(({ node, intensity }) => activate(node, intensity));
+
+    // ── Fade the pathway back after the decay window ───────────────────────────
+    const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
     setTimeout(() => {
       ctx.traceNodes.clear();
       ctx.traceLinks.clear();
-      ctx.revealTrace(pathNodes, pathLinks);
-    }, waves.length * HOP_MS + 2800);
+      if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
+    }, fadeMs);
   }
 
   ctx.applyTrace = applyTrace;
 
   // ── Local test-trace trigger (D-102: same applyTrace as the SSE path) ─────
-  // Wires #btn-test-trace to pick the best-connected visible nodes and call
-  // the shared applyTrace — confirming SSE and local paths share the function.
+  // Wires #btn-test-trace to pick the best-connected visible nodes and build a
+  // synthetic row from ctx.adj — confirming SSE and local paths share applyTrace.
   const btnTrace = document.getElementById('btn-test-trace');
   if (btnTrace) {
     btnTrace.addEventListener('click', () => {
@@ -356,8 +464,32 @@ export function initTrace(ctx) {
       const scored = visible
         .map(n => ({ n, deg: (ctx.adj.get(n.id) || []).length }))
         .sort((a, b) => b.deg - a.deg);
-      const seedIds = scored.slice(0, 3).map(x => x.n.id);
-      applyTrace(seedIds);
+      const seedNodes = scored.slice(0, 3).map((x, i) => ({
+        node_id: x.n.id,
+        score: Math.max(0.2, 1.0 - i * 0.25), // descending: 1.0, 0.75, 0.5
+      }));
+
+      // Build hop set from ctx.adj for the synthetic test row
+      const hopSet = new Set();
+      const seedIds = new Set(seedNodes.map(s => s.node_id));
+      for (const { node_id } of seedNodes) {
+        const edges = ctx.adj.get(node_id) || [];
+        for (const edge of edges.slice(0, 5)) {
+          const src = typeof edge.source === 'object' ? edge.source.id : edge.source;
+          const tgt = typeof edge.target === 'object' ? edge.target.id : edge.target;
+          const nbId = src === node_id ? tgt : src;
+          if (!seedIds.has(nbId)) hopSet.add(nbId);
+          if (hopSet.size >= 15) break;
+        }
+        if (hopSet.size >= 15) break;
+      }
+      const syntheticRow = {
+        seeds: seedNodes,
+        hops:  [...hopSet].map(id => ({ node_id: id, score: null, hop: 1 })),
+        kind:  'recall',
+        query_id: `test-${Date.now()}`,
+      };
+      applyTrace(syntheticRow);
     });
   }
 }

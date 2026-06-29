@@ -297,7 +297,11 @@ export class RetrievalEngine {
     // T-10-05: wrapped in try/catch fire-and-forget so a sink error never corrupts results.
     if (this.traceEnabled) {
       try {
-        const seedIds = seeds.map(([id]) => id);
+        // D-07: carry per-seed retrieval score into the presentation payload.
+        // seedScore was already destructured at line 271; this additive change
+        // surfaces it so the viz can render brightness ∝ score (inside the
+        // existing T-10-05 fire-and-forget guard — zero impact on ranking/results).
+        const seedPayload = seeds.map(([id, score]) => ({ node_id: id, score }));
         // Collect activated neighbors: nodes whose score was boosted in the spread loop.
         // We track these by iterating seeds again and reading their out-edges from the scores map.
         const hopEntries: Array<{ node_id: string; score: number; hop: number }> = [];
@@ -313,7 +317,7 @@ export class RetrievalEngine {
             }
           }
         }
-        this.traceSink.emit({ query_id: newId(), seeds: seedIds, hops: hopEntries });
+        this.traceSink.emit({ query_id: newId(), seeds: seedPayload, hops: hopEntries });
       } catch {
         // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
       }

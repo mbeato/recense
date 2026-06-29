@@ -93,7 +93,7 @@ if (typeof (globalThis as any).performance === 'undefined') {
 // @ts-ignore — browser ESM; no type declarations
 import { initTrace } from '../src/viz/modules/trace.js';
 // @ts-ignore
-import { HOT } from '../src/viz/modules/constants.js';
+import { HOT, DECAY_ATTACK_MS, DECAY_HOLD_MS, DECAY_FADE_MS } from '../src/viz/modules/constants.js';
 
 // ── Test-side color helper (mirrors the mock Color above) ────────────────────
 // Used to create __hazeBase and __base values and to snapshot colors at assertion time.
@@ -199,8 +199,10 @@ describe('viz haze activation (instanced-haze color-only branch)', () => {
     // Before the fix, activate() returns early on !node.__mat and this call is a no-op
     ctx.activate(node, 1.0);
 
-    // Run tick with small dt so activation level stays > 0
-    ticks[0]!(performance.now());
+    // D-06 envelope: at t=0 activation is 0 (start of attack ramp); we must
+    // advance time past the ATTACK phase so the tick sees the node in HOLD.
+    // node.__actT0 = performance.now() from inside activate().
+    ticks[0]!(performance.now() + DECAY_ATTACK_MS + 50);
 
     // Must have called setColorAt for instance 7
     const callsForIdx7 = colorSetCalls.filter(c => c.idx === 7);
@@ -233,11 +235,12 @@ describe('viz haze activation (instanced-haze color-only branch)', () => {
     const node = makeHazeNode('haze-099', 99);
     ctx.hazeNodeIdMap.set('haze-099', 99);
 
-    // Very low activation — one tick at max dt (50ms → 0.03 decay) evicts the node
+    // D-06 envelope: decay takes ATTACK+HOLD+FADE=3240ms to expire, regardless
+    // of activation level. Advance time past the full envelope so tick evicts the node.
     ctx.activate(node, 0.001);
 
     let now = performance.now();
-    ticks[0]!((now += 50));
+    ticks[0]!((now += DECAY_ATTACK_MS + DECAY_HOLD_MS + DECAY_FADE_MS + 100));
 
     // A restore call must have set instance 99 back to __hazeBase
     const callsForIdx99 = colorSetCalls.filter(c => c.idx === 99);

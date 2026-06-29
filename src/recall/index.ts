@@ -520,7 +520,9 @@ export class RecallEngine {
           score:   null,
           hop:     1 as const,
         }));
-        this.traceSink.emit({ query_id: newId(), seeds: [bestMatch.id], hops });
+        // D-07/WR-02: emit seed as {node_id, score:null} — consistent with hops above.
+        // score=null per WR-02 (this path has only rank order, not a measured magnitude).
+        this.traceSink.emit({ query_id: newId(), seeds: [{ node_id: bestMatch.id, score: null }], hops });
       } catch {
         // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
       }
