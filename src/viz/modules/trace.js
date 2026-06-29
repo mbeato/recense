@@ -30,6 +30,7 @@
 import * as THREE from 'three';
 import {
   HOT,
+  KIND_COLOR,
   TRACE_MAX_EDGES,
   PULSE_MS,
   DECAY_ATTACK_MS,
@@ -181,6 +182,14 @@ export function initTrace(ctx) {
   // Convert HOT constant to a THREE.Color for lerping
   const HOT_COLOR = new THREE.Color(HOT);
 
+  // Per-kind colour objects (pre-built at init; zero allocation cost per-frame)
+  const KIND_COLORS = {
+    new_node:        new THREE.Color(KIND_COLOR.new_node),
+    reconsolidation: new THREE.Color(KIND_COLOR.reconsolidation),
+    oscillation:     new THREE.Color(KIND_COLOR.oscillation),
+    neutral:         new THREE.Color(KIND_COLOR.neutral),
+  };
+
   // Active node Set — the tick callback walks ONLY this set, never allNodes
   const active = new Set();
 
@@ -196,13 +205,14 @@ export function initTrace(ctx) {
   // branch that drives ctx.hazeMesh.setColorAt — no per-frame setMatrixAt so
   // the 6k-instance matrix buffer stays untouched (performance constraint).
   // Regular nodes must have __mat to be rendered — early-return if absent.
-  function activate(node, level) {
+  function activate(node, level, kindColor) {
     if (!node) return;
     if (node.__mat == null && node.__hazeIdx == null) return;
     if ((node.__act || 0) < level) {
-      node.__act    = level;
-      node.__actT0  = performance.now();
-      node.__actPeak = level;
+      node.__act      = level;
+      node.__actT0    = performance.now();
+      node.__actPeak  = level;
+      node.__actColor = kindColor || HOT_COLOR; // per-kind palette (D-03 / D-04)
     }
     active.add(node);
   }
@@ -213,11 +223,11 @@ export function initTrace(ctx) {
   // _pulseGeo; each wavefront owns only its (cheap) ShaderMaterial, disposed on
   // completion. Preserved for detail.js ripple — NOT called from applyTrace
   // (no honest source-seed→hop edge available from the server payload).
-  function spawnPulse(from, to) {
+  function spawnPulse(from, to, color) {
     if (!ctx.pulseGroup || !from || !to) return;
     const mat = new THREE.ShaderMaterial({
       uniforms: {
-        uColor:     { value: HOT_COLOR },
+        uColor:     { value: color || HOT_COLOR }, // parameterised per-kind
         uWavefront: { value: 0 },
         uIntensity: { value: 0 },
       },
@@ -256,9 +266,10 @@ export function initTrace(ctx) {
           ? elapsed >= DECAY_ATTACK_MS + DECAY_HOLD_MS + DECAY_FADE_MS
           : node.__act <= 0.001;
         if (expired || node.__act <= 0) {
-          node.__act     = 0;
-          node.__actT0   = undefined;
-          node.__actPeak = undefined;
+          node.__act      = 0;
+          node.__actT0    = undefined;
+          node.__actPeak  = undefined;
+          node.__actColor = undefined;
           active.delete(node);
           // Restore rest color — copy __hazeBase into the instance color buffer
           ctx.hazeMesh.setColorAt(node.__hazeIdx, node.__hazeBase);
@@ -266,8 +277,8 @@ export function initTrace(ctx) {
           continue;
         }
         const a = Math.max(0, node.__act);
-        // Lerp toward HOT amber (color-only; no setMatrixAt scale-pulse)
-        const activationColor = node.__hazeBase.clone().lerp(HOT_COLOR, a * 0.8);
+        // Lerp toward the kind-specific activation colour (default: HOT amber)
+        const activationColor = node.__hazeBase.clone().lerp(node.__actColor || HOT_COLOR, a * 0.8);
         ctx.hazeMesh.setColorAt(node.__hazeIdx, activationColor);
         ctx.hazeMesh.instanceColor.needsUpdate = true;
         continue;
@@ -289,9 +300,10 @@ export function initTrace(ctx) {
         ? elapsed >= DECAY_ATTACK_MS + DECAY_HOLD_MS + DECAY_FADE_MS
         : node.__act <= 0.001;
       if (expired || node.__act <= 0) {
-        node.__act     = 0;
-        node.__actT0   = undefined;
-        node.__actPeak = undefined;
+        node.__act      = 0;
+        node.__actT0    = undefined;
+        node.__actPeak  = undefined;
+        node.__actColor = undefined;
         active.delete(node);
         // Restore base appearance — scale restores to __baseR, NOT 1: node radius
         // lives in mesh.scale (shared unit geometry, D-05), so setScalar(1) would
@@ -302,7 +314,7 @@ export function initTrace(ctx) {
         continue;
       }
       const a = Math.max(0, node.__act) * (node.__actGain || 1);
-      if (node.__base) node.__mat.color.copy(node.__base).lerp(HOT_COLOR, a * 0.8);
+      if (node.__base) node.__mat.color.copy(node.__base).lerp(node.__actColor || HOT_COLOR, a * 0.8);
       node.__mat.opacity = Math.min(1, (node.__baseOp || 0.85) + a * 0.4);
       node.__mesh.scale.setScalar((node.__baseR || 1) * (1 + a * 0.35));
     }
@@ -360,21 +372,34 @@ export function initTrace(ctx) {
   ctx.spawnPulse = spawnPulse;
 
   // ── applyTrace(row) — honest payload-driven activation ────────────────────
-  // Phase 52 rewrite: lights EVERY seed in row.seeds (brightness ∝ score) and
-  // EVERY real 1-hop neighbour in row.hops (subordinate / dimmer, score-gated).
-  // NO client BFS. NO seeds[0]-anchoring. NO edge.w term (not in honest payload).
+  // Phase 52 rewrite: dispatches on row.kind for per-event vocabulary (Plan 03)
+  // and falls through to the full recall path for recall / absent kind (Plan 02).
   //
-  // Back-compat: if a bare string[] is passed (legacy before Phase 52), wraps it
-  // into {seeds: arr, hops: []} so the same code path handles both shapes.
+  // Ingestion kinds handled (Plan 03):
+  //   new_node        → quiet green blip on seed
+  //   oscillation     → orange strobing pulse on seed (three re-triggers)
+  //   reconsolidation → D-05 choreography: green arriving blip → magenta flash
+  //   <other>         → muted neutral (non-amber) background consolidation
   //
-  // Called by both the SSE trace listener (hud.js) and the local test trigger
-  // — the same function in both cases (D-102 proof).
+  // Recall path (kind absent / null / 'recall') is byte-identical to Plan 02:
+  //   lights ALL seeds ∝ score + ALL real 1-hop hops from payload; no BFS.
+  //
+  // Back-compat: bare string[] wraps into {seeds, hops:[]} before dispatch.
+  // Called by SSE listener (hud.js) and local test trigger — same function.
   function applyTrace(row) {
     // Back-compat: bare string[] → synthetic row (legacy SSE shape before Phase 52)
     if (Array.isArray(row)) {
       row = { seeds: row, hops: [] };
     }
 
+    // ── Dispatch: ingestion hero kinds branch to _applyIngestion ──────────────
+    const kind = row.kind ?? null;
+    if (kind && kind !== 'recall') {
+      _applyIngestion(row, kind);
+      return;
+    }
+
+    // ── Phase-02 recall path (unchanged behavior) ─────────────────────────────
     const rawSeeds = row.seeds || [];
     const seedLog = rawSeeds.map(s => typeof s === 'string' ? s : s.node_id);
     if (ctx.logEvent) {
@@ -443,6 +468,109 @@ export function initTrace(ctx) {
       ctx.traceLinks.clear();
       if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
     }, fadeMs);
+  }
+
+  // ── _applyIngestion(row, kind) — per-kind ingestion color + motion ──────────
+  // Handles new_node / oscillation / reconsolidation and the neutral fallback
+  // for all other consolidation-kind values (confirm / extend / schema_emitted /
+  // entity_merge / fact_merge / contradict_hold / etc.).
+  //
+  // Operates ONLY on nodes already in ctx.idMap — never mutates Graph.graphData.
+  // Missing seed node is always a no-op (never throws).
+  // Intensity scales with seed score per D-07 (null score → kind-appropriate mid).
+  function _applyIngestion(row, kind) {
+    const rawSeeds = row.seeds || [];
+    if (!rawSeeds.length) return;
+
+    const { node_id: seedId, score: seedScore } = normalizeSeed(rawSeeds[0]);
+    const seedNode = ctx.idMap.get(seedId);
+
+    // ── new_node: quiet single green blip — no spreading ─────────────────────
+    if (kind === 'new_node') {
+      if (!seedNode) return;
+      // Modest intensity (new nodes are background arrivals, not recall peaks)
+      const intensity = typeof seedScore === 'number'
+        ? Math.max(0.2, Math.min(0.7, seedScore))
+        : 0.4;
+      if (ctx.markAnimating) ctx.markAnimating(DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
+      ctx.traceNodes.add(seedId);
+      if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+      if (ctx.logEvent) ctx.logEvent('trace', `kind=new_node seed=${seedId} intensity=${intensity.toFixed(2)}`);
+      activate(seedNode, intensity, KIND_COLORS.new_node);
+      return;
+    }
+
+    // ── oscillation: orange strobing pulse — visibly unsettled ───────────────
+    if (kind === 'oscillation') {
+      if (!seedNode) return;
+      const intensity = typeof seedScore === 'number'
+        ? Math.max(0.25, Math.min(0.85, seedScore))
+        : 0.6;
+      // Strobe window: 3 activations ~280ms apart; bounded (T-52-07 accept).
+      if (ctx.markAnimating) ctx.markAnimating(DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS + 700);
+      ctx.traceNodes.add(seedId);
+      if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+      if (ctx.logEvent) ctx.logEvent('trace', `kind=oscillation seed=${seedId} intensity=${intensity.toFixed(2)}`);
+      activate(seedNode, intensity,        KIND_COLORS.oscillation);
+      setTimeout(() => activate(seedNode, intensity * 0.75, KIND_COLORS.oscillation), 280);
+      setTimeout(() => activate(seedNode, intensity * 0.55, KIND_COLORS.oscillation), 560);
+      return;
+    }
+
+    // ── reconsolidation hero choreography (D-05) ──────────────────────────────
+    // seed  = existing / superseded belief node (row.seeds[0], normalised)
+    // hops[0] = arriving candidate (new evidence node, row.hops[0].node_id)
+    //
+    // Sequence:
+    //   1. Green "arriving" blip: candidate → existing (subordinate spawnPulse)
+    //   2. After blip arrives (~WF_SWEEP ms), magenta error-flash on existing node
+    //   3. Standard decay envelope → settle
+    //
+    // CRITICAL (T-52-06): no Graph.graphData mutation; only existing idMap nodes.
+    // Missing candidate → flash-only, still no throw.
+    if (kind === 'reconsolidation') {
+      if (!seedNode) return; // existing node not rendered — no-op
+      const intensity = typeof seedScore === 'number'
+        ? Math.max(0.3, Math.min(1.0, seedScore))
+        : 0.65; // slightly above recall mid — this is the hero moment
+      if (ctx.markAnimating) ctx.markAnimating(WF_SWEEP + DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
+      ctx.traceNodes.add(seedId);
+      if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+      if (ctx.logEvent) ctx.logEvent('trace', `kind=reconsolidation seed=${seedId} intensity=${intensity.toFixed(2)}`);
+
+      const hops = row.hops || [];
+      const candidateHop = hops[0];
+      const candidateNode = candidateHop ? ctx.idMap.get(candidateHop.node_id) : null;
+
+      if (candidateNode) {
+        // Subordinate green blip: candidate → existing node
+        ctx.traceNodes.add(candidateHop.node_id);
+        if (ctx.revealTrace) ctx.revealTrace([candidateNode, seedNode], []);
+        spawnPulse(candidateNode, seedNode, KIND_COLORS.new_node);
+        // After blip arrives, flash the existing node magenta
+        setTimeout(() => {
+          if (!ctx.idMap.has(seedId)) return; // guard: node could have been removed
+          activate(seedNode, intensity, KIND_COLORS.reconsolidation);
+        }, WF_SWEEP);
+      } else {
+        // Candidate not in rendered graph — flash directly (graceful degradation)
+        activate(seedNode, intensity, KIND_COLORS.reconsolidation);
+      }
+      return;
+    }
+
+    // ── neutral fallback — all other consolidation kinds (D-03 / D-04) ────────
+    // confirm / extend / schema_emitted / entity_merge / fact_merge /
+    // contradict_hold / etc. → muted slate; never amber.
+    if (!seedNode) return;
+    const intensity = typeof seedScore === 'number'
+      ? Math.max(0.15, Math.min(0.5, seedScore * 0.6))
+      : 0.25; // low enough to read as background; never competes with recall amber
+    if (ctx.markAnimating) ctx.markAnimating(DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
+    ctx.traceNodes.add(seedId);
+    if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+    if (ctx.logEvent) ctx.logEvent('trace', `kind=${kind} (neutral) seed=${seedId} intensity=${intensity.toFixed(2)}`);
+    activate(seedNode, intensity, KIND_COLORS.neutral);
   }
 
   ctx.applyTrace = applyTrace;
