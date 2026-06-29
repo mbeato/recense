@@ -179,7 +179,10 @@ describe('engine: RecallEngine trace wiring', () => {
     expect(mockSink.traces).toHaveLength(1);
     const trace = mockSink.traces[0]!;
     expect(trace.seeds).toHaveLength(1);
-    expect(typeof trace.seeds[0]).toBe('string');
+    // Phase 52 (D-07/WR-02): seeds are now {node_id, score:null} — not bare strings
+    expect(typeof trace.seeds[0]).toBe('object');
+    expect(typeof (trace.seeds[0] as any).node_id).toBe('string');
+    expect((trace.seeds[0] as any).score).toBeNull();
     expect(trace.hops.length).toBeGreaterThan(0);
     trace.hops.forEach(h => {
       expect(h).toHaveProperty('node_id');

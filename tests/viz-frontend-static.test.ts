@@ -331,7 +331,8 @@ describe('activation', () => {
     const idx = hudSrc.indexOf("addEventListener('trace'");
     expect(idx).toBeGreaterThan(-1);
     // Look for applyTrace within a reasonable window of the listener
-    expect(hudSrc.slice(idx, idx + 400)).toContain('applyTrace');
+    // Phase 52 adds seedLog normalization before the applyTrace call — wider window needed.
+    expect(hudSrc.slice(idx, idx + 700)).toContain('applyTrace');
   });
 
   it('has at least 2 calls to applyTrace (SSE path + local test-trace trigger — D-102)', () => {
