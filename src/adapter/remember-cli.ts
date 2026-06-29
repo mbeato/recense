@@ -50,6 +50,7 @@ import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 import { routeContradiction, isOscillation } from '../consolidation/update-decision';
 import { newId, sha256 } from '../lib/hash';
 import { StrengthDecayManager } from '../strength/decay';
+import { bridgeRememberToViz } from './remember-viz-bridge';
 
 const LOG_PATH = '/tmp/recense-remember.log';
 
@@ -458,6 +459,10 @@ async function main(): Promise<void> {
       db, store, sink, strength, realClock, config,
       provider, retriever, verbatimText, resolvedScope,
     );
+
+    // ── Viz bridge: fire-and-forget, flag-gated, try/catch inside (T-52-11) ──
+    // Called while db is still open; swallows all errors; never perturbs the result.
+    bridgeRememberToViz(db, realClock, result);
 
     // ── D-01 output contract ──────────────────────────────────────────────────
     if (result.action === 'insert') {
