@@ -289,8 +289,8 @@ describe('SQLiteActivationTraceSink kind + seeds-union (Task 2)', () => {
     const db = new Database(':memory:');
     initSchema(db);
     const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
-    const mixed = ['node-bare', { node_id: 'node-scored', score: 0.5 }] as const;
-    sink.emit({ query_id: 'q-mix', seeds: mixed as ActivationTraceInput['seeds'], hops: [] });
+    const mixed: ActivationTraceInput['seeds'] = ['node-bare', { node_id: 'node-scored', score: 0.5 }];
+    sink.emit({ query_id: 'q-mix', seeds: mixed, hops: [] });
     const row = db.prepare('SELECT seeds FROM activation_trace').get() as { seeds: string };
     expect(JSON.parse(row.seeds)).toEqual(['node-bare', { node_id: 'node-scored', score: 0.5 }]);
   });
@@ -330,8 +330,8 @@ describe('SQLiteActivationTraceSink kind + seeds-union (Task 2)', () => {
     const sink = new MockActivationTraceSink();
     sink.emit({ query_id: 'q-1', seeds: ['a'], hops: [], kind: 'oscillation' });
     sink.emit({ query_id: 'q-2', seeds: [], hops: [] });
-    expect(sink.traces[0].kind).toBe('oscillation');
-    expect(sink.traces[1].kind).toBeUndefined();
+    expect(sink.traces[0]?.kind).toBe('oscillation');
+    expect(sink.traces[1]?.kind).toBeUndefined();
   });
 });
 

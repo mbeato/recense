@@ -43,8 +43,13 @@ export const RING_CAP = 50;
 export interface ActivationTraceInput {
   /** Caller-minted query identifier (newId()). */
   query_id: string;
-  /** Node IDs that seeded the spreading-activation pass. */
-  seeds: string[];
+  /**
+   * Seeds that initiated the spreading-activation pass. Back-compat union (D-07):
+   *   - bare string id — legacy / ingestion-kind producers (cascade, remember bridge)
+   *   - {node_id, score} — recall path emitters that carry a per-seed retrieval score
+   * Both shapes are JSON-serialised to the `seeds` TEXT column (shape-agnostic serialisation).
+   */
+  seeds: Array<string | { node_id: string; score: number | null }>;
   /**
    * 1-hop activated neighbours (JSON-serialised in DB). `score` is `null` when the
    * emitter has only rank order and no measured activation/similarity magnitude
@@ -53,6 +58,13 @@ export interface ActivationTraceInput {
   hops: Array<{ node_id: string; score: number | null; hop: number }>;
   /** Emission timestamp (ms). Defaults to clock.nowMs() when omitted. */
   ts?: number;
+  /**
+   * Row-level kind discriminator (D-09). Nullable — `null` / omitted means back-compat recall.
+   *   recall rows:     kind='recall' | null (treated identically — NULL is the back-compat shape)
+   *   ingestion rows:  kind='new_node' | 'reconsolidation' | 'oscillation' | consolidation-neutral
+   * Written as a bound param — never string-interpolated (T-52-01, extends T-10-02).
+   */
+  kind?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,8 +93,9 @@ export class SQLiteActivationTraceSink implements ActivationTraceSink {
     this.db = db;
     this.clock = clock;
     // T-01-SQL: compile prepared statements once in the constructor, never per-call.
+    // T-52-01: kind is a bound param — never string-interpolated (extends T-10-02).
     this.insert = db.prepare(
-      'INSERT INTO activation_trace (ts, query_id, seeds, hops) VALUES (?, ?, ?, ?)'
+      'INSERT INTO activation_trace (ts, query_id, seeds, hops, kind) VALUES (?, ?, ?, ?, ?)'
     );
     // T-10-02: RING_CAP bound as a parameter, never string-interpolated.
     this.evict = db.prepare(
@@ -97,7 +110,15 @@ export class SQLiteActivationTraceSink implements ActivationTraceSink {
    */
   emit(trace: ActivationTraceInput): void {
     const ts = trace.ts ?? this.clock.nowMs();
-    this.insert.run(ts, trace.query_id, JSON.stringify(trace.seeds), JSON.stringify(trace.hops));
+    // seeds/hops JSON-serialised (T-10-02: shape-agnostic, no injection surface).
+    // kind is a bound param written as NULL when omitted (T-52-01).
+    this.insert.run(
+      ts,
+      trace.query_id,
+      JSON.stringify(trace.seeds),
+      JSON.stringify(trace.hops),
+      trace.kind ?? null,
+    );
     // Ring eviction — keeps only the RING_CAP highest-id rows (T-10-01).
     this.evict.run(RING_CAP);
   }
