@@ -3,7 +3,7 @@
  *
  * Coverage:
  *   - initSchema creates activation_trace idempotently
- *   - schema_version meta stamps SCHEMA_VERSION (9) after initSchema
+ *   - schema_version meta stamps SCHEMA_VERSION (15) after initSchema
  *   - activation_trace columns: id, ts, query_id, seeds, hops
  *   - existing v3 node/edge/episode data is untouched by migration
  *   - SQLiteActivationTraceSink.emit writes a row; seeds/hops round-trip as JSON
@@ -48,10 +48,10 @@ describe('activation_trace table', () => {
       .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string } | undefined;
     expect(row?.value).toBe(String(SCHEMA_VERSION));
-    expect(SCHEMA_VERSION).toBe(14);
+    expect(SCHEMA_VERSION).toBe(15);
   });
 
-  it('activation_trace has expected columns (id, ts, query_id, seeds, hops)', () => {
+  it('activation_trace has expected columns (id, ts, query_id, seeds, hops, kind)', () => {
     const db = new Database(':memory:');
     initSchema(db);
     const cols = (db.pragma('table_info(activation_trace)') as Array<{ name: string }>)
@@ -61,6 +61,51 @@ describe('activation_trace table', () => {
     expect(cols).toContain('query_id');
     expect(cols).toContain('seeds');
     expect(cols).toContain('hops');
+    expect(cols).toContain('kind');
+  });
+
+  it('kind column has notnull=0 and no default (D-09: nullable, additive, no DEFAULT)', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const kindCol = (db.pragma('table_info(activation_trace)') as Array<{
+      name: string; notnull: number; dflt_value: string | null;
+    }>).find(r => r.name === 'kind');
+    expect(kindCol).toBeDefined();
+    expect(kindCol!.notnull).toBe(0);
+    expect(kindCol!.dflt_value).toBeNull();
+  });
+
+  it('pre-52 DB (activation_trace without kind) gains kind column via v15 ALTER migration', () => {
+    // Simulate a pre-52 DB by creating activation_trace WITHOUT kind, then running initSchema.
+    const db = new Database(':memory:');
+    // Create the old schema manually (no kind column).
+    db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS activation_trace (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts        INTEGER NOT NULL,
+        query_id  TEXT    NOT NULL,
+        seeds     TEXT    NOT NULL,
+        hops      TEXT    NOT NULL
+      );
+    `);
+    // Insert a row without kind (simulates a pre-52 recall row).
+    db.prepare(
+      "INSERT INTO activation_trace (ts, query_id, seeds, hops) VALUES (?, ?, ?, ?)"
+    ).run(1000, 'q-old', '[]', '[]');
+    // Run initSchema — should migrate additively.
+    initSchema(db);
+    // kind column now present.
+    const cols = (db.pragma('table_info(activation_trace)') as Array<{ name: string }>)
+      .map(r => r.name);
+    expect(cols).toContain('kind');
+    // Pre-existing row reads back kind === null (NULL backfill).
+    const row = db.prepare('SELECT kind FROM activation_trace').get() as { kind: string | null };
+    expect(row.kind).toBeNull();
+    // Re-running initSchema must not throw (idempotent ALTER guard).
+    expect(() => initSchema(db)).not.toThrow();
   });
 
   it('v3 DB (episode has cwd) gains activation_trace without data loss to node/edge/episode', () => {
@@ -88,8 +133,8 @@ describe('activation_trace table', () => {
     expect(epCount.cnt).toBe(1);
   });
 
-  it('SCHEMA_VERSION constant equals 14 (v14: token_usage_ledger)', () => {
-    expect(SCHEMA_VERSION).toBe(14);
+  it('SCHEMA_VERSION constant equals 15 (v15: activation_trace kind column)', () => {
+    expect(SCHEMA_VERSION).toBe(15);
   });
 });
 

@@ -8,7 +8,7 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -105,12 +105,17 @@ export const DDL = `
   -- Written by SQLiteActivationTraceSink; read by the viz server's read-only handle.
   -- Ring eviction: DELETE WHERE id NOT IN (SELECT id FROM activation_trace ORDER BY id DESC LIMIT 50)
   -- run after every insert (single-writer, viz server never writes).
+  -- v15 migration: kind TEXT nullable — row-level discriminator (D-09).
+  --   recall rows: kind='recall' OR NULL (NULL treated as recall for back-compat).
+  --   ingestion rows: kind='new_node'|'reconsolidation'|'oscillation'|consolidation-neutral.
+  --   Additive and reversible — no DEFAULT, no data rewrite.
   CREATE TABLE IF NOT EXISTS activation_trace (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     ts        INTEGER NOT NULL,
     query_id  TEXT    NOT NULL,
-    seeds     TEXT    NOT NULL,  -- JSON array of node ids
-    hops      TEXT    NOT NULL   -- JSON array of {node_id, score, hop}
+    seeds     TEXT    NOT NULL,  -- JSON array of node ids or {node_id,score} objects
+    hops      TEXT    NOT NULL,  -- JSON array of {node_id, score, hop}
+    kind      TEXT               -- nullable row-level kind tag (NULL → back-compat recall)
   );
 
   -- TEMP-02: sparse sidecar for temporal annotations (Phase 20).
@@ -603,6 +608,20 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_token_usage_ledger_ts
       ON token_usage_ledger (ts);
   `);
+
+  // v15 migration: add nullable kind column to activation_trace (Phase 52, D-09).
+  // Recall rows are kind='recall' or NULL (treated as recall for back-compat).
+  // Ingestion rows carry kind='new_node'|'reconsolidation'|'oscillation'|consolidation-neutral.
+  // Nullable — no DEFAULT needed; additive and reversible — no data rewrite.
+  // Fresh DBs already have kind from the DDL above → guard skips the ALTER.
+  // Existing pre-52 DBs: kind absent → ALTER TABLE adds it with NULL backfill.
+  // Guard uses a SEPARATE Set built from table_info(activation_trace) — NOT the episode cols Set.
+  const atCols = new Set(
+    (db.pragma('table_info(activation_trace)') as Array<{ name: string }>).map(r => r.name)
+  );
+  if (!atCols.has('kind')) {
+    db.exec('ALTER TABLE activation_trace ADD COLUMN kind TEXT');
+  }
 
   // Stamp schema version — read first to guard against downgrade (M-9).
   // Throws when stored > SCHEMA_VERSION so a stale launchd binary can't re-stamp a future DB
