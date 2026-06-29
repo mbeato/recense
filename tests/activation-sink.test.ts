@@ -235,6 +235,107 @@ describe('MockActivationTraceSink', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Task 2: kind round-trip + seeds back-compat union (TDD — RED/GREEN/REFACTOR)
+// ---------------------------------------------------------------------------
+
+describe('SQLiteActivationTraceSink kind + seeds-union (Task 2)', () => {
+  it('emit with kind set → row.kind equals that kind string', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({ query_id: 'q-kind', seeds: [], hops: [], kind: 'new_node' });
+    const row = db.prepare('SELECT kind FROM activation_trace').get() as { kind: string | null };
+    expect(row.kind).toBe('new_node');
+  });
+
+  it('emit without kind → row.kind is SQL NULL', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({ query_id: 'q-nokind', seeds: [], hops: [] });
+    const row = db.prepare('SELECT kind FROM activation_trace').get() as { kind: string | null };
+    expect(row.kind).toBeNull();
+  });
+
+  it('emit with kind: null → row.kind is SQL NULL', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({ query_id: 'q-nullkind', seeds: [], hops: [], kind: null });
+    const row = db.prepare('SELECT kind FROM activation_trace').get() as { kind: string | null };
+    expect(row.kind).toBeNull();
+  });
+
+  it('object-seed {node_id, score} round-trips through the JSON seeds column', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    const objectSeed = { node_id: 'A', score: 0.8 };
+    sink.emit({ query_id: 'q-obj', seeds: [objectSeed], hops: [] });
+    const row = db.prepare('SELECT seeds FROM activation_trace').get() as { seeds: string };
+    expect(JSON.parse(row.seeds)).toEqual([{ node_id: 'A', score: 0.8 }]);
+  });
+
+  it('bare-string seed (legacy/ingestion shape) still round-trips — back-compat union', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({ query_id: 'q-str', seeds: ['node-x'], hops: [] });
+    const row = db.prepare('SELECT seeds FROM activation_trace').get() as { seeds: string };
+    expect(JSON.parse(row.seeds)).toEqual(['node-x']);
+  });
+
+  it('mixed seeds array (string + object) round-trips', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    const mixed = ['node-bare', { node_id: 'node-scored', score: 0.5 }] as const;
+    sink.emit({ query_id: 'q-mix', seeds: mixed as ActivationTraceInput['seeds'], hops: [] });
+    const row = db.prepare('SELECT seeds FROM activation_trace').get() as { seeds: string };
+    expect(JSON.parse(row.seeds)).toEqual(['node-bare', { node_id: 'node-scored', score: 0.5 }]);
+  });
+
+  it('seeds round-trip and hops round-trip with kind present in the same row', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const sink = new SQLiteActivationTraceSink(db, new FakeClock(1));
+    sink.emit({
+      query_id: 'q-full',
+      seeds: [{ node_id: 'seed-A', score: 0.9 }],
+      hops: [{ node_id: 'hop-B', score: 0.4, hop: 1 }],
+      kind: 'reconsolidation',
+    });
+    const row = db.prepare('SELECT seeds, hops, kind FROM activation_trace').get() as {
+      seeds: string; hops: string; kind: string | null;
+    };
+    expect(JSON.parse(row.seeds)).toEqual([{ node_id: 'seed-A', score: 0.9 }]);
+    expect(JSON.parse(row.hops)).toEqual([{ node_id: 'hop-B', score: 0.4, hop: 1 }]);
+    expect(row.kind).toBe('reconsolidation');
+  });
+
+  it('ring eviction still works with kind present — COUNT stays at RING_CAP after 60 emits', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const clock = new FakeClock(1);
+    const sink = new SQLiteActivationTraceSink(db, clock);
+    for (let i = 0; i < 60; i++) {
+      sink.emit({ query_id: `q-${i}`, seeds: [], hops: [], kind: i % 2 === 0 ? 'new_node' : null });
+      clock.advanceMs(1);
+    }
+    const count = db.prepare('SELECT COUNT(*) as cnt FROM activation_trace').get() as { cnt: number };
+    expect(count.cnt).toBe(RING_CAP);
+  });
+
+  it('MockActivationTraceSink captures the kind field on the input object', () => {
+    const sink = new MockActivationTraceSink();
+    sink.emit({ query_id: 'q-1', seeds: ['a'], hops: [], kind: 'oscillation' });
+    sink.emit({ query_id: 'q-2', seeds: [], hops: [] });
+    expect(sink.traces[0].kind).toBe('oscillation');
+    expect(sink.traces[1].kind).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SwitchableActivationTraceSink — runtime flag toggle (WR-04)
 // ---------------------------------------------------------------------------
 
