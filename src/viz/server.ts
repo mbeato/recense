@@ -365,8 +365,10 @@ export function startVizServer(
   `);
 
   // Compile /events polling statement once.
+  // D-07-seedshape: seeds column may hold legacy string[] OR post-52 [{node_id,score}] objects;
+  // server is shape-transparent and ships whatever the column holds (client normalises).
   const stmtTrace = db.prepare(
-    'SELECT id, ts, query_id, seeds, hops FROM activation_trace WHERE id > ? ORDER BY id ASC'
+    'SELECT id, ts, query_id, seeds, hops, kind FROM activation_trace WHERE id > ? ORDER BY id ASC'
   );
 
   // Active SSE response objects (T-10-11: removed on req 'close').
@@ -382,7 +384,7 @@ export function startVizServer(
   const pollInterval = setInterval(() => {
     if (clients.size === 0) return;
     const fresh = stmtTrace.all(cursor) as Array<{
-      id: number; ts: number; query_id: string; seeds: string; hops: string;
+      id: number; ts: number; query_id: string; seeds: string; hops: string; kind: string | null;
     }>;
     if (!fresh.length) return;
     cursor = fresh[fresh.length - 1]!.id;
@@ -403,8 +405,12 @@ export function startVizServer(
         id: row.id,
         ts: row.ts,
         query_id: row.query_id,
+        // seeds: shape-transparent passthrough — may be legacy string[] OR
+        // post-52 [{node_id,score}] from Plan 02; client normalises (D-07-seedshape).
         seeds,
         hops,
+        // kind: null for back-compat recall rows (client treats null as recall).
+        kind: row.kind ?? null,
       })}\n\n`;
       for (const res of clients) {
         res.write(payload);
