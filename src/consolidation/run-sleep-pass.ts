@@ -44,6 +44,7 @@ import { FactDedup } from '../consolidation/fact-dedup';
 import { generateCorpusDocs } from '../consolidation/corpus-generator';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
+import type { ConsolidationEventType } from '../consolidation/sink';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 import { newId } from '../lib/hash';
 import { cwdToScope, resolveNodeScope, GLOBAL_SCOPE } from '../lib/scope';
@@ -63,6 +64,27 @@ export const CASCADE_GAP_MS = 300;
 
 /** Default spacer — real wall-clock sleep. Injectable so tests stay instant. */
 const realSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Phase 52 kind discriminator: map a consolidation event_type to its per-event-color
+ * kind for the viz client (D-03 palette). Pure function — no side-effects, no throw path.
+ *
+ * Hero kinds (get distinct colors):
+ *   unrelated              → 'new_node'        (brand-new belief being written)
+ *   contradict_reconcile   → 'reconsolidation' (magenta hero flash)
+ *   contradict_oscillation → 'oscillation'     (amber/orange instability indicator)
+ *
+ * Everything else → 'consolidate' (neutral slate — client mutes these; D-03).
+ * Unknown/future event types are also captured by the default (T-52-10: closed switch).
+ */
+export function consolidationKind(event_type: ConsolidationEventType | string): string {
+  switch (event_type) {
+    case 'unrelated':             return 'new_node';
+    case 'contradict_reconcile':  return 'reconsolidation';
+    case 'contradict_oscillation': return 'oscillation';
+    default:                      return 'consolidate';
+  }
+}
 
 /**
  * Phase 19 viz lighting: replay the consolidation_event provenance a sleep pass just
@@ -93,14 +115,15 @@ export async function lightConsolidatedNodes(
     // Flag OFF → nothing to do; bail before any query or sleep (no waste).
     if (!traceSink.refresh()) return;
     const ops = db.prepare(
-      `SELECT node_id FROM consolidation_event
+      `SELECT node_id, event_type FROM consolidation_event
        WHERE ts >= ? AND node_id IS NOT NULL
        ORDER BY ts ASC LIMIT ?`,
-    ).all(sinceTs, CASCADE_MAX) as Array<{ node_id: string }>;
+    ).all(sinceTs, CASCADE_MAX) as Array<{ node_id: string; event_type: string }>;
     for (let i = 0; i < ops.length; i++) {
       const op = ops[i];
       if (!op) continue;
-      traceSink.emit({ query_id: newId(), seeds: [op.node_id], hops: [] });
+      // kind derived from the op's consolidation event_type — pure, no throw path (T-52-10).
+      traceSink.emit({ query_id: newId(), seeds: [op.node_id], hops: [], kind: consolidationKind(op.event_type) });
       // Space between steps so the viz replays a cascade, not a burst — but not
       // after the last, so we don't hold the lock for a trailing idle gap.
       if (i < ops.length - 1) await sleep(CASCADE_GAP_MS);

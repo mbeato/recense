@@ -24,6 +24,7 @@ import { FakeClock } from '../src/lib/clock';
 import { newId } from '../src/lib/hash';
 import {
   lightConsolidatedNodes,
+  consolidationKind,
   CASCADE_MAX,
 } from '../src/consolidation/run-sleep-pass';
 
@@ -34,17 +35,28 @@ function makeDb(): Database.Database {
 }
 
 /** Insert a consolidation_event provenance row (minimal required columns). */
-function recordEvent(db: Database.Database, ts: number, nodeId: string | null) {
+function recordEvent(
+  db: Database.Database,
+  ts: number,
+  nodeId: string | null,
+  event_type = 'confirm',
+) {
   db.prepare(
     `INSERT INTO consolidation_event (id, ts, schema_version, event_type, node_id)
-     VALUES (?, ?, 1, 'update_strengthen', ?)`,
-  ).run(newId(), ts, nodeId);
+     VALUES (?, ?, 1, ?, ?)`,
+  ).run(newId(), ts, event_type, nodeId);
 }
 
 /** Seeds per trace, in emission (id) order — each cascade step is one trace. */
 function traceSeeds(db: Database.Database): string[][] {
   const rows = db.prepare('SELECT seeds FROM activation_trace ORDER BY id').all() as Array<{ seeds: string }>;
   return rows.map(r => JSON.parse(r.seeds) as string[]);
+}
+
+/** Kind per trace, in emission (id) order. */
+function traceKinds(db: Database.Database): Array<string | null> {
+  const rows = db.prepare('SELECT kind FROM activation_trace ORDER BY id').all() as Array<{ kind: string | null }>;
+  return rows.map(r => r.kind);
 }
 
 describe('sleep-pass viz lighting (lightConsolidatedNodes cascade)', () => {
@@ -94,5 +106,78 @@ describe('sleep-pass viz lighting (lightConsolidatedNodes cascade)', () => {
     await lightConsolidatedNodes(db, clock, 50, sleep);
     expect(db.prepare('SELECT * FROM activation_trace').all()).toHaveLength(0);
     expect(sleeps).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 52: consolidationKind mapper + per-event-type kind tagging (Plan 04)
+// ---------------------------------------------------------------------------
+
+describe('consolidationKind — event_type→kind mapper (Plan 04, D-03)', () => {
+  it('unrelated → new_node (hero: brand-new belief)', () => {
+    expect(consolidationKind('unrelated')).toBe('new_node');
+  });
+
+  it('contradict_reconcile → reconsolidation (hero: magenta flash)', () => {
+    expect(consolidationKind('contradict_reconcile')).toBe('reconsolidation');
+  });
+
+  it('contradict_oscillation → oscillation (hero: amber instability)', () => {
+    expect(consolidationKind('contradict_oscillation')).toBe('oscillation');
+  });
+
+  it('confirm → consolidate (neutral: muted slate for non-hero events)', () => {
+    expect(consolidationKind('confirm')).toBe('consolidate');
+  });
+
+  it('all remaining ConsolidationEventType values → consolidate', () => {
+    const neutral = [
+      'extend', 'contradict_hold', 'contradict_append_new',
+      'contradict_force_destabilize', 'schema_emitted', 'schema_falsified',
+      'entity_merge', 'fact_merge',
+    ];
+    for (const et of neutral) {
+      expect(consolidationKind(et), `${et} should map to consolidate`).toBe('consolidate');
+    }
+  });
+
+  it('unknown/future event_type → consolidate (closed default, T-52-10)', () => {
+    expect(consolidationKind('some_future_type')).toBe('consolidate');
+  });
+});
+
+describe('lightConsolidatedNodes cascade kind tagging (Plan 04, D-03)', () => {
+  let db: Database.Database;
+  const clock = new FakeClock(Date.UTC(2026, 0, 1));
+  const noSleep = async (_ms: number) => { /* instant */ };
+  beforeEach(() => { db = new Database(':memory:'); initSchema(db); });
+  afterEach(() => { db.close(); });
+
+  it('each cascade emit carries the correct kind from its consolidation event_type', async () => {
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('viz_trace_enabled', '1')").run();
+    // Insert one of each hero type + one neutral, all in this pass (ts > 50).
+    recordEvent(db, 100, 'n-new',   'unrelated');
+    recordEvent(db, 101, 'n-recon', 'contradict_reconcile');
+    recordEvent(db, 102, 'n-osc',   'contradict_oscillation');
+    recordEvent(db, 103, 'n-conf',  'confirm');
+
+    await lightConsolidatedNodes(db, clock, 50, noSleep);
+
+    // Four traces written; kinds map in ts-ascending order.
+    expect(traceKinds(db)).toEqual(['new_node', 'reconsolidation', 'oscillation', 'consolidate']);
+  });
+
+  it('all cascade emits have non-null kind — no kind=null from the cascade (D-03)', async () => {
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('viz_trace_enabled', '1')").run();
+    recordEvent(db, 100, 'n1', 'schema_emitted');
+    recordEvent(db, 101, 'n2', 'entity_merge');
+
+    await lightConsolidatedNodes(db, clock, 50, noSleep);
+
+    const kinds = traceKinds(db);
+    expect(kinds).toHaveLength(2);
+    // All neutral kinds are 'consolidate', not null.
+    expect(kinds.every(k => k !== null)).toBe(true);
+    expect(kinds).toEqual(['consolidate', 'consolidate']);
   });
 });
