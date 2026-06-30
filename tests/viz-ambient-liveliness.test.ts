@@ -108,6 +108,14 @@ function readTraceJs(): string {
   return fs.readFileSync(path.resolve(ROOT, 'src/viz/modules/trace.js'), 'utf8');
 }
 
+function readConstantsJs(): string {
+  return fs.readFileSync(path.resolve(ROOT, 'src/viz/modules/constants.js'), 'utf8');
+}
+
+function readServer(): string {
+  return fs.readFileSync(path.resolve(ROOT, 'src/viz/server.ts'), 'utf8');
+}
+
 /** Strip JSDoc inner lines and standalone comment lines before token assertions. */
 function stripComments(src: string): string {
   return src.split('\n').filter(line => !/^\s*(\*|\/\/)/.test(line)).join('\n');
@@ -419,6 +427,197 @@ describe('Layer 3 — ambient twinkle tick (SC1, SC3, SC5)', () => {
   it('trace.js still has no setMatrixAt after twinkle implementation (SC5 regression guard)', () => {
     const src = stripComments(readTraceJs());
     expect(src).not.toContain('setMatrixAt');
+  });
+
+});
+
+// =============================================================================
+// SC5/constants — constants.js source-text guards (Phase 54 Plan 04)
+// Assert all 10 Phase-54 constants are exported; REPLAY_DIM < 1 numeric invariant.
+// =============================================================================
+
+describe('SC5/constants — Phase 54 constant exports and invariants', () => {
+  const src = stripComments(readConstantsJs());
+
+  it('exports ACT_SCALE_GAIN (Layer 1 — live amplification gain, SC2/SC5)', () => {
+    expect(src).toMatch(/export const ACT_SCALE_GAIN\s*=/);
+  });
+
+  it('exports ACT_BRIGHTEN_GAIN (Layer 1 — opacity boost gain, SC2/SC5)', () => {
+    expect(src).toMatch(/export const ACT_BRIGHTEN_GAIN\s*=/);
+  });
+
+  it('exports ACT_HAZE_LERP (Layer 1 — haze color lerp factor, SC2/SC5)', () => {
+    expect(src).toMatch(/export const ACT_HAZE_LERP\s*=/);
+  });
+
+  it('exports REPLAY_IDLE_GAP_MS (Layer 2 — idle replay gap, SC1/SC3)', () => {
+    expect(src).toMatch(/export const REPLAY_IDLE_GAP_MS\s*=/);
+  });
+
+  it('exports REPLAY_CADENCE_MS (Layer 2 — replay cadence, SC1/SC3)', () => {
+    expect(src).toMatch(/export const REPLAY_CADENCE_MS\s*=/);
+  });
+
+  it('exports REPLAY_DIM (Layer 2 — replay intensity multiplier, SC3)', () => {
+    expect(src).toMatch(/export const REPLAY_DIM\s*=/);
+  });
+
+  it('exports REPLAY_HISTORY_N (Layer 2 — replay ring buffer size, SC1/SC3)', () => {
+    expect(src).toMatch(/export const REPLAY_HISTORY_N\s*=/);
+  });
+
+  it('exports TWINKLE_COUNT (Layer 3 — twinkle subset size, SC1/SC5)', () => {
+    expect(src).toMatch(/export const TWINKLE_COUNT\s*=/);
+  });
+
+  it('exports TWINKLE_PERIOD_MS (Layer 3 — twinkle breathe period, SC1/SC5)', () => {
+    expect(src).toMatch(/export const TWINKLE_PERIOD_MS\s*=/);
+  });
+
+  it('exports TWINKLE_AMP (Layer 3 — twinkle breathe amplitude, SC1/SC5)', () => {
+    expect(src).toMatch(/export const TWINKLE_AMP\s*=/);
+  });
+
+  it('SC3: REPLAY_DIM numeric value parses to < 1 (replay can never escalate above live)', () => {
+    // Extract the assigned value and confirm it is strictly less than 1.
+    // REPLAY_DIM >= 1 would let a replay echo exceed live brightness — a hard SC3 violation.
+    const match = src.match(/export\s+const\s+REPLAY_DIM\s*=\s*([\d.]+)/);
+    expect(match).not.toBeNull();
+    const value = parseFloat(match![1]!);
+    expect(value).toBeLessThan(1);
+  });
+
+});
+
+// =============================================================================
+// SC2/SC3/SC1 — additional compound source-text guards (Layer 1-3, Plan 04)
+// The existing Layer 1-3 tests check constant NAMES. These guards check the
+// USAGE expressions (a * GAIN) that confirm the constants drive the computation,
+// not just that the names appear (e.g. in import lines).
+// =============================================================================
+
+describe('SC2/SC3/SC1 — additional compound source-text guards (Layer 1-3)', () => {
+  const traceSrc = stripComments(readTraceJs());
+
+  // ── Layer 1: compound gain expression guards ────────────────────────────────
+
+  it('SC2: trace.js scale formula contains "1 + a * ACT_SCALE_GAIN" (compound expression)', () => {
+    // Confirms the constant drives the scale computation, not just that it is imported.
+    expect(traceSrc).toContain('1 + a * ACT_SCALE_GAIN');
+  });
+
+  it('SC2: trace.js opacity formula contains "a * ACT_BRIGHTEN_GAIN" (compound expression)', () => {
+    // More specific than checking the name alone: confirms the usage in the expression context.
+    expect(traceSrc).toContain('a * ACT_BRIGHTEN_GAIN');
+  });
+
+  it('SC2: trace.js haze lerp formula contains "a * ACT_HAZE_LERP" (compound expression)', () => {
+    expect(traceSrc).toContain('a * ACT_HAZE_LERP');
+  });
+
+  // ── Layer 2: replay-branch traceEdgesFromHops and REPLAY_DIM usage guards ──
+
+  it('SC3: replay branch references traceEdgesFromHops (honest hops — no ctx.adj fabrication)', () => {
+    // Confirm traceEdgesFromHops is called INSIDE the row.replay === true block.
+    const replayStart = traceSrc.indexOf('row.replay === true');
+    expect(replayStart).toBeGreaterThanOrEqual(0);
+    // Extract 2000 chars from the replay branch to cover the full block
+    const replayBlock = traceSrc.slice(replayStart, replayStart + 2000);
+    expect(replayBlock).toContain('traceEdgesFromHops');
+  });
+
+  it('SC3: replay branch multiplies activate by REPLAY_DIM ("* REPLAY_DIM" compound guard)', () => {
+    // The activate call inside the replay path must multiply by REPLAY_DIM.
+    // "* REPLAY_DIM" catches both "intensity * REPLAY_DIM" and similar patterns.
+    expect(traceSrc).toContain('* REPLAY_DIM');
+  });
+
+  // ── Layer 3: twinkleTick registration and isolation guards ──────────────────
+
+  it('SC1: trace.js registers twinkleTick via ctx.registerTick (source-text guard)', () => {
+    // The exact registration call must appear in non-comment lines.
+    expect(traceSrc).toContain('ctx.registerTick(twinkleTick)');
+  });
+
+  it('SC1/SC3: twinkleTick body contains no spawnPulse call (isolation from pulse machinery)', () => {
+    // Extract from the twinkleTick function definition to the registration line so we
+    // cover the full function body. spawnPulse inside twinkle would mix the decorative
+    // ambient layer with the event-triggered pulse machinery — a SC1/SC3 violation.
+    const fnMarker  = 'function twinkleTick(';
+    const regMarker = 'ctx.registerTick(twinkleTick)';
+    const fnStart   = traceSrc.indexOf(fnMarker);
+    expect(fnStart).toBeGreaterThanOrEqual(0);
+    const regEnd = traceSrc.indexOf(regMarker, fnStart);
+    expect(regEnd).toBeGreaterThanOrEqual(0);
+    const twinkleBody = traceSrc.slice(fnStart, regEnd + regMarker.length);
+    expect(twinkleBody).not.toContain('spawnPulse(');
+  });
+
+});
+
+// =============================================================================
+// SC1+SC5/server — server.ts source-text guards (Phase 54 Plan 04)
+// Read server.ts as text, strip comment lines, assert structural invariants:
+//   - replay: true present (replay payload marker)
+//   - replayBuffer declared (ring buffer exists)
+//   - exactly one new Database( occurrence (single read-only handle)
+//   - no fetch( / embed( / provider token (no outbound calls / LLM)
+//   - zero cursor = / cursor= assignments inside the replay-scheduler block
+//     (replay is a side-channel re-emit; the /events cursor is forward-only)
+// =============================================================================
+
+describe('SC1+SC5/server — server.ts structural invariants', () => {
+  const serverSrc = readServer(); // raw (need both stripped and raw for counting)
+  const stripped  = stripComments(serverSrc);
+
+  it('SC1: server.ts replay payload includes replay: true marker (SC1 signal to client)', () => {
+    expect(stripped).toContain('replay: true');
+  });
+
+  it('SC1/SC5: server.ts declares replayBuffer (ring buffer for idle replay)', () => {
+    expect(stripped).toContain('replayBuffer');
+  });
+
+  it('SC5: server.ts contains exactly one new Database( occurrence (single read-only handle)', () => {
+    // Multiple Database handles would break the D-95 / T-10-08 read-only boundary.
+    // Comments mentioning new Database() are stripped; only code-level occurrences count.
+    const count = (stripped.match(/new Database\(/g) ?? []).length;
+    expect(count).toBe(1);
+  });
+
+  it('SC5: server.ts contains no fetch( call in non-comment lines (no outbound network)', () => {
+    // The viz server is read-only and local; fetch() to external URLs is forbidden.
+    expect(stripped).not.toContain('fetch(');
+  });
+
+  it('SC5: server.ts contains no embed( call in non-comment lines (no LLM embed calls)', () => {
+    expect(stripped).not.toContain('embed(');
+  });
+
+  it('SC5: server.ts contains no "provider" token in non-comment lines (no LLM provider)', () => {
+    expect(stripped).not.toContain('provider');
+  });
+
+  it('SC1/SC5: replay-scheduler block contains no cursor = assignment (forward-only cursor guard)', () => {
+    // The /events cursor is a forward-only AUTOINCREMENT pointer seeded at the current
+    // max id. Rewinding it inside the replay scheduler would re-broadcast historical
+    // rows as "new" live events — a SC1/SC5 violation.
+    //
+    // Implementation: locate the replay-scheduler block by its opening marker, extract
+    // to the unique closing marker (}, REPLAY_CADENCE_MS)), and assert NO cursor assignment
+    // inside it. The whole-file count gate is intentionally NOT used: server.ts has two
+    // legitimate cursor assignments at rest — the `let cursor = ...` declaration and the
+    // `cursor = fresh[...]` forward poll update — both outside the replay block.
+    const startMarker = 'replayInterval = setInterval(';
+    const endMarker   = '}, REPLAY_CADENCE_MS)';
+    const start = stripped.indexOf(startMarker);
+    expect(start).toBeGreaterThanOrEqual(0); // replay block must exist
+    const end = stripped.indexOf(endMarker, start + startMarker.length);
+    expect(end).toBeGreaterThanOrEqual(0);   // block must close
+    const replayBlock = stripped.slice(start, end + endMarker.length);
+    // Assert no `cursor =` or `cursor=` (assignment, not comparison) inside the block.
+    expect(replayBlock).not.toMatch(/cursor\s*=[^=]/);
   });
 
 });
