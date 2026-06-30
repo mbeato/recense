@@ -24,6 +24,7 @@ import {
   CONTAIN_STRENGTH,
   HOVER_SCALE,
   nodeRelSize,
+  SETTLE_BUDGET_MS,
 } from './constants.js';
 
 // ─── Shared geometry (D-05) ──────────────────────────────────────────────────
@@ -167,8 +168,19 @@ function brainOccupied(brainVol, qx, qy, qz) {
  * Seed all node positions inside the brain occupancy volume before the layout
  * simulation starts. Nodes begin inside the hull so the containment force has
  * less correction to do and the simulation converges faster.
+ *
+ * Phase 53 rewrite (D-01/D-02/D-04/D-08):
+ *   - No Math.random() in the brainVol path: all randomness via _hashIndex
+ *     (Knuth multiplicative hash) keyed on the per-node integer index so
+ *     the same corpus produces the same layout on every reload (D-08).
+ *   - Continuous full-cell jitter (±1/R in local space) eliminates the
+ *     voxel-centre snap that produced visible lattice lines (D-04).
+ *   - Three-pass placement: schema hubs first, then members biased toward
+ *     their hub centroid within CLUSTER_RADIUS, then haze (D-01/D-02).
+ *
+ * Exported so unit tests can exercise it headlessly (additive; no API change).
  */
-function seedNodePositions(allNodes, brainVol) {
+export function seedNodePositions(allNodes, brainVol) {
   if (!brainVol) {
     // Fallback: random scatter in a sphere of radius BRAIN_SCALE * 0.6
     for (const n of allNodes) {
@@ -184,8 +196,9 @@ function seedNodePositions(allNodes, brainVol) {
 
   // Build a rotation matrix matching the hull group orientation so sampled
   // occupancy-grid points map to the same world space as the hull mesh.
-  const euler  = new THREE.Euler(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
-  const rotMat = new THREE.Matrix4().makeRotationFromEuler(euler);
+  const euler     = new THREE.Euler(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
+  const rotMat    = new THREE.Matrix4().makeRotationFromEuler(euler);
+  const invRotMat = rotMat.clone().invert(); // for world→local conversion
 
   const R    = brainVol.res;
   const bits = brainVol.bits;
@@ -208,16 +221,100 @@ function seedNodePositions(allNodes, brainVol) {
 
   if (!occupied.length) { seedNodePositions(allNodes, null); return; }
 
-  const v = new THREE.Vector3();
+  // Full-cell jitter magnitude in local [-1,1] space.
+  // Voxel spacing = 2/R → ±(1/R) spans the full cell width continuously,
+  // eliminating the voxel-centre snap that produced visible lattice lines (D-04).
+  const cellHalf = 1 / R;
+  // High-precision denominator: _hashIndex(k, HIGH)/HIGH gives a sub-voxel
+  // fractional value in [0,1) with ~20 bits of resolution.
+  const HIGH = 1 << 20;
+  // Cluster radius in world space for member centroid bias (D-01/D-02).
+  // Tune at the founder visual checkpoint alongside SETTLE_BUDGET_MS.
+  const CLUSTER_RADIUS = 0.12 * BRAIN_SCALE;
+
+  // Scratch vectors reused across placements
+  const v    = new THREE.Vector3();
+  const vLoc = new THREE.Vector3();
+
+  // Local id→node Map — no signature change; used for hub lookup in Pass 2
+  const nodeMap = new Map();
+  for (const n of allNodes) nodeMap.set(n.id, n);
+
+  /**
+   * Place node n at a deterministic, continuous, in-hull point.
+   * All randomness from _hashIndex(hashBase + attempt, ...) — no Math.random.
+   * On persistent miss (8 attempts outside hull), falls back to the plain
+   * voxel centre (guaranteed occupied by construction of the occupied[] list).
+   */
+  function placeInHull(n, hashBase) {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const tryKey = hashBase + attempt;
+      const [lx, ly, lz] = occupied[_hashIndex(tryKey, occupied.length)];
+      // Continuous full-cell jitter: spans the full inter-voxel cell (±cellHalf)
+      const jx = (_hashIndex(tryKey * 3 + 0, HIGH) / HIGH - 0.5) * 2 * cellHalf;
+      const jy = (_hashIndex(tryKey * 3 + 1, HIGH) / HIGH - 0.5) * 2 * cellHalf;
+      const jz = (_hashIndex(tryKey * 3 + 2, HIGH) / HIGH - 0.5) * 2 * cellHalf;
+      const cx = lx + jx, cy = ly + jy, cz = lz + jz;
+      if (brainOccupied(brainVol, cx, cy, cz)) {
+        v.set(cx, cy, cz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
+        n.x = v.x; n.y = v.y; n.z = v.z;
+        return;
+      }
+    }
+    // Fallback: plain voxel centre (always occupied by construction)
+    const [lx, ly, lz] = occupied[_hashIndex(hashBase, occupied.length)];
+    v.set(lx, ly, lz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
+    n.x = v.x; n.y = v.y; n.z = v.z;
+  }
+
+  // ── Pass 1: schema hub nodes ─────────────────────────────────────────────
+  // Place hubs first so Pass 2 can look up their seeded world positions.
+  let i = 0;
   for (const n of allNodes) {
-    const [lx, ly, lz] = occupied[(Math.random() * occupied.length) | 0];
-    v.set(lx, ly, lz)
-     .applyMatrix4(rotMat)
-     .multiplyScalar(BRAIN_SCALE);
-    // Small jitter so co-located voxels diverge
-    n.x = v.x + (Math.random() - 0.5) * 4;
-    n.y = v.y + (Math.random() - 0.5) * 4;
-    n.z = v.z + (Math.random() - 0.5) * 4;
+    if (n.__cat === 'schema') placeInHull(n, i);
+    i++;
+  }
+
+  // ── Pass 2: member nodes — biased toward their schema hub centroid ────────
+  // Generates a deterministic offset within CLUSTER_RADIUS of the hub's world
+  // position, validates in-hull via brainOccupied, falls back to placeInHull
+  // on persistent miss (D-01 hybrid / D-02 schema-membership grouping).
+  i = 0;
+  for (const n of allNodes) {
+    if (n.__schemaId != null) {
+      const hub = nodeMap.get(n.__schemaId);
+      if (hub && hub.x != null) {
+        let placed = false;
+        for (let attempt = 0; attempt < 8 && !placed; attempt++) {
+          const key = i * 1000 + attempt;
+          const dx = (_hashIndex(key * 3 + 0, HIGH) / HIGH - 0.5) * 2 * CLUSTER_RADIUS;
+          const dy = (_hashIndex(key * 3 + 1, HIGH) / HIGH - 0.5) * 2 * CLUSTER_RADIUS;
+          const dz = (_hashIndex(key * 3 + 2, HIGH) / HIGH - 0.5) * 2 * CLUSTER_RADIUS;
+          // Convert candidate world point to local coords for brainOccupied check
+          vLoc.set(hub.x + dx, hub.y + dy, hub.z + dz)
+              .multiplyScalar(1 / BRAIN_SCALE)
+              .applyMatrix4(invRotMat);
+          if (brainOccupied(brainVol, vLoc.x, vLoc.y, vLoc.z)) {
+            n.x = hub.x + dx;
+            n.y = hub.y + dy;
+            n.z = hub.z + dz;
+            placed = true;
+          }
+        }
+        if (!placed) placeInHull(n, i);
+      } else {
+        // Hub not yet seeded or not found — fall back to in-hull placement
+        placeInHull(n, i);
+      }
+    }
+    i++;
+  }
+
+  // ── Pass 3: haze / unclassified nodes — continuous in-hull placement ──────
+  i = 0;
+  for (const n of allNodes) {
+    if (n.__cat !== 'schema' && n.__schemaId == null) placeInHull(n, i);
+    i++;
   }
 }
 
@@ -592,10 +689,14 @@ export function initGraph(ctx) {
   Graph.onEngineTick(brainContainment);
 
   // ── Settle-then-pin reveal ────────────────────────────────────────────
-  // The canvas starts hidden (opacity 0). Once the simulation cools (or
-  // 200 ms elapses — primary path since onEngineStop is unreliable/slow),
-  // pin every node's fx/fy/fz at its settled position then fade in.
-  Graph.cooldownTicks(12);
+  // The canvas starts hidden (opacity 0). The sim runs freely until
+  // SETTLE_BUDGET_MS elapses (wall-clock primary path — D-03: bounded
+  // regardless of node count). revealSettled() pins fx/fy/fz then fades in.
+  // Graph.onEngineStop(revealSettled) is retained as a fallback.
+  //
+  // D-03: the fixed-tick stop is replaced with a wall-clock budget.
+  // cooldownTicks(0) lets the sim run freely; the setTimeout below stops it.
+  Graph.cooldownTicks(0); // run freely — wall-clock budget controls the stop
   const graphEl = document.getElementById('graph');
   graphEl.style.opacity = '0'; // hidden — no transition yet
 
@@ -611,7 +712,7 @@ export function initGraph(ctx) {
   }
 
   Graph.onEngineStop(revealSettled);
-  setTimeout(revealSettled, 200); // primary path (onEngineStop is unreliable/slow)
+  setTimeout(revealSettled, SETTLE_BUDGET_MS); // primary path — wall-clock bounded (D-03)
 
   // ── Camera framing ────────────────────────────────────────────────────
   // Compact viewports (tray popover ≤500px) sit slightly farther out so the

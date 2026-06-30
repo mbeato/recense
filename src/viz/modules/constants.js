@@ -226,6 +226,19 @@ export const DENSITY_THIN_FULL = 6000;
 export const HAZE_DENSE_SCALE = 0.35;
 
 // ============================================================================
+// Force-settle timing (Phase 53 D-03)
+// ============================================================================
+// Replaces Graph.cooldownTicks(12) with a wall-clock budget that bounds the
+// settle regardless of node count. The sim runs freely during the budget;
+// when the timeout fires, revealSettled() pins every node's fx/fy/fz and
+// fades the canvas in. Tune at the founder visual checkpoint.
+
+/** Wall-clock ms the force settle runs before pinning nodes and fading in.
+ *  Replaces cooldownTicks(12); bounded regardless of node count (D-03).
+ *  Tune at the founder visual checkpoint. */
+export const SETTLE_BUDGET_MS = 250;
+
+// ============================================================================
 // Hull rotation (radians)
 // ============================================================================
 // The STL's longest axis is Z (~208 units). -π/2 on X rotates it from
