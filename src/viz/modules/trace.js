@@ -219,19 +219,15 @@ export function initTrace(ctx) {
   // Regular nodes must have __mat to be rendered — early-return if absent.
   function activate(node, level, kindColor) {
     if (!node) return;
-    if (node.__mat == null && node.__hazeIdx == null) return;
-    if ((node.__act || 0) < level) {
-      node.__act      = level;
-      node.__actT0    = performance.now();
-      node.__actPeak  = level;
-      node.__actColor = kindColor || HOT_COLOR; // per-kind palette (D-03 / D-04)
-    }
-    active.add(node);
 
     // Spawn (or coalesce) an additive halo for this activation (FIX-52A).
     // Lives in ctx.pulseGroup so the bloom pass catches it — same proven-visible
-    // path as edge wavefronts. Coalesce prevents unbounded stacking on rapid
-    // re-activations (oscillation strobes, repeated recalls).
+    // path as edge wavefronts. The halo is an INDEPENDENT mesh at the node's
+    // position, so it must spawn BEFORE the __mat/__hazeIdx guard below: that
+    // guard bails for nodes not realized as a mesh/haze instance (the common
+    // case at overview zoom), which previously suppressed every node flash.
+    // Coalesce prevents unbounded stacking on rapid re-activations (oscillation
+    // strobes, repeated recalls).
     if (ctx.pulseGroup) {
       let found = false;
       for (let hi = 0; hi < halos.length; hi++) {
@@ -255,6 +251,16 @@ export function initTrace(ctx) {
         halos.push({ node, t0: performance.now(), level, mesh, mat });
       }
     }
+
+    // Per-node material/haze tint + scale path requires the node to be realized.
+    if (node.__mat == null && node.__hazeIdx == null) return;
+    if ((node.__act || 0) < level) {
+      node.__act      = level;
+      node.__actT0    = performance.now();
+      node.__actPeak  = level;
+      node.__actColor = kindColor || HOT_COLOR; // per-kind palette (D-03 / D-04)
+    }
+    active.add(node);
   }
 
   // ── spawnPulse(from, to) ──────────────────────────────────────────────────
