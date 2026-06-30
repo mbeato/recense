@@ -47,7 +47,21 @@ vi.mock('three', () => {
   }
   class Quaternion { setFromUnitVectors() { return this; } }
   class CylinderGeometry {}
+  class SphereGeometry { constructor(_r?: number, _w?: number, _h?: number) {} }
   class ShaderMaterial { uniforms: any = {}; constructor(_a: any) {} dispose() {} }
+  class MeshBasicMaterial {
+    color: Color;
+    transparent?: boolean;
+    depthWrite?: boolean;
+    opacity = 1;
+    constructor(p?: any) {
+      this.color = new Color();
+      if (p?.color instanceof Color) this.color.copy(p.color);
+      if (p?.transparent !== undefined) this.transparent = p.transparent;
+      if (p?.depthWrite  !== undefined) this.depthWrite  = p.depthWrite;
+    }
+    dispose() {}
+  }
   class Mesh {
     position = { set(_x: number, _y: number, _z: number) {} };
     scale    = { set(_x: number, _y: number, _z: number) {}, setScalar(_s: number) {} };
@@ -55,7 +69,7 @@ vi.mock('three', () => {
     setRotationFromQuaternion(_q: any) {}
   }
   const AdditiveBlending = 2;
-  return { Color, Vector3, Quaternion, CylinderGeometry, ShaderMaterial, Mesh, AdditiveBlending };
+  return { Color, Vector3, Quaternion, CylinderGeometry, SphereGeometry, ShaderMaterial, MeshBasicMaterial, Mesh, AdditiveBlending };
 });
 
 // ── Browser globals ─────────────────────────────────────────────────────────

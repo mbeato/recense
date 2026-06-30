@@ -77,6 +77,12 @@ const WF_SWEEP  = 850;
 const WF_DECAY  = 1150;
 const WF_LIFE   = WF_SWEEP + WF_DECAY;
 
+// Additive node-flash halo constants (FIX-52A).
+// Fixed world-space radius so the glow reads at ~2,700-node overview zoom.
+const HALO_RADIUS  = 16;   // world-space radius at peak (scene units)
+const HALO_LIFE_MS = 900;  // total halo lifetime (ms): grow then fade
+const HALO_ATTACK  = 150;  // grow phase (0 → HALO_RADIUS, ms)
+
 /** Clamped smoothstep on [0,1]. */
 function _smooth01(x) { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); }
 
@@ -178,6 +184,9 @@ export function initTrace(ctx) {
   // on Y and oriented along the edge. Thin radius gives the wire body so the glow
   // reads without looking like a fat rod. One allocation for all wavefront meshes.
   const _pulseGeo = new THREE.CylinderGeometry(1.3, 1.3, 1, 6, 1);
+  // Shared halo geometry: unit sphere scaled per halo to HALO_RADIUS (FIX-52A).
+  // One allocation for all halos — matches _pulseGeo pattern.
+  const _haloGeo = new THREE.SphereGeometry(1, 8, 6);
 
   // Convert HOT constant to a THREE.Color for lerping
   const HOT_COLOR = new THREE.Color(HOT);
@@ -195,6 +204,9 @@ export function initTrace(ctx) {
 
   // In-flight traveling pulse records (detail.js ripple path)
   const pulses = [];
+
+  // In-flight node-flash halo records (FIX-52A)
+  const halos = [];
 
   // ── activate(node, level) ─────────────────────────────────────────────────
   // Raises the node's activation level and enqueues it for animation.
@@ -215,6 +227,34 @@ export function initTrace(ctx) {
       node.__actColor = kindColor || HOT_COLOR; // per-kind palette (D-03 / D-04)
     }
     active.add(node);
+
+    // Spawn (or coalesce) an additive halo for this activation (FIX-52A).
+    // Lives in ctx.pulseGroup so the bloom pass catches it — same proven-visible
+    // path as edge wavefronts. Coalesce prevents unbounded stacking on rapid
+    // re-activations (oscillation strobes, repeated recalls).
+    if (ctx.pulseGroup) {
+      let found = false;
+      for (let hi = 0; hi < halos.length; hi++) {
+        if (halos[hi].node === node) {
+          halos[hi].t0    = performance.now();
+          halos[hi].level = level;
+          halos[hi].mat.color.copy(kindColor || HOT_COLOR);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        const mat  = new THREE.MeshBasicMaterial({
+          color:       kindColor || HOT_COLOR,
+          blending:    THREE.AdditiveBlending,
+          transparent: true,
+          depthWrite:  false,
+        });
+        const mesh = new THREE.Mesh(_haloGeo, mat);
+        ctx.pulseGroup.add(mesh);
+        halos.push({ node, t0: performance.now(), level, mesh, mat });
+      }
+    }
   }
 
   // ── spawnPulse(from, to) ──────────────────────────────────────────────────
@@ -360,6 +400,39 @@ export function initTrace(ctx) {
       const down = elapsed > WF_SWEEP ? 1 - _smooth01((elapsed - WF_SWEEP) / WF_DECAY) : 1;
       p.mat.uniforms.uWavefront.value = wf;
       p.mat.uniforms.uIntensity.value = up * down * 0.9;
+    }
+
+    // -- Node-flash halos: additive bloom sphere at each activated node --------
+    // Each halo tracks a node's live position (same pattern as the pulses loop).
+    // Envelope: grow 0 → HALO_RADIUS during attack, then ease-out fade.
+    // Allocation-light: no per-frame `new`; position/scale set directly.
+    for (let i = halos.length - 1; i >= 0; i--) {
+      const h = halos[i];
+      const elapsed = now - h.t0;
+
+      if (elapsed >= HALO_LIFE_MS) {
+        ctx.pulseGroup.remove(h.mesh);
+        h.mat.dispose();
+        halos.splice(i, 1);
+        continue;
+      }
+
+      // Track node's live world position (force-graph updates x/y/z each tick)
+      h.mesh.position.set(h.node.x || 0, h.node.y || 0, h.node.z || 0);
+
+      // Grow→fade: scale expands to HALO_RADIUS over HALO_ATTACK, then opacity fades
+      let scale, opacity;
+      if (elapsed < HALO_ATTACK) {
+        const t = elapsed / HALO_ATTACK;
+        scale   = HALO_RADIUS * t;
+        opacity = t * h.level;
+      } else {
+        scale   = HALO_RADIUS;
+        const t = (elapsed - HALO_ATTACK) / (HALO_LIFE_MS - HALO_ATTACK);
+        opacity = (1 - _smooth01(t)) * h.level;
+      }
+      h.mesh.scale.setScalar(scale < 0.001 ? 0.001 : scale);
+      h.mat.opacity = opacity;
     }
   }
 
