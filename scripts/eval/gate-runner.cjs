@@ -93,6 +93,12 @@ function requireKey(obj, keyPath, label, filepath) {
     console.error(`GATE FAIL: null value at '${keyPath}' in ${label} (${filepath})`);
     process.exit(1);
   }
+  // WR-03: every axis read via requireKey is a numeric score; a present-but-non-numeric
+  // value (e.g. "n/a") would evade the NaN-comparing comparator and fail open. Fail closed.
+  if (typeof cur !== 'number' || Number.isNaN(cur)) {
+    console.error(`GATE FAIL: non-numeric value at '${keyPath}' in ${label} (${filepath})`);
+    process.exit(1);
+  }
   return cur;
 }
 
@@ -217,15 +223,24 @@ if (IS_UPDATE_BASELINE) {
   const commit        = getCommit();
   const engineVersion = getEngineVersion();
 
-  // Compute thresholds: floors = baseline - epsilon (~0.02); ceilings = baseline * headroom.
+  // CR-01: --update-baseline only re-records the CHEAP axes. Merge onto the prior baseline so
+  // the accuracy-tier floors (eval02_floor/locomo_j_floor/ku_floor) and accuracy_floor_provenance
+  // — armed separately by Plan 50-03 — survive a re-baseline instead of being silently wiped
+  // (which would revert gate:accuracy to all-SKIP/PASS and disarm the belief-correction gate).
+  let prior = {};
+  try { prior = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8')); } catch { /* first-ever baseline */ }
+
+  // Compute cheap-axis thresholds: floors = baseline - epsilon (~0.02); ceilings = baseline * headroom.
   const newBaseline = {
     meta: {
+      ...(prior.meta || {}),            // preserve accuracy_floor_provenance + any prior meta keys
       eval:           'gate-baseline',
       version:        'v9.0-final',
       date:           new Date().toISOString(),
       commit,
       engine_version: engineVersion,
       recorded_from: {
+        ...((prior.meta && prior.meta.recorded_from) || {}),
         locomo_rAtK: locomo.source,
         latency:     latency.source,
         injection:   injection.source,
@@ -233,6 +248,7 @@ if (IS_UPDATE_BASELINE) {
       },
     },
     scores: {
+      ...(prior.scores || {}),          // preserve any accuracy-tier recorded scores
       locomo_r5:         locomo.r5,
       locomo_r10:        locomo.r10,
       lat_p50_ms:        latency.p50_ms,
@@ -241,6 +257,7 @@ if (IS_UPDATE_BASELINE) {
       total_contradicts: contradicts.total_contradicts,
     },
     thresholds: {
+      ...(prior.thresholds || {}),      // preserve eval02_floor / locomo_j_floor / ku_floor
       locomo_r5_floor:          Math.max(0, +parseFloat((locomo.r5  - 0.02).toFixed(4))),
       locomo_r10_floor:         Math.max(0, +parseFloat((locomo.r10 - 0.02).toFixed(4))),
       lat_p95_ceiling_ms:       Math.ceil(latency.p95_ms * 1.15),
@@ -263,6 +280,15 @@ const baseline = readJsonSafe(BASELINE_PATH, 'baseline');
 if (!baseline.thresholds || typeof baseline.thresholds !== 'object') {
   console.error(`GATE FAIL: baseline missing 'thresholds' block (${BASELINE_PATH})`);
   process.exit(1);
+}
+// WR-02: a missing individual cheap-axis floor would silently disable that axis (the comparator
+// is guarded by `!= null`) and still GATE PASS — an invisible regression hole. Require all
+// cheap-axis floors up front and fail closed if any is absent. (contradicts_floor defaults to 1.)
+for (const k of ['locomo_r5_floor', 'locomo_r10_floor', 'lat_p95_ceiling_ms', 'injected_tokens_ceiling']) {
+  if (baseline.thresholds[k] == null) {
+    console.error(`GATE FAIL: baseline missing required threshold '${k}' (${BASELINE_PATH})`);
+    process.exit(1);
+  }
 }
 
 // 2. Collect axis values (run harnesses or read from override paths).

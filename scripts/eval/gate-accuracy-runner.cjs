@@ -64,15 +64,19 @@ try { commit = execSync('git rev-parse --short HEAD', { stdio: ['pipe', 'pipe', 
 
 // ---- helper: read baseline (thresholds only) ----------------------------------
 function readBaseline() {
+  // WR-01: the paid tier must never run unguarded. A wholly missing/unparseable baseline → all
+  // axes would SKIP and the run would report GATE PASS having enforced nothing (fail-open). Fail
+  // closed, matching gate-runner.cjs. Per-axis SKIP is reserved for an individual floor that is
+  // intentionally absent while the baseline itself is present and valid.
   if (!fs.existsSync(BASELINE_PATH)) {
-    console.warn(`WARN: baseline not found at ${BASELINE_PATH} — all accuracy axes will be SKIP (informational only)`);
-    return { thresholds: {} };
+    console.error(`GATE FAIL: baseline not found at ${BASELINE_PATH} — cannot enforce accuracy floors`);
+    process.exit(1);
   }
   try {
     return JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
   } catch (e) {
-    console.warn(`WARN: could not parse baseline at ${BASELINE_PATH}: ${e.message} — all axes SKIP`);
-    return { thresholds: {} };
+    console.error(`GATE FAIL: could not parse baseline at ${BASELINE_PATH}: ${e.message} — cannot enforce accuracy floors`);
+    process.exit(1);
   }
 }
 
@@ -299,7 +303,14 @@ if (failures.length > 0) {
   console.log('=================================================================');
   process.exit(1);
 } else {
-  console.log('GATE PASS (accuracy tier)');
+  // WR-04: a flat "GATE PASS" reads identically whether all three axes were enforced or all three
+  // were SKIPPED (no floor). Surface any unenforced axis so a disarmed gate never looks fully green.
+  const skipped = ['eval02_floor', 'locomo_j_floor', 'ku_floor'].filter(k => !(k in thresholds));
+  if (skipped.length > 0) {
+    console.warn(`GATE PASS (accuracy tier) — WARNING: ${skipped.length} axis/axes NOT enforced (no baseline floor): ${skipped.join(', ')}`);
+  } else {
+    console.log('GATE PASS (accuracy tier) — all 3 axes enforced');
+  }
   console.log('=================================================================');
   process.exit(0);
 }
