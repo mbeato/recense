@@ -349,3 +349,80 @@ describe('Layer 2 — replay echo (row.replay === true) (SC3)', () => {
   });
 
 });
+
+// =============================================================================
+// Layer 3 — Ambient twinkle tick (Task 3 auto)
+// These tests are added with the implementation and verify the full structure.
+// =============================================================================
+
+describe('Layer 3 — ambient twinkle tick (SC1, SC3, SC5)', () => {
+
+  it('initTrace registers a second tick (twinkleTick) via ctx.registerTick (SC1)', () => {
+    // After initTrace, two ticks should be registered: main tick (ticks[0])
+    // and twinkleTick (ticks[1]). Without twinkleTick, ticks.length === 1.
+    const hazeNode = makeHazeNode('h0', 0);
+    const { ticks } = makeCtx([], [hazeNode]);
+    expect(ticks.length).toBe(2);
+  });
+
+  it('twinkleTick calls setColorAt for a haze node on first tick (SC1)', () => {
+    // Lazy init happens on first tick: subset is built and setColorAt is called.
+    const hazeNode = makeHazeNode('h0', 0);
+    const { ticks, setColorAtSpy } = makeCtx([], [hazeNode]);
+
+    // Invoke only the twinkle tick (ticks[1])
+    ticks[1]!(performance.now());
+
+    expect(setColorAtSpy).toHaveBeenCalled();
+    const [idx] = setColorAtSpy.mock.calls[0] as [number, any];
+    expect(idx).toBe(0); // hazeIdx of our test node
+  });
+
+  it('twinkleTick skips active nodes (live/replay flash has priority)', () => {
+    // An activated haze node should be in the `active` Set inside initTrace.
+    // twinkleTick must skip it so the live/replay color is not overwritten.
+    const { node: regular } = makeRegularNode('r');
+    const hazeNode = makeHazeNode('h0', 0);
+    const { ctx, ticks, setColorAtSpy } = makeCtx([regular], [hazeNode]);
+
+    ctx.activate(hazeNode, 1.0); // adds hazeNode to the active Set
+
+    // Run only the twinkle tick (NOT the main tick, to isolate twinkle behavior)
+    ticks[1]!(performance.now());
+
+    // setColorAt must NOT be called by twinkle (active node skipped)
+    expect(setColorAtSpy).not.toHaveBeenCalled();
+  });
+
+  it('twinkleTick does not call ctx.revealTrace (SC3 — no fabricated edges)', () => {
+    const hazeNode = makeHazeNode('h0', 0);
+    const { ctx, ticks } = makeCtx([], [hazeNode]);
+
+    ticks[1]!(performance.now());
+
+    expect(ctx.revealTrace).not.toHaveBeenCalled();
+  });
+
+  it('twinkleTick is a no-op when ctx.hazeMesh is null (lazy guard)', () => {
+    // With no hazeNodes, makeCtx sets hazeMesh=null. twinkleTick should return early.
+    const { node } = makeRegularNode('n');
+    const { ticks, setColorAtSpy } = makeCtx([node]);
+
+    // Should not throw, and setColorAt is never called (no hazeMesh)
+    expect(() => ticks[1]!(performance.now())).not.toThrow();
+    expect(setColorAtSpy).not.toHaveBeenCalled();
+  });
+
+  it('trace.js contains TWINKLE_COUNT, TWINKLE_PERIOD_MS, TWINKLE_AMP constants (source-text guard)', () => {
+    const src = stripComments(readTraceJs());
+    expect(src).toContain('TWINKLE_COUNT');
+    expect(src).toContain('TWINKLE_PERIOD_MS');
+    expect(src).toContain('TWINKLE_AMP');
+  });
+
+  it('trace.js still has no setMatrixAt after twinkle implementation (SC5 regression guard)', () => {
+    const src = stripComments(readTraceJs());
+    expect(src).not.toContain('setMatrixAt');
+  });
+
+});
