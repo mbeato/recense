@@ -801,7 +801,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   rankWeightS: 1.0,
   rankWeightR: 0.0,
   rankStrengthWeight: 0,  // D-04: dark default — ships w=0; no behavior change at merge
-  bm25FusionWeight: 0,  // Phase 47 D-02: dark default — w=0 reproduces pure-cosine; flip to w* after held-out tune
+  bm25FusionWeight: 0,  // Phase 47 D-05: w* = 0 (held-out LoCoMo sweep null result — R@5 max at w=0, no positive weight passes per-category no-regression gate); set 0 to use pure cosine
   // Phase 37: min cosine for query→predicate confident match (D-07, RESEARCH §2).
   // Below threshold → schema-neighborhood fallback (D-06); calibrate against D-05 harness.
   predicateGlossThreshold: 0.35,

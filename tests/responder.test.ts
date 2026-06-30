@@ -323,9 +323,9 @@ describe('HybridResponder', () => {
     expect(result.reply).not.toContain('(inferred)');
   });
 
-  // ── WR-01: retrieveRanked on the answer path receives no queryText (hybrid off) ──
+  // ── WR-01: retrieveRanked on the answer path receives queryForEmbed as 4th arg (LEVER 1 ON) ──
 
-  it('WR-01: retrieveRanked on the answer path is called with exactly 3 args (cueVec, k, floor) — no queryText', async () => {
+  it('WR-01: retrieveRanked on the answer path is called with 4 args (cueVec, k, floor, queryForEmbed) — LEVER 1 ON, w=0 null result', async () => {
     // Spy: capture all positional args passed to retrieveRanked
     let capturedArgs: unknown[] = [];
     const mockRetrieval = {
@@ -348,12 +348,15 @@ describe('HybridResponder', () => {
 
     await responder.respond('Where does Max live?', 'sess-wr01');
 
-    // retrieveRanked must receive exactly 3 positional args: (cueVec, k, floor)
-    // — no 4th queryText arg means hybridTopk/BM25 is off on the answer path (GAP-03, WR-01)
-    expect(capturedArgs).toHaveLength(3);
+    // retrieveRanked must receive 4 positional args: (cueVec, k, floor, queryForEmbed)
+    // — Plan 47-03 threads queryForEmbed as the 4th arg so LEVER 1 (BM25+dense hybrid) is ON.
+    // Plan 02 null result (w* = 0) means hybrid(0) ≡ cosine byte-identical; w=0 is the instant fallback.
+    // queryForEmbed is user-derived (LEVER-3 rewrite or boundedQuery); satisfies T-04-03-I.
+    expect(capturedArgs).toHaveLength(4);
     expect(typeof capturedArgs[0]).toBe('object'); // cueVec: Float32Array
     expect(capturedArgs[1]).toBe(h.config.rankedRetrievalK);
     expect(capturedArgs[2]).toBe(h.config.rankedRetrievalFloor);
+    expect(typeof capturedArgs[3]).toBe('string'); // queryForEmbed: user-derived text
   });
 
   // ── safe-null: embed throws → resolves null, never throws ────────────────
