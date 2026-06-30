@@ -24,6 +24,7 @@ import {
   DENSITY_THIN_START,
   DENSITY_THIN_FULL,
   HAZE_DENSE_SCALE,
+  OVERVIEW_NODE_CAP,
 // @ts-ignore — browser ESM, no type declarations
 } from '../src/viz/modules/constants.js';
 
@@ -59,6 +60,14 @@ function buildCtx(spec: { schemas: number; membersPerSchema: number; haze: numbe
 
 const overviewOf = (ctx: any) =>
   ctx.allNodes.filter((n: any) => n.__cat === 'schema' || n.__cat === 'haze').length;
+
+describe('OVERVIEW_NODE_CAP constant', () => {
+  it('is exported from constants.js with the calibrated initial value 3000', () => {
+    // D-05: caps overview (schema + haze) regardless of corpus size;
+    // sits inside the founder-calibrated 2,700–3,200 band.
+    expect(OVERVIEW_NODE_CAP).toBe(3000);
+  });
+});
 
 describe('lod adaptive density', () => {
   it('is a pure no-op inside the neutral band (founder anchor untouched)', () => {
