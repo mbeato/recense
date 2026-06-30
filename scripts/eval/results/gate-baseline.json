@@ -10,6 +10,11 @@
       "latency": "scripts/eval/results/gate-latency-run.json",
       "injection": "scripts/eval/results/gate-injection-run.json",
       "contradicts": "scripts/eval/results/46-recon03-ku-bm25on.json"
+    },
+    "accuracy_floor_provenance": {
+      "eval02_floor": { "anchor": "fresh", "source": "scripts/eval/results/correctness-v90final.json", "value": 0.846, "commit": "8e544f3", "date": "2026-06-30", "note": "belief_correction_rate over 13 contradiction cases; fresh Task-2 run on the shipped subscription stack; floor = value - 0.05" },
+      "locomo_j_floor": { "anchor": "reused", "source": "scripts/eval/results/locomo-d41d5c8.json", "value": 0.8604, "commit": "d41d5c8", "date": "2026-06-24", "note": "LoCoMo-J headline; REUSED recorded run (D-12, no multi-hour re-run), NOT a fresh same-day measurement; floor = value - 0.05" },
+      "ku_floor": { "anchor": "reused", "source": "scripts/eval/results/46-recon03-ku-bm25on.json", "value": 0.389, "commit": "f4de897", "date": "2026-06-28", "note": "KU score 7/18; REUSED recorded run (D-12), NOT fresh; floor = value - 0.05" }
     }
   },
   "scores": {
@@ -25,6 +30,9 @@
     "locomo_r10_floor": 0.8021,
     "lat_p95_ceiling_ms": 23,
     "injected_tokens_ceiling": 517,
-    "contradicts_floor": 1
+    "contradicts_floor": 1,
+    "eval02_floor": 0.796,
+    "locomo_j_floor": 0.8104,
+    "ku_floor": 0.339
   }
 }
