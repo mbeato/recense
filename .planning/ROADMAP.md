@@ -1006,12 +1006,12 @@ honesty holds by construction —
   Founder visual checkpoint confirms 1–4 on the live viz (52/53 idiom). Fresh spontaneous retrievals
   are deferred to a follow-up.
 
-**Plans:** 5 plans (4 waves)
+**Plans:** 1/5 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 54-01-PLAN.md — constants.js: 10 ambient-liveliness tunables (Wave 1 foundation)
+- [x] 54-01-PLAN.md — constants.js: 10 ambient-liveliness tunables (Wave 1 foundation)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
