@@ -40,6 +40,7 @@ import {
   ACT_SCALE_GAIN,
   ACT_BRIGHTEN_GAIN,
   ACT_HAZE_LERP,
+  REPLAY_DIM,
 } from './constants.js';
 
 // ── Reusable scratch objects for pulse orientation (avoid per-frame alloc) ─
@@ -514,6 +515,62 @@ export function initTrace(ctx) {
     // Back-compat: bare string[] → synthetic row (legacy SSE shape before Phase 52)
     if (Array.isArray(row)) {
       row = { seeds: row, hops: [] };
+    }
+
+    // ── Layer 2 — Replay echo (Phase 54): re-render real hops at reduced intensity ─
+    // Slots BEFORE kind dispatch so a replay row never enters _applyIngestion.
+    // Uses the same honest seed/hop resolution as the recall path; never ctx.adj.
+    // Intensity is intensity * REPLAY_DIM so replay is strictly dimmer than live (SC3).
+    if (row.replay === true) {
+      const rawSeeds = row.seeds || [];
+      if (!rawSeeds.length) return;           // Pitfall 3: empty row → silent no-op
+
+      const visited = new Set();
+      const seedEntries = [];                 // {node, intensity}
+
+      for (const raw of rawSeeds) {
+        const { node_id, score } = normalizeSeed(raw);
+        if (!node_id || visited.has(node_id)) continue;
+        const node = ctx.idMap.get(node_id);
+        if (!node) continue;
+        visited.add(node_id);
+        const intensity = typeof score === 'number'
+          ? Math.max(0.2, Math.min(1.0, score))
+          : 0.5;
+        seedEntries.push({ node, intensity });
+      }
+
+      if (!seedEntries.length) return;        // all seeds absent from idMap → no-op
+
+      const hopEntries = traceEdgesFromHops(row, ctx.idMap)
+        .map(({ node_id, score }) => {
+          const node = ctx.idMap.get(node_id);
+          if (!node) return null;
+          const intensity = typeof score === 'number'
+            ? Math.max(0.1, Math.min(0.5, score * 0.55))
+            : 0.3;
+          return { node, intensity };
+        })
+        .filter(Boolean);
+
+      if (ctx.markAnimating) ctx.markAnimating(DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
+
+      const pathNodes = seedEntries.map(e => e.node).concat(hopEntries.map(e => e.node));
+      seedEntries.forEach(e => ctx.traceNodes.add(e.node.id));
+      hopEntries.forEach(e => ctx.traceNodes.add(e.node.id));
+      if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
+
+      // Activate at REPLAY_DIM intensity — replay is always strictly dimmer than live (SC3)
+      seedEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM));
+      hopEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM));
+
+      const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
+      setTimeout(() => {
+        ctx.traceNodes.clear();
+        ctx.traceLinks.clear();
+        if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
+      }, fadeMs);
+      return;
     }
 
     // ── Dispatch: ingestion hero kinds branch to _applyIngestion ──────────────
