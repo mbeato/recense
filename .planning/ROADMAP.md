@@ -973,10 +973,14 @@ honesty holds by construction —
   Founder visual checkpoint confirms 1–4 on the live viz (52/53 idiom). Fresh spontaneous retrievals
   are deferred to a follow-up.
 
-**Plans:** TBD (run /gsd:plan-phase 54 to break down)
+**Plans:** 5 plans (4 waves)
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 54 to break down)
+- [ ] 54-01-PLAN.md — constants.js: 9 ambient-liveliness tunables (Wave 1 foundation)
+- [ ] 54-02-PLAN.md — trace.js: Layer1 amplify + Layer2 client replay branch + Layer3 twinkle (Wave 2)
+- [ ] 54-03-PLAN.md — server.ts: idle-replay scheduler, replay:true, read-only boundary (Wave 2)
+- [ ] 54-04-PLAN.md — tests/viz-ambient-liveliness.test.ts: SC1/SC3/SC5 machine guards (Wave 3)
+- [ ] 54-05-PLAN.md — founder visual checkpoint + constant tuning, autonomous:false (Wave 4)
 
 ## Backlog
 
