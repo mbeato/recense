@@ -150,12 +150,15 @@ export const KIND_COLOR = {
   recall_seed:     0xffb866,
   /** 1-hop association — cyan (subordinate; thinner / dimmer than seeds) */
   recall_hop:      0x66d9ff,
-  /** New node encoding — green */
-  new_node:        0x66ff99,
-  /** Reconsolidation hero — magenta (belief-update-in-place flash) */
-  reconsolidation: 0xff3b6b,
-  /** Oscillation / instability — orange */
-  oscillation:     0xff7a1a,
+  /** New node encoding — soft sage-green (muted into the tissue palette) */
+  new_node:        0x8fbf9e,
+  /** Reconsolidation hero — warm rose-mauve (belief-update-in-place; the hero
+   *  hue, the warmest/most-saturated of the muted set so it still reads as the
+   *  signature event, but no longer hot magenta — sits with entity-rose/schema-mauve) */
+  reconsolidation: 0xc481a4,
+  /** Oscillation / instability — muted burnt amber (warm + unsettled, distinct
+   *  from the brighter recall-seed amber) */
+  oscillation:     0xc9824e,
   /** Non-hero cascade events — muted slate (NON-amber per D-04) */
   neutral:         0x8a93a6,
 };

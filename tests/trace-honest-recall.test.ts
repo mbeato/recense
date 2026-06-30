@@ -48,7 +48,7 @@ vi.mock('three', () => {
   class Quaternion { setFromUnitVectors() { return this; } }
   class CylinderGeometry {}
   class SphereGeometry { constructor(_r?: number, _w?: number, _h?: number) {} }
-  class ShaderMaterial { uniforms: any = {}; constructor(_a: any) {} dispose() {} }
+  class ShaderMaterial { uniforms: any = {}; constructor(o: any) { this.uniforms = o?.uniforms ?? {}; } dispose() {} }
   class MeshBasicMaterial {
     color: Color;
     transparent?: boolean;

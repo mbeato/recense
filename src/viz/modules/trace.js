@@ -83,6 +83,36 @@ const HALO_RADIUS  = 16;   // world-space radius at peak (scene units)
 const HALO_LIFE_MS = 900;  // total halo lifetime (ms): grow then fade
 const HALO_ATTACK  = 150;  // grow phase (0 → HALO_RADIUS, ms)
 
+// Soft-glow halo shader: a view-facing radial falloff (bright core fading to a
+// soft silhouette) instead of a flat additive disc — reads as a dimensional orb,
+// not a cheap sphere. `facing` = dot(normal, viewDir): 1 at the camera-facing
+// center, 0 at the silhouette. A bright inner core + soft outer wash gives the
+// layered glow; additive blending feeds the bloom pass.
+const HALO_VERT = `
+  varying vec3 vN;
+  varying vec3 vV;
+  void main() {
+    vN = normalize(normalMatrix * normal);
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vV = normalize(-mv.xyz);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const HALO_FRAG = `
+  uniform vec3  uColor;
+  uniform float uIntensity;
+  varying vec3 vN;
+  varying vec3 vV;
+  void main() {
+    float facing = clamp(dot(normalize(vN), normalize(vV)), 0.0, 1.0);
+    float core = pow(facing, 3.0);        // tight bright center
+    float wash = pow(facing, 1.2) * 0.45; // soft surrounding glow
+    float a = (core + wash) * uIntensity;
+    if (a <= 0.002) discard;
+    gl_FragColor = vec4(uColor, a);
+  }
+`;
+
 /** Clamped smoothstep on [0,1]. */
 function _smooth01(x) { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); }
 
@@ -234,14 +264,21 @@ export function initTrace(ctx) {
         if (halos[hi].node === node) {
           halos[hi].t0    = performance.now();
           halos[hi].level = level;
-          halos[hi].mat.color.copy(kindColor || HOT_COLOR);
+          if (halos[hi].mat.uniforms && halos[hi].mat.uniforms.uColor) {
+            halos[hi].mat.uniforms.uColor.value.copy(kindColor || HOT_COLOR);
+          }
           found = true;
           break;
         }
       }
       if (!found) {
-        const mat  = new THREE.MeshBasicMaterial({
-          color:       kindColor || HOT_COLOR,
+        const mat  = new THREE.ShaderMaterial({
+          uniforms: {
+            uColor:     { value: (kindColor || HOT_COLOR).clone() },
+            uIntensity: { value: 0 },
+          },
+          vertexShader:   HALO_VERT,
+          fragmentShader: HALO_FRAG,
           blending:    THREE.AdditiveBlending,
           transparent: true,
           depthWrite:  false,
@@ -426,19 +463,24 @@ export function initTrace(ctx) {
       // Track node's live world position (force-graph updates x/y/z each tick)
       h.mesh.position.set(h.node.x || 0, h.node.y || 0, h.node.z || 0);
 
-      // Grow→fade: scale expands to HALO_RADIUS over HALO_ATTACK, then opacity fades
-      let scale, opacity;
+      // Grow→settle→fade. Eased grow (easeOutCubic) with a slight overshoot so it
+      // breathes rather than pops; then a smooth ease-out fade of the glow
+      // intensity. Scale grows to HALO_RADIUS; intensity carries the envelope.
+      let scale, intensity;
       if (elapsed < HALO_ATTACK) {
         const t = elapsed / HALO_ATTACK;
-        scale   = HALO_RADIUS * t;
-        opacity = t * h.level;
+        const e = 1 - Math.pow(1 - t, 3);          // easeOutCubic
+        scale     = HALO_RADIUS * (0.6 + 0.45 * e); // grow from 0.6→1.05R (soft overshoot)
+        intensity = e * h.level;
       } else {
-        scale   = HALO_RADIUS;
         const t = (elapsed - HALO_ATTACK) / (HALO_LIFE_MS - HALO_ATTACK);
-        opacity = (1 - _smooth01(t)) * h.level;
+        scale     = HALO_RADIUS * (1.05 - 0.05 * _smooth01(t)); // settle 1.05R→1.0R
+        intensity = (1 - _smooth01(t)) * h.level;
       }
       h.mesh.scale.setScalar(scale < 0.001 ? 0.001 : scale);
-      h.mat.opacity = opacity;
+      if (h.mat.uniforms && h.mat.uniforms.uIntensity) {
+        h.mat.uniforms.uIntensity.value = intensity;
+      }
     }
   }
 
