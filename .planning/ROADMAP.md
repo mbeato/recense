@@ -241,7 +241,7 @@ Goal: make recense's belief-correction and retrieval work on messy real-world da
 | 48. Correctness Hardening | v9.0 | 2/2 | Complete    | 2026-06-28 |
 | 49. Scale + Data-Model Spike | v9.0 | 3/3 | Complete   | 2026-06-28 |
 | 50. Verification + Regression Gates | v9.0 | 2/4 | In Progress|  |
-| 51. WASM SIMD Exact-Scan Kernel | v9.0 | 5/5 | Complete   | 2026-06-30 |
+| 51. WASM SIMD Exact-Scan Kernel | v9.0 | 5/5 | Complete    | 2026-06-30 |
 
 ### Phase 28: Schema-Anchored Corpus
 
