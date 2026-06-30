@@ -35,7 +35,7 @@
   "scripts": {
     "build": "tsc",
     "postbuild": "chmod +x dist/src/adapter/recense.js && node scripts/copy-viz-assets.cjs",
-    "pretest": "npm run build",
+    "pretest": "npm run build && node scripts/gen-simd-kernel.cjs --check",
     "init": "npm run build && node dist/src/adapter/recense.js init",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -74,6 +74,6 @@
     "typescript": "^6.0.3",
     "vectorlite": "^0.2.0",
     "vitest": "^4.1.8",
-    "wabt": "^1.0.39"
+    "wabt": "1.0.39"
   }
 }
