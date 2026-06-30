@@ -1006,7 +1006,7 @@ honesty holds by construction —
   Founder visual checkpoint confirms 1–4 on the live viz (52/53 idiom). Fresh spontaneous retrievals
   are deferred to a follow-up.
 
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans complete
 
 Plans:
 **Wave 1**
@@ -1024,7 +1024,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 54-05-PLAN.md — founder visual checkpoint + constant tuning, autonomous:false (Wave 4)
+- [x] 54-05-PLAN.md — founder visual checkpoint + constant tuning, autonomous:false (Wave 4)
 
 ## Backlog
 
