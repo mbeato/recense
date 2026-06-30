@@ -186,7 +186,7 @@ Goal: make recense's belief-correction and retrieval work on messy real-world da
 - [x] **Phase 47: Hybrid Retrieval Recall** — BM25+dense fusion (RRF/z-score, tunable scalar) on the LLM-free hot path to lift LoCoMo R@5/R@10 with no per-category regression; depends on 46 (completed 2026-06-30)
 - [x] **Phase 48: Correctness Hardening** — close C-2 self-confirmation loop, immediate() write txns (M-5), schema-version read-first guard (M-9), embedding model/dims stamp+assert (L-2); each with a regression test; independent of 46/47 (completed 2026-06-28)
 - [x] **Phase 49: Scale + Data-Model Spike** — measure vectorlite ANN vs brute-force crossover at real node scale + go/no-go; written bi-temporal/supersedes-vs-tombstone recommendation with migration cost; independent; a "defer" outcome is valid (completed 2026-06-28)
-- [ ] **Phase 50: Verification + Regression Gates** — re-run full eval suite on the improved pipeline, prove Phase-46 judge fires on real contradictions, lock regression gates (CI/pre-merge), update docs/evals.md; depends on 46–48
+- [x] **Phase 50: Verification + Regression Gates** — re-run full eval suite on the improved pipeline, prove Phase-46 judge fires on real contradictions, lock regression gates (on-demand `npm run gate`, not CI — D-01), update docs/evals.md; depends on 46–48
 - [ ] **Phase 51: WASM SIMD Exact-Scan Kernel** — replace the scalar-JS exact cosine scan with a portable prebuilt WASM `f32x4` dot-product kernel (no node-gyp); byte-exact (recall@10=1.000), ~4.9× kernel speedup measured in the Phase-49 spike; fold reciprocal-norm + partial-select top-k for the full win. Removes scale pressure to ~85k–190k nodes with zero approximation and zero new native deps; defers ANN. Depends on 50 (gates catch any regression)
 
 ## Progress
@@ -849,8 +849,8 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 **Plans**: 4 plans
 - [x] 50-01-PLAN.md — Cheap LLM-free deterministic gate runner (R@K, latency, token-structural, binary judge-fire) + floor/ceiling baseline + npm scripts
 - [x] 50-02-PLAN.md — Opt-in paid accuracy-tier gate (gate:accuracy: LoCoMo-J + EVAL-02 + KU), key-guarded, never in the cheap path
-- [ ] 50-03-PLAN.md — Record fresh v9.0-final baseline + fresh EVAL-02 n=13 (discharges RECON-04)
-- [ ] 50-04-PLAN.md — docs/evals.md v9.0-final record: honest provenance, 368-contradicts judge evidence, before/after deltas, deferred-check discharge
+- [x] 50-03-PLAN.md — Record fresh v9.0-final baseline + fresh EVAL-02 n=13 (discharges RECON-04)
+- [x] 50-04-PLAN.md — docs/evals.md v9.0-final record: honest provenance, 368-contradicts judge evidence, before/after deltas, deferred-check discharge
 
 
 ### Phase 51: WASM SIMD Exact-Scan Kernel
