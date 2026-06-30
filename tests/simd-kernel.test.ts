@@ -260,6 +260,17 @@ describe('loadSimdKernel safe fallback (Case 3 — D-08)', () => {
     expect(result).toBeNull();
   });
 
+  it('returns null (not throw) on short norms array (norms.length < count)', () => {
+    const DIM_GUARD = 8; // divisible by 4 — ensures norms guard fires, not dim%4
+    const data = new Float32Array(COUNT * DIM_GUARD); // valid data length
+    const shortNorms = new Float64Array(COUNT - 1); // one element short
+    let result: ReturnType<typeof loadSimdKernel> | undefined;
+    expect(() => {
+      result = loadSimdKernel(data, shortNorms, COUNT, DIM_GUARD);
+    }).not.toThrow();
+    expect(result).toBeNull();
+  });
+
   it('returns null (not throw) on compile failure (truncated/invalid WASM bytes)', async () => {
     // Mock wasmBytes to return a truncated WASM header (invalid module) to exercise
     // the try/catch → null path for WebAssembly.validate() returning false.
