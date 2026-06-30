@@ -782,12 +782,14 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 **Depends on**: Nothing — first phase of v9.0
 **Requirements**: RECON-01, RECON-02, RECON-03, RECON-04
 **Success Criteria** (what must be TRUE):
+
   1. For each new fact, candidate generation produces a union of (a) entity/subject-keyed graph lookup, (b) BM25 `node_fts` FTS5 lexical match, and (c) dense top-k cosine — the cosine gate alone no longer determines the candidate set — RECON-01
   2. The union candidate set is fed to the existing Sonnet judge for ADD/UPDATE/contradict screening; all existing provenance, tombstone, and self-confirmation guards are preserved — RECON-02
   3. On LongMemEval-KU, the reconsolidation judge fires on real contradictions — measurably above zero (ideally a majority of true-contradiction cases), verifiable via escalation/judge-call counters — RECON-03
   4. KU belief-correction improves measurably vs the extraction+recency-only baseline; EVAL-02 clean-case belief-correction shows no regression; load-bearing invariants intact (no self-confirmation minting, no evidence-backed node deleted by decay) — RECON-04
 
 **Plans**: 2 plans
+
 - [x] 46-01-PLAN.md — BM25 lexical candidate broadening: config knob, consolidator union/D-04 gate/D-06 counters, unit tests (RECON-01, RECON-02)
 - [x] 46-02-PLAN.md — Validate on LongMemEval-KU: judge-fire (contradict) counter > 0 A/B + EVAL-02 clean-case no-regression (RECON-03, RECON-04)
 
@@ -797,12 +799,14 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 **Depends on**: Phase 46 (BM25 node_fts candidate machinery is live and validated)
 **Requirements**: RETR-01, RETR-02, RETR-03, RETR-04
 **Success Criteria** (what must be TRUE):
+
   1. Online retrieval fuses BM25 (`node_fts`) + dense via RRF or z-score-normalized weighted score; no LLM calls introduced on the hot path — RETR-01
   2. The fusion weight is a single tunable scalar exposed in config, with a default selected via held-out evaluation — RETR-02
   3. R@5/R@10 improve on LoCoMo vs the pure-dense baseline with no per-category regression — RETR-03
   4. Hot-path retrieval latency stays within budget (live-brain p50 ~45 ms today); profiled and confirmed on the live brain — RETR-04
 
 **Plans**: 3 plans
+
 - [x] 47-01-PLAN.md — expose bm25FusionWeight as a config scalar threaded into hybridTopk/retrieveRanked (dark default 0)
 - [x] 47-02-PLAN.md — held-out bm25FusionWeight sweep on LoCoMo → **w\*=0 null result** (BM25 fusion does not beat dense cosine; ship dark). Held-out temporal-reasoning lead logged as follow-up.
 - [x] 47-03-PLAN.md — thread queryForEmbed into responder.respond→retrieveRanked + set DEFAULT_CONFIG.bm25FusionWeight=w* (no-op at w*=0)
@@ -813,12 +817,14 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 **Depends on**: Nothing — independent of Phases 46/47; can run in parallel
 **Requirements**: HARD-01, HARD-02, HARD-03, HARD-04
 **Success Criteria** (what must be TRUE):
+
   1. Assistant output entering as `origin:'observed'` cannot strengthen a fact without a judge call; the C-2 self-confirmation loop is closed and verified by a test that RED-fails before the fix — HARD-01
   2. All write transactions in the consolidator (Phase B) and `txUpsertNode` use `db.transaction().immediate()` so a lost upgrade race no longer aborts the sleep pass on `SQLITE_BUSY_SNAPSHOT`; regression test RED-fails before fix — HARD-02
   3. `initSchema` reads the stored `SCHEMA_VERSION` first and throws a descriptive error on `stored > compile-time`; a stale binary can no longer silently re-stamp a newer schema; regression test RED-fails before fix — HARD-03
   4. Embedding model + dims are stamped in meta at first embed and asserted on every write/decode call; a model or dims change fails closed instead of silently producing NaN cosines; regression test RED-fails before fix — HARD-04
 
 **Plans**: 2 plans
+
 - [x] 48-01-PLAN.md — HARD-04: stamp+assert embedding_model in setEmbedding (mirrors dims guard) + regression tests
 - [x] 48-02-PLAN.md — HARD-01/02/03: audit C-2/M-5/M-9 guards, label existing tests, write the missing M-5 IMMEDIATE-mode test
 
@@ -828,10 +834,12 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 **Depends on**: Nothing — independent spike; can run in parallel with Phases 46/47/48
 **Requirements**: SCALE-01, SCALE-02
 **Success Criteria** (what must be TRUE):
+
   1. A scripted crossover measurement (vectorlite HNSW vs brute-force O(N) cosine) is run over recense's actual node scale (~10–50k synthetic + live brain); recall/latency crossover point is identified; a written go/no-go is produced — SCALE-01
   2. A written recommendation on Zep-style bi-temporal validity intervals and/or DCPM-style doubly-linked supersedes chains vs the current tombstone reconsolidation model is produced, with better-sqlite3 migration cost estimated — SCALE-02
 
 **Plans**: 3 plans
+
 - [x] 49-01-PLAN.md — provision HNSW ANN as a bench-only devDependency + verify loadability early (D-02/D-02b)
 - [x] 49-02-PLAN.md — build + run the crossover benchmark (exact cosine vs HNSW over 11.3k/25k/50k nodes; recall@k, p50/p95, build, memory)
 - [x] 49-03-PLAN.md — write 49-SPIKE-FINDINGS.md: SCALE-01 go/no-go + SCALE-02 bi-temporal/supersedes-vs-tombstone recommendation + migration cost
@@ -842,16 +850,17 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 **Depends on**: Phase 46 (candidate broadening), Phase 47 (hybrid retrieval), Phase 48 (correctness hardening)
 **Requirements**: GATE-01, GATE-02, GATE-03
 **Success Criteria** (what must be TRUE):
+
   1. An automated CI/pre-merge gate runs the eval harness reproducibly and blocks merges that regress below thresholds — GATE-01
   2. Gate thresholds cover accuracy (EVAL-02 belief-correction + LoCoMo J), retrieval recall (R@5/R@10), latency (p50/p95), and token cost; any axis regression past its threshold fails visibly — GATE-02
   3. Baseline is intentionally re-set to v9.0-final figures; the full eval suite is re-run with documented before/after deltas; Phase 46 judge-fires on real KU contradictions are proved via escalation counters; `docs/evals.md` is updated with new numbers and judge-validation evidence — GATE-03
 
 **Plans**: 4 plans
+
 - [x] 50-01-PLAN.md — Cheap LLM-free deterministic gate runner (R@K, latency, token-structural, binary judge-fire) + floor/ceiling baseline + npm scripts
 - [x] 50-02-PLAN.md — Opt-in paid accuracy-tier gate (gate:accuracy: LoCoMo-J + EVAL-02 + KU), key-guarded, never in the cheap path
 - [x] 50-03-PLAN.md — Record fresh v9.0-final baseline + fresh EVAL-02 n=13 (discharges RECON-04)
 - [x] 50-04-PLAN.md — docs/evals.md v9.0-final record: honest provenance, 368-contradicts judge evidence, before/after deltas, deferred-check discharge
-
 
 ### Phase 51: WASM SIMD Exact-Scan Kernel
 
@@ -859,11 +868,13 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 **Depends on**: Phase 50 (regression gates must be live first, so latency/recall gates catch any regression the kernel introduces)
 **Requirements**: SCALE-03
 **Success Criteria** (what must be TRUE):
+
   1. A prebuilt `.wasm` `f32x4` dot-product kernel is checked into the repo and used by the retrieval path (`src/retrieval/topk.ts`); it requires no native build or assembler at install time — SCALE-03
   2. Retrieval is byte-exact vs the prior scalar scan (recall@10 = 1.000 on the eval set; no approximation), with the exact scalar path retained as a verified fallback when SIMD is unavailable — SCALE-03
   3. Measured scan-latency improvement of ~4–5× on the kernel and a materially faster full per-query p95 (reciprocal-norm folded into the kernel + partial-select top-k so the post-scan tail no longer dominates); the Phase-50 latency gate passes — SCALE-03
 
 **Plans**: 3 plans
+
 - [ ] 51-01-PLAN.md — Reproducible WASM kernel artifact: in-repo WAT (fused f32x4 dot + reciprocal-norm cosine), dev-only regen script (`--check` reproducibility + math self-test), committed base64 blob module
 - [ ] 51-02-PLAN.md — Kernel loader: blob decode + SIMD feature-detect + instantiate-once over the index matrix, `scanCosine` (cosine direct), `partialSelectTopK`, safe null fallback; unit tests for exactness/partial-select/fallback
 - [ ] 51-03-PLAN.md — Wire kernel into `topkIndexed` with verbatim scalar fallback (D-05/D-06/D-08); CandidateRetriever integration test; live-brain `51-topk-equivalence` gate (recall@10=1.000 + ~4–5× kernel / faster full p95)
@@ -874,11 +885,13 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 **Depends on**: Nothing. Orthogonal to the v9.0 memory-quality line (Phases 46–51) — pure presentation-layer rework, can run independently at any time.
 **Requirements**: Presentation-layer; no REQUIREMENTS.md entry. The approved design spec is the contract: `docs/superpowers/specs/2026-06-29-brain-viz-honest-traces-design.md`.
 **Success Criteria** (what must be TRUE):
+
   1. A recall trace fires ONLY seeds + their real scored 1-hop neighbors (matching `row.hops`, ≤ caps) — no topology BFS; seed/edge brightness tracks retrieval score.
   2. Lit nodes hold then decay on the tail envelope; viz-disabled path stays zero-cost (Noop sink) and consolidation is unaffected (bridge failures swallowed).
   3. `remember` of a new unrelated fact → green blip; a contradicting fact → magenta flash on the existing node with NO duplicate spawned; an unresolved contradiction → orange wavering pulse.
 
 **Plans**: 6 plans
+
 - [x] 52-01-PLAN.md — Schema + sink nullable `kind` column (D-09 additive migration)
 - [x] 52-02-PLAN.md — Recall honesty core: drive from real hops, delete client BFS, D-06 decay envelope + exactly-N test
 - [x] 52-03-PLAN.md — Per-kind color/motion vocabulary + reconsolidation magenta hero choreography
@@ -908,13 +921,16 @@ retrieval, or data-model changes. Performance-sensitive: the layout already degr
 so any added settling/forces must stay within the existing rAF/idle budget.
 
 **Root-cause findings (already traced — start here, don't re-investigate):**
+
 - `src/viz/modules/graph.js:171–221` `seedNodePositions()` — each node is dropped onto a randomly
   chosen **occupied voxel center** of the brain-hull occupancy grid (`occupied[...]`, line 213),
   scaled by `BRAIN_SCALE` (460), with only **±2 units of jitter** (line 218). Voxel spacing ≫ ±2, so
   nodes snap to a visible lattice → the gridlines.
+
 - `src/viz/modules/graph.js:598` `Graph.cooldownTicks(12)` then pin (`n.fx = n.x`, ~line 607) — the
   force sim runs only 12 ticks and freezes, far too few to reorganize 15k nodes into
   connectivity-based clusters; nodes stay at their grid seed positions.
+
 - Adaptive-density band lives in `src/viz/modules/constants.js` (~line 190+, "Adaptive density")
   and `lod.js` — overview currently renders schema super-nodes + haze; the member-hiding / density
   adaptation is the lever for the "too full" symptom.
@@ -922,24 +938,31 @@ so any added settling/forces must stay within the existing rAF/idle budget.
 **Depends on**: Phase 52 (shares the viz; must not regress the now-approved honest-traces flashes).
 **Requirements**: Presentation-layer; design contract is the Phase 52 viz design spec + this gap.
 **Success Criteria** (what must be TRUE):
+
   1. No visible lattice/gridlines at ~15k nodes — node placement fills space (cell-filling jitter or
      a blue-noise/Poisson seed), not snapped to voxel centers.
+
   2. Overview at ~15k nodes reads as readable and deliberate, not an undifferentiated full cloud —
      adaptive density / LOD keeps screen fullness in the calibrated band as the corpus grows.
+
   3. Related nodes visibly cluster (connectivity-driven), so the brain feels deliberate — within the
      existing performance budget (no frame-rate regression at 15k vs today).
+
   4. Zero engine/retrieval/data-model change; Phase 52 honest-traces flashes still render correctly.
 
 **Plans**: 3 plans in 3 waves
 
 Plans:
 **Wave 1**
+
 - [x] 53-01-PLAN.md — graph.js: continuous in-hull + schema-centroid + deterministic seeding (kills lattice, starts clustered, stable) + wall-clock SETTLE_BUDGET_MS settle replacing cooldownTicks(12); revealSettled() body locked (D-01/02/03/04/07/08)
 
 **Wave 2** *(depends on 53-01 — shares constants.js)*
+
 - [x] 53-02-PLAN.md — lod.js: overview density cap (OVERVIEW_NODE_CAP, schema-largest-first ranking, haze remainder) holding screen fullness in the calibrated band at scale (D-05/06)
 
 **Wave 3** *(depends on 53-01 + 53-02)*
+
 - [x] 53-03-PLAN.md — verification: machine-checkable layout/locked-anchor/Phase-52 guards + full viz suite + dist build + founder visual checkpoint at ~15k with constant tuning; autonomous: false (D-09)
 
 ### Phase 54: Viz Ambient Liveliness and Replay Traces
@@ -953,23 +976,30 @@ LLM-free, and the Phase 52 honest-traces invariant is preserved. Design contract
 
 **Approach (from approved spec):** a three-layer activity hierarchy, strictly ranked in intensity so
 honesty holds by construction —
+
 - **Live recall (brightest):** amplify the real-event flash (size-pulse ~1.35×→~1.8–2× + brighten +
   snappier attack; haze color-overshoot since haze is a color-only InstancedMesh).
+
 - **Replay echo (dimmer, real-but-past):** a server idle scheduler re-emits recent real
   `activation_trace` rows (flag `replay:true`) during idle gaps; the client renders a softer echo of
   the same real hops. Stays inside the viz server's read-only boundary (re-reads existing rows only).
+
 - **Twinkle (faintest):** dim, slow, neutral-palette brightness shimmer on a small rotating node
   subset; no pulses/halos/event-colors.
 
 **Depends on**: Phase 52 (honest traces — must not regress) and Phase 53 (Halton layout).
 **Requirements**: Presentation-layer; design contract is the 2026-06-30 spec above.
 **Success Criteria** (what must be TRUE):
+
   1. Alive at idle: pinned with no user recalls, the brain shows continuous gentle life (twinkle)
      punctuated by periodic replay echoes of real recent recalls.
+
   2. Events pop: a real recall is clearly noticeable at overview zoom, distinctly stronger than a
      replay echo.
+
   3. Honest hierarchy: live > replay > twinkle is always legible; replays read as rehearsal, not
      live; no fabricated edges (pulses/halos only on real hops).
+
   4. Not distracting: ambient layers read as meaningful, not loud/noisy (founder felt-quality call).
   5. Bounded + in-boundary: no frame-rate regression at ~15k; viz server stays read-only/LLM-free.
 
@@ -979,10 +1009,21 @@ honesty holds by construction —
 **Plans:** 5 plans (4 waves)
 
 Plans:
+**Wave 1**
+
 - [ ] 54-01-PLAN.md — constants.js: 10 ambient-liveliness tunables (Wave 1 foundation)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 54-02-PLAN.md — trace.js: Layer1 amplify + Layer2 client replay branch + Layer3 twinkle (Wave 2)
 - [ ] 54-03-PLAN.md — server.ts: idle-replay scheduler, replay:true, read-only boundary (Wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 54-04-PLAN.md — tests/viz-ambient-liveliness.test.ts: SC1/SC3/SC5 machine guards (Wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 54-05-PLAN.md — founder visual checkpoint + constant tuning, autonomous:false (Wave 4)
 
 ## Backlog
