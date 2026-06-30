@@ -20,8 +20,9 @@
  *
  * Key invariants:
  *   - No mode flag → usage + exit 1 (mode-guard, T-50-03)
- *   - --run without ANTHROPIC_API_KEY or OPENAI_API_KEY → clear error + exit 1 (fail-closed, T-50-04)
- *   - Missing baseline floor for an axis → SKIP notice (not a pass, never fail-open)
+ *   - --run without OPENAI_API_KEY, or without a reachable `claude` CLI / ANTHROPIC_API_KEY →
+ *     clear error + exit 1 (fail-closed, T-50-04; gates on what the run actually consumes)
+ *   - Missing/unparseable baseline → fail closed; missing individual floor → SKIP notice (never fail-open)
  *   - Floor breach → GATE FAIL per axis, exit 1 after all axes are checked
  *   - This file never spawns or requires gate-runner.cjs (D-03 separation)
  */
@@ -96,13 +97,14 @@ function runHarness(label, args, opts) {
 
 // ---- probe mode --------------------------------------------------------------
 if (IS_PROBE) {
-  // Static cost estimate based on observed per-run token spend.
-  // These are honest estimates derived from locomo-harness.cjs probe output
-  // and EVAL-02/KU observed Haiku/Sonnet costs on the founder's subscription.
+  // IN-04: these are STATIC, manually-maintained estimates (last verified 2026-06-30) derived from
+  // locomo-harness.cjs probe output + observed EVAL-02/KU Haiku/Sonnet costs on the founder's
+  // subscription. They are NOT a live measurement — they can drift as the harnesses change; re-run
+  // `node scripts/eval/locomo-harness.cjs --probe` for a current per-conversation figure.
   //
   // IMPORTANT: subscription marginal cost ≈ $0, but tokens count against limits.
   console.log('');
-  console.log('=== gate:accuracy — Cost Probe (PAID TIER, estimated) ===');
+  console.log('=== gate:accuracy — Cost Probe (PAID TIER, static estimate, last verified 2026-06-30) ===');
   console.log('');
   console.log('This gate wraps three LLM-routed accuracy axes:');
   console.log('');
@@ -137,16 +139,27 @@ if (IS_PROBE) {
 
 // ---- run mode: key-guard (fail-closed, T-50-04) ------------------------------
 // ALWAYS required for --run — there is no dry-run that skips the LLM here.
+// WR-05: gate on what the run actually consumes. OPENAI_API_KEY is genuinely billed
+// (gpt-4o-mini scorer + embeddings). The Anthropic side runs Haiku/Sonnet through the
+// `claude -p` SUBSCRIPTION transport (per CLAUDE.md, explicitly NOT direct API), which does
+// not use ANTHROPIC_API_KEY — so a present env var does not prove auth, and an absent one does
+// not mean the run can't proceed. Probe the `claude` binary instead, accepting an explicit
+// ANTHROPIC_API_KEY only as the alternative direct-API path.
 {
   const missing = [];
-  if (!process.env.ANTHROPIC_API_KEY) missing.push('ANTHROPIC_API_KEY');
-  if (!process.env.OPENAI_API_KEY)    missing.push('OPENAI_API_KEY');
+  if (!process.env.OPENAI_API_KEY) missing.push('OPENAI_API_KEY (gpt-4o-mini scorer + embeddings)');
+  let anthropicReachable = !!process.env.ANTHROPIC_API_KEY;
+  if (!anthropicReachable) {
+    try { execSync('command -v claude', { stdio: 'ignore' }); anthropicReachable = true; } catch { /* not found */ }
+  }
+  if (!anthropicReachable) missing.push('claude CLI on PATH (subscription transport) OR ANTHROPIC_API_KEY (direct API)');
   if (missing.length > 0) {
     console.error('');
-    console.error(`ERROR: missing API keys for a paid accuracy run: ${missing.join(', ')}`);
-    console.error('Both ANTHROPIC_API_KEY and OPENAI_API_KEY are required — fail-closed (T-50-04).');
-    console.error('  ANTHROPIC_API_KEY  — Haiku extract + Sonnet judge via claude -p subscription transport');
-    console.error('  OPENAI_API_KEY     — gpt-4o-mini for LoCoMo-J scoring + embeddings for KU');
+    console.error(`ERROR: cannot start a paid accuracy run — missing: ${missing.join(', ')}`);
+    console.error('Fail-closed (T-50-04). The run needs:');
+    console.error('  OPENAI_API_KEY  — gpt-4o-mini for LoCoMo-J scoring + embeddings for KU (real billed)');
+    console.error('  Anthropic side  — Haiku extract + Sonnet judge via `claude -p` subscription transport');
+    console.error('                    (install/auth the claude CLI), or set ANTHROPIC_API_KEY for direct API');
     console.error('');
     console.error('Run `node scripts/eval/gate-accuracy-runner.cjs --probe` for a cost estimate first.');
     process.exit(1);
@@ -170,6 +183,10 @@ const thresholds = baseline.thresholds || {};
 
 // Ensure temp output directory exists
 fs.mkdirSync(OUT_DIR, { recursive: true });
+// IN-03: a sub-harness spawn failure throws past the explicit cleanup below and would leak the
+// gate-accuracy-<pid> dir. Register a synchronous exit hook so the temp dir is removed on ANY exit
+// path (throw, exit 0, exit 1).
+process.on('exit', () => { try { fs.rmSync(OUT_DIR, { recursive: true, force: true }); } catch { /* best-effort */ } });
 
 const failures = [];
 const results  = {};

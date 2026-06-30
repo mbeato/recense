@@ -33,7 +33,7 @@ key-decisions:
   - "eval02_floor anchored to the FRESH Task-2 run; locomo_j_floor and ku_floor anchored to REUSED recorded runs, marked as such in meta.accuracy_floor_provenance"
 
 patterns-established:
-  - "Floor convention: floor = recorded value − 0.05 epsilon, applied uniformly to cheap and accuracy axes"
+  - "Floor convention: floor = recorded value − epsilon. Cheap deterministic axes use a tighter −0.02 (low variance → catch smaller regressions); LLM-judged accuracy axes use −0.05 for judge-variance headroom. The two epsilons differ on purpose (corrected per code-review IN-01; an earlier note wrongly said −0.05 uniform)."
   - "Honest provenance: recorded_from + accuracy_floor_provenance name each axis's source file + commit/date; reused numbers never presented as fresh"
 
 requirements-completed: [GATE-02, GATE-03]

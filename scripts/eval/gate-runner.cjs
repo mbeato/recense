@@ -258,8 +258,13 @@ if (IS_UPDATE_BASELINE) {
     },
     thresholds: {
       ...(prior.thresholds || {}),      // preserve eval02_floor / locomo_j_floor / ku_floor
+      // IN-01: cheap deterministic axes use a TIGHTER −0.02 floor (low run-to-run variance → catch
+      // smaller regressions); the LLM-judged accuracy floors (Plan 50-03) deliberately use a looser
+      // −0.05 for judge variance headroom. The two epsilons differ on purpose — not "uniform".
       locomo_r5_floor:          Math.max(0, +parseFloat((locomo.r5  - 0.02).toFixed(4))),
       locomo_r10_floor:         Math.max(0, +parseFloat((locomo.r10 - 0.02).toFixed(4))),
+      // IN-02: p95 (tail latency) is the gated regression signal; lat_p50_ms is recorded for
+      // provenance only and intentionally has no ceiling.
       lat_p95_ceiling_ms:       Math.ceil(latency.p95_ms * 1.15),
       injected_tokens_ceiling:  Math.ceil(injection.injected_tokens * 1.10),
       contradicts_floor:        1,
