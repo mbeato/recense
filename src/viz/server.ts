@@ -447,6 +447,37 @@ export function startVizServer(
   // Prevent the interval from keeping the process alive after server.close().
   pollInterval.unref();
 
+  // Phase 54 (Task 2 — Plan 54-03): idle-gated replay scheduler.
+  // Re-emits a recent real row tagged `replay: true` over /events when the live poll
+  // has been silent for REPLAY_IDLE_GAP_MS. Gives the brain real (but past) activity
+  // to echo during idle sessions without fabricating data (SC1 + SC3).
+  //
+  // Boundary invariants (T-54-05, T-54-06):
+  //   - Reads ONLY replayBuffer (in-memory ring populated by the live poll)
+  //   - Opens no new Database(); no LLM calls, no outbound network requests
+  //   - Does NOT reference or assign `cursor` — replay is a side-channel re-emit;
+  //     the /events cursor is forward-only and must never be rewound
+  const replayInterval = setInterval(() => {
+    if (clients.size === 0) return;
+    if (replayBuffer.length === 0) return;
+    if (Date.now() - lastLiveRow < REPLAY_IDLE_GAP_MS) return;  // live preempts replay (SC3)
+    // Pick a row from the recency-trimmed buffer (uniform random over the ring).
+    const row = replayBuffer[Math.floor(Math.random() * replayBuffer.length)]!;
+    const replayPayload = `event: trace\ndata: ${JSON.stringify({
+      id: row.id,
+      ts: row.ts,
+      query_id: row.query_id,
+      seeds: row.seeds,
+      hops: row.hops,
+      kind: row.kind,
+      replay: true,
+    })}\n\n`;
+    for (const res of clients) {
+      res.write(replayPayload);
+    }
+  }, REPLAY_CADENCE_MS);
+  replayInterval.unref();
+
   // ── spawnGenerateDoc: shell out to generate-doc CLI (T-27-11) ─────────────
   // The viz server's DB handle is READ-ONLY, so it cannot write doc nodes directly.
   // Instead, it spawns the `recense generate-doc <slug>` CLI as a detached subprocess.
@@ -1183,6 +1214,7 @@ export function startVizServer(
   // Clean up on server close.
   server.on('close', () => {
     clearInterval(pollInterval);
+    clearInterval(replayInterval);
     db.close();
   });
 
