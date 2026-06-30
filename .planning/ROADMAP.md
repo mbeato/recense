@@ -887,7 +887,7 @@ catches it — the same proven-visible path as the `spawnPulse` edge wavefronts.
 radius so it reads at overview zoom; coalesces repeat activations; presentation-only (zero change to
 the verified data path / kind mapping / choreography). tsc clean, 2,442 tests green. See
 `.planning/quick/260629-tqq-fix-52a-legible-node-activation-flashes-/260629-tqq-SUMMARY.md`.
-**Open**: founder visual re-verification after restarting the packed app.
+**Founder-approved** (2026-06-29): palette desaturated into the rose/slate/mauve theme + soft-glow halo; node flashes now legible and on-theme at overview zoom.
 
 ## Backlog
 
