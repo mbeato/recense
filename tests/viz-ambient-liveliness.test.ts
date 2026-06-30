@@ -239,3 +239,113 @@ describe('Layer 1 — live recall amplification (SC2)', () => {
   });
 
 });
+
+// =============================================================================
+// Layer 2 — Replay echo (row.replay === true) (Task 2 TDD)
+// RED: these tests fail because applyTrace has no replay branch yet
+// GREEN: pass after adding the replay branch with REPLAY_DIM intensity
+// =============================================================================
+
+describe('Layer 2 — replay echo (row.replay === true) (SC3)', () => {
+
+  it('replay row produces strictly dimmer activation than same live row (SC3)', () => {
+    // Live row seeds node 'a' at score=0.9 → __actPeak = 0.9
+    // Replay row seeds node 'b' at score=0.9 → __actPeak should be 0.9 * REPLAY_DIM = 0.45
+    // In RED (no replay branch), both go through the recall path at full intensity:
+    //   replayPeak === livePeak → expect(replayPeak).toBeLessThan(livePeak) FAILS
+    const { node: nodeA } = makeRegularNode('a');
+    const { node: nodeB } = makeRegularNode('b');
+    const { ctx } = makeCtx([nodeA, nodeB]);
+
+    // Live call
+    ctx.applyTrace({ seeds: [{ node_id: 'a', score: 0.9 }], hops: [] });
+    const livePeak = nodeA.__actPeak as number;
+
+    // Replay call — same seed score, different node
+    ctx.applyTrace({ seeds: [{ node_id: 'b', score: 0.9 }], hops: [], replay: true });
+    const replayPeak = nodeB.__actPeak as number;
+
+    expect(livePeak).toBeGreaterThan(0);
+    expect(replayPeak).toBeGreaterThan(0);       // replay must still fire (not silently skip)
+    expect(replayPeak).toBeLessThan(livePeak);   // SC3: replay strictly dimmer than live
+  });
+
+  it('replay peak matches live peak * REPLAY_DIM (exact multiplier)', () => {
+    // After GREEN implementation: activate(node, intensity * REPLAY_DIM)
+    // For score=0.9, live peak = 0.9, replay peak = 0.9 * REPLAY_DIM = 0.45
+    const { node: nodeLive } = makeRegularNode('live');
+    const { node: nodeReplay } = makeRegularNode('replay');
+    const { ctx } = makeCtx([nodeLive, nodeReplay]);
+
+    ctx.applyTrace({ seeds: [{ node_id: 'live',   score: 0.9 }], hops: [] });
+    ctx.applyTrace({ seeds: [{ node_id: 'replay', score: 0.9 }], hops: [], replay: true });
+
+    const livePeak   = nodeLive.__actPeak   as number;
+    const replayPeak = nodeReplay.__actPeak as number;
+
+    // replayPeak should be approximately livePeak * REPLAY_DIM
+    expect(replayPeak).toBeCloseTo(livePeak * REPLAY_DIM, 5);
+  });
+
+  it('replay resolves hops via traceEdgesFromHops — no ctx.adj traversal (no fabricated edges)', () => {
+    // A replay row with hops should light the hop node.
+    // Neither path should touch ctx.adj (same honesty rule as live recall).
+    const { node: seed } = makeRegularNode('s');
+    const { node: hop  } = makeRegularNode('h');
+    // extra node in adj but NOT in row.hops — must NOT be lit
+    const { node: extra } = makeRegularNode('x');
+
+    const { ctx } = makeCtx([seed, hop, extra]);
+    ctx.adj.set('s', [
+      { source: 's', target: 'h' },
+      { source: 's', target: 'x' },  // only in adj, not in hops → must stay dark
+    ]);
+
+    ctx.applyTrace({
+      seeds: [{ node_id: 's', score: 0.9 }],
+      hops:  [{ node_id: 'h', score: 0.5, hop: 1 }],
+      replay: true,
+    });
+
+    expect(seed.__actPeak).toBeGreaterThan(0);
+    expect(hop.__actPeak).toBeGreaterThan(0);    // in row.hops → lit
+    expect(extra.__actPeak).toBeUndefined();      // in adj only → not lit (honesty)
+  });
+
+  it('replay with no seeds is a no-op (Pitfall 3 guard)', () => {
+    // An empty/malformed row should return without side effects.
+    const { node } = makeRegularNode('n');
+    const { ctx } = makeCtx([node]);
+
+    expect(() => {
+      ctx.applyTrace({ seeds: [], hops: [], replay: true });
+    }).not.toThrow();
+
+    expect(node.__actPeak).toBeUndefined(); // no activation
+  });
+
+  it('non-replay row (recall) is unchanged by replay branch (recall path byte-identical)', () => {
+    // After adding the replay branch, a live recall must still behave exactly as before.
+    const { node } = makeRegularNode('s');
+    const { ctx } = makeCtx([node]);
+
+    ctx.applyTrace({ seeds: [{ node_id: 's', score: 0.8 }], hops: [] });
+
+    expect(node.__actPeak).toBeCloseTo(0.8, 5);
+  });
+
+  it('trace.js contains row.replay === true branch (source-text guard)', () => {
+    // The branch must exist in non-comment source lines.
+    // FAILS in RED. PASSES in GREEN.
+    const src = stripComments(readTraceJs());
+    expect(src).toContain('row.replay === true');
+  });
+
+  it('trace.js replay branch uses REPLAY_DIM constant (source-text guard)', () => {
+    // REPLAY_DIM must appear in non-comment source lines.
+    // FAILS in RED. PASSES in GREEN.
+    const src = stripComments(readTraceJs());
+    expect(src).toContain('REPLAY_DIM');
+  });
+
+});
