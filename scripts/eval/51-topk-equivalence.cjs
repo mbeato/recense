@@ -53,9 +53,21 @@ const CANDIDATE_K = DEFAULT_CONFIG.candidateK || 5;
 const LARGER_K = 20;
 const DB_PATH = process.env.RECENSE_DB_PATH || path.join(os.homedir(), '.config/recense/recense.db');
 
-// Boundary-tie epsilon: a C/SIMD-vs-JS float sum-order difference on a 1536-dim dot product
-// is far below this; a genuinely different node's cosine is not.
+// Boundary-tie epsilon. The WASM kernel computes cosine entirely in f32 (f32x4 lane
+// accumulation, f32 horizontal sum, f32 reciprocal norms), while the brute-force reference
+// cosineSimF32 computes in f64 — a precision-CLASS difference, not sum reordering at equal
+// precision. At dim=1536 each lane sums ~384 f32 products; worst-case accumulation error is
+// approximately sqrt(384)·2⁻²⁴ ≈ 1–3e-6 in the dot product, which propagates to the cosine
+// and can approach TIE_EPS. The real-embed run asserts the empirically-observed max|Δscore|
+// against MAX_DELTA_BUDGET below — if a production run approaches or exceeds that budget, it
+// is a finding requiring recalibration with justification, not a silent widen.
 const TIE_EPS = 1e-6;
+
+// Documented ceiling for the per-id score precision delta observed in a real-embed run.
+// MUST remain >= the empirically-observed max|Δscore|. If a real-embed run pushes max|Δscore|
+// near or above this budget, that is a FINDING requiring TIE_EPS recalibration with
+// justification — do NOT widen the epsilon merely to make the gate pass.
+const MAX_DELTA_BUDGET = TIE_EPS;
 
 // REPEATS for latency measurement (kernel + full).
 const REPEATS = 5;
@@ -196,10 +208,57 @@ function pct(arr, p) {
   // Build the indexed retriever (WASM kernel loads here if SIMD available + dim%4===0).
   const indexed = new CandidateRetriever(db, { indexPath });
 
+  // ---- Real-embed: fail loud when API key absent or embeddings degenerate ----
+  // OpenAIEmbedder reads OPENAI_API_KEY automatically. A missing/invalid key causes
+  // embedBatch to fall back to per-input retries, each of which substitutes a zero vector —
+  // so without this guard a missing key would yield 20 all-zero vectors and a vacuous pass.
+  if (REAL_EMBED) {
+    if (!process.env.OPENAI_API_KEY) {
+      process.stderr.write(
+        '[51-equiv] FATAL: --real-embed requires OPENAI_API_KEY to be set; ' +
+        'refusing to run — a missing key yields silent zero-vectors and a vacuous pass.\n',
+      );
+      process.exit(3);
+    }
+  }
+
   const queryVecs = await embedQueries();
+
+  // Validate every real query vector: must be the right length, contain no NaN, and have
+  // a non-zero L2 norm. Any degenerate vector (all-zero or NaN-poisoned) means the key
+  // or the API call silently failed — exit 3 rather than vacuously passing.
+  if (REAL_EMBED) {
+    for (let qi = 0; qi < queryVecs.length; qi++) {
+      const v = queryVecs[qi];
+      if (v.length !== DIMS) {
+        process.stderr.write(
+          `[51-equiv] FATAL: real embedding for query ${qi} has length ${v.length} (expected ${DIMS}) — ` +
+          'real embeddings unavailable/degenerate — not vacuously passing.\n',
+        );
+        process.exit(3);
+      }
+      let hasNaN = false;
+      let l2sq = 0;
+      for (let i = 0; i < v.length; i++) {
+        if (!isFinite(v[i])) { hasNaN = true; break; }
+        l2sq += v[i] * v[i];
+      }
+      if (hasNaN || l2sq === 0) {
+        process.stderr.write(
+          `[51-equiv] FATAL: real embedding for query ${qi} is ${hasNaN ? 'NaN/Inf-poisoned' : 'a zero-vector'} — ` +
+          'real embeddings unavailable/degenerate — not vacuously passing.\n',
+        );
+        process.exit(3);
+      }
+    }
+  }
 
   const perQuery = [];
   let allEquivalent = true;
+
+  // recall@10: per-query fraction of the indexed top-10 that matches the brute-force top-10.
+  // Computed once per query (when k === LARGER_K so bruteScored covers >= 10 entries).
+  const recallAt10PerQuery = [];
 
   for (const k of [CANDIDATE_K, LARGER_K]) {
     for (let qi = 0; qi < queryVecs.length; qi++) {
@@ -228,15 +287,49 @@ function pct(arr, p) {
           return m;
         })(),
       });
+
+      // Compute recall@10 once per query when k === LARGER_K (covers the full top-20,
+      // so bruteScored already has >= 10 entries if the corpus is large enough).
+      // Reuses bruteScored — no second brute-force scan.
+      if (k === LARGER_K) {
+        const top10Idx = new Set(idx.slice(0, 10).map(h => h.id));
+        const top10Brute = bruteScored.slice(0, 10);
+        const denom = Math.min(10, top10Brute.length);
+        let intersect = 0;
+        for (const h of top10Brute) if (top10Idx.has(h.id)) intersect++;
+        recallAt10PerQuery.push(denom > 0 ? intersect / denom : 1);
+      }
     }
   }
 
   const maxDelta = perQuery.reduce((m, r) => Math.max(m, r.max_score_delta), 0);
   const failures = perQuery.filter(r => !r.equivalent);
 
+  // Hard budget assertion: if max|Δscore| meets or exceeds MAX_DELTA_BUDGET, the gate fails.
+  // This is a documented precision finding — recalibrate TIE_EPS with justification; do NOT
+  // widen merely to pass. Mock-mode observes ~5.191e-8, well within budget.
+  let budgetBreached = false;
+  if (maxDelta >= MAX_DELTA_BUDGET) {
+    budgetBreached = true;
+    process.stderr.write(
+      `[51-equiv] FATAL: max|Δscore|=${maxDelta.toExponential(3)} meets/exceeds ` +
+      `MAX_DELTA_BUDGET=${MAX_DELTA_BUDGET.toExponential(3)} — ` +
+      'FINDING: recalibrate TIE_EPS to the empirical bound with justification; ' +
+      'do NOT widen the epsilon merely to pass.\n',
+    );
+  }
+
+  const meanRecallAt10 = recallAt10PerQuery.length > 0
+    ? recallAt10PerQuery.reduce((s, v) => s + v, 0) / recallAt10PerQuery.length
+    : 0;
+
   process.stderr.write(
     `[51-equiv] equivalence checks=${perQuery.length} failures=${failures.length} ` +
-    `max|Δscore|=${maxDelta.toExponential(3)} equivalent=${allEquivalent}\n`,
+    `max|Δscore|=${maxDelta.toExponential(3)} budget_breached=${budgetBreached} equivalent=${allEquivalent}\n`,
+  );
+  process.stderr.write(
+    `[51-equiv] recall@10: mean=${meanRecallAt10.toFixed(4)} ` +
+    `per_query=[${recallAt10PerQuery.map(v => v.toFixed(3)).join(',')}]\n`,
   );
 
   // ---- PART 2: Kernel-vs-scalar latency measurement ----
@@ -409,6 +502,12 @@ function pct(arr, p) {
       total_checks: perQuery.length,
       failures: failures.length,
       max_score_delta_across_all: maxDelta,
+      max_delta_budget: MAX_DELTA_BUDGET,
+      budget_breached: budgetBreached,
+      recall_at_10: {
+        per_query: recallAt10PerQuery,
+        mean: meanRecallAt10,
+      },
       per_query: perQuery,
     },
     latency: latencyResult,
@@ -418,18 +517,29 @@ function pct(arr, p) {
   fs.writeFileSync(OUT, JSON.stringify(out, null, 2) + '\n');
   process.stderr.write(`[51-equiv] written: ${OUT}\n`);
 
-  // ---- Hard-fail on equivalence divergence ----
-  if (!allEquivalent) {
-    process.stderr.write(
-      '[51-equiv] DIVERGENCE — WASM-indexed top-k differs from brute-force beyond a boundary tie:\n',
-    );
-    for (const f of failures) {
-      process.stderr.write(`  k=${f.k} "${f.query}": ${f.reason}\n`);
+  // ---- Hard-fail on equivalence divergence or budget breach ----
+  if (!allEquivalent || budgetBreached) {
+    if (!allEquivalent) {
+      process.stderr.write(
+        '[51-equiv] DIVERGENCE — WASM-indexed top-k differs from brute-force beyond a boundary tie:\n',
+      );
+      for (const f of failures) {
+        process.stderr.write(`  k=${f.k} "${f.query}": ${f.reason}\n`);
+      }
+    }
+    if (budgetBreached) {
+      process.stderr.write(
+        `[51-equiv] BUDGET BREACH — max|Δscore|=${maxDelta.toExponential(3)} >= MAX_DELTA_BUDGET=${MAX_DELTA_BUDGET.toExponential(3)}\n`,
+      );
     }
     process.exit(1);
   }
 
-  process.stderr.write('[51-equiv] PASS — all queries set-identical, boundary-tie tolerant\n');
+  process.stderr.write(
+    `[51-equiv] PASS — all queries set-identical, boundary-tie tolerant, ` +
+    `max|Δscore|=${maxDelta.toExponential(3)} < budget=${MAX_DELTA_BUDGET.toExponential(3)}, ` +
+    `recall@10=${meanRecallAt10.toFixed(4)}\n`,
+  );
 })().catch(e => {
   process.stderr.write(`[51-equiv] FATAL error: ${e.stack || e.message}\n`);
   process.exit(1);
