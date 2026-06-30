@@ -37,6 +37,9 @@ import {
   DECAY_HOLD_MS,
   DECAY_FADE_MS,
   DECAY_FLOOR,
+  ACT_SCALE_GAIN,
+  ACT_BRIGHTEN_GAIN,
+  ACT_HAZE_LERP,
 } from './constants.js';
 
 // ── Reusable scratch objects for pulse orientation (avoid per-frame alloc) ─
@@ -361,7 +364,7 @@ export function initTrace(ctx) {
         }
         const a = Math.max(0, node.__act);
         // Lerp toward the kind-specific activation colour (default: HOT amber)
-        const activationColor = node.__hazeBase.clone().lerp(node.__actColor || HOT_COLOR, a * 0.8);
+        const activationColor = node.__hazeBase.clone().lerp(node.__actColor || HOT_COLOR, a * ACT_HAZE_LERP);
         ctx.hazeMesh.setColorAt(node.__hazeIdx, activationColor);
         ctx.hazeMesh.instanceColor.needsUpdate = true;
         continue;
@@ -398,8 +401,8 @@ export function initTrace(ctx) {
       }
       const a = Math.max(0, node.__act) * (node.__actGain || 1);
       if (node.__base) node.__mat.color.copy(node.__base).lerp(node.__actColor || HOT_COLOR, a * 0.8);
-      node.__mat.opacity = Math.min(1, (node.__baseOp || 0.85) + a * 0.4);
-      node.__mesh.scale.setScalar((node.__baseR || 1) * (1 + a * 0.35));
+      node.__mat.opacity = Math.min(1, (node.__baseOp || 0.85) + a * ACT_BRIGHTEN_GAIN);
+      node.__mesh.scale.setScalar((node.__baseR || 1) * (1 + a * ACT_SCALE_GAIN));
     }
 
     // -- Pathway wavefront: light races from→to, then the wire glows + decays --
