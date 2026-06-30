@@ -889,6 +889,42 @@ the verified data path / kind mapping / choreography). tsc clean, 2,442 tests gr
 `.planning/quick/260629-tqq-fix-52a-legible-node-activation-flashes-/260629-tqq-SUMMARY.md`.
 **Founder-approved** (2026-06-29): palette desaturated into the rose/slate/mauve theme + soft-glow halo; node flashes now legible and on-theme at overview zoom.
 
+### Phase 53: Brain Layout at Scale (declutter + deliberate clustering)
+
+**Goal**: Make the `recense viz` brain read as a deliberate, clustered, organic structure at scale
+(~15k+ nodes) instead of a dense, visibly-gridded, "very full" cloud. Three coupled symptoms the
+founder reported at 15k nodes (2026-06-29): (1) **visible gridlines** — nodes snap to a lattice;
+(2) **feels too full** — the whole corpus renders at overview; (3) **no longer feels clustered/
+deliberate** — no connectivity-driven grouping. **Presentation/layout-layer only** — no engine,
+retrieval, or data-model changes. Performance-sensitive: the layout already degrades as nodes grow,
+so any added settling/forces must stay within the existing rAF/idle budget.
+
+**Root-cause findings (already traced — start here, don't re-investigate):**
+- `src/viz/modules/graph.js:171–221` `seedNodePositions()` — each node is dropped onto a randomly
+  chosen **occupied voxel center** of the brain-hull occupancy grid (`occupied[...]`, line 213),
+  scaled by `BRAIN_SCALE` (460), with only **±2 units of jitter** (line 218). Voxel spacing ≫ ±2, so
+  nodes snap to a visible lattice → the gridlines.
+- `src/viz/modules/graph.js:598` `Graph.cooldownTicks(12)` then pin (`n.fx = n.x`, ~line 607) — the
+  force sim runs only 12 ticks and freezes, far too few to reorganize 15k nodes into
+  connectivity-based clusters; nodes stay at their grid seed positions.
+- Adaptive-density band lives in `src/viz/modules/constants.js` (~line 190+, "Adaptive density")
+  and `lod.js` — overview currently renders schema super-nodes + haze; the member-hiding / density
+  adaptation is the lever for the "too full" symptom.
+
+**Depends on**: Phase 52 (shares the viz; must not regress the now-approved honest-traces flashes).
+**Requirements**: Presentation-layer; design contract is the Phase 52 viz design spec + this gap.
+**Success Criteria** (what must be TRUE):
+  1. No visible lattice/gridlines at ~15k nodes — node placement fills space (cell-filling jitter or
+     a blue-noise/Poisson seed), not snapped to voxel centers.
+  2. Overview at ~15k nodes reads as readable and deliberate, not an undifferentiated full cloud —
+     adaptive density / LOD keeps screen fullness in the calibrated band as the corpus grows.
+  3. Related nodes visibly cluster (connectivity-driven), so the brain feels deliberate — within the
+     existing performance budget (no frame-rate regression at 15k vs today).
+  4. Zero engine/retrieval/data-model change; Phase 52 honest-traces flashes still render correctly.
+
+**Plans**: TBD — run `/gsd-plan-phase 53` (or `/gsd-discuss-phase 53` first; the perf-vs-quality
+tradeoff on settling/clustering is a real gray area worth surfacing before planning).
+
 ## Backlog
 
 _(empty — no backlog items)_
