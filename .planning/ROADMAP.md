@@ -1006,7 +1006,7 @@ honesty holds by construction —
   Founder visual checkpoint confirms 1–4 on the live viz (52/53 idiom). Fresh spontaneous retrievals
   are deferred to a follow-up.
 
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 **Wave 1**
@@ -1020,7 +1020,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 54-04-PLAN.md — tests/viz-ambient-liveliness.test.ts: SC1/SC3/SC5 machine guards (Wave 3)
+- [x] 54-04-PLAN.md — tests/viz-ambient-liveliness.test.ts: SC1/SC3/SC5 machine guards (Wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
