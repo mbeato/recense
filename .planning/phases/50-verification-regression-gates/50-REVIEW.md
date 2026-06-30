@@ -11,10 +11,19 @@ findings:
   warning: 5
   info: 5
   total: 11
-status: issues_found
+status: partially_resolved
+resolution:
+  fixed: [CR-01, WR-01, WR-02, WR-03, WR-04]
+  fixed_in: d83fb24
+  deferred: [WR-05, IN-01, IN-02, IN-03, IN-04, IN-05]
+  note: "Critical + 4 fail-open warnings fixed and verified (re-baseline preserves floors; missing-baseline/missing-floor/non-numeric all fail closed exit 1; happy-path GATE PASS). WR-05 (key-guard transport signal) + Info findings deferred as documented follow-ups."
 ---
 
 # Phase 50: Code Review Report
+
+> **Resolution (2026-06-30, commit `d83fb24`):** CR-01 and WR-01–WR-04 (the fail-open chain) are
+> fixed and verified. WR-05 and IN-01…IN-05 are deferred as documented follow-ups. See commit body.
+> Original findings preserved below.
 
 **Reviewed:** 2026-06-30
 **Depth:** standard
