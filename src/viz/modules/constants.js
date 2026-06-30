@@ -314,3 +314,44 @@ export const FULL_FPS = 60;
  * stats.js watches the rolling average and calls ctx.setTier() accordingly.
  */
 export const DEGRADE_FPS = 45;
+
+// ============================================================================
+// Phase 54 — ambient liveliness (tuned at founder visual checkpoint)
+// ============================================================================
+// Three-layer activity hierarchy: live recall (brightest) > replay echo (dimmer,
+// real-but-past) > twinkle (faintest, decorative baseline). All values are spec
+// midpoints; founder dials them at the Plan 05 visual checkpoint. REPLAY_DIM < 1
+// is a hard invariant (replay can never escalate above live — SC3).
+
+// Layer 1 — live recall amplification
+/** Size-pulse gain multiplier; replaces the inline 0.35 (spec tuning range: 0.8–1.0). */
+export const ACT_SCALE_GAIN    = 0.9;
+
+/** Opacity boost gain; replaces the inline 0.4 (spec: raise opacity signal at overview zoom). */
+export const ACT_BRIGHTEN_GAIN = 0.55;
+
+/** Haze color-lerp factor; replaces the inline 0.8 (spec: raise for stronger haze color overshoot). */
+export const ACT_HAZE_LERP     = 0.95;
+
+// Layer 2 — replay echo
+/** ms of no new rows before idle-replay begins (spec tuning range: 4000–6000). */
+export const REPLAY_IDLE_GAP_MS  = 5000;
+
+/** ms between replay broadcasts during idle (spec tuning range: 3000–5000). */
+export const REPLAY_CADENCE_MS   = 4000;
+
+/** Intensity multiplier vs. live recall — MUST be < 1 (honesty invariant SC3; spec: 0.4–0.6). */
+export const REPLAY_DIM          = 0.5;
+
+/** Number of recent real rows kept in the server-side replay ring buffer. */
+export const REPLAY_HISTORY_N    = 20;
+
+// Layer 3 — ambient twinkle
+/** Nodes in the rotating twinkle subset (~0.5% of 15k corpus). */
+export const TWINKLE_COUNT      = 80;
+
+/** Sine breathe period per twinkle node (ms; spec tuning range: 1500–2500). */
+export const TWINKLE_PERIOD_MS  = 2000;
+
+/** Brightness amplitude of the twinkle breathe — faint, neutral (spec: 0.12–0.18). */
+export const TWINKLE_AMP        = 0.15;
