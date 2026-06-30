@@ -937,7 +937,7 @@ Plans:
 - [x] 53-02-PLAN.md — lod.js: overview density cap (OVERVIEW_NODE_CAP, schema-largest-first ranking, haze remainder) holding screen fullness in the calibrated band at scale (D-05/06)
 
 **Wave 3** *(depends on 53-01 + 53-02)*
-- [ ] 53-03-PLAN.md — verification: machine-checkable layout/locked-anchor/Phase-52 guards + full viz suite + dist build + founder visual checkpoint at ~15k with constant tuning; autonomous: false (D-09)
+- [x] 53-03-PLAN.md — verification: machine-checkable layout/locked-anchor/Phase-52 guards + full viz suite + dist build + founder visual checkpoint at ~15k with constant tuning; autonomous: false (D-09)
 
 ## Backlog
 
