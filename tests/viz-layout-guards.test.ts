@@ -209,4 +209,47 @@ describe('viz-layout-guards', () => {
 
   });
 
+  // ── 6. buildHazeLayer scatter — full-cell de-lattice (D-04, gap fix) ──────
+  // The haze InstancedMesh renders the BULK of a large brain. Its scatter must
+  // span the full inter-voxel cell (±cellHalf) like seedNodePositions/placeInHull,
+  // NOT the old ±4-world-unit jitter that left a visible lattice. This guard
+  // exists because 53-01 de-latticed seedNodePositions but missed this second
+  // placement path — the actual source of the gridlines the founder reported.
+  describe('buildHazeLayer scatter — full-cell continuous de-lattice (D-04)', () => {
+
+    const hazeStart = GRAPH.indexOf('function buildHazeLayer(');
+    const hazeClose = GRAPH.indexOf('\n}', hazeStart);
+    const hazeBody  = hazeStart >= 0 && hazeClose >= 0
+      ? GRAPH.slice(hazeStart, hazeClose + 2)
+      : '';
+
+    it('buildHazeLayer() body is present in graph.js', () => {
+      expect(hazeStart).toBeGreaterThanOrEqual(0);
+      expect(hazeBody.length).toBeGreaterThan(0);
+    });
+
+    it('uses cellHalf full-cell jitter (continuous, spans the inter-voxel cell)', () => {
+      expect(hazeBody).toContain('cellHalf');
+    });
+
+    it('validates haze points in-hull via brainOccupied (no out-of-hull bleed)', () => {
+      expect(hazeBody).toContain('brainOccupied(brainVol');
+    });
+
+    it('does NOT use the old ±4-unit ") * 8" lattice jitter (regression guard)', () => {
+      // The old snap-to-voxel jitter was `(... - 0.5) * 8` (±4 world units),
+      // far smaller than the voxel spacing → visible lattice. Must be gone.
+      expect(hazeBody).not.toMatch(/-\s*0\.5\)\s*\*\s*8/);
+    });
+
+    it('contains no Math.random in the brainVol scatter (D-08 determinism)', () => {
+      // The null-brainVol fallback (no occupied/rotMat) may retain trig scatter,
+      // but the brainVol path must be deterministic. Slice to the else-fallback.
+      const elseIdx = hazeBody.indexOf('} else {');
+      const brainVolHaze = elseIdx >= 0 ? hazeBody.slice(0, elseIdx) : hazeBody;
+      expect(brainVolHaze).not.toContain('Math.random');
+    });
+
+  });
+
 });

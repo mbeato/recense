@@ -353,11 +353,13 @@ function buildHazeLayer(ctx) {
   // ── Build occupied voxel list (same pattern as seedNodePositions) ────────
   let occupied = null;
   let rotMat   = null;
+  let cellHalf = null; // full-cell jitter half-extent in local [-1,1] space (1/R)
   if (brainVol) {
     const euler = new THREE.Euler(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
     rotMat = new THREE.Matrix4().makeRotationFromEuler(euler);
     const R    = brainVol.res;
     const bits = brainVol.bits;
+    cellHalf   = 1 / R; // spans the full inter-voxel cell → continuous de-lattice (D-04)
     const occ  = [];
     for (let iz = 0; iz < R; iz++) {
       for (let iy = 0; iy < R; iy++) {
@@ -413,17 +415,34 @@ function buildHazeLayer(ctx) {
   for (let i = 0; i < hazeCount; i++) {
     const node = hazeNodes[i];
 
-    // ── Position: deterministic scatter inside brain volume ──────────────
+    // ── Position: deterministic CONTINUOUS scatter inside brain volume ───
+    // Full-cell jitter (±cellHalf in local [-1,1] space) spans the entire
+    // inter-voxel cell so the haze cloud does NOT snap to voxel centres —
+    // the same de-lattice as seedNodePositions/placeInHull (D-04). The old
+    // ±4-world-unit jitter was far smaller than the world voxel spacing
+    // ((2/R)·BRAIN_SCALE ≈ 15–20u) and left the visible lattice the founder
+    // reported. Validate in-hull via brainOccupied; fall back to the plain
+    // voxel centre on persistent miss. All randomness via _hashIndex (D-08).
     if (occupied && rotMat) {
-      // Pick a voxel deterministically by hashing the node index
-      const [lx, ly, lz] = occupied[_hashIndex(i, occupied.length)];
-      tmpV.set(lx, ly, lz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
-      // Small deterministic jitter: use hash of (i+voxelIdx) to avoid pile-up
-      // at voxel centres. Scale: ±4 units (same as seedNodePositions).
-      const jx = ((_hashIndex(i * 3 + 0, 1000) / 1000) - 0.5) * 8;
-      const jy = ((_hashIndex(i * 3 + 1, 1000) / 1000) - 0.5) * 8;
-      const jz = ((_hashIndex(i * 3 + 2, 1000) / 1000) - 0.5) * 8;
-      dummy.position.set(tmpV.x + jx, tmpV.y + jy, tmpV.z + jz);
+      const HIGH = 1 << 20;
+      let placed = false;
+      for (let attempt = 0; attempt < 8 && !placed; attempt++) {
+        const key = i * 3 + attempt;
+        const [lx, ly, lz] = occupied[_hashIndex(i + attempt, occupied.length)];
+        const cx = lx + (_hashIndex(key * 3 + 0, HIGH) / HIGH - 0.5) * 2 * cellHalf;
+        const cy = ly + (_hashIndex(key * 3 + 1, HIGH) / HIGH - 0.5) * 2 * cellHalf;
+        const cz = lz + (_hashIndex(key * 3 + 2, HIGH) / HIGH - 0.5) * 2 * cellHalf;
+        if (brainOccupied(brainVol, cx, cy, cz)) {
+          tmpV.set(cx, cy, cz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
+          dummy.position.set(tmpV.x, tmpV.y, tmpV.z);
+          placed = true;
+        }
+      }
+      if (!placed) {
+        const [lx, ly, lz] = occupied[_hashIndex(i, occupied.length)];
+        tmpV.set(lx, ly, lz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
+        dummy.position.set(tmpV.x, tmpV.y, tmpV.z);
+      }
       // Store position on node object so raycaster and trace can read it
       node.x = dummy.position.x;
       node.y = dummy.position.y;
