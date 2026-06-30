@@ -37,6 +37,13 @@ import {
   DECAY_HOLD_MS,
   DECAY_FADE_MS,
   DECAY_FLOOR,
+  ACT_SCALE_GAIN,
+  ACT_BRIGHTEN_GAIN,
+  ACT_HAZE_LERP,
+  REPLAY_DIM,
+  TWINKLE_COUNT,
+  TWINKLE_PERIOD_MS,
+  TWINKLE_AMP,
 } from './constants.js';
 
 // ── Reusable scratch objects for pulse orientation (avoid per-frame alloc) ─
@@ -361,7 +368,7 @@ export function initTrace(ctx) {
         }
         const a = Math.max(0, node.__act);
         // Lerp toward the kind-specific activation colour (default: HOT amber)
-        const activationColor = node.__hazeBase.clone().lerp(node.__actColor || HOT_COLOR, a * 0.8);
+        const activationColor = node.__hazeBase.clone().lerp(node.__actColor || HOT_COLOR, a * ACT_HAZE_LERP);
         ctx.hazeMesh.setColorAt(node.__hazeIdx, activationColor);
         ctx.hazeMesh.instanceColor.needsUpdate = true;
         continue;
@@ -398,8 +405,8 @@ export function initTrace(ctx) {
       }
       const a = Math.max(0, node.__act) * (node.__actGain || 1);
       if (node.__base) node.__mat.color.copy(node.__base).lerp(node.__actColor || HOT_COLOR, a * 0.8);
-      node.__mat.opacity = Math.min(1, (node.__baseOp || 0.85) + a * 0.4);
-      node.__mesh.scale.setScalar((node.__baseR || 1) * (1 + a * 0.35));
+      node.__mat.opacity = Math.min(1, (node.__baseOp || 0.85) + a * ACT_BRIGHTEN_GAIN);
+      node.__mesh.scale.setScalar((node.__baseR || 1) * (1 + a * ACT_SCALE_GAIN));
     }
 
     // -- Pathway wavefront: light races from→to, then the wire glows + decays --
@@ -488,6 +495,71 @@ export function initTrace(ctx) {
   // The central loop governs all idle throttling — trace registers here only.
   ctx.registerTick(tick);
 
+  // ── Layer 3 — Ambient twinkle tick (Phase 54) ────────────────────────────
+  // Breathes a rotating subset of haze nodes with a neutral/cool tint on the
+  // master rAF loop. Idle loop runs at IDLE_FPS (24) — no keep-alive needed
+  // (confirmed in 54-RESEARCH.md: the master loop never sleeps while visible).
+  //
+  // Invariants:
+  //   - setColorAt only — never setMatrixAt (SC5 perf invariant)
+  //   - no spawnPulse, no halo, no ctx.revealTrace (SC3: twinkle fabricates nothing)
+  //   - no size/scale changes on any node
+  //   - subset built lazily once, rotated every TWINKLE_COUNT frames (Pitfall 2)
+  //   - active nodes are skipped so a live/replay flash is never dimmed
+
+  // Twinkle state (persistent across frames, scoped to initTrace closure)
+  let twinkleSubset  = []; // persistent haze subset (built lazily)
+  let twinklePtr     = 0;  // window-start pointer for subset rotation
+  let twinkleFrame   = 0;  // frame counter for rotation cadence
+
+  // Pre-built neutral/cool tint — intentionally NOT HOT amber and NOT any
+  // KIND_COLOR event hue, so twinkle reads as decorative ambient (SC3 / D-04).
+  const TWINKLE_TINT = new THREE.Color(0x7a8a9a); // quiet blue-gray
+
+  function twinkleTick(now) {
+    // Lazy guard: hazeMesh / __hazeIdx are populated by graph.js after initTrace.
+    if (!ctx.hazeMesh || !ctx.allNodes?.length) return;
+
+    // Build (or rotate) the subset — never re-filter allNodes every frame (Pitfall 2).
+    // Re-pick every TWINKLE_COUNT frames for visual variation.
+    if (twinkleSubset.length === 0 ||
+        (twinkleFrame > 0 && twinkleFrame % TWINKLE_COUNT === 0)) {
+      const hazePool = ctx.allNodes.filter(n => n.__cat === 'haze' && n.__hazeIdx != null);
+      if (hazePool.length === 0) return;
+      const startIdx = (twinklePtr * TWINKLE_COUNT) % hazePool.length;
+      twinkleSubset = [];
+      for (let i = 0; i < Math.min(TWINKLE_COUNT, hazePool.length); i++) {
+        twinkleSubset.push(hazePool[(startIdx + i) % hazePool.length]);
+      }
+      twinklePtr++;
+    }
+    twinkleFrame++;
+
+    // Per-node sine breathe: stateless, keyed on (now + __hazeIdx * OFFSET) so
+    // each node breathes at a slightly different phase for visual spread.
+    const TWO_PI = 2 * Math.PI;
+    const OFFSET = 750; // per-instance phase spread (ms)
+    let didUpdate = false;
+
+    for (const node of twinkleSubset) {
+      if (active.has(node)) continue;               // live/replay flash has priority
+      if (node.__hazeIdx == null || !node.__hazeBase) continue; // safety guard
+
+      const phase = (now + node.__hazeIdx * OFFSET) / TWINKLE_PERIOD_MS * TWO_PI;
+      const breath = TWINKLE_AMP * (0.5 + 0.5 * Math.sin(phase)); // range [0, TWINKLE_AMP]
+      const twinkleColor = node.__hazeBase.clone().lerp(TWINKLE_TINT, breath);
+      ctx.hazeMesh.setColorAt(node.__hazeIdx, twinkleColor);
+      didUpdate = true;
+    }
+
+    // One needsUpdate per tick (not per node) — same pattern as the main tick
+    if (didUpdate) ctx.hazeMesh.instanceColor.needsUpdate = true;
+  }
+
+  // Register twinkleTick alongside the main tick on the master rAF loop.
+  // Both run at IDLE_FPS (24) when idle; no additional scheduling needed.
+  ctx.registerTick(twinkleTick);
+
   // Expose on ctx so callers (app.js, hud.js, detail.js) can reach them
   ctx.activate   = activate;
   ctx.spawnPulse = spawnPulse;
@@ -511,6 +583,62 @@ export function initTrace(ctx) {
     // Back-compat: bare string[] → synthetic row (legacy SSE shape before Phase 52)
     if (Array.isArray(row)) {
       row = { seeds: row, hops: [] };
+    }
+
+    // ── Layer 2 — Replay echo (Phase 54): re-render real hops at reduced intensity ─
+    // Slots BEFORE kind dispatch so a replay row never enters _applyIngestion.
+    // Uses the same honest seed/hop resolution as the recall path; never ctx.adj.
+    // Intensity is intensity * REPLAY_DIM so replay is strictly dimmer than live (SC3).
+    if (row.replay === true) {
+      const rawSeeds = row.seeds || [];
+      if (!rawSeeds.length) return;           // Pitfall 3: empty row → silent no-op
+
+      const visited = new Set();
+      const seedEntries = [];                 // {node, intensity}
+
+      for (const raw of rawSeeds) {
+        const { node_id, score } = normalizeSeed(raw);
+        if (!node_id || visited.has(node_id)) continue;
+        const node = ctx.idMap.get(node_id);
+        if (!node) continue;
+        visited.add(node_id);
+        const intensity = typeof score === 'number'
+          ? Math.max(0.2, Math.min(1.0, score))
+          : 0.5;
+        seedEntries.push({ node, intensity });
+      }
+
+      if (!seedEntries.length) return;        // all seeds absent from idMap → no-op
+
+      const hopEntries = traceEdgesFromHops(row, ctx.idMap)
+        .map(({ node_id, score }) => {
+          const node = ctx.idMap.get(node_id);
+          if (!node) return null;
+          const intensity = typeof score === 'number'
+            ? Math.max(0.1, Math.min(0.5, score * 0.55))
+            : 0.3;
+          return { node, intensity };
+        })
+        .filter(Boolean);
+
+      if (ctx.markAnimating) ctx.markAnimating(DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
+
+      const pathNodes = seedEntries.map(e => e.node).concat(hopEntries.map(e => e.node));
+      seedEntries.forEach(e => ctx.traceNodes.add(e.node.id));
+      hopEntries.forEach(e => ctx.traceNodes.add(e.node.id));
+      if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
+
+      // Activate at REPLAY_DIM intensity — replay is always strictly dimmer than live (SC3)
+      seedEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM));
+      hopEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM));
+
+      const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
+      setTimeout(() => {
+        ctx.traceNodes.clear();
+        ctx.traceLinks.clear();
+        if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
+      }, fadeMs);
+      return;
     }
 
     // ── Dispatch: ingestion hero kinds branch to _applyIngestion ──────────────
