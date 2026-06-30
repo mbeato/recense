@@ -53,7 +53,8 @@
     "gate": "npm run build && node scripts/eval/gate-runner.cjs --run --locomo scripts/eval/results/locomo-d41d5c8.json",
     "gate:baseline": "npm run build && node scripts/eval/gate-runner.cjs --update-baseline --locomo scripts/eval/results/locomo-d41d5c8.json",
     "gate:accuracy": "npm run build && node scripts/eval/gate-accuracy-runner.cjs --run",
-    "build:client": "tsc -p clients/telegram/tsconfig.json"
+    "build:client": "tsc -p clients/telegram/tsconfig.json",
+    "gen:simd-kernel": "node scripts/gen-simd-kernel.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
