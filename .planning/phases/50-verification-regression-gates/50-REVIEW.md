@@ -11,19 +11,20 @@ findings:
   warning: 5
   info: 5
   total: 11
-status: partially_resolved
+status: resolved
 resolution:
-  fixed: [CR-01, WR-01, WR-02, WR-03, WR-04]
-  fixed_in: d83fb24
-  deferred: [WR-05, IN-01, IN-02, IN-03, IN-04, IN-05]
-  note: "Critical + 4 fail-open warnings fixed and verified (re-baseline preserves floors; missing-baseline/missing-floor/non-numeric all fail closed exit 1; happy-path GATE PASS). WR-05 (key-guard transport signal) + Info findings deferred as documented follow-ups."
+  fixed: [CR-01, WR-01, WR-02, WR-03, WR-04, WR-05, IN-01, IN-02, IN-03, IN-04, IN-05]
+  fixed_in: [d83fb24, 8cfc20c]
+  deferred: []
+  note: "All 11 findings resolved. d83fb24: CR-01 + WR-01..04 (the fail-open chain). 8cfc20c: WR-05 (key-guard gates on actual consumption — OpenAI required, Anthropic via claude CLI or direct key) + IN-01..05 (epsilon-split documented, p50 provenance-only, tmp-dir exit-hook cleanup, probe static/last-verified, --run dropped from gate:baseline). All verified; happy-path gate still GATE PASS; committed baseline untouched."
 ---
 
 # Phase 50: Code Review Report
 
-> **Resolution (2026-06-30, commit `d83fb24`):** CR-01 and WR-01–WR-04 (the fail-open chain) are
-> fixed and verified. WR-05 and IN-01…IN-05 are deferred as documented follow-ups. See commit body.
-> Original findings preserved below.
+> **Resolution (2026-06-30):** All 11 findings resolved. CR-01 + WR-01–04 fixed in `d83fb24`;
+> WR-05 + IN-01–05 fixed in `8cfc20c`. Each verified (re-baseline preserves floors;
+> missing-baseline/missing-floor/non-numeric fail closed exit 1; key-guard gates on real
+> consumption; happy-path GATE PASS). Original findings preserved below.
 
 **Reviewed:** 2026-06-30
 **Depth:** standard
