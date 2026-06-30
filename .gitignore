@@ -33,6 +33,8 @@ scripts/reader-slice/out/
 # use /* instead of trailing / so that the !-negation below takes effect.
 scripts/eval/results/*
 !scripts/eval/results/gate-baseline.json
+# Exception: dated v9.0-final RECON-04 evidence (committed result of record, not a PENDING intermediate).
+!scripts/eval/results/correctness-v90final.json
 scripts/eval/*-results.json
 scripts/eval/*-results-*.json
 scripts/eval/judge-eval-set.json

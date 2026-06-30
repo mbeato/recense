@@ -1,0 +1,508 @@
+{
+  "meta": {
+    "eval": "correctness",
+    "date": "2026-06-30T15:21:11.225Z",
+    "commit": "8e544f3",
+    "engine_version": "0.1.0",
+    "cases_total": 17,
+    "cases_contradiction": 13,
+    "cases_control": 4,
+    "dry_run": false
+  },
+  "scores": {
+    "brain_memory": {
+      "n": 17,
+      "contradiction_cases": 13,
+      "belief_correction_rate": 0.846,
+      "stale_recall_rate": 0.154,
+      "avg_duplicate_count": 1.71,
+      "tombstone_rate": 0.706
+    },
+    "add_only_baseline": {
+      "n": 17,
+      "contradiction_cases": 13,
+      "belief_correction_rate": 0,
+      "stale_recall_rate": 1,
+      "avg_duplicate_count": 2,
+      "tombstone_rate": 0
+    }
+  },
+  "per_case": [
+    {
+      "case_id": 1,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana runs 5 miles every morning before breakfast",
+        "contradicting_input": "Ana now runs 4 miles every morning — she shortened her route after a minor knee strain",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 1,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 1,
+      "trace": {
+        "stored_belief": "Ana runs 5 miles every morning before breakfast",
+        "contradicting_input": "Ana now runs 4 miles every morning — she shortened her route after a minor knee strain",
+        "now_believes": "Ana runs 4 miles every morning"
+      }
+    },
+    {
+      "case_id": 2,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana meditates for 30 minutes each morning",
+        "contradicting_input": "Ana cut her daily meditation down to 20 minutes because of her new work schedule",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 2,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana meditates for 30 minutes each morning",
+        "contradicting_input": "Ana cut her daily meditation down to 20 minutes because of her new work schedule",
+        "now_believes": "Ana's daily meditation is 20 minutes"
+      }
+    },
+    {
+      "case_id": 3,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana has visited 23 countries on her travels",
+        "contradicting_input": "Ana has now visited 26 countries after her recent trip to Southeast Asia",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 3,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana has visited 23 countries on her travels",
+        "contradicting_input": "Ana has now visited 26 countries after her recent trip to Southeast Asia",
+        "now_believes": "Ana has visited 26 countries"
+      }
+    },
+    {
+      "case_id": 4,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana lives in Portland, Oregon",
+        "contradicting_input": "Ana moved to Denver, Colorado last spring to be closer to the mountains",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 4,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 1,
+      "trace": {
+        "stored_belief": "Ana lives in Portland, Oregon",
+        "contradicting_input": "Ana moved to Denver, Colorado last spring to be closer to the mountains",
+        "now_believes": "Ana lives in Denver, Colorado to be closer to the mountains"
+      }
+    },
+    {
+      "case_id": 5,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana teaches yoga at a community center every Tuesday evening",
+        "contradicting_input": "Ana switched to teaching yoga at a private studio on Saturday mornings",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 5,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana teaches yoga at a community center every Tuesday evening",
+        "contradicting_input": "Ana switched to teaching yoga at a private studio on Saturday mornings",
+        "now_believes": "Ana teaches yoga at a private studio on Saturday mornings"
+      }
+    },
+    {
+      "case_id": 6,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana's favorite travel destination is Japan",
+        "contradicting_input": "Ana now says Iceland is her favorite travel destination after her trip last autumn",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 6,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana's favorite travel destination is Japan",
+        "contradicting_input": "Ana now says Iceland is her favorite travel destination after her trip last autumn",
+        "now_believes": "Ana's favorite travel destination is Iceland"
+      }
+    },
+    {
+      "case_id": 7,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana publishes her travel articles in The Wanderer magazine",
+        "contradicting_input": "Ana stopped writing for The Wanderer and now publishes exclusively in Nomad Journal",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 7,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 1,
+      "trace": {
+        "stored_belief": "Ana publishes her travel articles in The Wanderer magazine",
+        "contradicting_input": "Ana stopped writing for The Wanderer and now publishes exclusively in Nomad Journal",
+        "now_believes": "Ana publishes exclusively in Nomad Journal"
+      }
+    },
+    {
+      "case_id": 8,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana speaks Spanish as a second language",
+        "contradicting_input": "Ana dropped Spanish and switched to learning Portuguese, which is now her second language",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 8,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 1,
+      "trace": {
+        "stored_belief": "Ana speaks Spanish as a second language",
+        "contradicting_input": "Ana dropped Spanish and switched to learning Portuguese, which is now her second language",
+        "now_believes": "Ana's second language is Portuguese"
+      }
+    },
+    {
+      "case_id": 9,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana prefers budget backpacking when she travels",
+        "contradicting_input": "After a back injury last year, Ana switched to staying at boutique hotels instead of backpacking",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 9,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana prefers budget backpacking when she travels",
+        "contradicting_input": "After a back injury last year, Ana switched to staying at boutique hotels instead of backpacking",
+        "now_believes": "Ana stays at boutique hotels for travel"
+      }
+    },
+    {
+      "case_id": 10,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana is a vegetarian",
+        "contradicting_input": "Ana started eating meat again last year and is no longer vegetarian",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 10,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": true,
+      "duplicate_count": 1,
+      "trace": {
+        "stored_belief": "Ana is a vegetarian",
+        "contradicting_input": "Ana started eating meat again last year and is no longer vegetarian",
+        "now_believes": "Ana eats meat"
+      }
+    },
+    {
+      "case_id": 11,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana is a certified yoga instructor and teaches yoga professionally",
+        "contradicting_input": "Ana quit teaching yoga two years ago and now works full-time as a software developer",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 11,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 1,
+      "trace": {
+        "stored_belief": "Ana is a certified yoga instructor and teaches yoga professionally",
+        "contradicting_input": "Ana quit teaching yoga two years ago and now works full-time as a software developer",
+        "now_believes": "Ana works full-time as a software developer"
+      }
+    },
+    {
+      "case_id": 12,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana is married to her partner Stefan Kowalski",
+        "contradicting_input": "Ana and Stefan divorced last year; she now lives alone",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 12,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": true,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana is married to her partner Stefan Kowalski",
+        "contradicting_input": "Ana and Stefan divorced last year; she now lives alone",
+        "now_believes": "Ana and Stefan are divorced"
+      }
+    },
+    {
+      "case_id": 13,
+      "expected_relation": "contradict",
+      "system": "add-only",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana has a dog named Biscuit",
+        "contradicting_input": "Ana no longer has any pets — she gave Biscuit to her sister when she moved to Denver",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 13,
+      "expected_relation": "contradict",
+      "system": "recense",
+      "corrected": false,
+      "stale": true,
+      "tombstone_present": true,
+      "duplicate_count": 3,
+      "trace": {
+        "stored_belief": "Ana has a dog named Biscuit",
+        "contradicting_input": "Ana no longer has any pets — she gave Biscuit to her sister when she moved to Denver",
+        "now_believes": "Ana gave her pet Biscuit to her sister"
+      }
+    },
+    {
+      "case_id": 14,
+      "expected_relation": "confirm",
+      "system": "add-only",
+      "corrected": false,
+      "stale": false,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana runs 5 miles every morning before breakfast",
+        "contradicting_input": "Ana goes on a 5-mile run each morning as part of her fitness routine",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 14,
+      "expected_relation": "confirm",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": false,
+      "duplicate_count": 1,
+      "trace": {
+        "stored_belief": "Ana runs 5 miles every morning before breakfast",
+        "contradicting_input": "Ana goes on a 5-mile run each morning as part of her fitness routine",
+        "now_believes": "User runs 5 miles every morning before breakfast"
+      }
+    },
+    {
+      "case_id": 15,
+      "expected_relation": "confirm",
+      "system": "add-only",
+      "corrected": false,
+      "stale": false,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana lives in Portland, Oregon",
+        "contradicting_input": "Ana's home is in Portland, Oregon, in the Pacific Northwest",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 15,
+      "expected_relation": "confirm",
+      "system": "recense",
+      "corrected": true,
+      "stale": false,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana lives in Portland, Oregon",
+        "contradicting_input": "Ana's home is in Portland, Oregon, in the Pacific Northwest",
+        "now_believes": "Ana's home is in Portland, Oregon in the Pacific Northwest"
+      }
+    },
+    {
+      "case_id": 16,
+      "expected_relation": "extend",
+      "system": "add-only",
+      "corrected": false,
+      "stale": false,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana is a vegetarian",
+        "contradicting_input": "Ana has been vegetarian since college and also avoids buying leather products as part of her values",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 16,
+      "expected_relation": "extend",
+      "system": "recense",
+      "corrected": false,
+      "stale": false,
+      "tombstone_present": false,
+      "duplicate_count": 3,
+      "trace": {
+        "stored_belief": "Ana is a vegetarian",
+        "contradicting_input": "Ana has been vegetarian since college and also avoids buying leather products as part of her values",
+        "now_believes": "Ana is a vegetarian"
+      }
+    },
+    {
+      "case_id": 17,
+      "expected_relation": "extend",
+      "system": "add-only",
+      "corrected": false,
+      "stale": false,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana meditates for 30 minutes each morning",
+        "contradicting_input": "Ana follows the Vipassana meditation technique in her daily 30-minute practice",
+        "now_believes": "[2 episode rows stored with no graph consolidation]"
+      }
+    },
+    {
+      "case_id": 17,
+      "expected_relation": "extend",
+      "system": "recense",
+      "corrected": false,
+      "stale": false,
+      "tombstone_present": false,
+      "duplicate_count": 2,
+      "trace": {
+        "stored_belief": "Ana meditates for 30 minutes each morning",
+        "contradicting_input": "Ana follows the Vipassana meditation technique in her daily 30-minute practice",
+        "now_believes": "Ana meditates for 30 minutes each morning"
+      }
+    }
+  ]
+}
