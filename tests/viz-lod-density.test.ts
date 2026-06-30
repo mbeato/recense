@@ -126,3 +126,39 @@ describe('lod adaptive density', () => {
     expect(mid.hazeOpacityScale).toBeLessThan(1);
   });
 });
+
+describe('lod overview cap (D-05/D-06)', () => {
+  it('over-cap: visible overview is held at OVERVIEW_NODE_CAP (schema + haze ≤ cap)', () => {
+    // 5 schemas + (OVERVIEW_NODE_CAP + 5000) haze → raw overview >> cap
+    const excessHaze = OVERVIEW_NODE_CAP + 5000;
+    const ctx = buildCtx({ schemas: 5, membersPerSchema: 3, haze: excessHaze });
+    const rawOverview = 5 + excessHaze; // what it would be without the cap
+    expect(rawOverview).toBeGreaterThan(OVERVIEW_NODE_CAP);
+
+    // After cap: visible overview must be ≤ cap (D-05)
+    expect(overviewOf(ctx)).toBeLessThanOrEqual(OVERVIEW_NODE_CAP);
+  });
+
+  it('over-cap: ALL schema super-nodes survive (schema-first ranking, D-06)', () => {
+    // 50 schemas + many haze → schema-first ranking means every schema survives
+    const ctx = buildCtx({ schemas: 50, membersPerSchema: 2, haze: OVERVIEW_NODE_CAP + 1000 });
+    const schemaNodes = ctx.allNodes.filter((n: any) => n.type === 'schema');
+    expect(schemaNodes.length).toBe(50);
+    for (const s of schemaNodes) {
+      expect(s.__cat).toBe('schema'); // not demoted
+    }
+    // visible overview still respects the cap
+    expect(overviewOf(ctx)).toBeLessThanOrEqual(OVERVIEW_NODE_CAP);
+  });
+
+  it('under-cap: no suppression — existing overview behavior unchanged (pure no-op)', () => {
+    // 10 schemas + (OVERVIEW_NODE_CAP - 200) haze → just under cap
+    const hazeCount = OVERVIEW_NODE_CAP - 200;
+    const ctx = buildCtx({ schemas: 10, membersPerSchema: 5, haze: hazeCount });
+    const raw = overviewOf(ctx);
+    expect(raw).toBeLessThanOrEqual(OVERVIEW_NODE_CAP); // no suppression needed
+    // All haze nodes remain classified as haze (no demotions)
+    const hazeNodes = ctx.allNodes.filter((n: any) => n.id.startsWith('haze-'));
+    expect(hazeNodes.every((n: any) => n.__cat === 'haze')).toBe(true);
+  });
+});
