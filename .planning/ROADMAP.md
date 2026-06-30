@@ -846,7 +846,12 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
   2. Gate thresholds cover accuracy (EVAL-02 belief-correction + LoCoMo J), retrieval recall (R@5/R@10), latency (p50/p95), and token cost; any axis regression past its threshold fails visibly — GATE-02
   3. Baseline is intentionally re-set to v9.0-final figures; the full eval suite is re-run with documented before/after deltas; Phase 46 judge-fires on real KU contradictions are proved via escalation counters; `docs/evals.md` is updated with new numbers and judge-validation evidence — GATE-03
 
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 50-01-PLAN.md — Cheap LLM-free deterministic gate runner (R@K, latency, token-structural, binary judge-fire) + floor/ceiling baseline + npm scripts
+- [ ] 50-02-PLAN.md — Opt-in paid accuracy-tier gate (gate:accuracy: LoCoMo-J + EVAL-02 + KU), key-guarded, never in the cheap path
+- [ ] 50-03-PLAN.md — Record fresh v9.0-final baseline + fresh EVAL-02 n=13 (discharges RECON-04)
+- [ ] 50-04-PLAN.md — docs/evals.md v9.0-final record: honest provenance, 368-contradicts judge evidence, before/after deltas, deferred-check discharge
+
 
 ### Phase 51: WASM SIMD Exact-Scan Kernel
 
