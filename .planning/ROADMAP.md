@@ -183,7 +183,7 @@ Goal: make recense's belief-correction and retrieval work on messy real-world da
 **Engine invariants across all phases:** single-tenant; graph is source of truth, vector is derived cache; online paths stay LLM-free; never strengthen a fact from inferred output (self-confirmation guard); no accuracy regression accepted for a latency/token win; net-zero new runtime deps.
 
 - [x] **Phase 46: Reconsolidation Candidate Broadening** — decouple contradiction-candidate generation from the single cosine gate (entity/subject-keyed + BM25 node_fts + dense union) so the belief-update judge actually fires on real KU contradictions (today: zero) (completed 2026-06-28)
-- [ ] **Phase 47: Hybrid Retrieval Recall** — BM25+dense fusion (RRF/z-score, tunable scalar) on the LLM-free hot path to lift LoCoMo R@5/R@10 with no per-category regression; depends on 46
+- [x] **Phase 47: Hybrid Retrieval Recall** — BM25+dense fusion (RRF/z-score, tunable scalar) on the LLM-free hot path to lift LoCoMo R@5/R@10 with no per-category regression; depends on 46 (completed 2026-06-30)
 - [x] **Phase 48: Correctness Hardening** — close C-2 self-confirmation loop, immediate() write txns (M-5), schema-version read-first guard (M-9), embedding model/dims stamp+assert (L-2); each with a regression test; independent of 46/47 (completed 2026-06-28)
 - [x] **Phase 49: Scale + Data-Model Spike** — measure vectorlite ANN vs brute-force crossover at real node scale + go/no-go; written bi-temporal/supersedes-vs-tombstone recommendation with migration cost; independent; a "defer" outcome is valid (completed 2026-06-28)
 - [ ] **Phase 50: Verification + Regression Gates** — re-run full eval suite on the improved pipeline, prove Phase-46 judge fires on real contradictions, lock regression gates (CI/pre-merge), update docs/evals.md; depends on 46–48
@@ -237,7 +237,7 @@ Goal: make recense's belief-correction and retrieval work on messy real-world da
 | 44. Bundled-App Settings & Cost Controls | v8.0 | 6/6 | Complete | 2026-06-26 |
 | 45. Subscription-Default Install & Billing-Leak Warning | v8.0 | 6/6 | Complete | 2026-06-26 |
 | 46. Reconsolidation Candidate Broadening | v9.0 | 2/2 | Complete   | 2026-06-28 |
-| 47. Hybrid Retrieval Recall | v9.0 | 1/3 | In Progress|  |
+| 47. Hybrid Retrieval Recall | v9.0 | 3/3 | Complete   | 2026-06-30 |
 | 48. Correctness Hardening | v9.0 | 2/2 | Complete    | 2026-06-28 |
 | 49. Scale + Data-Model Spike | v9.0 | 3/3 | Complete   | 2026-06-28 |
 | 50. Verification + Regression Gates | v9.0 | 0/0 | Not started | — |
@@ -805,7 +805,7 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 **Plans**: 3 plans
 - [x] 47-01-PLAN.md — expose bm25FusionWeight as a config scalar threaded into hybridTopk/retrieveRanked (dark default 0)
 - [x] 47-02-PLAN.md — held-out bm25FusionWeight sweep on LoCoMo → **w\*=0 null result** (BM25 fusion does not beat dense cosine; ship dark). Held-out temporal-reasoning lead logged as follow-up.
-- [ ] 47-03-PLAN.md — thread queryForEmbed into responder.respond→retrieveRanked + set DEFAULT_CONFIG.bm25FusionWeight=w* (no-op at w*=0)
+- [x] 47-03-PLAN.md — thread queryForEmbed into responder.respond→retrieveRanked + set DEFAULT_CONFIG.bm25FusionWeight=w* (no-op at w*=0)
 
 ### Phase 48: Correctness Hardening
 
