@@ -7,6 +7,7 @@
  *     Returns null (never throws) on any detection / instantiation failure (D-08):
  *       - dim % 4 !== 0 (kernel requires f32x4 — 4-element SIMD lanes)
  *       - data.length !== count * dim (shape mismatch)
+ *       - norms.length < count (norms shape mismatch — short norms yield NaN scores silently)
  *       - WebAssembly.validate(bytes) === false (SIMD opcodes unsupported on this runtime)
  *       - any compile / instantiate throw
  *
@@ -64,6 +65,7 @@ export function loadSimdKernel(
     // Pre-validate shape before any allocation (T-51-21)
     if (dim % 4 !== 0) return null;
     if (data.length !== count * dim) return null;
+    if (norms.length < count) return null;
 
     // Feature-detect SIMD: the blob carries v128/f32x4 opcodes, so validate()
     // returns false on runtimes without SIMD support (D-09 discretion, per PATTERNS).
