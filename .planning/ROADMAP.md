@@ -241,7 +241,7 @@ Goal: make recense's belief-correction and retrieval work on messy real-world da
 | 48. Correctness Hardening | v9.0 | 2/2 | Complete    | 2026-06-28 |
 | 49. Scale + Data-Model Spike | v9.0 | 3/3 | Complete   | 2026-06-28 |
 | 50. Verification + Regression Gates | v9.0 | 2/4 | In Progress|  |
-| 51. WASM SIMD Exact-Scan Kernel | v9.0 | 3/3 | Complete   | 2026-06-30 |
+| 51. WASM SIMD Exact-Scan Kernel | v9.0 | 5/5 | Complete   | 2026-06-30 |
 
 ### Phase 28: Schema-Anchored Corpus
 
@@ -878,8 +878,8 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 - [x] 51-01-PLAN.md — Reproducible WASM kernel artifact: in-repo WAT (fused f32x4 dot + reciprocal-norm cosine), dev-only regen script (`--check` reproducibility + math self-test), committed base64 blob module
 - [x] 51-02-PLAN.md — Kernel loader: blob decode + SIMD feature-detect + instantiate-once over the index matrix, `scanCosine` (cosine direct), `partialSelectTopK`, safe null fallback; unit tests for exactness/partial-select/fallback
 - [x] 51-03-PLAN.md — Wire kernel into `topkIndexed` with verbatim scalar fallback (D-05/D-06/D-08); CandidateRetriever integration test; live-brain `51-topk-equivalence` gate (recall@10=1.000 + ~4–5× kernel / faster full p95)
-- [ ] 51-04-PLAN.md — Gap closure: norms.length bounds guard (WR-02) + wire gen-simd-kernel `--check` into pretest & pin wabt exact (WR-03)
-- [ ] 51-05-PLAN.md — Gap closure: harden 51-topk-equivalence gate (fail-loud real-embed, hard max|Δscore| budget, recall@10 metric, f32-vs-f64 comment fix) + live-brain `--real-embed` SC2 proof (WR-01)
+- [x] 51-04-PLAN.md — Gap closure: norms.length bounds guard (WR-02) + wire gen-simd-kernel `--check` into pretest & pin wabt exact (WR-03)
+- [x] 51-05-PLAN.md — Gap closure: harden 51-topk-equivalence gate (fail-loud real-embed, hard max|Δscore| budget, recall@10 metric, f32-vs-f64 comment fix) + live-brain `--real-embed` SC2 proof (WR-01)
 
 ### Phase 52: Brain Viz Honest Traces
 
