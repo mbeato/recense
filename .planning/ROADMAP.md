@@ -931,10 +931,10 @@ so any added settling/forces must stay within the existing rAF/idle budget.
 
 Plans:
 **Wave 1**
-- [ ] 53-01-PLAN.md — graph.js: continuous in-hull + schema-centroid + deterministic seeding (kills lattice, starts clustered, stable) + wall-clock SETTLE_BUDGET_MS settle replacing cooldownTicks(12); revealSettled() body locked (D-01/02/03/04/07/08)
+- [x] 53-01-PLAN.md — graph.js: continuous in-hull + schema-centroid + deterministic seeding (kills lattice, starts clustered, stable) + wall-clock SETTLE_BUDGET_MS settle replacing cooldownTicks(12); revealSettled() body locked (D-01/02/03/04/07/08)
 
 **Wave 2** *(depends on 53-01 — shares constants.js)*
-- [ ] 53-02-PLAN.md — lod.js: overview density cap (OVERVIEW_NODE_CAP, schema-largest-first ranking, haze remainder) holding screen fullness in the calibrated band at scale (D-05/06)
+- [x] 53-02-PLAN.md — lod.js: overview density cap (OVERVIEW_NODE_CAP, schema-largest-first ranking, haze remainder) holding screen fullness in the calibrated band at scale (D-05/06)
 
 **Wave 3** *(depends on 53-01 + 53-02)*
 - [ ] 53-03-PLAN.md — verification: machine-checkable layout/locked-anchor/Phase-52 guards + full viz suite + dist build + founder visual checkpoint at ~15k with constant tuning; autonomous: false (D-09)
