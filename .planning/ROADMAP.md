@@ -1006,7 +1006,7 @@ honesty holds by construction —
   Founder visual checkpoint confirms 1–4 on the live viz (52/53 idiom). Fresh spontaneous retrievals
   are deferred to a follow-up.
 
-**Plans:** 1/5 plans executed
+**Plans:** 3/5 plans executed
 
 Plans:
 **Wave 1**
@@ -1015,8 +1015,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 54-02-PLAN.md — trace.js: Layer1 amplify + Layer2 client replay branch + Layer3 twinkle (Wave 2)
-- [ ] 54-03-PLAN.md — server.ts: idle-replay scheduler, replay:true, read-only boundary (Wave 2)
+- [x] 54-02-PLAN.md — trace.js: Layer1 amplify + Layer2 client replay branch + Layer3 twinkle (Wave 2)
+- [x] 54-03-PLAN.md — server.ts: idle-replay scheduler, replay:true, read-only boundary (Wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
