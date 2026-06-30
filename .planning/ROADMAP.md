@@ -939,6 +939,45 @@ Plans:
 **Wave 3** *(depends on 53-01 + 53-02)*
 - [x] 53-03-PLAN.md — verification: machine-checkable layout/locked-anchor/Phase-52 guards + full viz suite + dist build + founder visual checkpoint at ~15k with constant tuning; autonomous: false (D-09)
 
+### Phase 54: Viz Ambient Liveliness and Replay Traces
+
+**Goal**: Make `recense viz` feel alive and engaging when pinned while working, without fabricating
+engine activity. Two founder symptoms after Phase 53: (1) **idle dead air** — activation traces fire
+only on real recalls, so between them the brain is static; (2) **real activations are too subtle** to
+notice at node scale. **Presentation-layer only** — the viz server stays read-only / no-engine /
+LLM-free, and the Phase 52 honest-traces invariant is preserved. Design contract:
+`docs/superpowers/specs/2026-06-30-viz-ambient-liveliness-replay-traces-design.md`.
+
+**Approach (from approved spec):** a three-layer activity hierarchy, strictly ranked in intensity so
+honesty holds by construction —
+- **Live recall (brightest):** amplify the real-event flash (size-pulse ~1.35×→~1.8–2× + brighten +
+  snappier attack; haze color-overshoot since haze is a color-only InstancedMesh).
+- **Replay echo (dimmer, real-but-past):** a server idle scheduler re-emits recent real
+  `activation_trace` rows (flag `replay:true`) during idle gaps; the client renders a softer echo of
+  the same real hops. Stays inside the viz server's read-only boundary (re-reads existing rows only).
+- **Twinkle (faintest):** dim, slow, neutral-palette brightness shimmer on a small rotating node
+  subset; no pulses/halos/event-colors.
+
+**Depends on**: Phase 52 (honest traces — must not regress) and Phase 53 (Halton layout).
+**Requirements**: Presentation-layer; design contract is the 2026-06-30 spec above.
+**Success Criteria** (what must be TRUE):
+  1. Alive at idle: pinned with no user recalls, the brain shows continuous gentle life (twinkle)
+     punctuated by periodic replay echoes of real recent recalls.
+  2. Events pop: a real recall is clearly noticeable at overview zoom, distinctly stronger than a
+     replay echo.
+  3. Honest hierarchy: live > replay > twinkle is always legible; replays read as rehearsal, not
+     live; no fabricated edges (pulses/halos only on real hops).
+  4. Not distracting: ambient layers read as meaningful, not loud/noisy (founder felt-quality call).
+  5. Bounded + in-boundary: no frame-rate regression at ~15k; viz server stays read-only/LLM-free.
+
+  Founder visual checkpoint confirms 1–4 on the live viz (52/53 idiom). Fresh spontaneous retrievals
+  are deferred to a follow-up.
+
+**Plans:** TBD (run /gsd:plan-phase 54 to break down)
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 54 to break down)
+
 ## Backlog
 
 _(empty — no backlog items)_
