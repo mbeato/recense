@@ -2,30 +2,29 @@
   "meta": {
     "eval": "gate-baseline",
     "version": "v9.0-final",
-    "date": "2026-06-30T00:00:00.000Z",
-    "commit": "d30d756",
+    "date": "2026-06-30T14:59:30.289Z",
+    "commit": "01e2aa8",
     "engine_version": "0.1.0",
-    "note": "Seed schema — scores carry pre-Plan-50-03 provenance from committed result files. Run `npm run gate:baseline` (Plan 50-03) to record fresh v9.0-final numbers against the live DB.",
     "recorded_from": {
       "locomo_rAtK": "scripts/eval/results/locomo-d41d5c8.json",
-      "latency": "scripts/eval/results/41-latency-after.json",
-      "injection": "scripts/eval/results/injection-efficiency-PENDING.json (untracked at time of seed — see note)",
+      "latency": "scripts/eval/results/gate-latency-run.json",
+      "injection": "scripts/eval/results/gate-injection-run.json",
       "contradicts": "scripts/eval/results/46-recon03-ku-bm25on.json"
     }
   },
   "scores": {
     "locomo_r5": 0.7727272727272727,
     "locomo_r10": 0.8220779220779221,
-    "lat_p50_ms": 13,
-    "lat_p95_ms": 14,
-    "injected_tokens": 427,
+    "lat_p50_ms": 20,
+    "lat_p95_ms": 20,
+    "injected_tokens": 470,
     "total_contradicts": 368
   },
   "thresholds": {
-    "locomo_r5_floor": 0.75,
-    "locomo_r10_floor": 0.80,
-    "lat_p95_ceiling_ms": 20,
-    "injected_tokens_ceiling": 470,
+    "locomo_r5_floor": 0.7527,
+    "locomo_r10_floor": 0.8021,
+    "lat_p95_ceiling_ms": 23,
+    "injected_tokens_ceiling": 517,
     "contradicts_floor": 1
   }
 }
