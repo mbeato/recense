@@ -863,7 +863,10 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
   2. Retrieval is byte-exact vs the prior scalar scan (recall@10 = 1.000 on the eval set; no approximation), with the exact scalar path retained as a verified fallback when SIMD is unavailable — SCALE-03
   3. Measured scan-latency improvement of ~4–5× on the kernel and a materially faster full per-query p95 (reciprocal-norm folded into the kernel + partial-select top-k so the post-scan tail no longer dominates); the Phase-50 latency gate passes — SCALE-03
 
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 51-01-PLAN.md — Reproducible WASM kernel artifact: in-repo WAT (fused f32x4 dot + reciprocal-norm cosine), dev-only regen script (`--check` reproducibility + math self-test), committed base64 blob module
+- [ ] 51-02-PLAN.md — Kernel loader: blob decode + SIMD feature-detect + instantiate-once over the index matrix, `scanCosine` (cosine direct), `partialSelectTopK`, safe null fallback; unit tests for exactness/partial-select/fallback
+- [ ] 51-03-PLAN.md — Wire kernel into `topkIndexed` with verbatim scalar fallback (D-05/D-06/D-08); CandidateRetriever integration test; live-brain `51-topk-equivalence` gate (recall@10=1.000 + ~4–5× kernel / faster full p95)
 
 ### Phase 52: Brain Viz Honest Traces
 
@@ -976,7 +979,7 @@ honesty holds by construction —
 **Plans:** 5 plans (4 waves)
 
 Plans:
-- [ ] 54-01-PLAN.md — constants.js: 9 ambient-liveliness tunables (Wave 1 foundation)
+- [ ] 54-01-PLAN.md — constants.js: 10 ambient-liveliness tunables (Wave 1 foundation)
 - [ ] 54-02-PLAN.md — trace.js: Layer1 amplify + Layer2 client replay branch + Layer3 twinkle (Wave 2)
 - [ ] 54-03-PLAN.md — server.ts: idle-replay scheduler, replay:true, read-only boundary (Wave 2)
 - [ ] 54-04-PLAN.md — tests/viz-ambient-liveliness.test.ts: SC1/SC3/SC5 machine guards (Wave 3)
