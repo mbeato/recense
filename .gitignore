@@ -29,7 +29,10 @@ scripts/eval/extract-bakeoff.log
 # reader-slice generated deep-dives are built from the live DB (real fact content) — never commit
 scripts/reader-slice/out/
 # Eval DATA/RESULTS stay local; the harness CODE (.cjs/.sh) is committed.
-scripts/eval/results/
+# Exception: gate-baseline.json is a committed config/fixture (not a raw result dump);
+# use /* instead of trailing / so that the !-negation below takes effect.
+scripts/eval/results/*
+!scripts/eval/results/gate-baseline.json
 scripts/eval/*-results.json
 scripts/eval/*-results-*.json
 scripts/eval/judge-eval-set.json
