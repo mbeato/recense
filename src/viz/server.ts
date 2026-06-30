@@ -60,6 +60,12 @@ import type { PresetName, SettingsFile } from '../lib/config';
 const POLL_MS = 250;  // polling interval for activation_trace SSE broadcast
 const SEARCH_LIMIT = 20;  // BM25 result cap for /search?q= endpoint (T-19-03)
 
+// Phase 54 replay constants — mirrored from src/viz/modules/constants.js (browser-ESM;
+// not imported here to avoid a cross-boundary build dependency). Keep in sync with constants.js.
+const REPLAY_IDLE_GAP_MS = 5000;  // ms of silence before idle-replay activates (spec: 4000–6000)
+const REPLAY_CADENCE_MS  = 4000;  // ms between replay broadcasts (spec: 3000–5000)
+const REPLAY_HISTORY_N   = 20;    // max recent real rows in the server-side replay ring
+
 // ---------------------------------------------------------------------------
 // POST /settings — key whitelist (T-44-15)
 // ---------------------------------------------------------------------------
@@ -380,6 +386,15 @@ export function startVizServer(
   // only genuinely new traces stream.
   let cursor = (db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM activation_trace').get() as { m: number }).m;
 
+  // Phase 54 (Task 1 — Plan 54-03): replay ring buffer + idle timer.
+  // Populated by the live poll; read by the replay scheduler below. No extra DB handle.
+  interface ReplayRow {
+    id: number; ts: number; query_id: string;
+    seeds: unknown; hops: unknown; kind: string | null;
+  }
+  const replayBuffer: ReplayRow[] = [];
+  let lastLiveRow = Date.now();
+
   // D-98: poll activation_trace every POLL_MS ms and push new rows to all SSE clients.
   const pollInterval = setInterval(() => {
     if (clients.size === 0) return;
@@ -401,6 +416,14 @@ export function startVizServer(
       } catch {
         continue; // skip corrupt row, keep polling and streaming
       }
+      // Phase 54 (Task 1): push into replay ring — only rows with non-empty seeds arrays
+      // (Pitfall 3: skip empty/malformed rows so replay never re-emits a no-op trace).
+      if (Array.isArray(seeds) && seeds.length > 0) {
+        replayBuffer.push({ id: row.id, ts: row.ts, query_id: row.query_id, seeds, hops, kind: row.kind ?? null });
+        if (replayBuffer.length > REPLAY_HISTORY_N) {
+          replayBuffer.splice(0, replayBuffer.length - REPLAY_HISTORY_N);
+        }
+      }
       const payload = `event: trace\ndata: ${JSON.stringify({
         id: row.id,
         ts: row.ts,
@@ -416,6 +439,9 @@ export function startVizServer(
         res.write(payload);
       }
     }
+    // Phase 54 (Task 1): record timestamp of last real row batch (live-preempt signal for
+    // the replay scheduler). fresh.length > 0 is guaranteed here by the early-return above.
+    lastLiveRow = Date.now();
   }, POLL_MS);
 
   // Prevent the interval from keeping the process alive after server.close().
