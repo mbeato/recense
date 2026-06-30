@@ -876,7 +876,19 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 - [x] 52-03-PLAN.md — Per-kind color/motion vocabulary + reconsolidation magenta hero choreography
 - [x] 52-04-PLAN.md — Backend kind plumbing: SSE payload + event_type→kind on the capped sleep-pass cascade
 - [x] 52-05-PLAN.md — Synchronous `remember` ingestion bridge (fire-and-forget) + zero-duplicate test
-- [ ] 52-06-PLAN.md — Founder visual checkpoint (color/motion/decay feel + reconsolidation choreography)
+- [~] 52-06-PLAN.md — Founder visual checkpoint → **VERIFIED-WITH-PUNCH-LIST**. Code confirmed correct end-to-end (engine/bridge/SSE/choreography; 2,442 tests). Visual sign-off deferred: node-activation flashes are imperceptible at overview zoom (haze instances only tint one `setColorAt` color, never promote to a glow mesh) → routed to FIX-52A. See `52-06-SUMMARY.md`.
+
+### Phase 53: Brain Viz Node-Flash Prominence (FIX-52A)
+
+**Goal**: Make node-activation flashes legible at overview zoom in the dock/popover — the Phase 52 honest-traces logic is correct but, on the ~2,700-node overview, a trace lights a node by tinting one `InstancedMesh` instance color (`activate`/`revealTrace` → `setColorAt`) for ~1–2s, which is imperceptible among thousands of haze points. `spawnPulse` edge wavefronts render fine; node flashes (recall seeds, `new_node` blip, `reconsolidation` magenta hero, `oscillation` strobe) do not read. **Presentation-only** — must NOT touch the verified `activation_trace` data path, kind mapping, or choreography logic.
+**Depends on**: Phase 52 (builds on its `applyTrace`/`activate`/`revealTrace` + per-kind palette).
+**Requirements**: Presentation-layer; design contract is `52-06-SUMMARY.md` (gap analysis) + the Phase 52 design spec.
+**Success Criteria** (what must be TRUE):
+  1. A node activation (esp. the `reconsolidation` magenta hero on a hub node) is clearly visible at the default overview zoom in the packed app, not only "at large sizes".
+  2. Approach is one (or more) of: boosted haze-instance activation brightness/scale, additive bloom on the lit instance, or short-lived promotion of trace seed/hero nodes to a prominent glow mesh that demotes on fade.
+  3. Zero change to `activation_trace` writes, kind mapping, choreography timing, or the recall honesty guarantees (Phase 52 tests stay green).
+
+**Plans**: TBD — run `/gsd-plan-phase 53` to break down.
 
 ## Backlog
 
