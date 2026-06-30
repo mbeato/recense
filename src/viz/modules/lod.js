@@ -36,6 +36,7 @@ import {
   DENSITY_THIN_START,
   DENSITY_THIN_FULL,
   HAZE_DENSE_SCALE,
+  OVERVIEW_NODE_CAP,
   HOT,
 } from './constants.js';
 
@@ -101,6 +102,37 @@ export function initLod(ctx) {
   let overviewCount = 0;
   for (const n of allNodes) if (n.__cat === 'schema' || n.__cat === 'haze') overviewCount++;
 
+  // ── Overview cap (Phase 53 D-05/D-06) ──────────────────────────────────
+  // When the corpus grows large, overviewCount can far exceed the founder-
+  // calibrated band. Cap the VISIBLE overview at OVERVIEW_NODE_CAP so screen
+  // fullness stays roughly constant regardless of corpus size.
+  //
+  // Survive-ranking (D-06):
+  //   1. ALL schema super-nodes are kept (the constellation is the point).
+  //   2. Haze fills the remaining budget (OVERVIEW_NODE_CAP - #schema).
+  //   3. Surplus haze is recorded in suppressedHaze and hidden by nodeVisible.
+  //
+  // __cat is NEVER mutated here — it stays 'haze' for all haze nodes so the
+  // trace-reveal path (revealTrace haze branch) and hazeOpacityScale remain
+  // unaffected. The suppressedHaze Set is the sole suppression signal.
+  //
+  // In-band (overviewCount ≤ OVERVIEW_NODE_CAP): pure no-op — suppressedHaze
+  // stays empty and all existing behaviour is unchanged.
+  const suppressedHaze = new Set(); // haze node ids hidden beyond cap (D-05)
+  if (overviewCount > OVERVIEW_NODE_CAP) {
+    const schemaCount = [...schemaMembers.keys()].length;
+    const hazeBudget  = Math.max(0, OVERVIEW_NODE_CAP - schemaCount);
+    let   hazeAdmitted = 0;
+    for (const n of allNodes) {
+      if (n.__cat !== 'haze') continue;
+      if (hazeAdmitted < hazeBudget) {
+        hazeAdmitted++;
+      } else {
+        suppressedHaze.add(n.id); // hidden from overview; still reachable via trace/drill-in
+      }
+    }
+  }
+
   const densityRevealed = new Set(); // member ids force-shown to fill a sparse overview
   if (overviewCount < DENSITY_FILL_BELOW) {
     const budget = DENSITY_FILL_TARGET - overviewCount;
@@ -149,9 +181,11 @@ export function initLod(ctx) {
 
   const nodeVisible = n => {
     if (!n) return false;
-    // Schema and haze nodes are visible in the overview; in compact viewports
-    // haze is rendered near-invisible instead of hidden (graph.js dims it) —
-    // schema constellation forward, haze as barely-there mist (founder-tuned).
+    // Haze nodes: visible unless suppressed by the overview cap (D-05).
+    // suppressedHaze tracks surplus haze beyond OVERVIEW_NODE_CAP; they remain
+    // in allNodes and reachable via trace/drill-in — just hidden at overview.
+    if (n.__cat === 'haze') return !suppressedHaze.has(n.id);
+    // Schema nodes are always visible in the overview.
     if (n.__cat !== 'member') return true;
     // Member nodes: show if their schema is drilled-in, the trace reveals them,
     // OR adaptive density promoted them to fill a sparse overview.
@@ -261,4 +295,5 @@ export function initLod(ctx) {
   ctx.linkKey           = linkKey;
   ctx.densityRevealed   = densityRevealed;   // member ids force-shown when sparse
   ctx.hazeOpacityScale  = hazeOpacityScale;  // graph.js multiplies HAZE_OPACITY by this
+  ctx.suppressedHaze    = suppressedHaze;    // haze node ids hidden beyond OVERVIEW_NODE_CAP (D-05)
 }

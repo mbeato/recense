@@ -225,6 +225,18 @@ export const DENSITY_THIN_FULL = 6000;
  *  DENSITY_THIN_START and DENSITY_THIN_FULL). 1.0 = no change. */
 export const HAZE_DENSE_SCALE = 0.35;
 
+/** Max total overview nodes (schema + haze) rendered at the overview level,
+ *  regardless of corpus size (D-05). Holds screen fullness in the founder-
+ *  calibrated ~2,700–3,200 band as the corpus grows to 15k / 50k nodes.
+ *
+ *  When overviewCount exceeds this cap, the long-tail haze is suppressed
+ *  (survive-ranking: schema super-nodes kept first, largest-schema-first
+ *  per D-06; haze fills the remaining budget; surplus haze suppressed).
+ *  Suppressed nodes are still reachable via drill-in and trace — the cap
+ *  is overview-render-only, never a data deletion. A named tunable, NOT a
+ *  magic number. Tune at the founder visual checkpoint. */
+export const OVERVIEW_NODE_CAP = 3000;
+
 // ============================================================================
 // Force-settle timing (Phase 53 D-03)
 // ============================================================================

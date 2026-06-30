@@ -24,6 +24,7 @@ import {
   DENSITY_THIN_START,
   DENSITY_THIN_FULL,
   HAZE_DENSE_SCALE,
+  OVERVIEW_NODE_CAP,
 // @ts-ignore — browser ESM, no type declarations
 } from '../src/viz/modules/constants.js';
 
@@ -59,6 +60,14 @@ function buildCtx(spec: { schemas: number; membersPerSchema: number; haze: numbe
 
 const overviewOf = (ctx: any) =>
   ctx.allNodes.filter((n: any) => n.__cat === 'schema' || n.__cat === 'haze').length;
+
+describe('OVERVIEW_NODE_CAP constant', () => {
+  it('is exported from constants.js with the calibrated initial value 3000', () => {
+    // D-05: caps overview (schema + haze) regardless of corpus size;
+    // sits inside the founder-calibrated 2,700–3,200 band.
+    expect(OVERVIEW_NODE_CAP).toBe(3000);
+  });
+});
 
 describe('lod adaptive density', () => {
   it('is a pure no-op inside the neutral band (founder anchor untouched)', () => {
@@ -115,5 +124,53 @@ describe('lod adaptive density', () => {
     });
     expect(mid.hazeOpacityScale).toBeGreaterThan(HAZE_DENSE_SCALE);
     expect(mid.hazeOpacityScale).toBeLessThan(1);
+  });
+});
+
+/**
+ * Count VISIBLE overview nodes: schema + haze nodes that pass nodeVisible.
+ * Distinguishes the "raw" overviewCount (pre-cap __cat count) from the
+ * "visible" count (what actually renders after suppression).
+ */
+const visibleOverviewOf = (ctx: any) =>
+  ctx.allNodes.filter(
+    (n: any) => ctx.nodeVisible(n) && (n.__cat === 'schema' || n.__cat === 'haze')
+  ).length;
+
+describe('lod overview cap (D-05/D-06)', () => {
+  it('over-cap: visible overview is held at OVERVIEW_NODE_CAP (schema + haze ≤ cap)', () => {
+    // 5 schemas + (OVERVIEW_NODE_CAP + 5000) haze → raw overview >> cap
+    const excessHaze = OVERVIEW_NODE_CAP + 5000;
+    const ctx = buildCtx({ schemas: 5, membersPerSchema: 3, haze: excessHaze });
+    // raw __cat count (suppressed haze keep __cat='haze' so overviewOf stays raw)
+    expect(overviewOf(ctx)).toBeGreaterThan(OVERVIEW_NODE_CAP);
+
+    // After cap: VISIBLE overview must be ≤ cap (D-05)
+    expect(visibleOverviewOf(ctx)).toBeLessThanOrEqual(OVERVIEW_NODE_CAP);
+  });
+
+  it('over-cap: ALL schema super-nodes survive (schema-first ranking, D-06)', () => {
+    // 50 schemas + many haze → schema-first ranking means every schema survives
+    const ctx = buildCtx({ schemas: 50, membersPerSchema: 2, haze: OVERVIEW_NODE_CAP + 1000 });
+    const schemaNodes = ctx.allNodes.filter((n: any) => n.type === 'schema');
+    expect(schemaNodes.length).toBe(50);
+    for (const s of schemaNodes) {
+      expect(s.__cat).toBe('schema'); // not demoted — schema-first survive
+      expect(ctx.nodeVisible(s)).toBe(true);
+    }
+    // visible overview still respects the cap
+    expect(visibleOverviewOf(ctx)).toBeLessThanOrEqual(OVERVIEW_NODE_CAP);
+  });
+
+  it('under-cap: no suppression — existing overview behavior unchanged (pure no-op)', () => {
+    // 10 schemas + (OVERVIEW_NODE_CAP - 200) haze → just under cap
+    const hazeCount = OVERVIEW_NODE_CAP - 200;
+    const ctx = buildCtx({ schemas: 10, membersPerSchema: 5, haze: hazeCount });
+    // All haze nodes remain visible (nothing suppressed)
+    expect(ctx.suppressedHaze.size).toBe(0);
+    const hazeNodes = ctx.allNodes.filter((n: any) => n.id.startsWith('haze-'));
+    expect(hazeNodes.every((n: any) => n.__cat === 'haze' && ctx.nodeVisible(n))).toBe(true);
+    // visibleOverviewOf == overviewOf when no suppression
+    expect(visibleOverviewOf(ctx)).toBe(overviewOf(ctx));
   });
 });
