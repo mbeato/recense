@@ -6,6 +6,47 @@ The goal is reproducibility and honesty, not benchmark warfare. recense numbers 
 
 ---
 
+## v9.0-final: results of record (Phase 50, 2026-06-30)
+
+This is the **v9.0-final results-of-record** (GATE-03). It consolidates the numbers the v9.0 release stands behind, each tagged **fresh** (re-measured this phase on the shipped subscription headless stack — Haiku extract / Sonnet judge via `claude -p`, D-09) or **reused** (a prior recorded run, cited by source commit + date — **not** a fresh same-day re-run). Per the no-inflated-metrics rule, reused numbers are never presented as fresh.
+
+These numbers are guarded by an **on-demand** regression gate — `npm run gate` (cheap, LLM-free, deterministic axes) plus the opt-in `npm run gate:accuracy` (paid accuracy tier). It is **not** a CI merge-block (D-01) — it is a founder-run check.
+
+### Results
+
+| Axis | v9.0-final | Provenance | Δ vs v8.0-final |
+|------|-----------|------------|-----------------|
+| EVAL-02 belief-correction (13 contradiction cases) | **84.6%** (11/13) | **fresh** — `correctness-v90final.json`, commit `8e544f3`, 2026-06-30, shipped Haiku/Sonnet stack | 84.6% (pre-46 `f779bfb`, Jun-27) → 84.6% — **no regression** (RECON-04) |
+| Latency p50 / p95 (warm indexed) | **20 / 20 ms** | **fresh** — `gate-baseline.json` (`meta.commit 01e2aa8`), 2026-06-30, live ~15.3k-node `.vindex` | 45 / 46 ms (v8.0, ~11.3k nodes) → 20 / 20 ms — re-measured on the current larger brain |
+| Token-structural injected_tokens | **470** (9 nodes) | **fresh** — `gate-baseline.json`, 2026-06-30, live brain | EVAL-03 prior 427 (3,591 nodes, Jun-14) → 470 (15.3k nodes); bounded, ≪ 500-tok budget |
+| LoCoMo R@5 / R@10 | **77.3% / 82.2%** | **reused** — `locomo-d41d5c8.json`, commit `d41d5c8`, 2026-06-24 (pure-cosine pipeline) | 77.3 / 82.2% → 77.3 / 82.2% — unchanged (reused) |
+| LoCoMo-J headline | **86.0%** | **reused** — `locomo-d41d5c8.json`, commit `d41d5c8`, 2026-06-24 | 86.0% → 86.0% — unchanged (reused) |
+| KU (knowledge-update, replay) | **38.9%** (7/18) | **reused** — `46-recon03-ku-bm25on.json`, commit `f4de897`, 2026-06-28 | not separately re-measured this phase |
+| Judge-fire contradicts | **368** | **reused** — `46-recon03-ku-bm25on.json`, commit `f4de897`, 2026-06-28 | 0 (pre-46) → 368 — see judge-fire evidence below |
+
+**Why R@5/R@10 and LoCoMo-J are reused, not re-run:** Phase 47 shipped `bm25FusionWeight = 0` — a documented **null result** (the live retrieval path stays pure cosine; the hybrid path is built but dark). Retrieval is therefore unchanged from the 2026-06-24 run, so the recorded R@K / LoCoMo-J numbers *are* the v9.0-final numbers. A fresh re-run reproduces them at ~3–4h of subscription-billed ingest; consistent with the no-multi-hour-re-run principle (D-13), they are reused with provenance. The cheap `npm run gate` likewise reads R@K from the recorded `locomo-d41d5c8.json` (`--locomo` override) rather than re-ingesting — only latency and injection (live `.vindex`, seconds) run fresh.
+
+### Judge-fire validation evidence (Phase 46, D-08)
+
+The reconsolidation judge **fires on real contradictions** — proven, not asserted. The KU-replay `contradicts` counter moved from a documented **zero** (pre-Phase-46; STATE.md / backlog 999.2) to **368 across 14 clean cases** (`46-recon03-ku-bm25on.json`, commit `f4de897`, 2026-06-28).
+
+- **Methodology:** count of `contradict` judge-fires during the KU-replay sleep pass — the `queryJudgeEngagement()` SQLite count over `consolidation_event` `contradict_*` rows (see `46-02-SUMMARY.md`). The Phase-46 candidate-broadening change (BM25 lexical candidates added alongside cosine) lets contradiction claims that previously hit `cosineGate && anchors.length===0 && bm25Candidates.length===0` reach the judge.
+- **Distribution:** per-case range 6–47 contradicts — the judge fires across the case set, not on a single outlier.
+- **Conservative floor:** 4 cases hit a mid-run `claude -p` rate-limit (empty judge return → false 0 contradicts); they contributed 0, so 368 is a floor, not a peak.
+- **Gate form:** the cheap `npm run gate` asserts the **binary `total_contradicts > 0`** (D-06) — robust to LLM run-to-run variance; it proves the Phase-46 win without depending on the exact count.
+
+### Deferred-check discharge
+
+| Deferred check | Discharged by | Evidence |
+|----------------|---------------|----------|
+| **RECON-04** (clean-case / contradiction no-regression after Phases 46–48) | Fresh EVAL-02 | `correctness-v90final.json` (`8e544f3`): 84.6% = pre-46 84.6% → no regression (D-14) |
+| **Pristine KU re-run** (D-15) | Reused recorded KU | `46-recon03-ku-bm25on.json` (`f4de897`, Jun-28); reused with provenance, **not** a fresh re-run |
+| **PERF-03(b)** 3-harness end-to-end (D-16) | correctness + KU + latency | EVAL-02 (fresh) + KU replay (reused) + latency (fresh) |
+
+The marginal write-cost (~7,118 tok/turn at v8.0-final, 0% Sonnet escalation) was **not** re-measured this phase; EVAL-04's measured write ledger remains pending (see EVAL-04 below).
+
+---
+
 ## EVAL-01: LongMemEval-S benchmark
 
 ### What it measures
