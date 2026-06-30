@@ -108,7 +108,7 @@ recense becomes the single source of truth for the founder's knowledge. Dependen
   3. `recense import-memory --dry-run` shows ≥193 facts to import and 0 policy-bundle leaks; a real run lands all importable facts as episodes without touching source files — SCOPE-03 verified
   4. After running `recense sleep-pass`, at least 3 imported facts per project across at least 3 projects are retrievable via `recense recall` with the correct `[scope]` prefix; a written verification report exists; source files are archived only after the founder sign-off — SCOPE-04 (D-S7 migration complete)
 
-**Plans**: 3 plans
+**Plans**: 3 plans + 2 gap-closure (SC2 / WR-01-02-03)
 
 - [x] 24-01-PLAN.md — verify FK-free clean sleep pass + live [scope] attribution, re-enable hourly agent (SCOPE-01/02 gate)
 - [x] 24-02-PLAN.md — import-memory --dry-run gate check: ≥193 facts, 0 policy-bundle leaks (SCOPE-03)
@@ -878,6 +878,8 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
 - [x] 51-01-PLAN.md — Reproducible WASM kernel artifact: in-repo WAT (fused f32x4 dot + reciprocal-norm cosine), dev-only regen script (`--check` reproducibility + math self-test), committed base64 blob module
 - [x] 51-02-PLAN.md — Kernel loader: blob decode + SIMD feature-detect + instantiate-once over the index matrix, `scanCosine` (cosine direct), `partialSelectTopK`, safe null fallback; unit tests for exactness/partial-select/fallback
 - [x] 51-03-PLAN.md — Wire kernel into `topkIndexed` with verbatim scalar fallback (D-05/D-06/D-08); CandidateRetriever integration test; live-brain `51-topk-equivalence` gate (recall@10=1.000 + ~4–5× kernel / faster full p95)
+- [ ] 51-04-PLAN.md — Gap closure: norms.length bounds guard (WR-02) + wire gen-simd-kernel `--check` into pretest & pin wabt exact (WR-03)
+- [ ] 51-05-PLAN.md — Gap closure: harden 51-topk-equivalence gate (fail-loud real-embed, hard max|Δscore| budget, recall@10 metric, f32-vs-f64 comment fix) + live-brain `--real-embed` SC2 proof (WR-01)
 
 ### Phase 52: Brain Viz Honest Traces
 
@@ -1025,6 +1027,33 @@ Plans:
 **Wave 4** *(blocked on Wave 3 completion)*
 
 - [x] 54-05-PLAN.md — founder visual checkpoint + constant tuning, autonomous:false (Wave 4)
+
+### Phase 55: Honest 1-hop pathways on ambient recall
+
+**Goal**: Make the viz show pathway-hop pulses on **every** recall, not just occasional curated
+recalls. Founder symptom from the Phase 54 checkpoint: live flashes light seed nodes but rarely show
+the spreading-activation pathways ("trace firing/hops") that make the brain feel alive.
+
+**Root cause (Phase 54 debug, evidence-backed)**: the dominant live trace source — per-prompt
+**ambient recall** (`retrieveRanked`, `src/retrieval/engine.ts` emit sites ~499/518) — emits
+`hops: []` by design ("no spread loop ran"). But the retrieved seeds carry **real graph out-edges**
+(measured 40–72 each over a 17,687-edge graph). The curated path already surfaces these honestly at
+`recall/index.ts:525` with `score: null` (rank-only). Only curated recalls that find a
+bestMatch+neighborhood currently emit pathways, so they're rare.
+
+**Approach**: have `retrieveRanked` surface each seed's real 1-hop out-edges as `hops`, `score: null`
+(rank-only — WR-02-safe, NOT fabricated edges/scores). Mirror the curated path. This is a
+**Phase-52 retrieval-engine change on the honesty-critical emit path** — needs its own plan + extended
+Plan-04-style machine guards (assert ambient hops are real edges, score:null, no fabricated magnitudes).
+
+**Depends on**: Phase 52 (honest-traces invariant — must not regress), Phase 54 (viz layers).
+**Requirements**: SC3 honesty invariant (no fabricated edges) preserved and machine-verified.
+**Success Criteria** (what must be TRUE):
+  1. A per-prompt recall lights real 1-hop pathways in the viz (not just seed nodes).
+  2. Emitted hops are real graph out-edges with `score: null`; no fabricated edge or magnitude (SC3).
+  3. Phase 52 honesty guards + Phase 54 layer guards still pass.
+
+**Plans:** not yet planned — run `/gsd-plan-phase 55`.
 
 ## Backlog
 
