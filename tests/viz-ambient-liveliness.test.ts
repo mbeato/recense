@@ -99,11 +99,7 @@ if (typeof (globalThis as any).performance === 'undefined') {
 // @ts-ignore — browser ESM; no type declarations in this project
 import { initTrace } from '../src/viz/modules/trace.js';
 // @ts-ignore
-import {
-  ACT_SCALE_GAIN,
-  REPLAY_DIM,
-  DECAY_ATTACK_MS,
-} from '../src/viz/modules/constants.js';
+import { ACT_SCALE_GAIN, REPLAY_DIM, DECAY_ATTACK_MS } from '../src/viz/modules/constants.js';
 
 // ── Source-text helpers ────────────────────────────────────────────────────────
 const ROOT = path.resolve(__dirname, '..');
@@ -211,7 +207,7 @@ describe('Layer 1 — live recall amplification (SC2)', () => {
 
     const calls = setScalarSpy.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
-    const lastScale = calls[calls.length - 1][0] as number;
+    const lastScale = calls[calls.length - 1]![0] as number;
     // Must be close to 1 + ACT_SCALE_GAIN, NOT 1.35 (old inline 0.35)
     expect(lastScale).toBeCloseTo(1 + ACT_SCALE_GAIN, 3);
   });
