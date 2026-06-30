@@ -24,6 +24,7 @@ import {
   CONTAIN_STRENGTH,
   HOVER_SCALE,
   nodeRelSize,
+  SETTLE_BUDGET_MS,
 } from './constants.js';
 
 // ─── Shared geometry (D-05) ──────────────────────────────────────────────────
@@ -688,10 +689,14 @@ export function initGraph(ctx) {
   Graph.onEngineTick(brainContainment);
 
   // ── Settle-then-pin reveal ────────────────────────────────────────────
-  // The canvas starts hidden (opacity 0). Once the simulation cools (or
-  // 200 ms elapses — primary path since onEngineStop is unreliable/slow),
-  // pin every node's fx/fy/fz at its settled position then fade in.
-  Graph.cooldownTicks(12);
+  // The canvas starts hidden (opacity 0). The sim runs freely until
+  // SETTLE_BUDGET_MS elapses (wall-clock primary path — D-03: bounded
+  // regardless of node count). revealSettled() pins fx/fy/fz then fades in.
+  // Graph.onEngineStop(revealSettled) is retained as a fallback.
+  //
+  // D-03: the fixed-tick stop is replaced with a wall-clock budget.
+  // cooldownTicks(0) lets the sim run freely; the setTimeout below stops it.
+  Graph.cooldownTicks(0); // run freely — wall-clock budget controls the stop
   const graphEl = document.getElementById('graph');
   graphEl.style.opacity = '0'; // hidden — no transition yet
 
@@ -707,7 +712,7 @@ export function initGraph(ctx) {
   }
 
   Graph.onEngineStop(revealSettled);
-  setTimeout(revealSettled, 200); // primary path (onEngineStop is unreliable/slow)
+  setTimeout(revealSettled, SETTLE_BUDGET_MS); // primary path — wall-clock bounded (D-03)
 
   // ── Camera framing ────────────────────────────────────────────────────
   // Compact viewports (tray popover ≤500px) sit slightly farther out so the
