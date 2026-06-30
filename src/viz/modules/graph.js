@@ -164,6 +164,50 @@ function brainOccupied(brainVol, qx, qy, qz) {
   return !!((brainVol.bits[i >> 3] >> (i & 7)) & 1);
 }
 
+// ─── Continuous in-hull sampling (Halton low-discrepancy + rejection) ─────────
+// Node positions are sampled as CONTINUOUS points, not snapped to voxel centres.
+// The voxel grid is used ONLY as the inside/outside test (brainOccupied); the
+// generator is a Halton (radical-inverse) sequence, so the cloud has NO lattice
+// at any hull rotation — fixing the diagonal gridlines that voxel-centre+jitter
+// left behind. Halton is a pure function of the integer index → identical layout
+// on every reload (D-08); no Math.random.
+
+/** Radical-inverse Halton value in [0,1) for `index` in the given prime `base`. */
+function halton(index, base) {
+  let result = 0;
+  let f = 1;
+  let i = index;
+  while (i > 0) {
+    f /= base;
+    result += f * (i % base);
+    i = Math.floor(i / base);
+  }
+  return result;
+}
+
+// Max rejection attempts before falling back. The brain hull fills a large
+// fraction of its bounding cube, so acceptance is high and the fallback is rare.
+const SAMPLE_TRIES = 48;
+// Disjoint Halton windows keep the haze cloud's sequence separate from the
+// schema/member sequence so the two layers don't land on coincident points.
+const HAZE_INDEX_OFFSET = 1000003;
+
+/**
+ * Sample a CONTINUOUS point inside the hull in local [-1,1] space via Halton
+ * (bases 2/3/5) + brainOccupied rejection. Returns [x,y,z] or null if every
+ * attempt landed outside the hull. `baseIdx` seeds the per-node Halton window.
+ */
+function sampleInHull(brainVol, baseIdx) {
+  for (let a = 0; a < SAMPLE_TRIES; a++) {
+    const idx = baseIdx + a;
+    const x = halton(idx, 2) * 2 - 1;
+    const y = halton(idx, 3) * 2 - 1;
+    const z = halton(idx, 5) * 2 - 1;
+    if (brainOccupied(brainVol, x, y, z)) return [x, y, z];
+  }
+  return null;
+}
+
 /**
  * Seed all node positions inside the brain occupancy volume before the layout
  * simulation starts. Nodes begin inside the hull so the containment force has
@@ -173,8 +217,10 @@ function brainOccupied(brainVol, qx, qy, qz) {
  *   - No Math.random() in the brainVol path: all randomness via _hashIndex
  *     (Knuth multiplicative hash) keyed on the per-node integer index so
  *     the same corpus produces the same layout on every reload (D-08).
- *   - Continuous full-cell jitter (±1/R in local space) eliminates the
- *     voxel-centre snap that produced visible lattice lines (D-04).
+ *   - Continuous Halton (low-discrepancy) sampling + brainOccupied rejection
+ *     places points anywhere in the hull with no voxel-centre snap, so there
+ *     is no lattice at any hull rotation (D-04). The voxel grid is used only
+ *     as the inside/outside test, never as the position generator.
  *   - Three-pass placement: schema hubs first, then members biased toward
  *     their hub centroid within CLUSTER_RADIUS, then haze (D-01/D-02).
  *
@@ -221,12 +267,9 @@ export function seedNodePositions(allNodes, brainVol) {
 
   if (!occupied.length) { seedNodePositions(allNodes, null); return; }
 
-  // Full-cell jitter magnitude in local [-1,1] space.
-  // Voxel spacing = 2/R → ±(1/R) spans the full cell width continuously,
-  // eliminating the voxel-centre snap that produced visible lattice lines (D-04).
-  const cellHalf = 1 / R;
   // High-precision denominator: _hashIndex(k, HIGH)/HIGH gives a sub-voxel
-  // fractional value in [0,1) with ~20 bits of resolution.
+  // fractional value in [0,1) with ~20 bits of resolution (used by Pass 2
+  // member centroid-bias offsets; Pass 1/3 use the Halton sampleInHull).
   const HIGH = 1 << 20;
   // Cluster radius in world space for member centroid bias (D-01/D-02).
   // Tune at the founder visual checkpoint alongside SETTLE_BUDGET_MS.
@@ -241,27 +284,20 @@ export function seedNodePositions(allNodes, brainVol) {
   for (const n of allNodes) nodeMap.set(n.id, n);
 
   /**
-   * Place node n at a deterministic, continuous, in-hull point.
-   * All randomness from _hashIndex(hashBase + attempt, ...) — no Math.random.
-   * On persistent miss (8 attempts outside hull), falls back to the plain
-   * voxel centre (guaranteed occupied by construction of the occupied[] list).
+   * Place node n at a deterministic, CONTINUOUS, in-hull point via the Halton
+   * low-discrepancy sampler (no voxel-centre snap → no lattice, D-04). All
+   * randomness from halton(index, base) — no Math.random (D-08). On the rare
+   * persistent miss, falls back to a plain occupied voxel centre (guaranteed
+   * in-hull by construction of the occupied[] list).
    */
   function placeInHull(n, hashBase) {
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const tryKey = hashBase + attempt;
-      const [lx, ly, lz] = occupied[_hashIndex(tryKey, occupied.length)];
-      // Continuous full-cell jitter: spans the full inter-voxel cell (±cellHalf)
-      const jx = (_hashIndex(tryKey * 3 + 0, HIGH) / HIGH - 0.5) * 2 * cellHalf;
-      const jy = (_hashIndex(tryKey * 3 + 1, HIGH) / HIGH - 0.5) * 2 * cellHalf;
-      const jz = (_hashIndex(tryKey * 3 + 2, HIGH) / HIGH - 0.5) * 2 * cellHalf;
-      const cx = lx + jx, cy = ly + jy, cz = lz + jz;
-      if (brainOccupied(brainVol, cx, cy, cz)) {
-        v.set(cx, cy, cz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
-        n.x = v.x; n.y = v.y; n.z = v.z;
-        return;
-      }
+    const local = sampleInHull(brainVol, (hashBase + 1) * SAMPLE_TRIES);
+    if (local) {
+      v.set(local[0], local[1], local[2]).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
+      n.x = v.x; n.y = v.y; n.z = v.z;
+      return;
     }
-    // Fallback: plain voxel centre (always occupied by construction)
+    // Fallback (rare): plain voxel centre (always occupied by construction)
     const [lx, ly, lz] = occupied[_hashIndex(hashBase, occupied.length)];
     v.set(lx, ly, lz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
     n.x = v.x; n.y = v.y; n.z = v.z;
@@ -350,16 +386,16 @@ function buildHazeLayer(ctx) {
 
   const { brainVol } = ctx;
 
-  // ── Build occupied voxel list (same pattern as seedNodePositions) ────────
+  // ── Build occupied voxel list (kept only as the rare-miss fallback) ──────
+  // Positions are generated by the Halton sampleInHull sampler; this list is
+  // a guaranteed-in-hull fallback for the (rare) all-rejected case.
   let occupied = null;
   let rotMat   = null;
-  let cellHalf = null; // full-cell jitter half-extent in local [-1,1] space (1/R)
   if (brainVol) {
     const euler = new THREE.Euler(HULL_ROT_X, HULL_ROT_Y, HULL_ROT_Z);
     rotMat = new THREE.Matrix4().makeRotationFromEuler(euler);
     const R    = brainVol.res;
     const bits = brainVol.bits;
-    cellHalf   = 1 / R; // spans the full inter-voxel cell → continuous de-lattice (D-04)
     const occ  = [];
     for (let iz = 0; iz < R; iz++) {
       for (let iy = 0; iy < R; iy++) {
@@ -415,34 +451,21 @@ function buildHazeLayer(ctx) {
   for (let i = 0; i < hazeCount; i++) {
     const node = hazeNodes[i];
 
-    // ── Position: deterministic CONTINUOUS scatter inside brain volume ───
-    // Full-cell jitter (±cellHalf in local [-1,1] space) spans the entire
-    // inter-voxel cell so the haze cloud does NOT snap to voxel centres —
-    // the same de-lattice as seedNodePositions/placeInHull (D-04). The old
-    // ±4-world-unit jitter was far smaller than the world voxel spacing
-    // ((2/R)·BRAIN_SCALE ≈ 15–20u) and left the visible lattice the founder
-    // reported. Validate in-hull via brainOccupied; fall back to the plain
-    // voxel centre on persistent miss. All randomness via _hashIndex (D-08).
+    // ── Position: continuous Halton scatter inside brain volume (D-04) ───
+    // Same primitive as seedNodePositions/placeInHull: a Halton low-discrepancy
+    // point + brainOccupied rejection — NO voxel-centre snap, so the haze cloud
+    // (the bulk of a large brain) has no lattice at any hull rotation. The index
+    // window is offset by HAZE_INDEX_OFFSET so the haze sequence is disjoint
+    // from the schema/member sequence. Deterministic (D-08); no Math.random.
     if (occupied && rotMat) {
-      const HIGH = 1 << 20;
-      let placed = false;
-      for (let attempt = 0; attempt < 8 && !placed; attempt++) {
-        const key = i * 3 + attempt;
-        const [lx, ly, lz] = occupied[_hashIndex(i + attempt, occupied.length)];
-        const cx = lx + (_hashIndex(key * 3 + 0, HIGH) / HIGH - 0.5) * 2 * cellHalf;
-        const cy = ly + (_hashIndex(key * 3 + 1, HIGH) / HIGH - 0.5) * 2 * cellHalf;
-        const cz = lz + (_hashIndex(key * 3 + 2, HIGH) / HIGH - 0.5) * 2 * cellHalf;
-        if (brainOccupied(brainVol, cx, cy, cz)) {
-          tmpV.set(cx, cy, cz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
-          dummy.position.set(tmpV.x, tmpV.y, tmpV.z);
-          placed = true;
-        }
-      }
-      if (!placed) {
+      const local = sampleInHull(brainVol, HAZE_INDEX_OFFSET + (i + 1) * SAMPLE_TRIES);
+      if (local) {
+        tmpV.set(local[0], local[1], local[2]).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
+      } else {
         const [lx, ly, lz] = occupied[_hashIndex(i, occupied.length)];
         tmpV.set(lx, ly, lz).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
-        dummy.position.set(tmpV.x, tmpV.y, tmpV.z);
       }
+      dummy.position.set(tmpV.x, tmpV.y, tmpV.z);
       // Store position on node object so raycaster and trace can read it
       node.x = dummy.position.x;
       node.y = dummy.position.y;

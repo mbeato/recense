@@ -209,13 +209,27 @@ describe('viz-layout-guards', () => {
 
   });
 
-  // ── 6. buildHazeLayer scatter — full-cell de-lattice (D-04, gap fix) ──────
-  // The haze InstancedMesh renders the BULK of a large brain. Its scatter must
-  // span the full inter-voxel cell (±cellHalf) like seedNodePositions/placeInHull,
-  // NOT the old ±4-world-unit jitter that left a visible lattice. This guard
-  // exists because 53-01 de-latticed seedNodePositions but missed this second
-  // placement path — the actual source of the gridlines the founder reported.
-  describe('buildHazeLayer scatter — full-cell continuous de-lattice (D-04)', () => {
+  // ── 6. Continuous Halton de-lattice — both placement paths (D-04, gap fix) ─
+  // Root cause of the persistent (then diagonal) lattice: sampling positions
+  // FROM the voxel grid (voxel-centre + jitter) inherits the grid's periodicity
+  // at any hull rotation. The fix samples CONTINUOUS Halton low-discrepancy
+  // points and rejects against brainOccupied — in BOTH seedNodePositions/
+  // placeInHull and buildHazeLayer (the bulk haze cloud). 53-01 missed the haze
+  // path entirely; these guards lock the continuous primitive into both.
+  describe('continuous Halton sampling — no voxel-grid position generator (D-04)', () => {
+
+    it('defines a module-scope halton() radical-inverse sampler', () => {
+      expect(GRAPH).toMatch(/function halton\(/);
+    });
+
+    it('defines sampleInHull() = Halton sequence + brainOccupied rejection', () => {
+      const start = GRAPH.indexOf('function sampleInHull(');
+      const end   = GRAPH.indexOf('\n}', start);
+      const body  = start >= 0 ? GRAPH.slice(start, end + 2) : '';
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(body).toContain('halton(');
+      expect(body).toContain('brainOccupied(brainVol');
+    });
 
     const hazeStart = GRAPH.indexOf('function buildHazeLayer(');
     const hazeClose = GRAPH.indexOf('\n}', hazeStart);
@@ -223,31 +237,31 @@ describe('viz-layout-guards', () => {
       ? GRAPH.slice(hazeStart, hazeClose + 2)
       : '';
 
-    it('buildHazeLayer() body is present in graph.js', () => {
+    it('buildHazeLayer() positions haze via sampleInHull (continuous, not voxel-snap)', () => {
       expect(hazeStart).toBeGreaterThanOrEqual(0);
-      expect(hazeBody.length).toBeGreaterThan(0);
+      expect(hazeBody).toContain('sampleInHull(brainVol');
     });
 
-    it('uses cellHalf full-cell jitter (continuous, spans the inter-voxel cell)', () => {
-      expect(hazeBody).toContain('cellHalf');
-    });
-
-    it('validates haze points in-hull via brainOccupied (no out-of-hull bleed)', () => {
-      expect(hazeBody).toContain('brainOccupied(brainVol');
-    });
-
-    it('does NOT use the old ±4-unit ") * 8" lattice jitter (regression guard)', () => {
+    it('buildHazeLayer() does NOT use the old ±4-unit ") * 8" lattice jitter (regression guard)', () => {
       // The old snap-to-voxel jitter was `(... - 0.5) * 8` (±4 world units),
       // far smaller than the voxel spacing → visible lattice. Must be gone.
       expect(hazeBody).not.toMatch(/-\s*0\.5\)\s*\*\s*8/);
     });
 
-    it('contains no Math.random in the brainVol scatter (D-08 determinism)', () => {
-      // The null-brainVol fallback (no occupied/rotMat) may retain trig scatter,
-      // but the brainVol path must be deterministic. Slice to the else-fallback.
+    it('haze uses a disjoint Halton window (HAZE_INDEX_OFFSET) from the seed sequence', () => {
+      expect(hazeBody).toContain('HAZE_INDEX_OFFSET');
+    });
+
+    it('buildHazeLayer brainVol scatter contains no Math.random (D-08 determinism)', () => {
+      // The null-brainVol fallback may retain trig scatter; the brainVol path
+      // must be deterministic. Slice to the else-fallback boundary.
       const elseIdx = hazeBody.indexOf('} else {');
       const brainVolHaze = elseIdx >= 0 ? hazeBody.slice(0, elseIdx) : hazeBody;
       expect(brainVolHaze).not.toContain('Math.random');
+    });
+
+    it('placeInHull (seed path) also samples via the shared sampleInHull primitive', () => {
+      expect(GRAPH).toContain('sampleInHull(brainVol');
     });
 
   });
