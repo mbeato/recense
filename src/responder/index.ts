@@ -131,7 +131,7 @@ export class HybridResponder {
    *    Falls back to raw question on error — rewrite failure never blocks the answer.
    *    ONLY in respond(): SessionStart/retrieveCueless is LLM-free and never calls respond().
    *  3. Online embed: provider.embed([queryForEmbed]).
-   *  4. Facts-first: retrieval.retrieveRanked(cueVec, k, floor) — pure cosine+temporal only (no BM25/hybrid).
+   *  4. Facts-first: retrieval.retrieveRanked(cueVec, k, floor, queryForEmbed) — BM25+dense hybrid via bm25FusionWeight (w=0 = pure cosine; Plan 02 null result ships at w=0).
    *     B1 fix: retrieveRanked uses top-k + floor (0.3) instead of the single-hit 0.7 bar.
    *     Question-form cues ("Where does Ana live?") score 0.4–0.6 against stored facts —
    *     structurally below retrieve()'s deletedSimilarityThreshold (0.7) but above the 0.3 floor.
@@ -183,15 +183,19 @@ export class HybridResponder {
       // returns tombstoned=0 nodes only, and entity invalidation excludes entities whose
       // supporting facts are all tombstoned (previously guarded by T-07-10 via retrieve()).
       //
-      // LEVER 1 (BM25/hybrid) intentionally absent on the answer path (17-08 GAP-03):
-      //   - retrieve_miss=0 in attribution: BM25 recovered zero gold nodes that cosine missed.
-      //   - 9ea5eabc regression: BM25 over-indexed stale "Hawaii" trip over current "Paris" — removed at root.
-      //   - queryForEmbed continues to feed embed() above (LEVER 3 cosine-asymmetry fix).
-      //   - node_fts + hybridTopk + ftsQueryFromText + rrfFuse infra retained; SCHEMA_VERSION=6 unchanged.
+      // LEVER 1 (BM25+dense hybrid) is ON via config.bm25FusionWeight (w=0 = instant pure-cosine fallback).
+      //   - Plan 02 held-out LoCoMo sweep: w* = 0 (null result — no positive weight passes the D-04
+      //     per-category no-regression gate on TUNE R@5). hybrid(0) ≡ cosine byte-identical (Plan 01
+      //     isolation test). Shipped at w=0 — mechanism live, weight neutral.
+      //   - The D-04 per-category gate (Plan 02, held-out LoCoMo) is the structural regression guard
+      //     against the 9ea5eabc stale-fact failure (BM25 over-indexed "Hawaii" over current "Paris").
+      //   - queryForEmbed (user-derived, possibly LEVER-3-rewritten) satisfies T-04-03-I; never LLM output.
+      //   - SCHEMA_VERSION=6 unchanged; net-zero new deps.
       const ranked = this.retrieval.retrieveRanked(
         cueVec,
         this.config.rankedRetrievalK,
         this.config.rankedRetrievalFloor,
+        queryForEmbed,
       );
       if (ranked.length > 0) {
         // Build grounded compose prompt — facts as data content (T-04-03-I)
