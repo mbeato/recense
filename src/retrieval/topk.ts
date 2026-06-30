@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { effectiveStrength } from '../strength/decay';
+import { loadSimdKernel, partialSelectTopK, type SimdKernel } from './simd-kernel';
 
 /**
  * Phase 41 (PERF-01, D-04/D-06): the persisted exact vector index.
@@ -289,6 +290,12 @@ export class CandidateRetriever {
   // authoritative — graph is source of truth).
   private readonly index: LoadedIndex | null;
 
+  // Phase 51 (SCALE-03): WASM SIMD kernel handle. Loaded ONCE in the constructor alongside
+  // `this.index` (corpus pre-loaded into WASM memory at construction, not per-query).
+  // Null when: index is absent, dim%4≠0, SIMD unsupported, or any instantiation fault.
+  // A null kernel falls back to the verbatim scalar dot loop in topkIndexed (D-08).
+  private readonly kernel: SimdKernel | null;
+
   constructor(db: Database.Database, opts?: { indexPath?: string }) {
     // Select only nodes that have been embedded AND are not tombstoned (T-02-STALE)
     this.stmtSelectEmbedded = db.prepare(
@@ -324,6 +331,26 @@ export class CandidateRetriever {
       }
     } else {
       this.index = null;
+    }
+
+    // Phase 51 (SCALE-03): load the WASM SIMD kernel once alongside the index. The corpus
+    // is pre-loaded into WASM memory here — not per-query. Returns null (never throws) when
+    // the index is absent, dim%4≠0, SIMD is unsupported on this runtime, or any instantiation
+    // fault (D-08 — mirrors the loadVectorIndex silent-fallback pattern above).
+    if (this.index !== null) {
+      this.kernel = loadSimdKernel(
+        this.index.data,
+        this.index.norms,
+        this.index.count,
+        this.index.dim,
+      );
+      if (this.kernel === null) {
+        process.stderr.write(
+          '[recense] WASM SIMD kernel unavailable — using scalar exact scan\n',
+        );
+      }
+    } else {
+      this.kernel = null;
     }
   }
 
@@ -366,13 +393,23 @@ export class CandidateRetriever {
   }
 
   /**
-   * Phase 41: index-backed exact top-k over the persisted flat buffer.
+   * Phase 41/51: index-backed exact top-k over the persisted flat buffer.
    *
-   * Computes `dot / (||q|| · ||row||)` against the contiguous `Float32Array` using the
-   * precomputed row norms — the identical cosine formula as cosineSimF32, so the returned
-   * scores are byte-equivalent (PERF-03 by construction). Preserves the L-2 dim-mismatch
-   * skip: when the query length differs from the indexed dim, returns [] (a cosine across
-   * different dims is meaningless — matches the brute-force scan's skip).
+   * When the WASM SIMD kernel is available (`this.kernel !== null`), the score for each
+   * corpus row is computed via f32x4 horizontal-sum in the kernel (`scanCosine`). The
+   * fused reciprocal-norm cosine is set-identical to the scalar formula (D-07 recall@10=
+   * 1.000 bar). Sub-ULP score differences from f32x4 horizontal-sum reordering vs scalar
+   * sequential summation are EXPECTED and accepted — the set-identity bar, not bitwise (D-07).
+   *
+   * When the kernel is unavailable (`this.kernel === null` — SIMD not supported on this
+   * runtime, dim%4≠0, or any instantiation fault) the VERBATIM scalar dot loop runs
+   * unchanged (D-08 silent-fallback contract: never throws, never breaks recall).
+   *
+   * In both paths, top-k selection uses `partialSelectTopK` (D-02: set-identical to
+   * `.sort().slice(k)`, O(n log k) via a fixed-size min-heap).
+   *
+   * Preserves the L-2 dim-mismatch skip: when the query length differs from the indexed
+   * dim, returns [] (a cosine across different dims is meaningless).
    *
    * Only called when `this.index !== null`.
    */
@@ -382,23 +419,33 @@ export class CandidateRetriever {
     // whole buffer is uniform-dim, so a query-dim mismatch means nothing scores.
     if (queryVec.length !== idx.dim) return [];
 
-    // Precompute the query norm once.
+    // Precompute the query norm once (used by both the kernel and the scalar fallback).
     let qNorm = 0;
     for (let j = 0; j < idx.dim; j++) qNorm += queryVec[j]! * queryVec[j]!;
     qNorm = Math.sqrt(qNorm);
 
+    if (this.kernel !== null) {
+      // WASM SIMD path (Phase 51, SCALE-03 / D-05): kernel computes all cosine scores in
+      // one SIMD pass. Returns a stable Float32Array copy (shared WASM score region is
+      // reused next call). partialSelectTopK then selects top-k via a fixed-size min-heap.
+      const scores = this.kernel.scanCosine(queryVec, qNorm);
+      return partialSelectTopK(scores, idx.ids, k);
+    }
+
+    // Scalar fallback path (D-08): verbatim dot loop + same denom guard as cosineSimF32.
+    // Runs when the kernel is null (SIMD unavailable / dim%4≠0 / instantiation fault).
+    // This body is UNCHANGED from the original topkIndexed — only the selection upgrades.
     const { dim, count, data, norms, ids } = idx;
-    const scored: Array<{ id: string; score: number }> = new Array(count);
+    const scores = new Float32Array(count);
     for (let i = 0; i < count; i++) {
       const base = i * dim;
       let dot = 0;
       for (let j = 0; j < dim; j++) dot += queryVec[j]! * data[base + j]!;
       const denom = qNorm * norms[i]!;
       // Same denom guard as cosineSimF32 (0 → score 0, never NaN/Infinity).
-      scored[i] = { id: ids[i]!, score: denom === 0 ? 0 : dot / denom };
+      scores[i] = denom === 0 ? 0 : dot / denom;
     }
-
-    return scored.sort((a, b) => b.score - a.score).slice(0, k);
+    return partialSelectTopK(scores, ids, k);
   }
 
   /**
