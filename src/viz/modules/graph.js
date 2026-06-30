@@ -185,21 +185,28 @@ function halton(index, base) {
   return result;
 }
 
-// Max rejection attempts before falling back. The brain hull fills a large
-// fraction of its bounding cube, so acceptance is high and the fallback is rare.
-const SAMPLE_TRIES = 48;
-// Disjoint Halton windows keep the haze cloud's sequence separate from the
-// schema/member sequence so the two layers don't land on coincident points.
+// Per-pass safety cap on the Halton walk; acceptance is high, so this only
+// bounds the loop if a hull is pathologically sparse.
+const SAMPLE_GUARD = 8192;
+// Starting index for the haze stream — offset far from the seed stream (which
+// starts at 1) so the two contiguous Halton walks never land on the same point.
 const HAZE_INDEX_OFFSET = 1000003;
 
 /**
- * Sample a CONTINUOUS point inside the hull in local [-1,1] space via Halton
- * (bases 2/3/5) + brainOccupied rejection. Returns [x,y,z] or null if every
- * attempt landed outside the hull. `baseIdx` seeds the per-node Halton window.
+ * Sample a CONTINUOUS point inside the hull in local [-1,1] space by walking
+ * the Halton sequence (bases 2/3/5) point-by-point with CONTIGUOUS indices and
+ * keeping the first point inside the hull (brainOccupied rejection).
+ *
+ * `counter` is a `{ v: number }` advanced in place, so the whole pass draws from
+ * ONE contiguous low-discrepancy stream. Contiguous indices are essential:
+ * strided indices (e.g. multiples of 48 = 2^4·3) hold the low Halton digits
+ * constant and collapse a dimension into a slab → the banding this replaces.
+ * Deterministic because the counter starts fixed and placement order is fixed
+ * (D-08). Returns [x,y,z] local, or null if the guard cap is hit.
  */
-function sampleInHull(brainVol, baseIdx) {
-  for (let a = 0; a < SAMPLE_TRIES; a++) {
-    const idx = baseIdx + a;
+function sampleInHull(brainVol, counter) {
+  for (let guard = 0; guard < SAMPLE_GUARD; guard++) {
+    const idx = counter.v++;
     const x = halton(idx, 2) * 2 - 1;
     const y = halton(idx, 3) * 2 - 1;
     const z = halton(idx, 5) * 2 - 1;
@@ -290,8 +297,11 @@ export function seedNodePositions(allNodes, brainVol) {
    * persistent miss, falls back to a plain occupied voxel centre (guaranteed
    * in-hull by construction of the occupied[] list).
    */
+  // Single contiguous Halton stream for this whole seeding pass (D-08).
+  const sampleCounter = { v: 1 };
+
   function placeInHull(n, hashBase) {
-    const local = sampleInHull(brainVol, (hashBase + 1) * SAMPLE_TRIES);
+    const local = sampleInHull(brainVol, sampleCounter);
     if (local) {
       v.set(local[0], local[1], local[2]).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
       n.x = v.x; n.y = v.y; n.z = v.z;
@@ -448,6 +458,9 @@ function buildHazeLayer(ctx) {
   const hazeInstanceMap = new Map(); // instanceId (number) → node
   const hazeNodeIdMap   = new Map(); // nodeId (string) → instanceId (number)
 
+  // Single contiguous Halton stream for the haze cloud (D-08 deterministic).
+  const hazeSampleCounter = { v: HAZE_INDEX_OFFSET };
+
   for (let i = 0; i < hazeCount; i++) {
     const node = hazeNodes[i];
 
@@ -458,7 +471,7 @@ function buildHazeLayer(ctx) {
     // window is offset by HAZE_INDEX_OFFSET so the haze sequence is disjoint
     // from the schema/member sequence. Deterministic (D-08); no Math.random.
     if (occupied && rotMat) {
-      const local = sampleInHull(brainVol, HAZE_INDEX_OFFSET + (i + 1) * SAMPLE_TRIES);
+      const local = sampleInHull(brainVol, hazeSampleCounter);
       if (local) {
         tmpV.set(local[0], local[1], local[2]).applyMatrix4(rotMat).multiplyScalar(BRAIN_SCALE);
       } else {
