@@ -240,7 +240,7 @@ Goal: make recense's belief-correction and retrieval work on messy real-world da
 | 47. Hybrid Retrieval Recall | v9.0 | 3/3 | Complete   | 2026-06-30 |
 | 48. Correctness Hardening | v9.0 | 2/2 | Complete    | 2026-06-28 |
 | 49. Scale + Data-Model Spike | v9.0 | 3/3 | Complete   | 2026-06-28 |
-| 50. Verification + Regression Gates | v9.0 | 0/0 | Not started | — |
+| 50. Verification + Regression Gates | v9.0 | 2/4 | In Progress|  |
 | 51. WASM SIMD Exact-Scan Kernel | v9.0 | 0/0 | Not started | — |
 
 ### Phase 28: Schema-Anchored Corpus
@@ -847,8 +847,8 @@ recense moves from "correctness on clean cases" to "correctness on messy real-wo
   3. Baseline is intentionally re-set to v9.0-final figures; the full eval suite is re-run with documented before/after deltas; Phase 46 judge-fires on real KU contradictions are proved via escalation counters; `docs/evals.md` is updated with new numbers and judge-validation evidence — GATE-03
 
 **Plans**: 4 plans
-- [ ] 50-01-PLAN.md — Cheap LLM-free deterministic gate runner (R@K, latency, token-structural, binary judge-fire) + floor/ceiling baseline + npm scripts
-- [ ] 50-02-PLAN.md — Opt-in paid accuracy-tier gate (gate:accuracy: LoCoMo-J + EVAL-02 + KU), key-guarded, never in the cheap path
+- [x] 50-01-PLAN.md — Cheap LLM-free deterministic gate runner (R@K, latency, token-structural, binary judge-fire) + floor/ceiling baseline + npm scripts
+- [x] 50-02-PLAN.md — Opt-in paid accuracy-tier gate (gate:accuracy: LoCoMo-J + EVAL-02 + KU), key-guarded, never in the cheap path
 - [ ] 50-03-PLAN.md — Record fresh v9.0-final baseline + fresh EVAL-02 n=13 (discharges RECON-04)
 - [ ] 50-04-PLAN.md — docs/evals.md v9.0-final record: honest provenance, 368-contradicts judge evidence, before/after deltas, deferred-check discharge
 
