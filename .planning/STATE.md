@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v9.0
 milestone_name: Memory Quality
-status: ready_to_plan
-stopped_at: Phase 51 complete (5/5) — ready to discuss Phase 52
-last_updated: 2026-06-30T22:29:35.886Z
-last_activity: 2026-06-30 -- Phase 51 planning complete
+status: executing
+stopped_at: Completed 55-01-PLAN.md
+last_updated: "2026-07-01T00:58:59.353Z"
+last_activity: 2026-07-01
 progress:
   total_phases: 31
-  completed_phases: 26
-  total_plans: 99
-  completed_plans: 119
-  percent: 84
+  completed_phases: 27
+  total_plans: 101
+  completed_plans: 100
+  percent: 87
 ---
 
 # Project State
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v9.0 Memory Quality opened)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Phase 52 — brain viz honest traces
+**Current focus:** Phase 55 — honest-1-hop-pathways-on-ambient-recall
 
 **v9.0 Key research grounding (June-2026 deep-research pass):**
 
@@ -33,10 +33,10 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v9.0 Memory Quality opened)
 
 ## Current Position
 
-Phase: 52
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-30
+Phase: 55 (honest-1-hop-pathways-on-ambient-recall) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-07-01
 
 ```
 v9.0 Progress ░░░░░░░░░░ 0%
@@ -126,7 +126,7 @@ v9.0 Progress ░░░░░░░░░░ 0%
 
 ### Key v9.0 Decisions (to record as made during phases)
 
-(Empty — decisions will be logged here as each phase executes.)
+- **Phase 55-01 (2026-06-30):** `retrieveRanked` ambient trace enrichment — `AMBIENT_HOP_TOPN=6` kept as a private module-level constant (D-01/D-02, not exported; test guards assert the literal per plan discretion); kind allowlist stays exactly `kind==='relation'` (D-05/D-05a default lean, `links_to`/`extends` included); liveness filter applied before weight-sort/truncate inside a new `buildAmbientTracePayload` helper (D-07, closes the Pitfall 2 displacement bug class); no batching of per-seed edge reads (RESEARCH Flag 3 — naive loop is strictly less work than the existing `retrieveCueless` pattern on the same hot-path budget).
 
 ## Deferred Items
 
@@ -145,8 +145,8 @@ Carried from v7.0/v8.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-30T22:22:08.363Z
-Stopped at: Phase 55 context gathered
+Last session: 2026-07-01T00:58:59.345Z
+Stopped at: Completed 55-01-PLAN.md
 Next: Phase 47 (Hybrid Retrieval Recall) — now unblocked (Phase 46 landed). EVAL-02 clean-case no-regression + the pristine 18/18 KU re-run deferred into Phase 50.
 
 ## Operator Next Steps

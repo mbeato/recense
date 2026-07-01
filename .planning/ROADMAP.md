@@ -1049,11 +1049,21 @@ Plan-04-style machine guards (assert ambient hops are real edges, score:null, no
 **Depends on**: Phase 52 (honest-traces invariant — must not regress), Phase 54 (viz layers).
 **Requirements**: SC3 honesty invariant (no fabricated edges) preserved and machine-verified.
 **Success Criteria** (what must be TRUE):
+
   1. A per-prompt recall lights real 1-hop pathways in the viz (not just seed nodes).
   2. Emitted hops are real graph out-edges with `score: null`; no fabricated edge or magnitude (SC3).
   3. Phase 52 honesty guards + Phase 54 layer guards still pass.
 
-**Plans:** not yet planned — run `/gsd-plan-phase 55`.
+**Plans:** 1/2 plans executed
+
+Plans:
+**Wave 1**
+
+- [x] 55-01-PLAN.md — Honest ambient 1-hop pathway emit (both retrieveRanked sites) + SC2/SC3 machine guards
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 55-02-PLAN.md — Founder visual verification of ambient pathways (SC1) + AMBIENT_HOP_TOPN tuning
 
 ## Backlog
 
