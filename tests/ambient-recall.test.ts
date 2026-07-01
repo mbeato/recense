@@ -151,12 +151,15 @@ describe('ambientRecall', () => {
     await ambientRecall(db, PROMPT, provider, config(), clock);
     expect(countTraceRows(db)).toBe(0);
 
-    // Flag on → exactly one row, seeds contain the node id, hops = [].
+    // Flag on → exactly one row, seeds contain the node id, hops = [] (no out-edges
+    // exist for the seeded node in this fixture, so honest 1-hop hops is empty).
+    // Phase 55 (D-06): seeds are now {node_id, score} objects, not bare strings.
     setFlag(db, '1');
     await ambientRecall(db, PROMPT, provider, config(), clock);
     expect(countTraceRows(db)).toBe(1);
     const trace = getLatestTraceRow(db);
-    expect(JSON.parse(trace.seeds) as string[]).toContain(SEEDED_NODE_ID);
+    const seeds = JSON.parse(trace.seeds) as Array<{ node_id: string; score: number }>;
+    expect(seeds.map(s => s.node_id)).toContain(SEEDED_NODE_ID);
     expect(JSON.parse(trace.hops)).toEqual([]);
   });
 

@@ -347,4 +347,97 @@ describe('engine: retrieveRanked vizFloor lights genuinely-retrieved nodes below
     expect(results).toHaveLength(0);
     expect(sink.traces).toHaveLength(0);
   });
+
+  // ── Phase 55 SC2/SC3 machine guards (honesty regression lock) ───────────────
+  // Real-edge cross-check, kind allowlist (D-05), liveness (D-07, Pitfall 2),
+  // top-N cap (D-01/D-02), and the seed-real/hop-null score split (D-06/WR-02).
+
+  it('SC2/SC3 honesty guard: real-edge cross-check, kind allowlist, liveness, top-N cap, score split', () => {
+    const { clock, store, retriever, strength, gate } = makeRetrievalDeps(db);
+
+    // Seed node with an exact-match embedding so it retrieves as the sole candidate.
+    store.upsertNode({ id: 'seed', type: 'fact', value: 'seed fact', origin: 'observed', s: 0.8 });
+    store.setEmbedding('seed', makeVec(0));
+
+    // 8 live kind='relation' out-edges, deterministic descending weights 0.90 → 0.55.
+    const relDsts = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8'];
+    relDsts.forEach((id, i) => {
+      store.upsertNode({ id, type: 'fact', value: `relation target ${id}`, origin: 'observed', s: 0.5 });
+      store.upsertEdge({ src: 'seed', dst: id, rel: 'related', w: 0.9 - i * 0.05, kind: 'relation' });
+    });
+
+    // Non-relation edges at HIGHER weight than any relation edge — must never leak (D-05).
+    store.upsertNode({ id: 'abs1', type: 'schema', value: 'abstract target', origin: 'observed', s: 0.5 });
+    store.upsertEdge({ src: 'seed', dst: 'abs1', rel: 'abstracts', w: 0.99, kind: 'abstracts' });
+    store.upsertNode({ id: 'doc1', type: 'doc', value: 'doc target', origin: 'observed', s: 0.5 });
+    store.upsertEdge({ src: 'seed', dst: 'doc1', rel: 'doc_link', w: 0.98, kind: 'doc_link' });
+
+    // Tombstoned relation edge at the HIGHEST weight — must be excluded WITHOUT
+    // displacing a live hop from a top-N slot (D-07, Pitfall 2: filter-before-truncate).
+    store.upsertNode({ id: 'dead1', type: 'fact', value: 'dead target', origin: 'observed', s: 0.5 });
+    store.upsertEdge({ src: 'seed', dst: 'dead1', rel: 'related', w: 0.99, kind: 'relation' });
+    store.tombstone('dead1');
+
+    const sink = new MockActivationTraceSink();
+    const engine = new RetrievalEngine(db, clock, BASE_CONFIG, retriever, store, strength, gate, sink);
+
+    const results = engine.retrieveRanked(makeVec(0), 5, 0.0);
+
+    expect(results.map(r => r.id)).toEqual(['seed']);
+    expect(sink.traces).toHaveLength(1);
+    const trace = sink.traces[0]!;
+
+    // Seed shape + real score (D-06) — never null, never fabricated.
+    expect(trace.seeds).toHaveLength(1);
+    const seedObj = trace.seeds[0] as any;
+    expect(seedObj.node_id).toBe('seed');
+    expect(typeof seedObj.score).toBe('number');
+    expect(seedObj.score).not.toBeNull();
+
+    // Real-edge cross-check (SC3): every emitted hop is an actual out-edge of the seed.
+    const realOutEdgeDsts = new Set(store.getOutEdgesWithRel('seed').map(e => e.dst));
+    trace.hops.forEach(h => expect(realOutEdgeDsts.has(h.node_id)).toBe(true));
+
+    // Kind-allowlist guard (D-05): only kind='relation' dsts ever appear as hops.
+    expect(trace.hops.some(h => h.node_id === 'abs1')).toBe(false);
+    expect(trace.hops.some(h => h.node_id === 'doc1')).toBe(false);
+
+    // Liveness guard (D-07): tombstoned dst absent AND live-hop count not reduced
+    // by the dead high-weight edge displacing a live one from the top-N slots.
+    expect(trace.hops.some(h => h.node_id === 'dead1')).toBe(false);
+
+    // Top-N cap guard (D-01/D-02): 8 live relation edges > AMBIENT_HOP_TOPN (6) —
+    // asserted against the literal engine default (not exported; see plan discretion).
+    expect(trace.hops.length).toBe(6);
+    // Confirms weight-sort correctness too: top-6 by weight among the 8 live edges
+    // are r1..r6 (0.90..0.65); r7/r8 (0.60/0.55) are truncated, not the tombstoned dead1.
+    expect(trace.hops.map(h => h.node_id).sort()).toEqual(['r1', 'r2', 'r3', 'r4', 'r5', 'r6']);
+
+    // Score-honesty split (D-06/WR-02): every hop is score:null/hop:1 (rank-only,
+    // no fabricated magnitude), while the seed above carries the real measured score.
+    trace.hops.forEach(h => {
+      expect(h.score).toBeNull();
+      expect(h.hop).toBe(1);
+    });
+  });
+
+  it('D-03 tiebreak: equal-weight relation edges resolve deterministically (dst id ascending)', () => {
+    const { clock, store, retriever, strength, gate } = makeRetrievalDeps(db);
+    store.upsertNode({ id: 'seed2', type: 'fact', value: 'seed fact 2', origin: 'observed', s: 0.8 });
+    store.setEmbedding('seed2', makeVec(0));
+
+    // 3 relation edges, identical weight, dst ids intentionally out of alpha order.
+    ['zzz', 'aaa', 'mmm'].forEach(id => {
+      store.upsertNode({ id, type: 'fact', value: `tie target ${id}`, origin: 'observed', s: 0.5 });
+      store.upsertEdge({ src: 'seed2', dst: id, rel: 'related', w: 0.5, kind: 'relation' });
+    });
+
+    const sink = new MockActivationTraceSink();
+    const engine = new RetrievalEngine(db, clock, BASE_CONFIG, retriever, store, strength, gate, sink);
+    engine.retrieveRanked(makeVec(0), 5, 0.0);
+
+    expect(sink.traces).toHaveLength(1);
+    const hopIds = sink.traces[0]!.hops.map(h => h.node_id);
+    expect(hopIds).toEqual(['aaa', 'mmm', 'zzz']);
+  });
 });
