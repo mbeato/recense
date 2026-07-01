@@ -151,3 +151,49 @@ describe('SPONT-06: spontaneous hop honesty guard (real edge cross-check)', () =
     }
   });
 });
+
+describe('SPONT-06: no activation_trace write / no new Database() (D-10/D-11)', () => {
+  it('the spontaneous emit-payload construction (pickSpontaneousSeeds + buildHonestOneHopTrace) writes nothing', () => {
+    const { db, store } = buildFixture();
+    try {
+      const before = db
+        .prepare('SELECT COUNT(*) AS c, COALESCE(MAX(id), 0) AS m FROM activation_trace')
+        .get() as { c: number; m: number };
+
+      const reader: HonestTraceReader = store;
+      const pool = ['seedA', 'seedB', 'seedC'];
+      const seeds = pickSpontaneousSeeds(pool, pool.length, makeSeededRng(7));
+      buildHonestOneHopTrace(seeds, reader, SPONT_HOP_TOPN);
+
+      const after = db
+        .prepare('SELECT COUNT(*) AS c, COALESCE(MAX(id), 0) AS m FROM activation_trace')
+        .get() as { c: number; m: number };
+
+      expect(after.c).toBe(before.c);
+      expect(after.m).toBe(before.m);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('static: the spontaneous emitter region in server.ts opens no new Database() and writes no activation_trace row', () => {
+    const src = readServer();
+    const startMarker = 'eligible-seed pool for the spontaneous idle emitter';
+    const endMarker = 'spontaneousInterval.unref();';
+    const start = src.indexOf(startMarker);
+    const end = src.indexOf(endMarker);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const block = stripComments(src.slice(start, end + endMarker.length));
+
+    // No second writer-capable handle and no write statement of any kind in this region —
+    // the spontaneous path reads via prepared SELECTs only (D-11 replay-ring exclusion is
+    // automatic because nothing is ever written).
+    expect(block).not.toContain('new Database(');
+    expect(block).not.toContain('INSERT INTO activation_trace');
+    expect(block).not.toContain('.run(');
+    // Sanity: confirms the slice actually captured the real emitter body, not an empty match.
+    expect(block).toContain('pickSpontaneousSeeds');
+    expect(block).toContain('buildHonestOneHopTrace');
+  });
+});
