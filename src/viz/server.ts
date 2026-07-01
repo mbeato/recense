@@ -52,6 +52,8 @@ import {
   buildGeneratingEnvelope,
 } from '../adapter/gen-status';
 import type { PresetName, SettingsFile } from '../lib/config';
+import { PRED_SET } from '../model/typed-predicates';
+import { buildHonestOneHopTrace, type HonestTraceReader } from '../retrieval/honest-trace';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -65,6 +67,36 @@ const SEARCH_LIMIT = 20;  // BM25 result cap for /search?q= endpoint (T-19-03)
 const REPLAY_IDLE_GAP_MS = 5000;  // ms of silence before idle-replay activates (spec: 4000–6000)
 const REPLAY_CADENCE_MS  = 2500;  // ms between replay broadcasts (denser idle life — founder checkpoint)
 const REPLAY_HISTORY_N   = 40;    // max recent real rows in the server-side replay ring (deeper for variety)
+
+// Phase 56 spontaneous-emitter constants — server-authoritative, mirroring the REPLAY_*
+// precedent above. Keep in sync with constants.js. Reuses REPLAY_IDLE_GAP_MS as the shared
+// idle signal (D-01a) — no second idle constant.
+const SPONT_CADENCE_MS       = 2500;   // ms between spontaneous idle broadcasts
+const SPONT_SEED_COUNT       = 3;      // distinct live seeds sampled per tick (D-03)
+const SPONT_HOP_TOPN         = 6;      // per-seed honest-hop top-N (reuses AMBIENT_HOP_TOPN density)
+const SPONT_POOL_REFRESH_MS  = 60000;  // how often the eligible-seed pool is rebuilt
+
+/**
+ * Sample `count` DISTINCT ids uniformly at random from `pool` using the injected `rng`
+ * (Math.random in production, a seeded fn in tests). Returns fewer only when the pool is
+ * smaller than `count`. Pure / side-effect-free — exported for direct unit testing (D-03).
+ * Score is a fixed passthrough placeholder; the emitted hop scores are always null regardless.
+ */
+export function pickSpontaneousSeeds(
+  pool: string[],
+  count: number,
+  rng: () => number,
+): Array<{ node_id: string; score: number }> {
+  const n = Math.min(count, pool.length);
+  const shuffled = [...pool];
+  for (let i = 0; i < n; i++) {
+    const j = i + Math.floor(rng() * (shuffled.length - i));
+    const tmp = shuffled[i]!;
+    shuffled[i] = shuffled[j]!;
+    shuffled[j] = tmp;
+  }
+  return shuffled.slice(0, n).map(node_id => ({ node_id, score: 0 }));
+}
 
 // ---------------------------------------------------------------------------
 // POST /settings — key whitelist (T-44-15)
@@ -477,6 +509,29 @@ export function startVizServer(
     }
   }, REPLAY_CADENCE_MS);
   replayInterval.unref();
+
+  // Phase 56 (Plan 02): eligible-seed pool for the spontaneous idle emitter.
+  // Read-only: a single bounded DISTINCT SELECT over live nodes with at least one real
+  // PRED_SET semantic out-edge (T-56-04) — guarantees every sampled seed has ≥1 honest
+  // edge, so a tick never comes up empty (D-02). Cached and rebuilt lazily, at most once
+  // per SPONT_POOL_REFRESH_MS (not per tick).
+  const stmtEligibleSeeds = db.prepare(
+    `SELECT DISTINCT e.src AS src, e.rel AS rel
+     FROM edge e JOIN node n ON n.id = e.src
+     WHERE e.kind = 'relation' AND n.tombstoned = 0`
+  );
+  let spontaneousPool: string[] = [];
+  let poolBuiltAt = 0;
+  function refreshSpontaneousPool(): void {
+    const rows = stmtEligibleSeeds.all() as Array<{ src: string; rel: string }>;
+    const distinctSrc = new Set<string>();
+    for (const row of rows) {
+      if (PRED_SET.has(row.rel)) distinctSrc.add(row.src);
+    }
+    spontaneousPool = Array.from(distinctSrc);
+    poolBuiltAt = Date.now();
+  }
+  refreshSpontaneousPool();
 
   // ── spawnGenerateDoc: shell out to generate-doc CLI (T-27-11) ─────────────
   // The viz server's DB handle is READ-ONLY, so it cannot write doc nodes directly.
