@@ -21,7 +21,6 @@
 import { STLLoader } from '../vendor/STLLoader.js';
 import { UnrealBloomPass } from '../vendor/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from '../vendor/addons/postprocessing/OutputPass.js';
-import { HULL_POPOVER_RIM_SCALE } from './constants.js';
 
 // ── Fresnel vertex shader ──────────────────────────────────────────────────
 // Passes world-space view direction and transformed normal to the fragment stage.
@@ -67,14 +66,6 @@ const FRAGMENT_SHADER = /* glsl */`
 export function initEffects(ctx) {
   const { THREE, Graph, hullGroup, brainVol, registerTick, isIdle } = ctx;
 
-  // Collapsed tray popover (?shell=1) dims the hull rim so the shell doesn't crowd the
-  // frame and drown the faint ambient twinkle at popover scale (founder request). The
-  // expanded brain window keeps the full rim (scale 1.0). Values below are the base × scale.
-  const hullRimScale = new URLSearchParams(location.search).has('shell')
-    ? HULL_POPOVER_RIM_SCALE
-    : 1;
-  const HULL_RIM_BASE = 0.22 * hullRimScale;
-
   // ── Fresnel rim ShaderMaterial (D-02) ─────────────────────────────────────
   //
   // Key rendering properties:
@@ -91,7 +82,7 @@ export function initEffects(ctx) {
     uniforms: {
       rimColor:   { value: new THREE.Color(0x453d46) },  // rose-tinted charcoal — faint warm rim
       rimPower:   { value: 3.5 },                        // tighter rim falloff — edge light only
-      rimOpacity: { value: HULL_RIM_BASE },              // dimmed in the collapsed popover
+      rimOpacity: { value: 0.22 },
     },
     transparent: true,
     depthWrite: false,
@@ -177,13 +168,13 @@ export function initEffects(ctx) {
     if (!shimmerActive || !isIdle()) {
       // Restore the non-idle base on the idle→active transition so the hull
       // never stays dimmed at whatever phase the sine wave happened to be in.
-      hullMat.uniforms.rimOpacity.value = HULL_RIM_BASE;
+      hullMat.uniforms.rimOpacity.value = 0.22;
       return;
     }
     const t = now / 1000;
-    // Animate between 0.10 and 0.22 (× popover scale) on a ~15.7-second period (0.4 rad/s);
+    // Animate between 0.10 and 0.22 on a ~15.7-second period (0.4 rad/s);
     // peaks at the non-idle base so shimmer only ever dims, never flares.
-    hullMat.uniforms.rimOpacity.value = (0.16 + 0.06 * Math.sin(t * 0.4)) * hullRimScale;
+    hullMat.uniforms.rimOpacity.value = 0.16 + 0.06 * Math.sin(t * 0.4);
   });
 
   // Arm the shimmer from init: the tick above gates on ctx.isIdle(), so this

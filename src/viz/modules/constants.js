@@ -261,14 +261,6 @@ export const HULL_ROT_X = -Math.PI / 2;
 export const HULL_ROT_Y = 0;
 export const HULL_ROT_Z = 0;
 
-/**
- * Hull rim-opacity scale in the collapsed tray popover (?shell=1). At popover scale the
- * brain shell crowds the frame and washes out the faint ambient twinkle, so dim its Fresnel
- * rim to let the node activity read. 1.0 = full (expanded window); <1 fades the shell.
- * Designer-tunable at the founder visual checkpoint.
- */
-export const HULL_POPOVER_RIM_SCALE = 0.35;
-
 // ============================================================================
 // Spreading-activation / trace timing
 // ============================================================================
