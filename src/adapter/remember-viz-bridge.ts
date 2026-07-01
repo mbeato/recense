@@ -4,8 +4,10 @@
  *
  * Design invariants:
  *  D-01  One fact → one emit (no loop, no fan-out; far below POLL_MS flood risk).
- *  D-07  Fixed mid score on the reconsolidation hop — never a fabricated magnitude
+ *  D-07  The reconsolidation hop carries score: null — never a fabricated magnitude
  *        (the actual PE magnitude lives inside the transaction; the bridge sees only result).
+ *        The mid display intensity is the CLIENT's documented null fallback (trace.js:137),
+ *        not stored data (WR-02: never present a fabricated magnitude as measured).
  *  D-08 #2 Zero-duplicate: a reconcile produces ONE reconsolidation trace on the existing
  *        node and ZERO new_node traces — the kind switch enforces this structurally.
  *  T-52-11 Entire body in try/catch swallow; flag-gated Switchable sink; called AFTER the
@@ -30,20 +32,6 @@ import {
   type ActivationTraceInput,
 } from '../viz/activation-sink';
 import type { RememberResult } from './remember-cli';
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/**
- * Fixed mid activation score used for the reconsolidation hop (D-07).
- *
- * The actual PE magnitude from the judge lives inside the transaction and is
- * not available at bridge call time. A fixed 0.5 ("mid") accurately represents
- * "evidence strong enough to reconsolidate" without inventing a precise number.
- * This is the correct value under D-07 (WR-02: never present a fabricated magnitude).
- */
-const MID_SCORE = 0.5;
 
 // ---------------------------------------------------------------------------
 // Pure mapper (exported for unit tests)
@@ -81,7 +69,10 @@ export function rememberTraceInput(result: RememberResult): ActivationTraceInput
         query_id,
         kind: 'reconsolidation',
         seeds: [result.supersededNodeId!], // bare string → back-compat seeds union (D-07)
-        hops: [{ node_id: result.newNodeId, score: MID_SCORE, hop: 1 }],
+        // WR-02 (D-07): no measured PE magnitude exists at bridge call time, so the hop
+        // carries score: null — never a fabricated constant. The client applies its
+        // documented mid-intensity null fallback (trace.js:137) for display.
+        hops: [{ node_id: result.newNodeId, score: null, hop: 1 }],
       };
 
     case 'oscillation':

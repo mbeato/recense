@@ -89,9 +89,10 @@ describe('rememberTraceInput — pure action→kind mapper', () => {
     expect(trace.hops).toHaveLength(1);
     expect(trace.hops[0]!.node_id).toBe('NEW');
     expect(trace.hops[0]!.hop).toBe(1);
-    // score is a fixed mid value (not null, not a fabricated magnitude — D-07)
-    expect(typeof trace.hops[0]!.score).toBe('number');
-    expect(trace.hops[0]!.score).toBeGreaterThan(0);
+    // score is null — no measured PE magnitude exists at bridge call time, so the hop
+    // carries an honest null rather than a fabricated constant (WR-02/D-07). The client
+    // applies its documented mid-intensity null fallback (trace.js:137) for display.
+    expect(trace.hops[0]!.score).toBeNull();
   });
 
   it('oscillation → kind=oscillation, seeds=[newNodeId], hops=[]', () => {
