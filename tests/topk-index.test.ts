@@ -90,6 +90,7 @@ function bruteforceTopk(
 }
 
 let livePairs: Array<{ id: string; v: Float32Array }>;
+let store: SemanticStore;
 
 beforeEach(() => {
   tmpDbPath = makeTempDbPath();
@@ -100,7 +101,7 @@ beforeEach(() => {
   db = new Database(tmpDbPath);
 
   const clock = new FakeClock(Date.UTC(2026, 0, 1));
-  const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+  store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
 
   livePairs = [];
   for (let i = 1; i <= 40; i++) {
@@ -265,5 +266,167 @@ describe('CandidateRetriever persisted exact index (Phase 41-02)', () => {
     expect(idSet(got)).toEqual(idSet(ref));
     // The v1-only bogus id must NOT appear (proves the stale sidecar was ignored).
     expect(got.some(h => h.id === 'V1ONLY')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 260701-vix: construction-time freshness diff + exact delta merge.
+// The sidecar is built ONCE, then the DB mutates WITHOUT a rebuild. A retriever
+// constructed AFTER the mutation must be exact against the CURRENT graph.
+// ---------------------------------------------------------------------------
+
+/** Re-embed a node in place (unchanged id, new vector + new embedded_hash) via raw SQL. */
+function reEmbedInPlace(id: string, v: Float32Array, hash: string): void {
+  const buf = Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+  db.prepare('UPDATE node SET embedding = ?, embedded_hash = ? WHERE id = ?').run(buf, hash, id);
+}
+
+describe('CandidateRetriever sidecar freshness diff (260701-vix)', () => {
+  it('1. a node minted+embedded after the build appears at rank 1 with its true score', () => {
+    buildVectorIndex(db, indexPath);
+    const q = vec(7);
+
+    // Mint a brand-new node whose vector IS the query → cosine 1.0, must rank 1.
+    store.upsertNode({ id: 'nNEW', type: 'fact', value: 'fact nNEW', origin: 'observed', s: 0.8 });
+    store.setEmbedding('nNEW', q);
+
+    // Retriever built AFTER the mint picks up the delta at construction.
+    const retriever = new CandidateRetriever(db, { indexPath });
+    const got = retriever.topk(q, 10);
+
+    expect(got[0]!.id).toBe('nNEW');
+    expect(got[0]!.score).toBeCloseTo(1, 6);
+  });
+
+  it('2. a node tombstoned after the build is never returned by the indexed scan', () => {
+    buildVectorIndex(db, indexPath);
+    const q = vec(7); // n7 is its own nearest (score 1) — the strongest possible hit.
+
+    store.tombstone('n7');
+
+    const retriever = new CandidateRetriever(db, { indexPath });
+    const got = retriever.topk(q, 40);
+    expect(got.some(h => h.id === 'n7')).toBe(false);
+
+    // The rest of the live set is still exact against brute-force (n7 removed from the ref).
+    const ref = bruteforceTopk(livePairs.filter(p => p.id !== 'n7'), q, 40);
+    expect(idSet(got)).toEqual(idSet(ref));
+  });
+
+  it('3. a node re-embedded in place is scored from its FRESH vector, not the stale row', () => {
+    buildVectorIndex(db, indexPath);
+    const q = vec(7);
+
+    // n5 originally embeds vec(5) (cosine < 1). Re-embed it as the query itself → cosine 1.
+    reEmbedInPlace('n5', q, 'fresh-hash-n5');
+
+    const retriever = new CandidateRetriever(db, { indexPath });
+    const got = retriever.topk(q, 10);
+
+    const n5hit = got.find(h => h.id === 'n5');
+    expect(n5hit).toBeDefined();
+    // Score reflects the FRESH vector (q·q → 1), not the stale vec(5) sidecar row.
+    expect(n5hit!.score).toBeCloseTo(1, 6);
+    // Sanity: the stale score would have been strictly < 1.
+    expect(cosineSimF32(q, vec(5))).toBeLessThan(0.999);
+  });
+
+  it('4. no drift → indexed results are set- and score-identical to brute-force', () => {
+    buildVectorIndex(db, indexPath);
+    const q = vec(13);
+    const k = 10;
+
+    const retriever = new CandidateRetriever(db, { indexPath });
+    const got = retriever.topk(q, k);
+    const ref = bruteforceTopk(livePairs, q, k);
+
+    expect(idSet(got)).toEqual(idSet(ref));
+    const refScore = new Map(ref.map(r => [r.id, r.score]));
+    for (const hit of got) {
+      expect(hit.score).toBeCloseTo(refScore.get(hit.id)!, 6);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 260701-vix: identical drift behavior on the SCALAR path (kernel-null seam).
+// DIM=9 (%4≠0) → loadSimdKernel returns null → topkIndexed runs the scalar loop,
+// so the mask + delta merge are exercised WITHOUT the WASM kernel.
+// ---------------------------------------------------------------------------
+
+describe('CandidateRetriever freshness diff — scalar fallback path (260701-vix)', () => {
+  const SDIM = 9; // %4≠0 → kernel null
+  const N = 30;
+
+  let sPath: string;
+  let sIndexPath: string;
+  let sdb: Database.Database;
+  let sStore: SemanticStore;
+  let sPairs: Array<{ id: string; v: Float32Array }>;
+
+  const svec = (s: number): Float32Array => {
+    const v = new Float32Array(SDIM);
+    let x = s * 2654435761;
+    for (let i = 0; i < SDIM; i++) {
+      x = (x ^ (x << 13)) >>> 0;
+      x = (x ^ (x >>> 17)) >>> 0;
+      x = (x ^ (x << 5)) >>> 0;
+      v[i] = ((x % 2000) - 1000) / 1000;
+    }
+    return v;
+  };
+
+  beforeEach(() => {
+    sPath = makeTempDbPath();
+    sIndexPath = `${sPath}.vindex`;
+    const setupDb = new Database(sPath);
+    initSchema(setupDb);
+    setupDb.close();
+    sdb = new Database(sPath);
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    sStore = new SemanticStore(sdb, clock, { ...DEFAULT_CONFIG, dbPath: sPath });
+    sPairs = [];
+    for (let i = 1; i <= N; i++) {
+      const v = svec(i);
+      sStore.upsertNode({ id: `n${i}`, type: 'fact', value: `fact n${i}`, origin: 'observed', s: 0.8 });
+      sStore.setEmbedding(`n${i}`, v);
+      sPairs.push({ id: `n${i}`, v });
+    }
+  });
+
+  afterEach(() => {
+    try { sdb.close(); } catch { /* ignore */ }
+    try { fs.unlinkSync(sPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(sIndexPath); } catch { /* ignore */ }
+  });
+
+  it('5. new / tombstoned / re-embedded drift all resolve exactly on the scalar path', () => {
+    buildVectorIndex(sdb, sIndexPath);
+    const q = svec(3);
+
+    // New nearest node.
+    sStore.upsertNode({ id: 'nNEW', type: 'fact', value: 'fact nNEW', origin: 'observed', s: 0.8 });
+    sStore.setEmbedding('nNEW', q);
+    // Tombstone a live node.
+    sStore.tombstone('n10');
+    // Re-embed n7 in place to the query.
+    const buf = Buffer.from(q.buffer, q.byteOffset, q.byteLength);
+    sdb.prepare('UPDATE node SET embedding = ?, embedded_hash = ? WHERE id = ?').run(buf, 'fresh-n7', 'n7');
+
+    const retriever = new CandidateRetriever(sdb, { indexPath: sIndexPath });
+    const got = retriever.topk(q, N);
+
+    // New node present, tombstoned node absent, re-embedded node scored fresh (→ 1).
+    expect(got.some(h => h.id === 'nNEW')).toBe(true);
+    expect(got.some(h => h.id === 'n10')).toBe(false);
+    expect(got.find(h => h.id === 'n7')!.score).toBeCloseTo(1, 6);
+
+    // Full set matches brute-force over the CURRENT graph (drop n10, re-embed n7, add nNEW).
+    const currentPairs = sPairs
+      .filter(p => p.id !== 'n10')
+      .map(p => (p.id === 'n7' ? { id: 'n7', v: q } : p))
+      .concat([{ id: 'nNEW', v: q }]);
+    const ref = bruteforceTopk(currentPairs, q, N);
+    expect(idSet(got)).toEqual(idSet(ref));
   });
 });

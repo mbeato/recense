@@ -321,6 +321,18 @@ export class CandidateRetriever {
   // A null kernel falls back to the verbatim scalar dot loop in topkIndexed (D-08).
   private readonly kernel: SimdKernel | null;
 
+  // 260701-vix: construction-time freshness diff against the sidecar. The sidecar is
+  // built at end-of-sleep-pass but the graph mutates between passes (remember mints+embeds
+  // synchronously; reconsolidation tombstones/revises in place). ONE cheap id+hash query
+  // (no BLOB marshal — preserves the D-06 cold win) yields:
+  //   - excludedRows: sidecar row indices whose live (id, embedded_hash) no longer matches
+  //     (tombstoned/deleted, or re-embedded under a new hash) — masked to -Infinity in topk.
+  //   - delta: live rows new-or-changed vs the sidecar — brute-scored and merged at query time.
+  // Both empty when the sidecar is fresh → behavior byte-identical to the pre-fix path.
+  // Both empty when this.index is null (brute-force mode never consults them).
+  private readonly excludedRows: Set<number>;
+  private readonly delta: Array<{ id: string; v: Float32Array; norm: number }>;
+
   constructor(db: Database.Database, opts?: { indexPath?: string }) {
     // Select only nodes that have been embedded AND are not tombstoned (T-02-STALE)
     this.stmtSelectEmbedded = db.prepare(
@@ -376,6 +388,73 @@ export class CandidateRetriever {
       }
     } else {
       this.kernel = null;
+    }
+
+    // 260701-vix: freshness diff. Only meaningful when a sidecar loaded; brute-force mode
+    // reads the graph live and never needs these. The id+hash query marshals NO embedding
+    // BLOBs for in-sync rows (only ids+hashes), so the D-06 cold win is preserved; blobs are
+    // fetched ONLY for the (small) delta set below. The graph stays source of truth: on any
+    // doubt a row is either masked or re-scored from its fresh DB vector, never trusted stale.
+    this.excludedRows = new Set<number>();
+    this.delta = [];
+    if (this.index !== null) {
+      const liveRows = db
+        .prepare('SELECT id, embedded_hash FROM node WHERE embedding IS NOT NULL AND tombstoned = 0')
+        .all() as Array<{ id: string; embedded_hash: string | null }>;
+      const liveMap = new Map<string, string>();
+      for (const r of liveRows) liveMap.set(r.id, r.embedded_hash ?? '');
+
+      const sidecarMap = new Map<string, string>();
+      for (let i = 0; i < this.index.count; i++) sidecarMap.set(this.index.ids[i]!, this.index.hashes[i]!);
+
+      // Mask sidecar rows that no longer match a live (id, hash). removedCount tracks rows
+      // whose id is gone entirely (for the stderr summary; re-embedded rows also mask, but
+      // their fresh vector re-enters via the delta below).
+      let removedCount = 0;
+      for (let i = 0; i < this.index.count; i++) {
+        const id = this.index.ids[i]!;
+        const liveHash = liveMap.get(id);
+        if (liveHash === undefined) {
+          this.excludedRows.add(i);
+          removedCount++;
+        } else if (liveHash !== this.index.hashes[i]!) {
+          this.excludedRows.add(i);
+        }
+      }
+
+      // Delta = live rows new-or-changed relative to the sidecar (missing id OR hash mismatch).
+      const deltaIds: string[] = [];
+      for (const [id, hash] of liveMap) {
+        const sidecarHash = sidecarMap.get(id);
+        if (sidecarHash === undefined || sidecarHash !== hash) deltaIds.push(id);
+      }
+
+      if (deltaIds.length > 0) {
+        // Single json_each IN-list fetch (mirrors stmtPoolStrength); one JSON binding, no
+        // per-id param limit to chunk around. This is the ONLY construction-time statement
+        // that marshals embedding BLOBs, and only for the delta set.
+        const deltaRows = db
+          .prepare('SELECT id, embedding FROM node WHERE id IN (SELECT value FROM json_each(?))')
+          .all(JSON.stringify(deltaIds)) as Array<{ id: string; embedding: Buffer }>;
+        for (const row of deltaRows) {
+          // Pitfall 5: byteOffset + length (Buffer slices may have a nonzero byteOffset).
+          const v = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
+          // L-2: skip dim-mismatched vectors (never scored against a different-dim query).
+          if (v.length !== this.index.dim) continue;
+          // Copy out of the Buffer-backed view — sqlite may reuse the underlying buffer.
+          const vc = Float32Array.from(v);
+          let norm = 0;
+          for (let j = 0; j < vc.length; j++) norm += vc[j]! * vc[j]!;
+          this.delta.push({ id: row.id, v: vc, norm: Math.sqrt(norm) });
+        }
+      }
+
+      if (this.excludedRows.size > 0 || this.delta.length > 0) {
+        // stderr only (never stdout — the hot path emits structured output).
+        process.stderr.write(
+          `[recense] vector index stale (+${this.delta.length} new/changed, -${removedCount} removed) — merging fresh delta\n`,
+        );
+      }
     }
   }
 
@@ -449,28 +528,54 @@ export class CandidateRetriever {
     for (let j = 0; j < idx.dim; j++) qNorm += queryVec[j]! * queryVec[j]!;
     qNorm = Math.sqrt(qNorm);
 
+    // Compute all corpus cosine scores (kernel or verbatim scalar fallback). Both produce
+    // an OWNED, mutable Float32Array we can mask in place: the kernel returns a fresh copy
+    // (scanCosine slices the reusable WASM region), the scalar path allocates its own.
+    let scores: Float32Array;
     if (this.kernel !== null) {
-      // WASM SIMD path (Phase 51, SCALE-03 / D-05): kernel computes all cosine scores in
-      // one SIMD pass. Returns a stable Float32Array copy (shared WASM score region is
-      // reused next call). partialSelectTopK then selects top-k via a fixed-size min-heap.
-      const scores = this.kernel.scanCosine(queryVec, qNorm);
-      return partialSelectTopK(scores, idx.ids, k);
+      // WASM SIMD path (Phase 51, SCALE-03 / D-05): all cosine scores in one SIMD pass.
+      scores = this.kernel.scanCosine(queryVec, qNorm);
+    } else {
+      // Scalar fallback path (D-08): verbatim dot loop + same denom guard as cosineSimF32.
+      // Runs when the kernel is null (SIMD unavailable / dim%4≠0 / instantiation fault).
+      const { dim, count, data, norms } = idx;
+      scores = new Float32Array(count);
+      for (let i = 0; i < count; i++) {
+        const base = i * dim;
+        let dot = 0;
+        for (let j = 0; j < dim; j++) dot += queryVec[j]! * data[base + j]!;
+        const denom = qNorm * norms[i]!;
+        // Same denom guard as cosineSimF32 (0 → score 0, never NaN/Infinity).
+        scores[i] = denom === 0 ? 0 : dot / denom;
+      }
     }
 
-    // Scalar fallback path (D-08): verbatim dot loop + same denom guard as cosineSimF32.
-    // Runs when the kernel is null (SIMD unavailable / dim%4≠0 / instantiation fault).
-    // This body is UNCHANGED from the original topkIndexed — only the selection upgrades.
-    const { dim, count, data, norms, ids } = idx;
-    const scores = new Float32Array(count);
-    for (let i = 0; i < count; i++) {
-      const base = i * dim;
-      let dot = 0;
-      for (let j = 0; j < dim; j++) dot += queryVec[j]! * data[base + j]!;
-      const denom = qNorm * norms[i]!;
-      // Same denom guard as cosineSimF32 (0 → score 0, never NaN/Infinity).
-      scores[i] = denom === 0 ? 0 : dot / denom;
+    // 260701-vix: mask stale sidecar rows (tombstoned/deleted/re-embedded) with -Infinity so
+    // they never survive top-k selection against real cosines. Identical for both paths above.
+    for (const i of this.excludedRows) scores[i] = -Infinity;
+
+    const indexedHits = partialSelectTopK(scores, idx.ids, k);
+
+    // Fresh-sidecar fast path: no drift → return the indexed top-k unchanged (byte-identical
+    // to the pre-fix behavior — the whole diff apparatus is inert).
+    if (this.delta.length === 0 && this.excludedRows.size === 0) {
+      return indexedHits;
     }
-    return partialSelectTopK(scores, ids, k);
+
+    // 260701-vix: score the delta exactly (same fused dot / (qNorm·norm) with the identical
+    // denom-0 guard), merge with the indexed hits, sort descending, slice k, and drop any
+    // -Infinity stragglers (only possible when k exceeds the live row count after masking).
+    const deltaHits = this.delta.map(d => {
+      let dot = 0;
+      for (let j = 0; j < idx.dim; j++) dot += queryVec[j]! * d.v[j]!;
+      const denom = qNorm * d.norm;
+      return { id: d.id, score: denom === 0 ? 0 : dot / denom };
+    });
+
+    return [...indexedHits, ...deltaHits]
+      .filter(h => h.score !== -Infinity)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, k);
   }
 
   /**
