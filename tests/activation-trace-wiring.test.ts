@@ -317,7 +317,8 @@ describe('engine: retrieveRanked vizFloor lights genuinely-retrieved nodes below
     // Trace lit the genuinely-retrieved set down to vizFloor: includes below-floor
     // 'mid', excludes below-vizFloor 'lo'.
     expect(sink.traces).toHaveLength(1);
-    expect([...sink.traces[0]!.seeds].sort()).toEqual(['hi', 'mid']);
+    // Phase 55 (D-06): seeds are now {node_id, score} objects, not bare strings.
+    expect(sink.traces[0]!.seeds.map(s => (s as any).node_id).sort()).toEqual(['hi', 'mid']);
   });
 
   it('without vizFloor: unchanged — trace seeds equal the injected set [hi]', () => {
@@ -330,7 +331,8 @@ describe('engine: retrieveRanked vizFloor lights genuinely-retrieved nodes below
 
     expect(results.map(r => r.id)).toEqual(['hi']);
     expect(sink.traces).toHaveLength(1);
-    expect([...sink.traces[0]!.seeds]).toEqual(['hi']);
+    // Phase 55 (D-06): seeds are now {node_id, score} objects, not bare strings.
+    expect(sink.traces[0]!.seeds.map(s => (s as any).node_id)).toEqual(['hi']);
   });
 
   it('honesty guard: scan reaches nothing ≥ vizFloor → no trace fires', () => {
