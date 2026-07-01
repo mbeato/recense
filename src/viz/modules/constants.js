@@ -348,10 +348,11 @@ export const REPLAY_HISTORY_N    = 20;
 
 // Layer 3 — ambient twinkle
 /** Nodes in the rotating twinkle subset (~0.5% of 15k corpus). */
-export const TWINKLE_COUNT      = 140;
+export const TWINKLE_COUNT      = 220;
 
 /** Sine breathe period per twinkle node (ms; spec tuning range: 1500–2500). */
 export const TWINKLE_PERIOD_MS  = 2000;
 
-/** Brightness amplitude of the twinkle breathe — faint, neutral (spec: 0.12–0.18). */
-export const TWINKLE_AMP        = 0.18;
+/** Brightness amplitude of the twinkle breathe — neutral tint lerp (raised from 0.18 at
+ *  the founder checkpoint so ambient idle activity reads without the hull as backdrop). */
+export const TWINKLE_AMP        = 0.42;

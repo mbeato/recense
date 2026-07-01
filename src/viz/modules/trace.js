@@ -534,7 +534,7 @@ export function initTrace(ctx) {
 
   // Pre-built neutral/cool tint — intentionally NOT HOT amber and NOT any
   // KIND_COLOR event hue, so twinkle reads as decorative ambient (SC3 / D-04).
-  const TWINKLE_TINT = new THREE.Color(0x7a8a9a); // quiet blue-gray
+  const TWINKLE_TINT = new THREE.Color(0xaec2d6); // brighter cool steel-blue (raised from 0x7a8a9a for idle visibility; still neutral, never the event palette)
 
   function twinkleTick(now) {
     // Lazy guard: hazeMesh / __hazeIdx are populated by graph.js after initTrace.
