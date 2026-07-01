@@ -18,7 +18,7 @@ import { initSchema } from '../src/db/schema';
 import { SemanticStore } from '../src/db/semantic-store';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
-import { SubjectPromoter, normalizeSubjectName } from '../src/consolidation/corpus-promoter';
+import { SubjectPromoter, normalizeSubjectName, isExhaustTheme } from '../src/consolidation/corpus-promoter';
 import type { ModelProvider } from '../src/model/provider';
 
 // ---------------------------------------------------------------------------
@@ -549,5 +549,81 @@ describe('SubjectPromoter — relatedSchemaIndexes index mapping (Phase 39.2 roo
     const promoterForced = new SubjectPromoter(db, store, clock, providerForced, DEFAULT_CONFIG);
     await promoterForced.promoteSubjects(scope, { force: true });
     expect(providerForced.callCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Exhaust-theme gate (39.1 residual, closed 2026-07-01)
+// ---------------------------------------------------------------------------
+
+describe('isExhaustTheme — deterministic label-theme classifier', () => {
+  it('returns TRUE for representative labels of the six exhaust classes', () => {
+    // version-control operations, task/plan tracking, tool-invocation, workflow,
+    // diagnostic/build, credential material — the six classes from the 2026-06-25 run.
+    const exhaust = [
+      'Git and Version Control',
+      'Task and Execution Tracking',
+      'Tool-Use IDs',
+      'GSD Workflow Phases',
+      'Diagnostic Runs',
+      'Compilation Success',
+      'Plaintext API Keys',
+    ];
+    for (const label of exhaust) {
+      expect(isExhaustTheme(label)).toBe(true);
+    }
+  });
+
+  it('returns FALSE for kept classes from the same cleanup run and generic project topics', () => {
+    const kept = [
+      'Brain Memory',
+      'Memory Operations',
+      'Qwen and Haiku Variants',
+      'Tonos',
+      'VTX',
+      'Retrieval Ranking',
+      'Sleep Pass',
+    ];
+    for (const label of kept) {
+      expect(isExhaustTheme(label)).toBe(false);
+    }
+  });
+});
+
+describe('SubjectPromoter — exhaust-theme gate on proposals', () => {
+  it('drops an exhaust-named proposal, accepts the legitimate one, and includes the exclusion instruction in the prompt', async () => {
+    const { db, store, clock } = makeDb();
+    const scope = 'exhaust-subject-scope';
+
+    // Two qualifying schemas so the CREATE gate opens; indices 0 (legit) and 1 (exhaust).
+    seedScopeWithSchema(db, store, scope, 'schema-legit', 'Retrieval Ranking', 6);
+    seedScopeWithSchema(db, store, scope, 'schema-exhaust', 'Git Commit Ops', 6);
+
+    // Provider returns one legit proposal + one exhaust-named proposal.
+    const provider = makeMockProvider(
+      JSON.stringify([
+        { name: 'Retrieval Ranking', relatedSchemaIds: ['schema-legit'] },
+        { name: 'Git and Version Control', relatedSchemaIds: ['schema-exhaust'] },
+      ]),
+    );
+    const promoter = new SubjectPromoter(db, store, clock, provider, DEFAULT_CONFIG);
+    const result = await promoter.promoteSubjects(scope);
+
+    // Only the legitimate subject is accepted; the exhaust proposal is dropped + counted.
+    expect(result.created).toBe(1);
+    expect(result.subjectDocIds).toHaveLength(1);
+    expect(result.exhaustSkipped).toBe(1);
+    expect(result.proposed.map(p => p.name)).toEqual(['Retrieval Ranking']);
+
+    // The only new subject-doc slug is the legit one — no git-themed stub minted.
+    const slugs = (db
+      .prepare("SELECT slug FROM node_doc nd JOIN node n ON n.id = nd.node_id WHERE n.type = 'doc' AND nd.slug LIKE ?")
+      .all(`${scope}:%`) as Array<{ slug: string }>).map(r => r.slug);
+    expect(slugs).toContain(`${scope}:retrieval-ranking`);
+    expect(slugs).not.toContain(`${scope}:git-and-version-control`);
+
+    // Belt: prompt carries the new exclusion instruction (LLM proposes fewer up front).
+    expect(provider.lastPrompt).toContain('development exhaust');
+    expect(provider.lastPrompt.toLowerCase()).toContain('working memory, not project knowledge');
   });
 });

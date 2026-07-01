@@ -20,7 +20,7 @@ import { initSchema } from '../src/db/schema';
 import { SemanticStore } from '../src/db/semantic-store';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
-import { CorpusPromoter, NoopCorpusPromoter } from '../src/consolidation/corpus-promoter';
+import { CorpusPromoter, NoopCorpusPromoter, isExhaustTheme } from '../src/consolidation/corpus-promoter';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -487,5 +487,82 @@ describe('NoopCorpusPromoter', () => {
     expect(result.containment).toBe(0);
     expect(result.reference).toBe(0);
     expect(result.tombstoned).toBe(0);
+    expect(result.exhaustSkipped).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Exhaust-theme gate at the chapter-stub mint loop (39.1 residual, 2026-07-01)
+// ---------------------------------------------------------------------------
+
+describe('CorpusPromoter — exhaust-theme mint gate', () => {
+  /** Seed one schema above HIGH_MASS (10) with `mass` clean members. */
+  function seedAboveHighMass(
+    store: SemanticStore,
+    db: Database.Database,
+    schemaId: string,
+    label: string,
+    mass: number,
+  ): void {
+    seedSchema(store, schemaId, label);
+    for (let i = 0; i < mass; i++) {
+      const memberId = `${schemaId}-m-${i}`;
+      seedNode(store, memberId, `${label} fact ${i}`, 'fact', [0.5, 0.5, 0.0, 0.0]);
+      abstracts(db, schemaId, memberId);
+    }
+  }
+
+  it('withholds a NEW chapter stub for an exhaust-labelled schema (counted), while a sibling non-exhaust schema still mints', async () => {
+    const { db, store, clock } = makeDb();
+    const exhaustSchema = 'schema-exhaust-000-0000-0000-000000000000';
+    const cleanSchema = 'schema-clean-0000-0000-0000-000000000000';
+    seedAboveHighMass(store, db, exhaustSchema, 'Git and Version Control', 12);
+    seedAboveHighMass(store, db, cleanSchema, 'Retrieval Ranking', 12);
+
+    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
+    const result = await promoter.promote();
+
+    // Both cross the mass gate → both appear in promoted (the gate withholds the DOC only).
+    expect(result.promoted).toContain(exhaustSchema);
+    expect(result.promoted).toContain(cleanSchema);
+    // Exactly one stub was withheld (the exhaust one) and counted.
+    expect(result.exhaustSkipped).toBe(1);
+
+    // No live doc stub exists for the exhaust schema (slug = schemaId).
+    const exhaustDoc = db
+      .prepare("SELECT n.id FROM node n JOIN node_doc nd ON nd.node_id = n.id WHERE n.type='doc' AND n.tombstoned=0 AND nd.slug = ?")
+      .get(exhaustSchema) as { id: string } | undefined;
+    expect(exhaustDoc).toBeUndefined();
+
+    // The sibling non-exhaust schema DID mint its stub.
+    const cleanDoc = db
+      .prepare("SELECT n.id FROM node n JOIN node_doc nd ON nd.node_id = n.id WHERE n.type='doc' AND n.tombstoned=0 AND nd.slug = ?")
+      .get(cleanSchema) as { id: string } | undefined;
+    expect(cleanDoc).toBeDefined();
+  });
+
+  it('leaves a PRE-EXISTING live doc for an exhaust-labelled schema untouched (withholds NEW stubs only)', async () => {
+    const { db, store, clock } = makeDb();
+    const exhaustSchema = 'schema-exhaust-live-0000-0000-00000000';
+    seedAboveHighMass(store, db, exhaustSchema, 'GSD Workflow Phases', 12);
+
+    // Pre-create a LIVE doc stub for the exhaust schema (slug = schemaId).
+    const existingDocId = 'doc-preexisting-exhaust';
+    store.upsertNode({ id: existingDocId, type: 'doc', value: '', origin: 'inferred', s: 0, c: 1.0, last_access: clock.nowMs() });
+    store.upsertNodeDoc({ node_id: existingDocId, slug: exhaustSchema, generated_at: clock.nowMs(), updated_at: clock.nowMs() });
+    store.upsertNodeScope({ node_id: existingDocId, scope: exhaustSchema, updated_at: clock.nowMs() });
+
+    const promoter = new CorpusPromoter(db, store, clock, defaultOpts());
+    const result = await promoter.promote();
+
+    // Existing doc means the gate never runs (early-continue on existingDocId) → nothing skipped.
+    expect(result.exhaustSkipped).toBe(0);
+
+    // The pre-existing doc is still LIVE (not tombstoned) — graph/live docs untouched.
+    const docRow = db.prepare('SELECT tombstoned FROM node WHERE id = ?').get(existingDocId) as
+      | { tombstoned: number }
+      | undefined;
+    expect(docRow).toBeDefined();
+    expect(docRow!.tombstoned).toBe(0);
   });
 });
