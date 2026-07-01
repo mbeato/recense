@@ -32,16 +32,23 @@ import { loadSimdKernel, partialSelectTopK, type SimdKernel } from './simd-kerne
  *   [4..8)   version = INDEX_VERSION     (uint32)
  *   [8..12)  dim                          (uint32)  embedding dimensionality
  *   [12..16) count                        (uint32)  number of vectors
- *   then `count` id records:  uint16 byteLength + UTF-8 id bytes
+ *   then `count` id records (v2):  uint16 idLen + UTF-8 id bytes
+ *                                  uint16 hashLen + UTF-8 embedded_hash bytes
  *   then count*dim float32 (row-major):   the contiguous embedding buffer
  *   then count float64:                    precomputed L2 row norms
+ *
+ * v2 (260701-vix) adds the per-row `embedded_hash` after each id so the online
+ * CandidateRetriever can diff the sidecar against the live graph at construction
+ * (freshness check) without marshaling any embedding BLOBs. v1 sidecars (id only,
+ * no hash) fail the version check in loadVectorIndex → brute-force fallback →
+ * self-heal at the next end-of-pass rebuild.
  *
  * Norms are precomputed so a query scan is one dot product + one sqrt of the query norm
  * per row — the same `dot / (||q|| · ||row||)` as cosineSimF32, just without re-decoding a
  * Float32Array view per row per query.
  */
 const INDEX_MAGIC = 'RVIX';
-const INDEX_VERSION = 1;
+const INDEX_VERSION = 2;
 
 /**
  * Canonical sidecar path for a given DB: `<dbPath>.vindex`, beside the DB file.
@@ -58,6 +65,8 @@ interface LoadedIndex {
   dim: number;
   count: number;
   ids: string[];
+  /** length = count; hashes[i] is ids[i]'s embedded_hash at build time ('' when null). */
+  hashes: string[];
   /** length = count * dim, row-major. */
   data: Float32Array;
   /** length = count; ||row_i||. */
@@ -79,11 +88,11 @@ interface LoadedIndex {
  */
 export function buildVectorIndex(db: Database.Database, indexPath: string): number {
   const rows = db
-    .prepare('SELECT id, embedding FROM node WHERE embedding IS NOT NULL AND tombstoned = 0')
-    .all() as Array<{ id: string; embedding: Buffer }>;
+    .prepare('SELECT id, embedding, embedded_hash FROM node WHERE embedding IS NOT NULL AND tombstoned = 0')
+    .all() as Array<{ id: string; embedding: Buffer; embedded_hash: string | null }>;
 
   // First pass: determine dim from the first decodable row and collect kept rows.
-  const kept: Array<{ id: string; v: Float32Array }> = [];
+  const kept: Array<{ id: string; hash: string; v: Float32Array }> = [];
   let dim = 0;
   for (const row of rows) {
     // Pitfall 5: byteOffset + length (Buffer slices may have a nonzero byteOffset).
@@ -92,15 +101,17 @@ export function buildVectorIndex(db: Database.Database, indexPath: string): numb
     // L-2: skip dimension-mismatched vectors so the contiguous buffer stays uniform.
     if (v.length !== dim) continue;
     // Copy out of the Buffer-backed view — the underlying Buffer may be reused by sqlite.
-    kept.push({ id: row.id, v: Float32Array.from(v) });
+    // v2: carry embedded_hash per row (never assume non-null — coerce null → '').
+    kept.push({ id: row.id, hash: row.embedded_hash ?? '', v: Float32Array.from(v) });
   }
 
   const count = kept.length;
   const ids = kept.map(r => r.id);
 
-  // Compute id-section byte length.
+  // Compute id-section byte length (v2: each record is idLen+id + hashLen+hash).
   const idBytes = ids.map(id => Buffer.byteLength(id, 'utf8'));
-  const idSectionLen = idBytes.reduce((sum, b) => sum + 2 + b, 0);
+  const hashBytes = kept.map(r => Buffer.byteLength(r.hash, 'utf8'));
+  const idSectionLen = idBytes.reduce((sum, b, i) => sum + 2 + b + 2 + hashBytes[i]!, 0);
 
   const headerLen = 16;
   const dataLen = count * dim * 4;
@@ -119,6 +130,12 @@ export function buildVectorIndex(db: Database.Database, indexPath: string): numb
     off += 2;
     buf.write(ids[i]!, off, 'utf8');
     off += idLen;
+    // v2: embedded_hash record immediately after the id (hashLen + UTF-8 hash).
+    const hashLen = hashBytes[i]!;
+    buf.writeUInt16LE(hashLen, off);
+    off += 2;
+    buf.write(kept[i]!.hash, off, 'utf8');
+    off += hashLen;
   }
 
   // Contiguous f32 data + precomputed f64 norms.
@@ -160,10 +177,11 @@ function loadVectorIndex(indexPath: string): LoadedIndex | null {
     if (buf.readUInt32LE(4) !== INDEX_VERSION) return null;
     const dim = buf.readUInt32LE(8);
     const count = buf.readUInt32LE(12);
-    if (dim === 0 || count === 0) return { dim, count: 0, ids: [], data: new Float32Array(0), norms: new Float64Array(0) };
+    if (dim === 0 || count === 0) return { dim, count: 0, ids: [], hashes: [], data: new Float32Array(0), norms: new Float64Array(0) };
 
     let off = 16;
     const ids: string[] = new Array(count);
+    const hashes: string[] = new Array(count);
     for (let i = 0; i < count; i++) {
       if (off + 2 > buf.length) return null;
       const idLen = buf.readUInt16LE(off);
@@ -171,6 +189,13 @@ function loadVectorIndex(indexPath: string): LoadedIndex | null {
       if (off + idLen > buf.length) return null;
       ids[i] = buf.toString('utf8', off, off + idLen);
       off += idLen;
+      // v2: embedded_hash record follows the id (same truncation guards).
+      if (off + 2 > buf.length) return null;
+      const hashLen = buf.readUInt16LE(off);
+      off += 2;
+      if (off + hashLen > buf.length) return null;
+      hashes[i] = buf.toString('utf8', off, off + hashLen);
+      off += hashLen;
     }
 
     const dataLen = count * dim * 4;
@@ -185,7 +210,7 @@ function loadVectorIndex(indexPath: string): LoadedIndex | null {
     const norms = new Float64Array(count);
     Buffer.from(norms.buffer).set(buf.subarray(off, off + normsLen));
 
-    return { dim, count, ids, data, norms };
+    return { dim, count, ids, hashes, data, norms };
   } catch {
     return null;
   }

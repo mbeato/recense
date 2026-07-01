@@ -122,6 +122,46 @@ afterEach(() => {
 
 const idSet = (rows: Array<{ id: string }>): Set<string> => new Set(rows.map(r => r.id));
 
+/**
+ * Write an OLD v1-format sidecar (id records with NO per-row embedded_hash) to `p`.
+ * Used only to prove loadVectorIndex rejects v1 → brute-force fallback (260701-vix).
+ * Mirrors the pre-v2 binary layout exactly: header + `count` (uint16 idLen + id) records
+ * + contiguous f32 data + f64 norms.
+ */
+function writeV1Sidecar(p: string, entries: Array<{ id: string; v: Float32Array }>): void {
+  const dim = entries[0]!.v.length;
+  const count = entries.length;
+  const idBytes = entries.map(e => Buffer.byteLength(e.id, 'utf8'));
+  const idSectionLen = idBytes.reduce((s, b) => s + 2 + b, 0);
+  const buf = Buffer.allocUnsafe(16 + idSectionLen + count * dim * 4 + count * 8);
+  buf.write('RVIX', 0, 'ascii');
+  buf.writeUInt32LE(1, 4); // version 1 — no hash records
+  buf.writeUInt32LE(dim, 8);
+  buf.writeUInt32LE(count, 12);
+  let off = 16;
+  for (let i = 0; i < count; i++) {
+    buf.writeUInt16LE(idBytes[i]!, off);
+    off += 2;
+    buf.write(entries[i]!.id, off, 'utf8');
+    off += idBytes[i]!;
+  }
+  const dataView = new Float32Array(count * dim);
+  const normsView = new Float64Array(count);
+  for (let i = 0; i < count; i++) {
+    let norm = 0;
+    for (let j = 0; j < dim; j++) {
+      const x = entries[i]!.v[j]!;
+      dataView[i * dim + j] = x;
+      norm += x * x;
+    }
+    normsView[i] = Math.sqrt(norm);
+  }
+  Buffer.from(dataView.buffer, dataView.byteOffset, count * dim * 4).copy(buf, off);
+  off += count * dim * 4;
+  Buffer.from(normsView.buffer, normsView.byteOffset, count * 8).copy(buf, off);
+  fs.writeFileSync(p, buf);
+}
+
 // ---------------------------------------------------------------------------
 // Cases
 // ---------------------------------------------------------------------------
@@ -207,5 +247,23 @@ describe('CandidateRetriever persisted exact index (Phase 41-02)', () => {
     }
     // At least one hit carries a real (non-zero) cosine score from the index.
     expect(hits.some(h => h.score > 0)).toBe(true);
+  });
+
+  it('5. a v1-format sidecar (no per-row hash) is rejected → brute-force fallback (260701-vix)', () => {
+    // Write a v1 sidecar containing a BOGUS id whose vector == the query. If v1 were
+    // accepted, that bogus id would dominate the results; a correct rejection means the
+    // retriever scans the live DB and never surfaces it.
+    const q = vec(7);
+    writeV1Sidecar(indexPath, [{ id: 'V1ONLY', v: q }]);
+    expect(fs.existsSync(indexPath)).toBe(true);
+
+    const retriever = new CandidateRetriever(db, { indexPath });
+    const got = retriever.topk(q, 10);
+    const ref = bruteforceTopk(livePairs, q, 10);
+
+    // v1 rejected → brute-force over the live DB → matches the reference set exactly.
+    expect(idSet(got)).toEqual(idSet(ref));
+    // The v1-only bogus id must NOT appear (proves the stale sidecar was ignored).
+    expect(got.some(h => h.id === 'V1ONLY')).toBe(false);
   });
 });
