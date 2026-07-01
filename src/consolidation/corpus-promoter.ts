@@ -78,6 +78,8 @@ export interface PromoteResult {
   reference: number;
   /** Number of doc stubs tombstoned (mass fell below lowMass). */
   tombstoned: number;
+  /** Number of chapter-doc stubs withheld by the exhaust-theme gate (39.1 residual). */
+  exhaustSkipped: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +101,70 @@ function isNoiseMember(value: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Exhaust-theme gate (39.1 residual, closed 2026-07-01)
+// ---------------------------------------------------------------------------
+//
+// Deterministic label-theme gate matched against SCHEMA LABELS / SUBJECT NAMES
+// (words, not member VALUES — that is NOISE_PATTERNS' job). It withholds corpus
+// DOCS only: it skips minting a chapter-doc stub / accepting a subject proposal
+// for a schema whose label reads as development EXHAUST (working memory, not
+// project knowledge). It NEVER touches graph nodes — no writes, no tombstones to
+// schemas, facts, or edges; the graph is source of truth, the corpus is derived
+// presentation. Without this gate the chapter-stub mint loop only checks for a
+// live doc row, so the 2026-06-25 cleanup's 24 hard-deleted exhaust chapter docs
+// re-mint on the next pass while their schemas still sit above highMass.
+//
+// Known trade-off: a project genuinely ABOUT one of these themes (e.g. a git
+// tooling project whose real knowledge is version-control ops) would need a
+// per-scope allowlist to opt back in — acceptable for customer-zero.
+//
+// Upgrade path if these patterns prove too coarse/leaky: a per-proposal
+// headless-Haiku semantic judge, meta-cached per label so it costs one LLM call
+// per novel label. Documented, NOT built — patterns first (zero new LLM calls).
+const EXHAUST_THEME_PATTERNS: RegExp[] = [
+  // version-control operations
+  /\bgit\b/i,
+  /version[- ]control/i,
+  /\bcommit(s|ting)?\b/i,
+  /\bbranch(es|ing)?\b/i,
+  /pull[- ]request/i,
+  /\bmerge\b/i,
+  /\bworktree/i,
+  // task/plan/execution tracking
+  /task[- ]?(and[- ])?(execution[- ])?track/i,
+  /plan[- ]?(execution|track)/i,
+  /\btodo[- ]?track/i,
+  /execution[- ]status/i,
+  /phase[- ](execution|completion|track)/i,
+  // tool-invocation mechanics
+  /tool[- ]?(use|invocation|call)/i,
+  /\btoolu\b/i,
+  // workflow bookkeeping
+  /\bgsd\b/i,
+  /workflow[- ]phase/i,
+  /milestone[- ]track/i,
+  // diagnostic/build noise
+  /diagnostic[- ]run/i,
+  /compilation[- ](success|status)/i,
+  /\bbuild[- ](output|log)/i,
+  /type[- ]?check/i,
+  // credential material
+  /api[- ]?key/i,
+  /credential/i,
+  /\bsecret(s)?\b/i,
+  /\btoken(s)?\b/i,
+];
+
+/**
+ * True when a schema label / subject name reads as development exhaust
+ * (working memory, not durable project knowledge). Used to WITHHOLD corpus
+ * doc stubs only — never to mutate graph nodes. See EXHAUST_THEME_PATTERNS.
+ */
+export function isExhaustTheme(label: string): boolean {
+  return EXHAUST_THEME_PATTERNS.some(re => re.test(label));
+}
+
+// ---------------------------------------------------------------------------
 // NoopCorpusPromoter — test/legacy default (does nothing)
 // ---------------------------------------------------------------------------
 
@@ -108,7 +174,7 @@ function isNoiseMember(value: string): boolean {
  */
 export class NoopCorpusPromoter {
   async promote(_opts?: { dryRun?: boolean }): Promise<PromoteResult> {
-    return { promoted: [], containment: 0, reference: 0, tombstoned: 0 };
+    return { promoted: [], containment: 0, reference: 0, tombstoned: 0, exhaustSkipped: 0 };
   }
 }
 
@@ -289,16 +355,24 @@ export class CorpusPromoter {
     // dryRun: return counts without writing
     // containment + reference are 0 — DocGraphDeriver owns edge derivation (D-11)
     if (dryRun) {
+      // Exhaust gate withholds a NEW stub only (existing live docs are untouched):
+      // count schemas that would be gated so dryRun surfaces the same signal.
+      const exhaustSkipped = promotedSchemas.filter(
+        s => !s.existingDocId && isExhaustTheme(s.value),
+      ).length;
       return {
         promoted: promotedSchemas.map(s => s.id),
         containment: 0,
         reference: 0,
         tombstoned: demotedDocIds.length,
+        exhaustSkipped,
       };
     }
 
     // ── Phase B: atomic write (single db.transaction().immediate()) ───────
     // T-02-ASYNC: NO await inside the transaction body — all async work done in Phase A
+
+    let exhaustSkipped = 0;
 
     this.db.transaction(() => {
       // 0. Tombstone demoted doc stubs (mass < lowMass fell below the band)
@@ -311,7 +385,18 @@ export class CorpusPromoter {
       //    slug = schemaId (Pitfall 4 — schemaId is the anchor, not the human label)
       for (const info of promotedSchemas) {
         if (info.existingDocId) {
-          // Already has a live stub — use it (no action needed)
+          // Already has a live stub — use it (no action needed).
+          // NOTE: an existing live doc is NOT tombstoned even if its label reads
+          // exhaust — the gate withholds NEW stubs only, never touches graph/live docs.
+          continue;
+        }
+
+        // Exhaust-theme gate (39.1 residual): withhold the NEW chapter-doc stub for
+        // an exhaust-labelled schema so the hard-deleted exhaust chapters cannot
+        // re-mint while their schemas sit above highMass. info.value is the schema
+        // label (node.value for type='schema'). No graph node is touched here.
+        if (isExhaustTheme(info.value)) {
+          exhaustSkipped++;
           continue;
         }
 
@@ -359,6 +444,7 @@ export class CorpusPromoter {
       containment: 0,  // DocGraphDeriver now owns edge derivation (D-11)
       reference: 0,    // DocGraphDeriver now owns edge derivation (D-11)
       tombstoned: demotedDocIds.length,
+      exhaustSkipped,  // chapter-doc stubs withheld by the exhaust-theme gate
     };
   }
 
@@ -391,7 +477,7 @@ export class CorpusPromoter {
 
     // D-04 bound: never force-promote GLOBAL_SCOPE or empty scope
     if (!scope || scope === GLOBAL_SCOPE) {
-      return { promoted: [], containment: 0, reference: 0, tombstoned: 0 };
+      return { promoted: [], containment: 0, reference: 0, tombstoned: 0, exhaustSkipped: 0 };
     }
 
     const now = this.clock.nowMs();
@@ -424,6 +510,7 @@ export class CorpusPromoter {
         containment: scopedSchemaIds.length, // one landing→chapter edge per in-scope schema
         reference: 0,
         tombstoned: 0,
+        exhaustSkipped: 0,
       };
     }
 
@@ -525,6 +612,7 @@ export class CorpusPromoter {
       containment: 0,  // DocGraphDeriver now owns edge derivation (D-11)
       reference: 0,
       tombstoned: 0,
+      exhaustSkipped: 0,  // scope bypass does not run the organic exhaust gate
     };
   }
 }
@@ -560,6 +648,8 @@ export interface SubjectPromoteResult {
   hubDocId: string | null;
   /** Doc node ids of newly created subject stubs. */
   subjectDocIds: string[];
+  /** Number of proposals dropped by the exhaust-theme gate (39.1 residual). */
+  exhaustSkipped: number;
 }
 
 /** Options for promoteSubjects. */
@@ -796,6 +886,7 @@ export class SubjectPromoter {
       refreshQueued: [],
       hubDocId: null,
       subjectDocIds: [],
+      exhaustSkipped: 0,
     };
 
     // D-04 guard: never promote GLOBAL_SCOPE or empty scope
@@ -860,6 +951,8 @@ ${schemaInputLines}
 
 Propose a small set of named subject areas (3-8) that group these schemas into coherent topics. For each subject, list the schema NUMBERS (the integer index shown before each schema label) that belong to it.
 
+Do NOT propose subjects that are development exhaust (version-control operations, task/plan/execution tracking, tool-invocation mechanics, workflow bookkeeping, diagnostic/build noise); they are working memory, not project knowledge.
+
 Output ONLY valid JSON (no markdown, no explanation):
 [{"name": "subject-name-hyphenated", "relatedSchemaIndexes": [0, 3, 7]}]`;
 
@@ -892,6 +985,7 @@ Output ONLY valid JSON (no markdown, no explanation):
 
     const accepted: AcceptedSubject[] = [];
     const seenSlugs = new Set<string>();
+    let exhaustSkipped = 0;
 
     for (const proposal of rawProposals) {
       if (!proposal || typeof proposal.name !== 'string') continue;
@@ -901,6 +995,16 @@ Output ONLY valid JSON (no markdown, no explanation):
 
       const normalizedName = normalizeSubjectName(name);
       if (!normalizedName) continue;
+
+      // Exhaust-theme gate (39.1 residual): deterministic backstop to the prompt
+      // instruction above — drop an exhaust-named proposal before any doc stub is
+      // created. Withholds the DOC only; no graph node is touched. Match both the
+      // raw name and its normalized (hyphenated) slug so "Git & Version Control"
+      // and "git-ops" are both caught.
+      if (isExhaustTheme(name) || isExhaustTheme(normalizedName)) {
+        exhaustSkipped++;
+        continue;
+      }
 
       const subjectSlug = `${scope}:${normalizedName}`;
       if (seenSlugs.has(subjectSlug)) continue; // deduplicate proposals
@@ -935,7 +1039,7 @@ Output ONLY valid JSON (no markdown, no explanation):
     }
 
     if (accepted.length === 0) {
-      return emptyResult;
+      return { ...emptyResult, exhaustSkipped };
     }
 
     // ── Phase C: atomic write (single IMMEDIATE transaction, NO await inside) ────
@@ -1046,6 +1150,7 @@ Output ONLY valid JSON (no markdown, no explanation):
       refreshQueued,
       hubDocId,
       subjectDocIds: newSubjectDocIds,
+      exhaustSkipped,
     };
   }
 }

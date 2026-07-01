@@ -637,10 +637,11 @@ export async function runConsolidation(
         const r = await subjectPromoter.promoteSubjects(s);
         // A scope that opened a gate did real work (and consumed an LLM call) — count it
         // toward the per-pass budget. Ungated no-op scopes (SQL-only) stay free.
-        if (r.proposed.length > 0 || r.created > 0 || r.refreshQueued.length > 0) {
+        if (r.proposed.length > 0 || r.created > 0 || r.refreshQueued.length > 0 || r.exhaustSkipped > 0) {
           log(
             `EXHAUST-GATE: scope=${s} proposed=${r.proposed.length} ` +
-            `created=${r.created} refreshQueued=${r.refreshQueued.length}`,
+            `created=${r.created} refreshQueued=${r.refreshQueued.length} ` +
+            `exhaustSkipped=${r.exhaustSkipped}`,
           );
           promotions++;
         }

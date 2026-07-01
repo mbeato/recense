@@ -104,7 +104,8 @@ async function main(): Promise<void> {
 
     fileLog(
       `done: promoted=${result.promoted.length} containment=${result.containment} ` +
-      `reference=${result.reference} tombstoned=${result.tombstoned}`,
+      `reference=${result.reference} tombstoned=${result.tombstoned} ` +
+      `exhaustSkipped=${result.exhaustSkipped}`,
     );
 
     // ── 6. Emit result JSON ────────────────────────────────────────────────
@@ -114,6 +115,7 @@ async function main(): Promise<void> {
         containment: result.containment,
         reference: result.reference,
         tombstoned: result.tombstoned,
+        exhaustSkipped: result.exhaustSkipped,
         dryRun: isDryRun,
       }) + '\n',
     );
