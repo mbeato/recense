@@ -151,12 +151,26 @@ export function initTrayIcon(opts: TrayIconOptions): TrayIconHandle {
 
     // Pulse ONLY on real activation trace events — Phase 15 D-04 no-fake-firing.
     // Event name is `trace` (NOT `message`, NOT `activation`) — locked in server.ts.
-    es.addEventListener('trace', (_e: Event) => {
-      log('trace event received — pulsing icon');
-      // A received trace proves the server is alive — clear any dim state.
-      // No setRest() needed: pulse() sets the active image immediately, so
-      // clearing the flag is sufficient and avoids an image flicker.
+    es.addEventListener('trace', (e: MessageEvent) => {
+      // A received trace (of ANY kind) proves the server is alive — clear any dim
+      // state regardless. But the icon pulse is a LIVE-activity signal: it must fire
+      // only on genuinely new events (live recalls + sleep-pass consolidation rows),
+      // NOT on idle replay echoes, which re-emit PAST rows tagged `replay: true`
+      // (Phase 54). Pulsing on replay would make an idle brain look perpetually
+      // active. Parse defensively: a malformed/unparseable trace still pulses
+      // (fail toward the liveness signal — matches pre-replay behaviour).
       isDim = false;
+      let isReplay = false;
+      try {
+        isReplay = JSON.parse(e.data)?.replay === true;
+      } catch {
+        isReplay = false;
+      }
+      if (isReplay) {
+        log('replay trace event received — not pulsing (idle rehearsal, not live)');
+        return;
+      }
+      log('trace event received — pulsing icon');
       pulse();
     });
 
