@@ -161,6 +161,11 @@ export const KIND_COLOR = {
   oscillation:     0xc9824e,
   /** Non-hero cascade events — muted slate (NON-amber per D-04) */
   neutral:         0x8a93a6,
+  /** Spontaneous idle 1-hop wandering (Phase 56) — dim indigo/violet, the
+   *  default-mode-network hue. Distinct from recall amber and replay cyan so
+   *  spontaneous activity is never mistaken for a live/replayed query result.
+   *  Starting direction only — tune at the founder visual checkpoint (D-04/D-06). */
+  spontaneous:     0x8a7fff,
 };
 
 // ============================================================================
@@ -358,3 +363,21 @@ export const TWINKLE_PERIOD_MS  = 2000;
 /** Brightness amplitude of the twinkle breathe — neutral tint lerp (raised from 0.18 at
  *  the founder checkpoint so ambient idle activity reads without the hull as backdrop). */
 export const TWINKLE_AMP        = 0.42;
+
+// ============================================================================
+// Layer 4 — Phase 56 spontaneous default-mode wandering (tuned at founder checkpoint)
+// ============================================================================
+// Honest idle-emitted 1-hop spreads (real PRED_SET edges, no fabricated content) —
+// rendered strictly subordinate to replay so a genuinely-alive brain with an empty
+// replay buffer still reads as alive, without ever escalating above the replay layer.
+
+/** Intensity multiplier vs. live recall — MUST be < REPLAY_DIM (0.4) (SC3 honesty
+ *  invariant: spontaneous is the dimmest activity layer). Starting direction only. */
+export const SPONT_DIM          = 0.3;
+
+/** ms between spontaneous emissions during idle (starting direction; keep in sync
+ *  with server.ts SPONT_CADENCE_MS — server is authoritative). */
+export const SPONT_CADENCE_MS   = 2500;
+
+/** Max hop nodes considered per spontaneous emission (starting direction). */
+export const SPONT_HOP_TOPN     = 6;
