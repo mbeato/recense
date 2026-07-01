@@ -11,9 +11,13 @@
  * BILLING SAFEGUARD (load-bearing): Claude Code prefers ANTHROPIC_API_KEY over the
  * subscription login when that env var is present — so forwarding process.env verbatim
  * silently bills the API instead of the Max subscription (the 2026-06-17 incident:
- * ~/.claude/settings.json env-injects the key). The spawn env DELETES ANTHROPIC_API_KEY
- * and ANTHROPIC_AUTH_TOKEN so `claude -p` falls back to the stored OAuth/subscription
- * login. The unit test asserts this strip — it is the whole point of the transport.
+ * ~/.claude/settings.json env-injects the key). Two layers close this: the spawn env
+ * DELETES ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN so `claude -p` falls back to the
+ * stored OAuth/subscription login (closes the parent-process-env vector), and
+ * `--setting-sources project` (below) suppresses ~/.claude/settings.json entirely
+ * (closes the user-settings re-injection vector, which alone defeats the env-strip —
+ * see 45-04-FINDING CONTROL). The unit test asserts the env strip; it is the whole
+ * point of the transport.
  *
  * ISOLATION (load-bearing): runs from os.tmpdir() — a NEUTRAL cwd with no project
  * CLAUDE.md and no brain-memory hooks. Critically this avoids re-firing recense's own

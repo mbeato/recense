@@ -76,7 +76,7 @@ describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
   it('throws "newer than this binary" when stored schema_version > SCHEMA_VERSION (M-9 downgrade guard)', () => {
     const db = new Database(':memory:');
     try {
-      initSchema(db); // stamps SCHEMA_VERSION (8)
+      initSchema(db); // stamps the current SCHEMA_VERSION
       // Simulate a future DB by hand-stamping a version one above the binary
       db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(
         String(SCHEMA_VERSION + 1),
@@ -90,7 +90,7 @@ describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
   it('re-stamps to SCHEMA_VERSION when stored version < SCHEMA_VERSION (upgrade path)', () => {
     const db = new Database(':memory:');
     try {
-      initSchema(db); // stamps SCHEMA_VERSION (8)
+      initSchema(db); // stamps the current SCHEMA_VERSION
       // Simulate a stale v4 DB
       db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4')").run();
       initSchema(db); // should upgrade, not throw
