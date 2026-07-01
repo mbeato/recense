@@ -41,6 +41,7 @@ import {
   ACT_BRIGHTEN_GAIN,
   ACT_HAZE_LERP,
   REPLAY_DIM,
+  SPONT_DIM,
   TWINKLE_COUNT,
   TWINKLE_PERIOD_MS,
   TWINKLE_AMP,
@@ -242,6 +243,9 @@ export function initTrace(ctx) {
     // recall_seed == HOT amber, but named explicitly so the recall path is legible.
     recall_seed:     new THREE.Color(KIND_COLOR.recall_seed),
     recall_hop:      new THREE.Color(KIND_COLOR.recall_hop),
+    // Spontaneous idle default-mode wandering (Phase 56) — dim indigo/violet,
+    // distinct from recall amber and replay cyan (T-56-06).
+    spontaneous:     new THREE.Color(KIND_COLOR.spontaneous),
   };
 
   // Pre-dimmed cyan for replay-echo edge pulses — spawnPulse has no intensity knob, so a
@@ -254,6 +258,17 @@ export function initTrace(ctx) {
     (Math.round(((_rh >> 16) & 0xff) * REPLAY_DIM) << 16) |
     (Math.round(((_rh >> 8) & 0xff) * REPLAY_DIM) << 8) |
     Math.round((_rh & 0xff) * REPLAY_DIM),
+  );
+
+  // Pre-dimmed indigo for spontaneous-wandering edge pulses (Phase 56) — same
+  // bit-shift dim construction as REPLAY_HOP_COLOR (no multiplyScalar, so it
+  // works under the minimal test colour stub). SPONT_DIM < REPLAY_DIM keeps
+  // spontaneous pulses strictly dimmer than replay (SC3).
+  const _sh = KIND_COLOR.spontaneous;
+  const SPONT_HOP_COLOR = new THREE.Color(
+    (Math.round(((_sh >> 16) & 0xff) * SPONT_DIM) << 16) |
+    (Math.round(((_sh >> 8) & 0xff) * SPONT_DIM) << 8) |
+    Math.round((_sh & 0xff) * SPONT_DIM),
   );
 
   // Active node Set — the tick callback walks ONLY this set, never allNodes
@@ -670,6 +685,76 @@ export function initTrace(ctx) {
           if (srcNode) spawnPulse(srcNode, node, REPLAY_HOP_COLOR);
         });
       }
+
+      const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
+      setTimeout(() => {
+        ctx.traceNodes.clear();
+        ctx.traceLinks.clear();
+        if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
+      }, fadeMs);
+      return;
+    }
+
+    // ── Layer 3.5 — Spontaneous idle wandering (Phase 56): honest seed→hop 1-hop
+    // pathway at SPONT_DIM, dim indigo default-mode hue. Slots BEFORE kind dispatch
+    // so a spontaneous row never enters _applyIngestion. No `replay` flag — the wire
+    // contract is { seeds, hops: [{node_id, src, score:null, hop:1}], kind:'spontaneous' }.
+    // Strictly subordinate to replay: SPONT_DIM < REPLAY_DIM (SC3 honesty invariant).
+    if (row.kind === 'spontaneous') {
+      const rawSeeds = row.seeds || [];
+      if (!rawSeeds.length) return;           // empty row → silent no-op
+
+      const visited = new Set();
+      const seedEntries = [];                 // {node, intensity}
+
+      for (const raw of rawSeeds) {
+        const { node_id, score } = normalizeSeed(raw);
+        if (!node_id || visited.has(node_id)) continue;
+        const node = ctx.idMap.get(node_id);
+        if (!node) continue;
+        visited.add(node_id);
+        const intensity = typeof score === 'number'
+          ? Math.max(0.2, Math.min(1.0, score))
+          : 0.5;
+        seedEntries.push({ node, intensity });
+      }
+
+      if (!seedEntries.length) return;        // all seeds absent from idMap → no-op
+
+      const hopEntries = traceEdgesFromHops(row, ctx.idMap)
+        .map(({ node_id, src, score }) => {
+          const node = ctx.idMap.get(node_id);
+          if (!node) return null;
+          // score:null on every hop per the spontaneous wire contract → mid-intensity
+          // fallback (WR-02), same pattern as the recall/replay paths.
+          const intensity = typeof score === 'number'
+            ? Math.max(0.1, Math.min(0.5, score * 0.55))
+            : 0.3;
+          const srcNode = src ? (ctx.idMap.get(src) ?? null) : null;
+          return { node, srcNode, intensity };
+        })
+        .filter(Boolean);
+
+      if (ctx.markAnimating) ctx.markAnimating(DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
+
+      const pathNodes = seedEntries.map(e => e.node).concat(hopEntries.map(e => e.node));
+      const seedIds = new Set(seedEntries.map(e => e.node.id));
+      seedEntries.forEach(e => ctx.traceNodes.add(e.node.id));
+      hopEntries.forEach(e => ctx.traceNodes.add(e.node.id));
+      if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
+
+      // Activate at SPONT_DIM intensity — dim indigo, strictly dimmer than replay (SC3).
+      seedEntries.forEach(({ node, intensity }) => activate(node, intensity * SPONT_DIM, KIND_COLORS.spontaneous));
+      hopEntries.forEach(({ node, intensity }) => {
+        if (seedIds.has(node.id)) return;   // keep a node's seed role over the hop role
+        activate(node, intensity * SPONT_DIM, KIND_COLORS.spontaneous);
+      });
+
+      // Draw the honest seed→hop pathway pulses only when srcNode is present (a real
+      // out-edge from the engine) — pre-dimmed indigo (SPONT_HOP_COLOR).
+      hopEntries.forEach(({ node, srcNode }) => {
+        if (srcNode) spawnPulse(srcNode, node, SPONT_HOP_COLOR);
+      });
 
       const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
       setTimeout(() => {
