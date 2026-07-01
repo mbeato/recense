@@ -1054,7 +1054,7 @@ Plan-04-style machine guards (assert ambient hops are real edges, score:null, no
   2. Emitted hops are real graph out-edges with `score: null`; no fabricated edge or magnitude (SC3).
   3. Phase 52 honesty guards + Phase 54 layer guards still pass.
 
-**Plans:** 1/2 plans executed
+**Plans:** 3/2 plans complete
 
 Plans:
 **Wave 1**
@@ -1063,7 +1063,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 55-02-PLAN.md — Founder visual verification of ambient pathways (SC1) + AMBIENT_HOP_TOPN tuning
+- [x] 55-02-PLAN.md — Founder visual verification of ambient pathways (SC1) + AMBIENT_HOP_TOPN tuning
+- [x] 55-03 (gap closure) — Cyan 1-hop nodes + honest seed→hop edge pulses (fixes Phase 52 recall_hop-never-wired gap surfaced at the 55-02 checkpoint)
 
 ## Backlog
 
