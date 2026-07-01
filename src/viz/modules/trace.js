@@ -157,9 +157,13 @@ export function normalizeSeed(s) {
  * inside hop resolution — those were the BFS tools; their use here would
  * reintroduce the dishonesty this phase kills (D-08 #1 regression guard).
  *
- * @param {{ hops: Array<{node_id: string, score: number|null, hop: number}> }} row
+ * `src` (Phase 55) is passed through when present — the id of the seed this hop is a
+ * real out-edge of, so the recall path can draw an honest source-seed→hop pathway line.
+ * Absent on curated/cueless/ingestion producers → those light the hop node only, no line.
+ *
+ * @param {{ hops: Array<{node_id: string, src?: string, score: number|null, hop: number}> }} row
  * @param {Map<string, any>} idMap
- * @returns {Array<{node_id: string, score: number|null}>}
+ * @returns {Array<{node_id: string, src: string|null, score: number|null}>}
  */
 export function traceEdgesFromHops(row, idMap) {
   const hops = row.hops || [];
@@ -167,7 +171,7 @@ export function traceEdgesFromHops(row, idMap) {
   for (const hop of hops) {
     if (!idMap.has(hop.node_id)) continue;  // skip nodes not in the render graph
     if (result.length >= TRACE_MAX_EDGES) break; // defensive cap (T-52-04)
-    result.push({ node_id: hop.node_id, score: hop.score ?? null });
+    result.push({ node_id: hop.node_id, src: hop.src ?? null, score: hop.score ?? null });
   }
   return result;
 }
@@ -234,6 +238,10 @@ export function initTrace(ctx) {
     reconsolidation: new THREE.Color(KIND_COLOR.reconsolidation),
     oscillation:     new THREE.Color(KIND_COLOR.oscillation),
     neutral:         new THREE.Color(KIND_COLOR.neutral),
+    // Recall-path palette (Phase 55 SC1): amber seeds, cyan 1-hop associations.
+    // recall_seed == HOT amber, but named explicitly so the recall path is legible.
+    recall_seed:     new THREE.Color(KIND_COLOR.recall_seed),
+    recall_hop:      new THREE.Color(KIND_COLOR.recall_hop),
   };
 
   // Active node Set — the tick callback walks ONLY this set, never allNodes
@@ -681,13 +689,17 @@ export function initTrace(ctx) {
     // Hop brightness gated on hop score ALONE (no edge.w — not in the honest
     // payload; deriving it would re-invent client adjacency, which this kills).
     const hopEntries = traceEdgesFromHops(row, ctx.idMap)
-      .map(({ node_id, score }) => {
+      .map(({ node_id, src, score }) => {
         const node = ctx.idMap.get(node_id);
         if (!node) return null;
         const intensity = typeof score === 'number'
           ? Math.max(0.1, Math.min(0.5, score * 0.55))
           : 0.3; // mid fallback for null-score hops (schema-recall path)
-        return { node, intensity };
+        // srcNode present only when the payload carried an honest src seed (ambient
+        // retrieveRanked path) AND that seed is realized in the render graph; used to
+        // draw the seed→hop pathway line. null → node lights, no line (curated/legacy).
+        const srcNode = src ? (ctx.idMap.get(src) ?? null) : null;
+        return { node, srcNode, intensity };
       })
       .filter(Boolean);
 
@@ -696,19 +708,29 @@ export function initTrace(ctx) {
     if (ctx.markAnimating) ctx.markAnimating(decayWindowMs);
 
     // ── Reveal pathway through the LOD ────────────────────────────────────────
-    // Only nodes — no links (we have no honest seed→hop edges to reveal).
+    // Nodes only — pathway LINES are drawn as animated wavefronts (spawnPulse) below,
+    // not as persistent LOD links (we still hold no persistent seed→hop link objects).
     const pathNodes = seedEntries.map(e => e.node)
       .concat(hopEntries.map(e => e.node));
     seedEntries.forEach(e => ctx.traceNodes.add(e.node.id));
     hopEntries.forEach(e => ctx.traceNodes.add(e.node.id));
     if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
 
-    // ── Activate all seeds at score-proportional intensity (D-07) ─────────────
-    seedEntries.forEach(({ node, intensity }) => activate(node, intensity));
+    // ── Activate all seeds at score-proportional intensity, amber (D-07) ──────
+    seedEntries.forEach(({ node, intensity }) => activate(node, intensity, KIND_COLORS.recall_seed));
 
-    // ── Activate hop nodes at subordinate (dimmer) intensity ──────────────────
-    // Gated on hop score alone; thinner/dimmer than seeds per spec.
-    hopEntries.forEach(({ node, intensity }) => activate(node, intensity));
+    // ── Activate hop nodes cyan at subordinate (dimmer) intensity ─────────────
+    // Distinct cyan (recall_hop) so hops read as subordinate 1-hop associations, not
+    // a second amber seed. Gated on hop score alone; thinner/dimmer than seeds per spec.
+    hopEntries.forEach(({ node, intensity }) => activate(node, intensity, KIND_COLORS.recall_hop));
+
+    // ── Draw honest seed→hop pathway pulses (Phase 55 SC1) ────────────────────
+    // A cyan wavefront races along the REAL src-seed→hop edge (src supplied by the
+    // engine; the (src→node) pair is a genuine relation out-edge — no fabricated path).
+    // Skipped for hops whose src is absent or off-graph (curated/legacy) — node-only.
+    hopEntries.forEach(({ node, srcNode }) => {
+      if (srcNode) spawnPulse(srcNode, node, KIND_COLORS.recall_hop);
+    });
 
     // ── Fade the pathway back after the decay window ───────────────────────────
     const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
