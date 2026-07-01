@@ -29,6 +29,7 @@ import {
 } from '../src/viz/activation-sink';
 import { MockModelProvider } from '../src/model/provider';
 import { newId } from '../src/lib/hash';
+import { PRED_SET } from '../src/model/typed-predicates';
 
 const BASE_CONFIG = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
 const DIMS = 16;
@@ -363,7 +364,7 @@ describe('engine: retrieveRanked vizFloor lights genuinely-retrieved nodes below
     const relDsts = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8'];
     relDsts.forEach((id, i) => {
       store.upsertNode({ id, type: 'fact', value: `relation target ${id}`, origin: 'observed', s: 0.5 });
-      store.upsertEdge({ src: 'seed', dst: id, rel: 'related', w: 0.9 - i * 0.05, kind: 'relation' });
+      store.upsertEdge({ src: 'seed', dst: id, rel: 'uses', w: 0.9 - i * 0.05, kind: 'relation' });
     });
 
     // Non-relation edges at HIGHER weight than any relation edge — must never leak (D-05).
@@ -372,10 +373,17 @@ describe('engine: retrieveRanked vizFloor lights genuinely-retrieved nodes below
     store.upsertNode({ id: 'doc1', type: 'doc', value: 'doc target', origin: 'observed', s: 0.5 });
     store.upsertEdge({ src: 'seed', dst: 'doc1', rel: 'doc_link', w: 0.98, kind: 'doc_link' });
 
+    // Structural relation-KIND edge (`extends`) at the HIGHEST weight of all: shares
+    // kind='relation' but its rel is NOT in PRED_SET, so it is a structural/schema edge,
+    // not a semantic association — must be excluded (D-05a reversed; LANDMINE-2 parity with
+    // typed-traversal). Highest weight so a missing PRED_SET guard would surface it as hop #1.
+    store.upsertNode({ id: 'ext1', type: 'schema', value: 'extends target', origin: 'observed', s: 0.5 });
+    store.upsertEdge({ src: 'seed', dst: 'ext1', rel: 'extends', w: 0.995, kind: 'relation' });
+
     // Tombstoned relation edge at the HIGHEST weight — must be excluded WITHOUT
     // displacing a live hop from a top-N slot (D-07, Pitfall 2: filter-before-truncate).
     store.upsertNode({ id: 'dead1', type: 'fact', value: 'dead target', origin: 'observed', s: 0.5 });
-    store.upsertEdge({ src: 'seed', dst: 'dead1', rel: 'related', w: 0.99, kind: 'relation' });
+    store.upsertEdge({ src: 'seed', dst: 'dead1', rel: 'uses', w: 0.99, kind: 'relation' });
     store.tombstone('dead1');
 
     const sink = new MockActivationTraceSink();
@@ -414,6 +422,20 @@ describe('engine: retrieveRanked vizFloor lights genuinely-retrieved nodes below
     expect(trace.hops.some(h => h.node_id === 'abs1')).toBe(false);
     expect(trace.hops.some(h => h.node_id === 'doc1')).toBe(false);
 
+    // Structural-edge exclusion (PRED_SET guard, D-05a reversal): a kind='relation' edge whose
+    // rel is not a semantic predicate (`extends`/`links_to`) is structure, not association —
+    // absent from hops even though its weight (0.995) is the highest of all edges.
+    expect(trace.hops.some(h => h.node_id === 'ext1')).toBe(false);
+    // And every emitted hop's rel IS a semantic predicate (PRED_SET) on a real relation edge.
+    const relBySeedDst = new Map(
+      store.getOutEdgesWithRel('seed').map(e => [e.dst, { rel: e.rel, kind: e.kind }]),
+    );
+    trace.hops.forEach(h => {
+      const e = relBySeedDst.get(h.node_id)!;
+      expect(e.kind).toBe('relation');
+      expect(PRED_SET.has(e.rel)).toBe(true);
+    });
+
     // Liveness guard (D-07): tombstoned dst absent AND live-hop count not reduced
     // by the dead high-weight edge displacing a live one from the top-N slots.
     expect(trace.hops.some(h => h.node_id === 'dead1')).toBe(false);
@@ -438,10 +460,10 @@ describe('engine: retrieveRanked vizFloor lights genuinely-retrieved nodes below
     store.upsertNode({ id: 'seed2', type: 'fact', value: 'seed fact 2', origin: 'observed', s: 0.8 });
     store.setEmbedding('seed2', makeVec(0));
 
-    // 3 relation edges, identical weight, dst ids intentionally out of alpha order.
+    // 3 semantic-predicate relation edges, identical weight, dst ids intentionally out of alpha order.
     ['zzz', 'aaa', 'mmm'].forEach(id => {
       store.upsertNode({ id, type: 'fact', value: `tie target ${id}`, origin: 'observed', s: 0.5 });
-      store.upsertEdge({ src: 'seed2', dst: id, rel: 'related', w: 0.5, kind: 'relation' });
+      store.upsertEdge({ src: 'seed2', dst: id, rel: 'uses', w: 0.5, kind: 'relation' });
     });
 
     const sink = new MockActivationTraceSink();

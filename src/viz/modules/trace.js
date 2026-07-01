@@ -244,6 +244,18 @@ export function initTrace(ctx) {
     recall_hop:      new THREE.Color(KIND_COLOR.recall_hop),
   };
 
+  // Pre-dimmed cyan for replay-echo edge pulses — spawnPulse has no intensity knob, so a
+  // darker colour keeps replay pulses strictly dimmer than live (SC3), matching the
+  // REPLAY_DIM node-activation factor. Scale each channel by REPLAY_DIM and rebuild the hex
+  // (avoids THREE.Color.multiplyScalar so it also works under the minimal test colour stub).
+  // Built once (zero per-frame allocation).
+  const _rh = KIND_COLOR.recall_hop;
+  const REPLAY_HOP_COLOR = new THREE.Color(
+    (Math.round(((_rh >> 16) & 0xff) * REPLAY_DIM) << 16) |
+    (Math.round(((_rh >> 8) & 0xff) * REPLAY_DIM) << 8) |
+    Math.round((_rh & 0xff) * REPLAY_DIM),
+  );
+
   // Active node Set — the tick callback walks ONLY this set, never allNodes
   const active = new Set();
 
@@ -618,27 +630,46 @@ export function initTrace(ctx) {
 
       if (!seedEntries.length) return;        // all seeds absent from idMap → no-op
 
+      // Recall replay rows mirror the live recall palette/pulses (dimmer); non-recall replay
+      // rows keep the neutral default activation (event-kind colouring is out of scope here).
+      const isRecallReplay = !row.kind || row.kind === 'recall';
+
       const hopEntries = traceEdgesFromHops(row, ctx.idMap)
-        .map(({ node_id, score }) => {
+        .map(({ node_id, src, score }) => {
           const node = ctx.idMap.get(node_id);
           if (!node) return null;
           const intensity = typeof score === 'number'
             ? Math.max(0.1, Math.min(0.5, score * 0.55))
             : 0.3;
-          return { node, intensity };
+          const srcNode = src ? (ctx.idMap.get(src) ?? null) : null;
+          return { node, srcNode, intensity };
         })
         .filter(Boolean);
 
       if (ctx.markAnimating) ctx.markAnimating(DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
 
       const pathNodes = seedEntries.map(e => e.node).concat(hopEntries.map(e => e.node));
+      const seedIds = new Set(seedEntries.map(e => e.node.id));
       seedEntries.forEach(e => ctx.traceNodes.add(e.node.id));
       hopEntries.forEach(e => ctx.traceNodes.add(e.node.id));
       if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
 
-      // Activate at REPLAY_DIM intensity — replay is always strictly dimmer than live (SC3)
-      seedEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM));
-      hopEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM));
+      // Activate at REPLAY_DIM intensity — replay is always strictly dimmer than live (SC3).
+      const seedColor = isRecallReplay ? KIND_COLORS.recall_seed : undefined;
+      const hopColor  = isRecallReplay ? KIND_COLORS.recall_hop  : undefined;
+      seedEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM, seedColor));
+      hopEntries.forEach(({ node, intensity }) => {
+        if (seedIds.has(node.id)) return;   // keep a node's seed role over the hop role
+        activate(node, intensity * REPLAY_DIM, hopColor);
+      });
+
+      // Replay the honest seed→hop edge pulses too (pre-dimmed cyan, SC3), so an idle replay
+      // echo is structurally the same frame as the live recall — just dimmer. Recall rows only.
+      if (isRecallReplay) {
+        hopEntries.forEach(({ node, srcNode }) => {
+          if (srcNode) spawnPulse(srcNode, node, REPLAY_HOP_COLOR);
+        });
+      }
 
       const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
       setTimeout(() => {
@@ -717,12 +748,18 @@ export function initTrace(ctx) {
     if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
 
     // ── Activate all seeds at score-proportional intensity, amber (D-07) ──────
+    const seedIds = new Set(seedEntries.map(e => e.node.id));
     seedEntries.forEach(({ node, intensity }) => activate(node, intensity, KIND_COLORS.recall_seed));
 
     // ── Activate hop nodes cyan at subordinate (dimmer) intensity ─────────────
     // Distinct cyan (recall_hop) so hops read as subordinate 1-hop associations, not
     // a second amber seed. Gated on hop score alone; thinner/dimmer than seeds per spec.
-    hopEntries.forEach(({ node, intensity }) => activate(node, intensity, KIND_COLORS.recall_hop));
+    // A node that is ALSO a retrieved seed keeps its primary amber seed role — do not
+    // overwrite it with the subordinate cyan hop colour (the edge pulse below still draws).
+    hopEntries.forEach(({ node, intensity }) => {
+      if (seedIds.has(node.id)) return;
+      activate(node, intensity, KIND_COLORS.recall_hop);
+    });
 
     // ── Draw honest seed→hop pathway pulses (Phase 55 SC1) ────────────────────
     // A cyan wavefront races along the REAL src-seed→hop edge (src supplied by the

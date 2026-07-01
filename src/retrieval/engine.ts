@@ -26,6 +26,7 @@ import { SemanticStore } from '../db/semantic-store';
 import { AllocationGate } from '../gate/allocation-gate';
 import type { ActivationTraceSink } from '../viz/activation-sink';
 import { NoopActivationTraceSink } from '../viz/activation-sink';
+import { PRED_SET } from '../model/typed-predicates';
 import { newId } from '../lib/hash';
 
 export type RetrieveStatus = 'ok' | 'deleted' | 'unreachable';
@@ -366,12 +367,18 @@ export class RetrievalEngine {
 
   /**
    * Phase 55 (SC1/SC2/SC3): builds the honest ambient 1-hop trace payload for retrieveRanked's
-   * fire-and-forget emit. For each seed, reads its REAL kind==='relation' out-edges (D-05,
-   * excludes structural/doc-graph kinds), filters to live (non-tombstoned) dst BEFORE the
-   * weight-sort/truncate (D-07, Pitfall 2 — a dead high-weight edge must never displace a live
-   * one from a top-N slot), sorts by weight desc with a deterministic dst-asc tiebreak (D-03),
-   * and takes the first AMBIENT_HOP_TOPN per seed. Hop scores are always null (WR-02, rank-only —
-   * no fabricated magnitude); seed scores are passed through unchanged (real cosine/RRF, D-06).
+   * fire-and-forget emit. For each seed, reads its REAL out-edges and keeps only genuine SEMANTIC
+   * association edges — `kind === 'relation' && PRED_SET.has(rel)` — the same LANDMINE-2 filter
+   * typed-traversal.ts uses. This excludes doc-graph kinds (doc_link etc.) AND the structural
+   * relation-kind edges `links_to` / `extends` that share kind='relation' but are NOT semantic
+   * associations (structural `extends` schema edges alone are ~83% of kind='relation' edges, so
+   * without the PRED_SET half they would dominate the rendered pathways with non-association
+   * structure). Sorts by weight desc with a deterministic dst-asc tiebreak (D-03), then walks in
+   * weight order taking only live (non-tombstoned) dsts until AMBIENT_HOP_TOPN are collected —
+   * liveness is checked BEFORE a slot is filled (D-07, Pitfall 2: a dead high-weight edge is
+   * skipped, never displacing a live one), and getNode is called lazily (bounded to ~top-N in the
+   * common case, not once per out-edge). Hop scores are always null (WR-02, rank-only — no
+   * fabricated magnitude); seed scores are passed through unchanged (real cosine/RRF, D-06).
    * Each hop carries `src` — the id of the ACTUAL seed whose out-edge produced it (SC1 edge
    * lines): the (src→node_id) pair is a real relation edge in the graph, never a guessed
    * seeds[0] attribution. De-dups on the (src,dst) pair (an edge is unique per seed already;
@@ -388,16 +395,21 @@ export class RetrievalEngine {
     const seenPairs = new Set<string>();
 
     for (const seed of seeds) {
-      const liveRelationEdges = this.store.getOutEdgesWithRel(seed.node_id)
-        .filter(e => e.kind === 'relation')
-        .filter(e => this.store.getNode(e.dst)?.tombstoned !== 1)
-        .sort((a, b) => (b.w - a.w) || (a.dst < b.dst ? -1 : a.dst > b.dst ? 1 : 0))
-        .slice(0, AMBIENT_HOP_TOPN);
+      // Cheap in-memory semantic-edge filter FIRST, then weight-sort; getNode (a DB read) is
+      // deferred to the bounded walk below so a high-degree seed does ~AMBIENT_HOP_TOPN reads,
+      // not one per out-edge.
+      const semanticEdges = this.store.getOutEdgesWithRel(seed.node_id)
+        .filter(e => e.kind === 'relation' && PRED_SET.has(e.rel))
+        .sort((a, b) => (b.w - a.w) || (a.dst < b.dst ? -1 : a.dst > b.dst ? 1 : 0));
 
-      for (const edge of liveRelationEdges) {
+      let taken = 0;
+      for (const edge of semanticEdges) {
+        if (taken >= AMBIENT_HOP_TOPN) break;
+        if (this.store.getNode(edge.dst)?.tombstoned === 1) continue; // liveness before the slot (D-07)
         const pairKey = `${seed.node_id} ${edge.dst}`;
         if (seenPairs.has(pairKey)) continue;
         seenPairs.add(pairKey);
+        taken++;
         hops.push({ node_id: edge.dst, src: seed.node_id, score: null, hop: 1 });
       }
     }
