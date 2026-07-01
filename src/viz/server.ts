@@ -533,6 +533,45 @@ export function startVizServer(
   }
   refreshSpontaneousPool();
 
+  // Phase 56 (Plan 02): read-only HonestTraceReader over the SAME readonly db handle
+  // (T-56-02) — no new Database(), no write-capable SemanticStore. Two prepared SELECTs
+  // mirror SemanticStore.getOutEdgesWithRel / getNode exactly.
+  const stmtSpontOutEdges = db.prepare('SELECT dst, rel, w, kind FROM edge WHERE src = ?');
+  const stmtSpontGetNode = db.prepare('SELECT tombstoned FROM node WHERE id = ?');
+  const spontaneousReader: HonestTraceReader = {
+    getOutEdgesWithRel(id: string) {
+      return stmtSpontOutEdges.all(id) as Array<{ dst: string; rel: string; w: number; kind: string }>;
+    },
+    getNode(id: string) {
+      return stmtSpontGetNode.get(id) as { tombstoned: number } | undefined;
+    },
+  };
+
+  // Phase 56 (Plan 02): idle-gated spontaneous emitter — mirrors the replay scheduler's
+  // gating shape exactly. Fires an honest 1-hop SSE trace ONLY when the replay buffer is
+  // EMPTY (replay is the fallback-owner of the idle gap, D-01) and the shared idle gap has
+  // elapsed (live preempts, SC3). Never writes an activation_trace row and never touches
+  // `cursor` (side-channel re-emit, like replay).
+  const spontaneousInterval = setInterval(() => {
+    if (clients.size === 0) return;
+    if (replayBuffer.length !== 0) return;                       // replay owns the idle gap (D-01)
+    if (Date.now() - lastLiveRow < REPLAY_IDLE_GAP_MS) return;    // live preempts (SC3)
+    if (Date.now() - poolBuiltAt >= SPONT_POOL_REFRESH_MS) refreshSpontaneousPool();
+    const seeds = pickSpontaneousSeeds(spontaneousPool, SPONT_SEED_COUNT, Math.random);
+    if (seeds.length === 0) return;
+    const { hops } = buildHonestOneHopTrace(seeds, spontaneousReader, SPONT_HOP_TOPN);
+    if (hops.length === 0) return;
+    const spontaneousPayload = `event: trace\ndata: ${JSON.stringify({
+      seeds,
+      hops,
+      kind: 'spontaneous',
+    })}\n\n`;
+    for (const res of clients) {
+      res.write(spontaneousPayload);
+    }
+  }, SPONT_CADENCE_MS);
+  spontaneousInterval.unref();
+
   // ── spawnGenerateDoc: shell out to generate-doc CLI (T-27-11) ─────────────
   // The viz server's DB handle is READ-ONLY, so it cannot write doc nodes directly.
   // Instead, it spawns the `recense generate-doc <slug>` CLI as a detached subprocess.
@@ -1270,6 +1309,7 @@ export function startVizServer(
   server.on('close', () => {
     clearInterval(pollInterval);
     clearInterval(replayInterval);
+    clearInterval(spontaneousInterval);
     db.close();
   });
 
