@@ -398,6 +398,18 @@ describe('engine: retrieveRanked vizFloor lights genuinely-retrieved nodes below
     const realOutEdgeDsts = new Set(store.getOutEdgesWithRel('seed').map(e => e.dst));
     trace.hops.forEach(h => expect(realOutEdgeDsts.has(h.node_id)).toBe(true));
 
+    // Src-pairing honesty (SC3, Phase 55 edge lines): every hop carries `src` = the ACTUAL
+    // seed it is a real out-edge of (never a guessed seeds[0]). Here the sole seed is 'seed',
+    // and (src → node_id) MUST be a genuine relation edge in the store — this is the property
+    // that makes the drawn pathway honest rather than fabricated.
+    trace.hops.forEach(h => {
+      expect((h as any).src).toBe('seed');
+      const realPairs = new Set(
+        store.getOutEdgesWithRel((h as any).src).filter(e => e.kind === 'relation').map(e => e.dst),
+      );
+      expect(realPairs.has(h.node_id)).toBe(true);
+    });
+
     // Kind-allowlist guard (D-05): only kind='relation' dsts ever appear as hops.
     expect(trace.hops.some(h => h.node_id === 'abs1')).toBe(false);
     expect(trace.hops.some(h => h.node_id === 'doc1')).toBe(false);

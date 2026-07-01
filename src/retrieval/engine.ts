@@ -372,15 +372,20 @@ export class RetrievalEngine {
    * one from a top-N slot), sorts by weight desc with a deterministic dst-asc tiebreak (D-03),
    * and takes the first AMBIENT_HOP_TOPN per seed. Hop scores are always null (WR-02, rank-only —
    * no fabricated magnitude); seed scores are passed through unchanged (real cosine/RRF, D-06).
-   * De-dups hop node_ids across seeds (mirrors retrieveCueless's seenInHops) so a node reached
-   * from multiple seeds isn't double-lit. Read-only; callers wrap this in the existing
-   * try/catch fire-and-forget guard (T-10-05) — this method itself does not swallow errors.
+   * Each hop carries `src` — the id of the ACTUAL seed whose out-edge produced it (SC1 edge
+   * lines): the (src→node_id) pair is a real relation edge in the graph, never a guessed
+   * seeds[0] attribution. De-dups on the (src,dst) pair (an edge is unique per seed already;
+   * the guard just protects against a src→dst appearing under two `rel`s), so every distinct
+   * real edge is kept — a dst reached from multiple seeds yields one hop per real source edge,
+   * which the viz draws as multiple honest pathways. Read-only; callers wrap this in the
+   * existing try/catch fire-and-forget guard (T-10-05) — this method itself does not swallow
+   * errors.
    */
   private buildAmbientTracePayload(
     seeds: Array<{ node_id: string; score: number }>,
-  ): { seeds: Array<{ node_id: string; score: number }>; hops: Array<{ node_id: string; score: null; hop: 1 }> } {
-    const hops: Array<{ node_id: string; score: null; hop: 1 }> = [];
-    const seenInHops = new Set<string>();
+  ): { seeds: Array<{ node_id: string; score: number }>; hops: Array<{ node_id: string; src: string; score: null; hop: 1 }> } {
+    const hops: Array<{ node_id: string; src: string; score: null; hop: 1 }> = [];
+    const seenPairs = new Set<string>();
 
     for (const seed of seeds) {
       const liveRelationEdges = this.store.getOutEdgesWithRel(seed.node_id)
@@ -390,9 +395,10 @@ export class RetrievalEngine {
         .slice(0, AMBIENT_HOP_TOPN);
 
       for (const edge of liveRelationEdges) {
-        if (seenInHops.has(edge.dst)) continue;
-        seenInHops.add(edge.dst);
-        hops.push({ node_id: edge.dst, score: null, hop: 1 });
+        const pairKey = `${seed.node_id} ${edge.dst}`;
+        if (seenPairs.has(pairKey)) continue;
+        seenPairs.add(pairKey);
+        hops.push({ node_id: edge.dst, src: seed.node_id, score: null, hop: 1 });
       }
     }
 

@@ -54,8 +54,14 @@ export interface ActivationTraceInput {
    * 1-hop activated neighbours (JSON-serialised in DB). `score` is `null` when the
    * emitter has only rank order and no measured activation/similarity magnitude
    * (WR-02: never present a fabricated number as a real activation value).
+   *
+   * `src` (optional): the id of the seed this hop is a REAL out-edge of (Phase 55
+   * SC1 edge lines). Present on the ambient retrieveRanked path so the viz can draw
+   * an honest source-seed→hop pathway; absent on curated/cueless/ingestion producers
+   * (the viz falls back to lighting the hop node with no connecting line). NEVER a
+   * guessed seeds[0] — only the actual seed whose getOutEdgesWithRel yielded this dst.
    */
-  hops: Array<{ node_id: string; score: number | null; hop: number }>;
+  hops: Array<{ node_id: string; src?: string; score: number | null; hop: number }>;
   /** Emission timestamp (ms). Defaults to clock.nowMs() when omitted. */
   ts?: number;
   /**
