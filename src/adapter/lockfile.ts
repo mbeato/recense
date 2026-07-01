@@ -241,3 +241,26 @@ export function heartbeatLock(): void {
     // ENOENT / unreadable — no-op
   }
 }
+
+/**
+ * DEBT-02: lock-mtime heartbeat interval. Must be comfortably below LOCK_STALE_MS
+ * (30 min) so a long pass refreshes its lock several times before it could ever be
+ * judged stale. 5 min gives a 6× margin.
+ */
+export const LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
+
+/**
+ * Start a lock-mtime heartbeat (DEBT-02). Returns a stop function; always call it in
+ * the same finally that calls releaseLock() (stop before release, so the timer can
+ * never refresh — and thus resurrect — the lock mtime after releaseLock() removes the
+ * file). The interval is unref()'d so it never keeps a finished process alive.
+ *
+ * Every long-pass lock holder (sleep pass, scheduler consolidation, corpus/doc
+ * generation, corpus promotion, ingest) shares this one helper so a pass exceeding
+ * LOCK_STALE_MS can never have its live lock reclaimed as stale mid-run (L-11).
+ */
+export function startLockHeartbeat(intervalMs: number = LOCK_HEARTBEAT_MS): () => void {
+  const t = setInterval(heartbeatLock, intervalMs);
+  t.unref?.();
+  return () => clearInterval(t);
+}

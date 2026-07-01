@@ -1089,10 +1089,14 @@ Plans:
   3. Tray icon stays at rest during spontaneous activity; live recalls + sleep-pass still pulse it.
   4. Founder confirms density/feel at the visual checkpoint.
 
-**Plans:** 0 plans
+**Plans:** 5 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 56 to break down)
+- [ ] 56-01-PLAN.md — Shared honest 1-hop helper extraction + engine re-point (correctness spine, D-07)
+- [ ] 56-02-PLAN.md — Read-only SSE-only spontaneous idle emitter in server.ts (gate, pool, unref, teardown)
+- [ ] 56-03-PLAN.md — Client render (dim-indigo default-mode hue) + SPONT constants + tray suppression
+- [ ] 56-04-PLAN.md — SPONT-06 machine guard: real-edge cross-check + no-DB-write (deterministic)
+- [ ] 56-05-PLAN.md — Founder visual checkpoint: tune hue/cadence/dim/density (non-autonomous)
 
 ## Backlog
 

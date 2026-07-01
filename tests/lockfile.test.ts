@@ -19,7 +19,7 @@ import { writeFileSync, utimesSync, existsSync, unlinkSync, statSync } from 'fs'
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
-import { acquireLock, releaseLock, heartbeatLock, LOCK_STALE_MS } from '../src/adapter/lockfile';
+import { acquireLock, releaseLock, heartbeatLock, startLockHeartbeat, LOCK_STALE_MS } from '../src/adapter/lockfile';
 
 /** Per-pid hermetic lock path — never collides with the production lock or sibling forks. */
 const TEST_LOCK_PATH = join(tmpdir(), `recense-test-lock-${process.pid}.lock`);
@@ -278,5 +278,71 @@ describe('heartbeatLock — L-11: mtime heartbeat', () => {
     age();
     heartbeatLock();
     expect(acquireLock()).toBe(false); // fresh + live holder → declined, no double-writer
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEBT-02: startLockHeartbeat — interval lifecycle (start / stop / idempotent)
+// ---------------------------------------------------------------------------
+
+describe('startLockHeartbeat — DEBT-02: interval heartbeat lifecycle', () => {
+  const SL_LOCK_PATH = join(tmpdir(), `recense-startheartbeat-lock-${process.pid}.lock`);
+
+  beforeAll(() => {
+    process.env['RECENSE_LOCK_PATH'] = SL_LOCK_PATH;
+  });
+
+  afterAll(() => {
+    delete process.env['RECENSE_LOCK_PATH'];
+  });
+
+  afterEach(() => {
+    try { if (existsSync(SL_LOCK_PATH)) unlinkSync(SL_LOCK_PATH); } catch { /* ignore */ }
+  });
+
+  /** Back-date the lock mtime by `ms` so a subsequent beat is observably newer. */
+  const backdate = (path: string, ms: number): void => {
+    const t = new Date(Date.now() - ms);
+    utimesSync(path, t, t);
+  };
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+  it('advances the lock mtime on each interval while the lock exists', async () => {
+    writeFileSync(SL_LOCK_PATH, String(process.pid));
+    backdate(SL_LOCK_PATH, 60_000); // 1 min stale so any beat is clearly newer
+    const before = statSync(SL_LOCK_PATH).mtimeMs;
+
+    const stop = startLockHeartbeat(20); // 20ms interval (real timers)
+    await sleep(80); // ≥3 beats
+    stop();
+
+    const after = statSync(SL_LOCK_PATH).mtimeMs;
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it('stops advancing mtime after the returned stop function is called', async () => {
+    writeFileSync(SL_LOCK_PATH, String(process.pid));
+    const stop = startLockHeartbeat(20);
+    await sleep(50); // let it beat at least once
+    stop();
+
+    backdate(SL_LOCK_PATH, 60_000);
+    const afterStop = statSync(SL_LOCK_PATH).mtimeMs;
+    await sleep(80); // longer than the interval — no further beat may fire
+    const later = statSync(SL_LOCK_PATH).mtimeMs;
+    expect(later).toBe(afterStop);
+  });
+
+  it('calling the stop function twice is safe (idempotent clearInterval)', () => {
+    const stop = startLockHeartbeat(20);
+    expect(() => { stop(); stop(); }).not.toThrow();
+  });
+
+  it('does not throw when started with no lock file present (heartbeatLock no-ops)', async () => {
+    expect(existsSync(SL_LOCK_PATH)).toBe(false);
+    const stop = startLockHeartbeat(10);
+    await sleep(30); // let the interval fire against a missing lock
+    expect(() => stop()).not.toThrow();
+    expect(existsSync(SL_LOCK_PATH)).toBe(false); // heartbeat must not create the file
   });
 });
