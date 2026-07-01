@@ -30,7 +30,7 @@ import { PRED_SET } from '../model/typed-predicates';
 /** Structural subset of SemanticStore this helper depends on (dependency injection). */
 export interface HonestTraceReader {
   getOutEdgesWithRel(id: string): Array<{ dst: string; rel: string; w: number; kind: string }>;
-  getNode(id: string): { tombstoned: number } | undefined;
+  getNode(id: string): { tombstoned: number } | null | undefined;
 }
 
 export function buildHonestOneHopTrace(
