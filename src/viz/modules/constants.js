@@ -337,14 +337,16 @@ export const ACT_HAZE_LERP     = 0.95;
 /** ms of no new rows before idle-replay begins (spec tuning range: 4000–6000). */
 export const REPLAY_IDLE_GAP_MS  = 5000;
 
-/** ms between replay broadcasts during idle (spec tuning range: 3000–5000). */
-export const REPLAY_CADENCE_MS   = 4000;
+/** ms between replay broadcasts during idle (raised density at founder checkpoint; keep in sync
+ *  with server.ts REPLAY_CADENCE_MS — the server-side scheduler is the authoritative copy). */
+export const REPLAY_CADENCE_MS   = 2500;
 
 /** Intensity multiplier vs. live recall — MUST be < 1 (honesty invariant SC3; spec: 0.4–0.6). */
 export const REPLAY_DIM          = 0.4;
 
-/** Number of recent real rows kept in the server-side replay ring buffer. */
-export const REPLAY_HISTORY_N    = 20;
+/** Number of recent real rows kept in the server-side replay ring buffer (keep in sync with
+ *  server.ts REPLAY_HISTORY_N — the server-side ring is the authoritative copy). */
+export const REPLAY_HISTORY_N    = 40;
 
 // Layer 3 — ambient twinkle
 /** Nodes in the rotating twinkle subset (~0.5% of 15k corpus). */

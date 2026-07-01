@@ -63,8 +63,8 @@ const SEARCH_LIMIT = 20;  // BM25 result cap for /search?q= endpoint (T-19-03)
 // Phase 54 replay constants — mirrored from src/viz/modules/constants.js (browser-ESM;
 // not imported here to avoid a cross-boundary build dependency). Keep in sync with constants.js.
 const REPLAY_IDLE_GAP_MS = 5000;  // ms of silence before idle-replay activates (spec: 4000–6000)
-const REPLAY_CADENCE_MS  = 4000;  // ms between replay broadcasts (spec: 3000–5000)
-const REPLAY_HISTORY_N   = 20;    // max recent real rows in the server-side replay ring
+const REPLAY_CADENCE_MS  = 2500;  // ms between replay broadcasts (denser idle life — founder checkpoint)
+const REPLAY_HISTORY_N   = 40;    // max recent real rows in the server-side replay ring (deeper for variety)
 
 // ---------------------------------------------------------------------------
 // POST /settings — key whitelist (T-44-15)
