@@ -33,7 +33,7 @@ import { DEFAULT_CONFIG } from '../lib/config';
 import { realClock } from '../lib/clock';
 import { SemanticStore } from '../db/semantic-store';
 import { CorpusPromoter } from '../consolidation/corpus-promoter';
-import { acquireLock, releaseLock } from './lockfile';
+import { acquireLock, releaseLock, startLockHeartbeat } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 
 const LOG_PATH = '/tmp/recense-promote-corpus.log';
@@ -41,6 +41,10 @@ const LOG_PATH = '/tmp/recense-promote-corpus.log';
 /** Append a timestamped line to the log file. */
 const fileLog = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] promote-corpus: ${msg}\n`);
+
+// DEBT-02: module-scoped so BOTH release paths (main's finally + the require.main FATAL
+// handler) can stop the lock heartbeat. undefined until acquireLock succeeds; guard-called.
+let stopHeartbeat: (() => void) | undefined;
 
 async function main(): Promise<void> {
   const argv = process.argv;
@@ -65,6 +69,10 @@ async function main(): Promise<void> {
     process.stderr.write('recense promote-corpus: Lock held by another process — exiting\n');
     process.exit(0);
   }
+
+  // DEBT-02: refresh the lock mtime across the promotion pass so a concurrent probe never
+  // false-stale reclaims this live lock.
+  stopHeartbeat = startLockHeartbeat();
 
   let db: Database.Database | undefined;
   try {
@@ -114,6 +122,8 @@ async function main(): Promise<void> {
     process.stderr.write(`recense promote-corpus: ${err}\n`);
     process.exitCode = 1;
   } finally {
+    // stop heartbeat before release so it can't refresh the mtime after the file is gone.
+    stopHeartbeat?.();
     db?.close();
     releaseLock();
   }
@@ -124,6 +134,7 @@ async function main(): Promise<void> {
 if (require.main === module) {
   main().catch(err => {
     appendFileSync(LOG_PATH, `[${new Date().toISOString()}] promote-corpus FATAL: ${err}\n`);
+    stopHeartbeat?.();
     releaseLock();
     process.exit(1);
   });

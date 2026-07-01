@@ -43,7 +43,7 @@ import { TranscriptAdapter } from '../source/transcript-adapter';
 import { ObsidianAdapter } from '../source/obsidian-adapter';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
 import { runCalendarCancellations } from '../consolidation/calendar-tombstone';
-import { acquireLock, releaseLock } from './lockfile';
+import { acquireLock, releaseLock, startLockHeartbeat } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath, resolveDirtySentinelPath, resolveEnabledSources } from './runtime-config';
 
 const LOG_PATH = '/tmp/recense-ingest.log';
@@ -51,6 +51,10 @@ const LOG_PATH = '/tmp/recense-ingest.log';
 /** Append a timestamped line to the log file (never stdout). */
 const log = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] brain-ingest: ${msg}\n`);
+
+// DEBT-02: module-scoped so BOTH release paths (main's finally + the require.main FATAL
+// handler) can stop the lock heartbeat. undefined until acquireLock succeeds; guard-called.
+let stopHeartbeat: (() => void) | undefined;
 
 // M-8: delegate to the shared resolveDbPath with fallbackToDefault=false so a missing
 // --db flag / RECENSE_DB env causes the missing-path exit (process.exit(0) below).
@@ -236,6 +240,11 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // DEBT-02: ingest runs the pull phase + full consolidation under one lock and can exceed
+  // LOCK_STALE_MS on a backlog; refresh the lock mtime across the whole cycle so a concurrent
+  // probe never false-stale reclaims this live lock.
+  stopHeartbeat = startLockHeartbeat();
+
   // DEBT-03: declare db outside try so finally can close it on every path (CR-02/WR-03).
   let db: Database.Database | undefined;
   try {
@@ -290,6 +299,8 @@ async function main(): Promise<void> {
     // ── 8. Always close the DB, then release the lock (DEBT-03/CR-02/WR-03) ──
     // Close first: flushes the WAL checkpoint and releases the read lock.
     // Release lock second: O_EXCL unlock after DB handle is gone.
+    // Stop the heartbeat first so it can't refresh the mtime after the file is gone.
+    stopHeartbeat?.();
     db?.close();
     releaseLock();
   }
@@ -301,6 +312,7 @@ if (require.main === module) {
   main().catch(err => {
     // Fatal: something went wrong before the try/finally could run
     appendFileSync(LOG_PATH, `[${new Date().toISOString()}] brain-ingest FATAL: ${err}\n`);
+    stopHeartbeat?.(); // best-effort cleanup
     releaseLock(); // best-effort cleanup
     process.exit(1);
   });

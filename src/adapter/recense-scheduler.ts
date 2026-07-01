@@ -30,7 +30,7 @@ import { Cron } from 'croner';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema';
 import { runConsolidation } from '../consolidation/run-sleep-pass';
-import { acquireLock, releaseLock } from './lockfile';
+import { acquireLock, releaseLock, startLockHeartbeat } from './lockfile';
 import { defaultSettingsPath, loadSettingsFile } from './settings-loader';
 
 // ---------------------------------------------------------------------------
@@ -203,6 +203,11 @@ async function startLinuxScheduler(): Promise<void> {
       log('lock held by another process — skipping tick');
       return;
     }
+    // DEBT-02: refresh the lock mtime while a >30-min consolidation runs so a concurrent
+    // launchd/probe never false-stale reclaims this live tick's lock. Long-lived daemon:
+    // start a fresh heartbeat each tick and stop it in the SAME finally (never leak an
+    // interval across ticks).
+    const stopHeartbeat = startLockHeartbeat();
     let db: Database.Database | undefined;
     try {
       db = new Database(dbPath);
@@ -212,7 +217,9 @@ async function startLinuxScheduler(): Promise<void> {
     } catch (err) {
       log(`hourly tick error: ${err}`);
     } finally {
-      // close DB first, then release lock (seed-cli.ts lines 141-143 correct order)
+      // stop heartbeat first (so it can't refresh the mtime after release), then close
+      // DB, then release lock (seed-cli.ts lines 141-143 correct order).
+      stopHeartbeat();
       db?.close();
       releaseLock();
     }

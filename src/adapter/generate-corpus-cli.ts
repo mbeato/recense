@@ -33,7 +33,7 @@ import { realClock } from '../lib/clock';
 import { SemanticStore } from '../db/semantic-store';
 import { DefaultModelProvider } from '../model/provider';
 import { generateCorpusDocs } from '../consolidation/corpus-generator';
-import { acquireLock, releaseLock } from './lockfile';
+import { acquireLock, releaseLock, startLockHeartbeat } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
 
@@ -66,6 +66,10 @@ async function main(): Promise<void> {
     process.stderr.write('recense generate-corpus: Lock held by another process — exiting\n');
     process.exit(0);
   }
+
+  // DEBT-02: corpus generation is the known multi-hour offender (stub-fill backlog); refresh
+  // the lock mtime across the whole run so a concurrent probe never false-stale reclaims it.
+  const stopHeartbeat = startLockHeartbeat();
 
   let db: Database.Database | undefined;
   try {
@@ -122,6 +126,8 @@ async function main(): Promise<void> {
     process.stderr.write(`recense generate-corpus: ${err}\n`);
     process.exitCode = 1;
   } finally {
+    // stop heartbeat before release so it can't refresh the mtime after the file is gone.
+    stopHeartbeat();
     db?.close();
     releaseLock();
   }

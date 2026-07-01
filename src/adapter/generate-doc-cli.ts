@@ -36,7 +36,7 @@ import { generateDoc, generateDocForSchema } from '../reader/doc-generator';
 import { computeSchemaCentroid } from '../reader/doc-gather';
 import { writeDoc } from '../consolidation/doc-writer';
 import { DocGraphDeriver } from '../consolidation/doc-graph-deriver';
-import { acquireLock, releaseLock } from './lockfile';
+import { acquireLock, releaseLock, startLockHeartbeat } from './lockfile';
 import { writeStatus, clearStatus } from './gen-status';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 import { resolveProviderOverlay } from '../consolidation/run-sleep-pass';
@@ -166,6 +166,12 @@ async function main(): Promise<void> {
     // writeStatus('failed', ...) already called by writeFailedBusy above.
     process.exit(0);
   }
+
+  // DEBT-02: the lock is now actually HELD (the wait loop resolved with acquireLock() true).
+  // Doc generation produces cited prose over a long headless call; refresh the lock mtime for
+  // the whole run so a concurrent probe never false-stale reclaims it. Start here — never
+  // while merely queued in the wait loop above.
+  const stopHeartbeat = startLockHeartbeat();
 
   let db: Database.Database | undefined;
   try {
@@ -330,6 +336,8 @@ async function main(): Promise<void> {
     process.stderr.write(`recense generate-doc: ${err}\n`);
     process.exitCode = 1;
   } finally {
+    // stop heartbeat before release so it can't refresh the mtime after the file is gone.
+    stopHeartbeat();
     db?.close();
     releaseLock();
   }
