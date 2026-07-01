@@ -41,6 +41,13 @@ const SEED_K = 10;
 /** Char-per-token proxy used throughout (same as live hooks: budget × 4). */
 const CHARS_PER_TOKEN = 4;
 
+/**
+ * Phase 55 D-01/D-02: per-seed cap on emitted 1-hop ambient trace edges. Named
+ * tunable (mirrors the Phase 52 D-06 decay-constant precedent) — tune at the
+ * founder visual checkpoint; the number only matters against the rendered feel.
+ */
+const AMBIENT_HOP_TOPN = 6;
+
 export class RetrievalEngine {
   private readonly clock: Clock;
   private readonly config: EngineConfig;
@@ -358,6 +365,41 @@ export class RetrievalEngine {
   }
 
   /**
+   * Phase 55 (SC1/SC2/SC3): builds the honest ambient 1-hop trace payload for retrieveRanked's
+   * fire-and-forget emit. For each seed, reads its REAL kind==='relation' out-edges (D-05,
+   * excludes structural/doc-graph kinds), filters to live (non-tombstoned) dst BEFORE the
+   * weight-sort/truncate (D-07, Pitfall 2 — a dead high-weight edge must never displace a live
+   * one from a top-N slot), sorts by weight desc with a deterministic dst-asc tiebreak (D-03),
+   * and takes the first AMBIENT_HOP_TOPN per seed. Hop scores are always null (WR-02, rank-only —
+   * no fabricated magnitude); seed scores are passed through unchanged (real cosine/RRF, D-06).
+   * De-dups hop node_ids across seeds (mirrors retrieveCueless's seenInHops) so a node reached
+   * from multiple seeds isn't double-lit. Read-only; callers wrap this in the existing
+   * try/catch fire-and-forget guard (T-10-05) — this method itself does not swallow errors.
+   */
+  private buildAmbientTracePayload(
+    seeds: Array<{ node_id: string; score: number }>,
+  ): { seeds: Array<{ node_id: string; score: number }>; hops: Array<{ node_id: string; score: null; hop: 1 }> } {
+    const hops: Array<{ node_id: string; score: null; hop: 1 }> = [];
+    const seenInHops = new Set<string>();
+
+    for (const seed of seeds) {
+      const liveRelationEdges = this.store.getOutEdgesWithRel(seed.node_id)
+        .filter(e => e.kind === 'relation')
+        .filter(e => this.store.getNode(e.dst)?.tombstoned !== 1)
+        .sort((a, b) => (b.w - a.w) || (a.dst < b.dst ? -1 : a.dst > b.dst ? 1 : 0))
+        .slice(0, AMBIENT_HOP_TOPN);
+
+      for (const edge of liveRelationEdges) {
+        if (seenInHops.has(edge.dst)) continue;
+        seenInHops.add(edge.dst);
+        hops.push({ node_id: edge.dst, score: null, hop: 1 });
+      }
+    }
+
+    return { seeds, hops };
+  }
+
+  /**
    * Ranked top-k retrieval with cosine floor for the product question-answering path (memory_ask / B1).
    *
    * Returns the top-k live nodes whose cosine similarity to queryVec >= floor, sorted descending.
@@ -441,14 +483,19 @@ export class RetrievalEngine {
     // only ids the scan actually returned, minus stale entities; never synthesized, and if
     // the scan reached nothing ≥ vizFloor the set is empty (no fire).
     let vizSeedIds: string[] | null = null;
+    // Phase 55 D-06: real cosine/RRF score per vizSeedId, captured alongside the id in the
+    // same scan (no extra pass over hits) — resolved into the emitted seed payload below.
+    let vizSeedScores: Map<string, number> | null = null;
     if (opts?.vizFloor != null && opts.vizFloor < floor) {
       const vf = opts.vizFloor;
       const cap = Math.max(k, 6);
       vizSeedIds = [];
+      vizSeedScores = new Map<string, number>();
       for (const hit of hits) {
         if (hit.score < vf) { if (!queryText) break; else continue; }
         if (staleEntityIds.has(hit.id)) continue;
         vizSeedIds.push(hit.id);
+        vizSeedScores.set(hit.id, hit.score);
         if (vizSeedIds.length >= cap) break;
       }
     }
@@ -492,11 +539,17 @@ export class RetrievalEngine {
 
       // ── Trace emission (D-97 guarded) ────────────────────────────────────────
       // vizSeedIds (when set) lights the genuinely-retrieved set down to vizFloor;
-      // otherwise the lit set is the returned set (unchanged behaviour).
-      const emitSeeds = vizSeedIds ?? annotated.map(r => r.id);
+      // otherwise the lit set is the returned set (unchanged behaviour). Phase 55
+      // (D-06): seed payload carries each seed's REAL cosine/RRF score; hops are the
+      // seeds' real top-N live kind==='relation' out-edges (SC1/SC2/SC3), built via
+      // the shared helper INSIDE this existing try/catch fire-and-forget guard (D-08).
+      const emitSeeds: Array<{ node_id: string; score: number }> = vizSeedIds
+        ? vizSeedIds.map(id => ({ node_id: id, score: vizSeedScores!.get(id) ?? 0 }))
+        : annotated.map(r => ({ node_id: r.id, score: r.score }));
       if (this.traceEnabled && emitSeeds.length > 0) {
         try {
-          this.traceSink.emit({ query_id: newId(), seeds: emitSeeds, hops: [] });
+          const { seeds, hops } = this.buildAmbientTracePayload(emitSeeds);
+          this.traceSink.emit({ query_id: newId(), seeds, hops });
         } catch {
           // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
         }
@@ -505,17 +558,24 @@ export class RetrievalEngine {
     }
 
     // ── Trace emission (D-97 guarded, mirrors retrieveCueless ~L279-300) ────────
-    // retrieveRanked is flat top-k + floor + stale-entity filter — no spread loop ran,
-    // so the results ARE the seeds and hops is honestly empty (WR-02: never fabricate
-    // activation structure that wasn't computed). This makes HybridResponder's
-    // facts-first branch (the common memory_ask / Telegram answer path) light the viz;
-    // the inference fallback already emits via RecallEngine. Callers wired with the
-    // Noop sink (correctness harness, session-start) have traceEnabled === false and
+    // retrieveRanked is flat top-k + floor + stale-entity filter — no spread loop ran, so
+    // the results ARE the seeds. Phase 55: hops are no longer fabricated-empty — they are
+    // each seed's REAL 1-hop kind==='relation' out-edges (WR-02: rank-only score:null, never
+    // an invented magnitude). This makes HybridResponder's facts-first branch (the common
+    // memory_ask / Telegram answer path) light the viz with honest spreading-activation
+    // pathways; the inference fallback already emits via RecallEngine. Callers wired with
+    // the Noop sink (correctness harness, session-start) have traceEnabled === false and
     // skip this entirely.
-    const emitSeeds = vizSeedIds ?? filtered.map(r => r.id);
+    // Phase 55 (D-06): seed payload carries each seed's REAL cosine/RRF score; hops are
+    // the seeds' real top-N live kind==='relation' out-edges (SC1/SC2/SC3), built via the
+    // shared helper INSIDE this existing try/catch fire-and-forget guard (D-08).
+    const emitSeeds: Array<{ node_id: string; score: number }> = vizSeedIds
+      ? vizSeedIds.map(id => ({ node_id: id, score: vizSeedScores!.get(id) ?? 0 }))
+      : filtered.map(r => ({ node_id: r.id, score: r.score }));
     if (this.traceEnabled && emitSeeds.length > 0) {
       try {
-        this.traceSink.emit({ query_id: newId(), seeds: emitSeeds, hops: [] });
+        const { seeds, hops } = this.buildAmbientTracePayload(emitSeeds);
+        this.traceSink.emit({ query_id: newId(), seeds, hops });
       } catch {
         // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
       }
