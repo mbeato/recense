@@ -1066,6 +1066,35 @@ Plans:
 - [x] 55-02-PLAN.md — Founder visual verification of ambient pathways (SC1) + AMBIENT_HOP_TOPN tuning
 - [x] 55-03 (gap closure) — Cyan 1-hop nodes + honest seed→hop edge pulses (fixes Phase 52 recall_hop-never-wired gap surfaced at the 55-02 checkpoint)
 
+### Phase 56: Spontaneous 1-hop idle activation
+
+**Goal:** Honest idle "default-mode" brain wandering for `recense viz` — during idle gaps the brain fires genuinely-new real 1-hop spreads (NOT replay echoes), so it feels alive even with an empty replay buffer / zero recent recalls, without fabricating any edge or activation.
+
+**Approach:** A read-only idle emitter (SSE-only — never writes `activation_trace`, so the viz server stays read-only/LLM-free and the single-writer invariant holds) picks a random LIVE node and reads its real semantic (`PRED_SET`, `kind='relation'`) 1-hop out-edges via the same honest builder as Phase-55 ambient recall. Rendered in a distinct "default-mode" color (NOT recall amber, NOT replay cyan) under a new trace `kind='spontaneous'`. Activity ordering preserved (SC3): live recall > replay echo > spontaneous > twinkle. Deferred-from-Phase-54 layer.
+
+**Depends on:** Phase 52 (honest-traces invariant — must not regress), Phase 54 (viz idle layers: replay + twinkle), Phase 55 (honest ambient 1-hop pathways + PRED_SET semantic-edge filter).
+
+**Requirements:**
+- SPONT-01: During idle, an emitter picks a random LIVE node and reads its REAL semantic (`PRED_SET`, `kind='relation'`) 1-hop out-edges via the same honest builder as ambient recall — real edges only, no fabrication.
+- SPONT-02: Spontaneous activity is visually distinct — its own color (a dim "default-mode" hue, NOT recall amber, NOT replay cyan) and its own trace `kind='spontaneous'`, so it can never be mistaken for a live query result.
+- SPONT-03: Honesty + no-DB-write — the emitter is read-only, emits an SSE-only event (never writes an `activation_trace` row), preserving single-writer + read-only/LLM-free viz server invariants.
+- SPONT-04: Activity ordering (SC3): live > replay > spontaneous > twinkle. Spontaneous is preempted by any live/replay activity and only fires after the idle gap.
+- SPONT-05: Tray icon does NOT pulse on spontaneous events (idle, not live — same rule as replay); `kind='spontaneous'` excluded from the replay ring buffer.
+- SPONT-06: Machine guards — every spontaneous hop is a real semantic out-edge of its seed (cross-checkable against the store); cadence/density are named tunable constants; founder visual checkpoint tunes density.
+
+**Success Criteria** (what must be TRUE):
+
+  1. Idle viz shows genuinely-new spontaneous 1-hop pathways (distinct color) even with an empty replay buffer / no recent recalls.
+  2. Spontaneous pulses trace only real semantic edges; no fabricated edge, no DB write; honesty invariant preserved and machine-verified.
+  3. Tray icon stays at rest during spontaneous activity; live recalls + sleep-pass still pulse it.
+  4. Founder confirms density/feel at the visual checkpoint.
+
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 56 to break down)
+
 ## Backlog
 
 _(empty — no backlog items)_
+
