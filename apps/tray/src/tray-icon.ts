@@ -156,18 +156,28 @@ export function initTrayIcon(opts: TrayIconOptions): TrayIconHandle {
       // state regardless. But the icon pulse is a LIVE-activity signal: it must fire
       // only on genuinely new events (live recalls + sleep-pass consolidation rows),
       // NOT on idle replay echoes, which re-emit PAST rows tagged `replay: true`
-      // (Phase 54). Pulsing on replay would make an idle brain look perpetually
-      // active. Parse defensively: a malformed/unparseable trace still pulses
-      // (fail toward the liveness signal — matches pre-replay behaviour).
+      // (Phase 54), and NOT on spontaneous idle wandering rows tagged
+      // `kind: 'spontaneous'` (Phase 56) — both are idle, not live. Pulsing on either
+      // would make an idle brain look perpetually active. Parse defensively: a
+      // malformed/unparseable trace still pulses (fail toward the liveness signal —
+      // matches pre-replay behaviour).
       isDim = false;
       let isReplay = false;
+      let isSpontaneous = false;
       try {
-        isReplay = JSON.parse(e.data)?.replay === true;
+        const parsed = JSON.parse(e.data);
+        isReplay = parsed?.replay === true;
+        isSpontaneous = parsed?.kind === 'spontaneous';
       } catch {
         isReplay = false;
+        isSpontaneous = false;
       }
       if (isReplay) {
         log('replay trace event received — not pulsing (idle rehearsal, not live)');
+        return;
+      }
+      if (isSpontaneous) {
+        log('spontaneous trace event received — not pulsing (idle wandering, not live)');
         return;
       }
       log('trace event received — pulsing icon');
