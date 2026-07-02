@@ -72,8 +72,8 @@ const REPLAY_HISTORY_N   = 40;    // max recent real rows in the server-side rep
 // precedent above. Keep in sync with constants.js. Reuses REPLAY_IDLE_GAP_MS as the shared
 // idle signal (D-01a) — no second idle constant.
 const SPONT_CADENCE_MS       = 2500;   // ms between spontaneous idle broadcasts
-const SPONT_SEED_COUNT       = 3;      // distinct live seeds sampled per tick (D-03)
-const SPONT_HOP_TOPN         = 6;      // per-seed honest-hop top-N (reuses AMBIENT_HOP_TOPN density)
+const SPONT_SEED_COUNT       = 2;      // distinct live seeds sampled per tick (56-05 founder tuning: 3→2)
+const SPONT_HOP_TOPN         = 3;      // per-seed honest-hop top-N (56-05 founder tuning: 6→3 — ~21 lit nodes/tick read cluttered; keep client constants.js copy in sync)
 const SPONT_POOL_REFRESH_MS  = 60000;  // how often the eligible-seed pool is rebuilt
 
 /**

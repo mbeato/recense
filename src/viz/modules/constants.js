@@ -161,11 +161,15 @@ export const KIND_COLOR = {
   oscillation:     0xc9824e,
   /** Non-hero cascade events — muted slate (NON-amber per D-04) */
   neutral:         0x8a93a6,
-  /** Spontaneous idle 1-hop wandering (Phase 56) — dim indigo/violet, the
+  /** Spontaneous idle 1-hop wandering (Phase 56) — pastel lavender, the
    *  default-mode-network hue. Distinct from recall amber and replay cyan so
    *  spontaneous activity is never mistaken for a live/replayed query result.
-   *  Starting direction only — tune at the founder visual checkpoint (D-04/D-06). */
-  spontaneous:     0x8a7fff,
+   *  56-05 founder tuning: 0x8a7fff → 0xc9b8ff — saturated indigo is inherently
+   *  low-luminance (Y≈138) and vanished on the dark bg once dimmed; desaturating
+   *  toward pastel keeps the violet IDENTITY while luminance (Y≈193) carries
+   *  visibility. Subordination to live/replay comes from SPONT_DIM + density,
+   *  not from a dark hue. */
+  spontaneous:     0xc9b8ff,
 };
 
 // ============================================================================
@@ -379,5 +383,16 @@ export const SPONT_DIM          = 0.3;
  *  with server.ts SPONT_CADENCE_MS — server is authoritative). */
 export const SPONT_CADENCE_MS   = 2500;
 
-/** Max hop nodes considered per spontaneous emission (starting direction). */
-export const SPONT_HOP_TOPN     = 6;
+/** Max hop nodes considered per spontaneous emission (founder-tuned at 56-05:
+ *  6 → 3 — with 6, a 3-seed tick lit ~21 nodes and read cluttered). */
+export const SPONT_HOP_TOPN     = 3;
+
+/** Channel scale for spontaneous EDGE pulses only (56-05 founder tuning — at
+ *  SPONT_DIM (0.3) the wavefront lines were near-invisible; thin additive lines
+ *  need high luminance to register). 0.6 × pastel lavender 0xc9b8ff → line
+ *  luminance ≈ 116: clearly visible, still well below live-amber full-intensity
+ *  lines. Replay and spontaneous never co-render (spontaneous fires only when
+ *  the replay buffer is empty), so per-pixel line-vs-line subordination is not
+ *  load-bearing — the SC3 machine invariant lives on SPONT_DIM < REPLAY_DIM
+ *  (node activations), which this constant does not touch. */
+export const SPONT_PULSE_SCALE  = 0.6;

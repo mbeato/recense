@@ -42,6 +42,7 @@ import {
   ACT_HAZE_LERP,
   REPLAY_DIM,
   SPONT_DIM,
+  SPONT_PULSE_SCALE,
   TWINKLE_COUNT,
   TWINKLE_PERIOD_MS,
   TWINKLE_AMP,
@@ -262,13 +263,15 @@ export function initTrace(ctx) {
 
   // Pre-dimmed indigo for spontaneous-wandering edge pulses (Phase 56) — same
   // bit-shift dim construction as REPLAY_HOP_COLOR (no multiplyScalar, so it
-  // works under the minimal test colour stub). SPONT_DIM < REPLAY_DIM keeps
-  // spontaneous pulses strictly dimmer than replay (SC3).
+  // works under the minimal test colour stub). Scaled by SPONT_PULSE_SCALE, not
+  // SPONT_DIM: at 0.3 the thin wavefront lines were near-invisible (56-05 founder
+  // tuning). 0.45 stays perceptually subordinate to replay (SC3) — indigo's
+  // luminance at 0.45 (≈62) < replay cyan's at REPLAY_DIM 0.4 (≈70).
   const _sh = KIND_COLOR.spontaneous;
   const SPONT_HOP_COLOR = new THREE.Color(
-    (Math.round(((_sh >> 16) & 0xff) * SPONT_DIM) << 16) |
-    (Math.round(((_sh >> 8) & 0xff) * SPONT_DIM) << 8) |
-    Math.round((_sh & 0xff) * SPONT_DIM),
+    (Math.round(((_sh >> 16) & 0xff) * SPONT_PULSE_SCALE) << 16) |
+    (Math.round(((_sh >> 8) & 0xff) * SPONT_PULSE_SCALE) << 8) |
+    Math.round((_sh & 0xff) * SPONT_PULSE_SCALE),
   );
 
   // Active node Set — the tick callback walks ONLY this set, never allNodes
@@ -708,14 +711,17 @@ export function initTrace(ctx) {
       const seedEntries = [];                 // {node, intensity}
 
       for (const raw of rawSeeds) {
-        const { node_id, score } = normalizeSeed(raw);
+        const { node_id } = normalizeSeed(raw);
         if (!node_id || visited.has(node_id)) continue;
         const node = ctx.idMap.get(node_id);
         if (!node) continue;
         visited.add(node_id);
-        const intensity = typeof score === 'number'
-          ? Math.max(0.2, Math.min(1.0, score))
-          : 0.5;
+        // Spontaneous seeds carry no meaningful score (pickSpontaneousSeeds emits score:0 —
+        // no fabricated magnitude, WR-02). Use a FULL base so SPONT_DIM is the sole dimmer,
+        // matching its documented semantics ("intensity multiplier vs. live recall"): a
+        // score-derived base double-dims to 0.2×SPONT_DIM=0.06, below the visible floor.
+        // Presentation intensity only — not a stored/claimed score.
+        const intensity = 1.0;
         seedEntries.push({ node, intensity });
       }
 
@@ -725,11 +731,12 @@ export function initTrace(ctx) {
         .map(({ node_id, src, score }) => {
           const node = ctx.idMap.get(node_id);
           if (!node) return null;
-          // score:null on every hop per the spontaneous wire contract → mid-intensity
-          // fallback (WR-02), same pattern as the recall/replay paths.
+          // score:null on every hop per the spontaneous wire contract → full-ish base so
+          // SPONT_DIM alone sets the layer dimness (WR-02). The old 0.3 base ×SPONT_DIM=0.09
+          // was sub-visible; 0.6 keeps hops dimmer than their seed yet on-screen.
           const intensity = typeof score === 'number'
             ? Math.max(0.1, Math.min(0.5, score * 0.55))
-            : 0.3;
+            : 0.6;
           const srcNode = src ? (ctx.idMap.get(src) ?? null) : null;
           return { node, srcNode, intensity };
         })
