@@ -1098,7 +1098,19 @@ Plans:
 - [x] 56-04-PLAN.md — SPONT-06 machine guard: real-edge cross-check + no-DB-write (deterministic)
 - [x] 56-05-PLAN.md — Founder visual checkpoint: tune hue/cadence/dim/density (non-autonomous)
 
+### Phase 57: viz activity-palette redesign
+
+**Goal:** Redesign the viz activity color system so hue carries IDENTITY and salience comes from motion/scale/density — never from brightness-scaling saturated hues. The current model (saturated hue × dim factor on a dark additive-blended background) has required founder rescue three times (Phase 54 replay, Phase 55 hops, Phase 56 spontaneous): every "subordinate" layer trends toward invisible because dimming a saturated hue drives it below the perceptual floor.
+
+**Approach:** (1) Luminance-equalized identity palette — every activity kind gets a high-luminance pastel/bioluminescent hue that survives dimming (live amber-gold, replay ice-cyan, spontaneous lavender, ingestion greens/magenta, all within a bounded luminance band); (2) salience ordering (SC3: live > replay > spontaneous > twinkle) expressed through attack sharpness, halo size, pulse thickness, cadence, and density — machine-checkable ordering invariants move from color constants to motion/scale constants; (3) one bloom/tone-mapping calibration pass against the real hull backdrop; (4) founder visual checkpoint closes it. Honesty constraints untouched — presentation layer only (per the faithfulness clause: viz chrome is free).
+
+**Requirements**: TBD (derive at plan-phase; carry forward advisory review findings from 56-REVIEW.md — WR-02 invariant lock, WR-06 trace-fade clobber — as candidate requirements)
+**Depends on:** Phase 56
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 57 to break down)
+
 ## Backlog
 
 _(empty — no backlog items)_
-
