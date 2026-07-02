@@ -32,7 +32,8 @@ const BASE_CONFIG = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
 
 // Mirrors src/viz/server.ts SPONT_HOP_TOPN (not exported; literal per plan D-10 discretion,
 // same convention as AMBIENT_HOP_TOPN in tests/activation-trace-wiring.test.ts).
-const SPONT_HOP_TOPN = 6;
+// 56-05 founder tuning: 6 → 3 (keep in sync with server.ts + constants.js).
+const SPONT_HOP_TOPN = 3;
 
 /** Deterministic seeded LCG rng — same seed always yields the same output sequence. */
 function makeSeededRng(seed: number): () => number {
@@ -45,7 +46,7 @@ function makeSeededRng(seed: number): () => number {
 
 /**
  * Fixture store with the exact edge shapes the honesty guard must distinguish:
- *   - seedA: 8 live PRED_SET ('uses') out-edges (r1..r8) — one MORE than SPONT_HOP_TOPN (6),
+ *   - seedA: 8 live PRED_SET ('uses') out-edges (r1..r8) — MORE than SPONT_HOP_TOPN (3),
  *     to prove top-N truncation by weight; plus a structural `extends` edge (kind='relation'
  *     but NOT a PRED_SET predicate) at the highest weight of all (must still be excluded);
  *     plus a PRED_SET edge to a TOMBSTONED dst at a high weight (must be excluded — liveness
@@ -142,10 +143,11 @@ describe('SPONT-06: spontaneous hop honesty guard (real edge cross-check)', () =
       expect(hops.some(h => h.node_id === 'ext1')).toBe(false);
       expect(hops.some(h => h.node_id === 'dead1')).toBe(false);
 
-      // Top-N cap: seedA has 8 live semantic edges > SPONT_HOP_TOPN (6) — truncated to 6.
+      // Top-N cap: seedA has 8 live semantic edges > SPONT_HOP_TOPN (3) — truncated to the
+      // top-3 by weight (r1 0.90, r2 0.85, r3 0.80).
       const seedAHops = hops.filter(h => h.src === 'seedA');
       expect(seedAHops.length).toBe(SPONT_HOP_TOPN);
-      expect(seedAHops.map(h => h.node_id).sort()).toEqual(['r1', 'r2', 'r3', 'r4', 'r5', 'r6']);
+      expect(seedAHops.map(h => h.node_id).sort()).toEqual(['r1', 'r2', 'r3']);
     } finally {
       db.close();
     }
