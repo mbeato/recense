@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v9.0
 milestone_name: Memory Quality
-status: completed
-stopped_at: Phase 56 context gathered
-last_updated: "2026-07-01T20:07:46.194Z"
-last_activity: 2026-07-01 -- Phase 55 marked complete
+status: verifying
+stopped_at: Completed 56-04-PLAN.md
+last_updated: "2026-07-02T16:03:21.047Z"
+last_activity: 2026-07-02
 progress:
   total_phases: 32
-  completed_phases: 28
-  total_plans: 101
-  completed_plans: 102
-  percent: 88
+  completed_phases: 29
+  total_plans: 106
+  completed_plans: 107
+  percent: 91
 ---
 
 # Project State
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v9.0 Memory Quality opened)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Phase 55 — honest-1-hop-pathways-on-ambient-recall
+**Current focus:** Phase 56 — spontaneous-1-hop-idle-activation
 
 **v9.0 Key research grounding (June-2026 deep-research pass):**
 
@@ -33,10 +33,10 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v9.0 Memory Quality opened)
 
 ## Current Position
 
-Phase: 55 — COMPLETE
-Plan: 2 of 2
-Status: Phase 55 complete
-Last activity: 2026-07-01 -- Phase 55 marked complete
+Phase: 56 (spontaneous-1-hop-idle-activation) — EXECUTING
+Plan: 5 of 5
+Status: Phase complete — ready for verification
+Last activity: 2026-07-02
 
 ```
 v9.0 Progress ░░░░░░░░░░ 0%
@@ -63,6 +63,10 @@ v9.0 Progress ░░░░░░░░░░ 0%
 | v7.0 | 35–39.1 | ~26 | 2026-06-23 |
 | v8.0 | 40–45 | 24 | 2026-06-26 |
 | v9.0 | 46–50 | TBD | — |
+| Phase 56 P01 | 20min | 2 tasks | 3 files |
+| Phase 56 P03 | 15min | 3 tasks | 3 files |
+| Phase 56 P02 | 15min | 2 tasks | 1 files |
+| Phase 56 P04 | 20min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -139,15 +143,25 @@ Carried from v7.0/v8.0 close:
 | Phase 43 eval gates | GATE-01/02/03 — now Phase 50 | Promoted to Phase 50 in v9.0 | 2026-06-26 |
 | Phase 41 accuracy recheck | PERF-03(b) 3-harness end-to-end re-run | Included in Phase 50 / GATE-03 | 2026-06-26 |
 | Retrieval scaling | Brute-force cosine → sqlite-vec ANN (trigger: measurably hurts at real scale) | Phase 49 will measure crossover | 2026-06-07 |
-| Consolidation hardening | Lock-heartbeat for >30-min passes — heartbeatLock() | Low priority — follow-up | 2026-06-17 |
+| Consolidation hardening | Lock-heartbeat for >30-min passes — heartbeatLock() | RESOLVED 2026-07-01 — quick task 260701-mmh wired startLockHeartbeat() into all six lock holders | 2026-06-17 |
 | HTTP | True remote VPS + Caddy/TLS exposure (CR-01) | Deferred from Phase 12 | 2026-06-11 |
 | HTTP | readBody multibyte UTF-8 chunk-boundary corruption (CR-02) | Deferred from Phase 12 | 2026-06-11 |
 | Viz perf | Phase 19 selection-rotation choppiness | Won't-fix — founder decision | 2026-06-14 |
 
+## Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260701-mmh | Thread startLockHeartbeat() through all six long-pass lock holders (closes 39.1 FIX-STALL-01 residual) | 2026-07-01 | 5167175, 10a6dd0 | [260701-mmh-thread-heartbeatlock-through-consolidato](./quick/260701-mmh-thread-heartbeatlock-through-consolidato/) |
+| 260701-vix | .vindex sidecar v2 (per-row embedded_hash) + construction-time freshness diff/delta merge (closes 51-05 staleness follow-up) | 2026-07-01 | e886ade, eb825f7 | [260701-vix-fix-vindex-sidecar-staleness](./quick/260701-vix-fix-vindex-sidecar-staleness/) |
+| 260701-brg | remember-bridge reconcile hop stores honest score:null (WR-02; client mid-intensity fallback keeps rendering identical) | 2026-07-01 | 5fe9533 | [260701-brg-remember-bridge-honest-null-score](./quick/260701-brg-remember-bridge-honest-null-score/) |
+| 260701-bkp | Bookkeeping: wabt lockfile pin (51-04), stale SCHEMA_VERSION comments, headless-client billing-comment two-layer attribution (45-04 NOTE) | 2026-07-01 | ad56f32 | [260701-bkp-source-bookkeeping-sweep](./quick/260701-bkp-source-bookkeeping-sweep/) |
+| 260701-exg | Exhaust-theme gate at both corpus promote seams (closes 39.1 zero-intervention exhaust-gate residual; docs-only, zero new LLM calls) | 2026-07-01 | 03a2083, 369cd50 | [260701-exg-exhaust-theme-gate](./quick/260701-exg-exhaust-theme-gate/) |
+
 ## Session Continuity
 
-Last session: 2026-07-01T20:07:46.186Z
-Stopped at: Phase 56 context gathered
+Last session: 2026-07-01T21:13:39.788Z
+Stopped at: Completed 56-04-PLAN.md
 Next: Phase 47 (Hybrid Retrieval Recall) — now unblocked (Phase 46 landed). EVAL-02 clean-case no-regression + the pristine 18/18 KU re-run deferred into Phase 50.
 
 ## Operator Next Steps
