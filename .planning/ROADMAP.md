@@ -1117,7 +1117,7 @@ Plans:
 - **VIZ-PAL-07**: Two-stage founder checkpoint — Stage 1 mid-phase palette hue sign-off, Stage 2 closing full-system tune — with provisional values ratcheted to founder-approved locks (D-16/D-09).
 
 **Depends on:** Phase 56
-**Plans:** 1/7 plans executed
+**Plans:** 2/7 plans executed
 
 Plans:
 **Wave 1**
@@ -1126,7 +1126,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 57-02-PLAN.md — Luminance-equalized identity palette: 8 identity hues (incl. new replay ice-cyan) in a tested band, oscillation off amber; replay-hue trace.js restructure (kills REPLAY_HOP_COLOR bit-shift); band-membership invariant [wave 2] (VIZ-PAL-01, VIZ-PAL-05)
+- [x] 57-02-PLAN.md — Luminance-equalized identity palette: 8 identity hues (incl. new replay ice-cyan) in a tested band, oscillation off amber; replay-hue trace.js restructure (kills REPLAY_HOP_COLOR bit-shift); band-membership invariant [wave 2] (VIZ-PAL-01, VIZ-PAL-05)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
