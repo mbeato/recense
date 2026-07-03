@@ -171,12 +171,74 @@ describe('D-02 luminance-band membership', () => {
 });
 
 // =============================================================================
-// Future Phase-57 invariant groups extend this file with additional describe()
-// blocks below (D-12) — one section header per group:
-//
-//   describe('dim floors', ...)                  — every dim factor stays >= its perceptual
-//                                                    floor on the dark bg (D-05).
-//   describe('SC3 motion ordering', ...)          — per-channel monotonic ordering across
-//                                                    live > replay > spontaneous > twinkle
-//                                                    on the salient channels (D-06).
+// D-06 motion-profile SC3 ordering + D-05 dim floors (Phase 57 Plan 04)
 // =============================================================================
+// Salience ordering (live > replay > spontaneous > twinkle) now lives on
+// motion/scale (D-06), not brightness. This section locks:
+//   - monotonic attack-sharpness ordering (smaller ms = sharper = more salient)
+//   - monotonic halo/scale ordering (bigger = more salient)
+//   - dim-factor floors (REPLAY_DIM / SPONT_DIM must stay >= a perceptual floor)
+//   - the WR-02 SPONT_DIM < REPLAY_DIM ordering lock (56-REVIEW.md), migrated in
+//     alongside the REPLAY_DIM < 1 lock previously in
+//     viz-ambient-liveliness.test.ts:482-489 (Phase 54) — D-12 consolidation.
+
+/** Perceptual dim-factor floor (D-05) — every subordinate-layer dim factor
+ *  must stay >= this fraction of live brightness on the dark bg now that a
+ *  luminance-equalized hue sits underneath it. PROVISIONAL — ratchets to the
+ *  founder-approved value at the Stage-2 checkpoint (D-09). */
+const FLOOR_BOUND = 0.6;
+
+describe('D-06 motion-profile SC3 ordering + D-05 dim floors', () => {
+  const constantsSrc = readConstantsJs();
+
+  /** Parse a named export-const numeric value directly out of constants.js source text. */
+  function parseConst(name: string): number {
+    const match = constantsSrc.match(new RegExp(`export\\s+const\\s+${name}\\s*=\\s*([\\d.]+)`));
+    expect(match, `${name} not found in constants.js`).not.toBeNull();
+    return parseFloat(match![1]!);
+  }
+
+  describe('monotonic attack-sharpness ordering (smaller ms = sharper)', () => {
+    it('LIVE < REPLAY < SPONT < TWINKLE (attack ms)', () => {
+      const live = parseConst('DECAY_ATTACK_MS');
+      const replay = parseConst('REPLAY_ATTACK_MS');
+      const spont = parseConst('SPONT_ATTACK_MS');
+      const twinkle = parseConst('TWINKLE_ATTACK_MS');
+      expect(live).toBeLessThan(replay);
+      expect(replay).toBeLessThan(spont);
+      expect(spont).toBeLessThan(twinkle);
+    });
+  });
+
+  describe('monotonic halo/scale ordering (bigger = more salient)', () => {
+    it('LIVE > REPLAY > SPONT > TWINKLE (halo/scale)', () => {
+      const live = parseConst('LIVE_HALO_SCALE');
+      const replay = parseConst('REPLAY_HALO_SCALE');
+      const spont = parseConst('SPONT_HALO_SCALE');
+      const twinkle = parseConst('TWINKLE_HALO_SCALE');
+      expect(live).toBeGreaterThan(replay);
+      expect(replay).toBeGreaterThan(spont);
+      expect(spont).toBeGreaterThan(twinkle);
+    });
+  });
+
+  describe('dim floors (D-05)', () => {
+    it('REPLAY_DIM >= FLOOR_BOUND', () => {
+      expect(parseConst('REPLAY_DIM')).toBeGreaterThanOrEqual(FLOOR_BOUND);
+    });
+
+    it('SPONT_DIM >= FLOOR_BOUND', () => {
+      expect(parseConst('SPONT_DIM')).toBeGreaterThanOrEqual(FLOOR_BOUND);
+    });
+  });
+
+  describe('WR-02 + SC3 dim ordering (migrated from viz-ambient-liveliness.test.ts)', () => {
+    it('SPONT_DIM < REPLAY_DIM (56-REVIEW.md WR-02 — spontaneous is the dimmest activity layer)', () => {
+      expect(parseConst('SPONT_DIM')).toBeLessThan(parseConst('REPLAY_DIM'));
+    });
+
+    it('REPLAY_DIM < 1 (replay can never escalate above live — SC3; migrated from viz-ambient-liveliness.test.ts)', () => {
+      expect(parseConst('REPLAY_DIM')).toBeLessThan(1);
+    });
+  });
+});

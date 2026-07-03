@@ -479,14 +479,9 @@ describe('SC5/constants — Phase 54 constant exports and invariants', () => {
     expect(src).toMatch(/export const TWINKLE_AMP\s*=/);
   });
 
-  it('SC3: REPLAY_DIM numeric value parses to < 1 (replay can never escalate above live)', () => {
-    // Extract the assigned value and confirm it is strictly less than 1.
-    // REPLAY_DIM >= 1 would let a replay echo exceed live brightness — a hard SC3 violation.
-    const match = src.match(/export\s+const\s+REPLAY_DIM\s*=\s*([\d.]+)/);
-    expect(match).not.toBeNull();
-    const value = parseFloat(match![1]!);
-    expect(value).toBeLessThan(1);
-  });
+  // SC3: REPLAY_DIM < 1 source-parse lock moved to
+  // tests/viz-activity-palette-invariants.test.ts ("D-06 motion-profile SC3
+  // ordering + D-05 dim floors") — D-12 consolidation, Phase 57 Plan 04.
 
 });
 
