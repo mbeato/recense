@@ -111,11 +111,64 @@ describe('D-10 shared source of truth', () => {
 });
 
 // =============================================================================
+// D-02 luminance-band membership (Phase 57 Plan 02)
+// =============================================================================
+// The 56-05 lesson generalized: saturated indigo (Y≈138) vanished on the dark bg
+// once dimmed; pastel lavender (Y≈193) survived. Every KIND_COLOR identity hue
+// must sit inside a machine-tested luminance band so dimming never drives a
+// layer below the perceptual floor.
+
+/** Relative luminance, Rec.709 weights, on 0-255 channels (the chosen D-02 metric). */
+function relativeLuminance(hex: number): number {
+  const r = (hex >> 16) & 0xff;
+  const g = (hex >> 8) & 0xff;
+  const b = hex & 0xff;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+// PROVISIONAL — ratchets at Stage 1 (D-09). Lower bound anchored to the 56-05
+// evidence (pastel lavender Y≈193 survived; saturated indigo Y≈138 vanished;
+// HOT amber Y≈193 anchor). Upper bound keeps hue identity legible below near-white.
+const Y_MIN = 170;
+const Y_MAX = 235;
+
+/** All eight activity identity hues (Phase-57 D-01 scope: the 7 existing
+ *  KIND_COLOR entries plus the new `replay` identity hue). */
+const IDENTITY_KEYS = [
+  'recall_seed',
+  'recall_hop',
+  'new_node',
+  'reconsolidation',
+  'oscillation',
+  'neutral',
+  'spontaneous',
+  'replay',
+] as const;
+
+describe('D-02 luminance-band membership', () => {
+  const constantsSrc = readConstantsJs();
+
+  /** Parse a KIND_COLOR entry's hex literal directly out of constants.js source text. */
+  function parseKindColorHex(key: string): number {
+    const match = constantsSrc.match(new RegExp(`\\b${key}:\\s*0x([0-9a-fA-F]+)`));
+    expect(match, `KIND_COLOR.${key} not found in constants.js`).not.toBeNull();
+    return parseInt(match![1], 16);
+  }
+
+  for (const key of IDENTITY_KEYS) {
+    it(`KIND_COLOR.${key} computed luminance falls inside [${Y_MIN}, ${Y_MAX}]`, () => {
+      const hex = parseKindColorHex(key);
+      const y = relativeLuminance(hex);
+      expect(y).toBeGreaterThanOrEqual(Y_MIN);
+      expect(y).toBeLessThanOrEqual(Y_MAX);
+    });
+  }
+});
+
+// =============================================================================
 // Future Phase-57 invariant groups extend this file with additional describe()
 // blocks below (D-12) — one section header per group:
 //
-//   describe('luminance-band membership', ...)   — every KIND_COLOR entry's computed
-//                                                    luminance falls inside the named band (D-02).
 //   describe('dim floors', ...)                  — every dim factor stays >= its perceptual
 //                                                    floor on the dark bg (D-05).
 //   describe('SC3 motion ordering', ...)          — per-channel monotonic ordering across
