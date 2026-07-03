@@ -346,15 +346,17 @@ export const ACT_HAZE_LERP     = 0.95;
 /** ms of no new rows before idle-replay begins (spec tuning range: 4000–6000). */
 export const REPLAY_IDLE_GAP_MS  = 5000;
 
-/** ms between replay broadcasts during idle (raised density at founder checkpoint; keep in sync
- *  with server.ts REPLAY_CADENCE_MS — the server-side scheduler is the authoritative copy). */
+/** ms between replay broadcasts during idle (raised density at founder checkpoint).
+ *  Single authored source (D-10) — server.ts derives this value via source-parse at
+ *  startVizServer init rather than re-declaring it. */
 export const REPLAY_CADENCE_MS   = 2500;
 
 /** Intensity multiplier vs. live recall — MUST be < 1 (honesty invariant SC3; spec: 0.4–0.6). */
 export const REPLAY_DIM          = 0.4;
 
-/** Number of recent real rows kept in the server-side replay ring buffer (keep in sync with
- *  server.ts REPLAY_HISTORY_N — the server-side ring is the authoritative copy). */
+/** Number of recent real rows kept in the server-side replay ring buffer.
+ *  Single authored source (D-10) — server.ts derives this value via source-parse at
+ *  startVizServer init rather than re-declaring it. */
 export const REPLAY_HISTORY_N    = 40;
 
 // Layer 3 — ambient twinkle
@@ -379,13 +381,26 @@ export const TWINKLE_AMP        = 0.42;
  *  invariant: spontaneous is the dimmest activity layer). Starting direction only. */
 export const SPONT_DIM          = 0.3;
 
-/** ms between spontaneous emissions during idle (starting direction; keep in sync
- *  with server.ts SPONT_CADENCE_MS — server is authoritative). */
+/** ms between spontaneous emissions during idle (starting direction).
+ *  Single authored source (D-10) — server.ts derives this value via source-parse at
+ *  startVizServer init rather than re-declaring it. */
 export const SPONT_CADENCE_MS   = 2500;
 
 /** Max hop nodes considered per spontaneous emission (founder-tuned at 56-05:
- *  6 → 3 — with 6, a 3-seed tick lit ~21 nodes and read cluttered). */
+ *  6 → 3 — with 6, a 3-seed tick lit ~21 nodes and read cluttered).
+ *  Single authored source (D-10) — server.ts derives this value via source-parse at
+ *  startVizServer init rather than re-declaring it. */
 export const SPONT_HOP_TOPN     = 3;
+
+/** Distinct live seeds sampled per spontaneous tick (server-only scalar; 56-05 founder
+ *  tuning 3 → 2). Single authored source (D-10) — server.ts derives this value via
+ *  source-parse at startVizServer init rather than declaring its own literal. */
+export const SPONT_SEED_COUNT   = 2;
+
+/** ms between eligible-seed pool rebuilds for the spontaneous emitter (server-only
+ *  scalar). Single authored source (D-10) — server.ts derives this value via
+ *  source-parse at startVizServer init rather than declaring its own literal. */
+export const SPONT_POOL_REFRESH_MS = 60000;
 
 /** Channel scale for spontaneous EDGE pulses only (56-05 founder tuning — at
  *  SPONT_DIM (0.3) the wavefront lines were near-invisible; thin additive lines
