@@ -1104,12 +1104,25 @@ Plans:
 
 **Approach:** (1) Luminance-equalized identity palette — every activity kind gets a high-luminance pastel/bioluminescent hue that survives dimming (live amber-gold, replay ice-cyan, spontaneous lavender, ingestion greens/magenta, all within a bounded luminance band); (2) salience ordering (SC3: live > replay > spontaneous > twinkle) expressed through attack sharpness, halo size, pulse thickness, cadence, and density — machine-checkable ordering invariants move from color constants to motion/scale constants; (3) one bloom/tone-mapping calibration pass against the real hull backdrop; (4) founder visual checkpoint closes it. Honesty constraints untouched — presentation layer only (per the faithfulness clause: viz chrome is free).
 
-**Requirements**: TBD (derive at plan-phase; carry forward advisory review findings from 56-REVIEW.md — WR-02 invariant lock, WR-06 trace-fade clobber — as candidate requirements)
+**Requirements** (derived at plan-phase 2026-07-02 — VIZ-PAL-*):
+- **VIZ-PAL-01**: Luminance-equalized identity palette — all 7 KIND_COLOR entries + a new replay identity hue, each hand-picked with computed luminance inside a machine-tested band; oscillation moved off amber-family (D-01/02/03/04).
+- **VIZ-PAL-02**: SC3 salience ordering re-expressed as per-layer motion profiles (attack/halo/pulse/cadence/density) with machine-checkable monotonic ordering on the salient channels; brightness bounded by hard test-enforced dim floors (D-05/06/07/08).
+- **VIZ-PAL-03**: Single shared source of truth for scheduler constants consumed by both the client and the viz server — structurally kills the WR-01 mirror-drift class (D-10).
+- **VIZ-PAL-04**: WR-06 fixed in-phase — own-trace-scoped fades in all three trace.js branches (live/replay/spontaneous) so concurrent traces never clobber each other (D-11).
+- **VIZ-PAL-05**: One dedicated invariants test file owns all palette/motion locks (band membership, dim floors, monotonic ordering, shared-source sync); subsumes the never-written WR-02 lock; migrates the scattered REPLAY_DIM<1 lock in (D-12).
+- **VIZ-PAL-06**: One global bloom/tone-mapping/exposure calibration pass against the real hull backdrop, verified by founder eyeball + captured per-layer evidence; global-only, no selective bloom (D-13/14/15).
+- **VIZ-PAL-07**: Two-stage founder checkpoint — Stage 1 mid-phase palette hue sign-off, Stage 2 closing full-system tune — with provisional values ratcheted to founder-approved locks (D-16/D-09).
 **Depends on:** Phase 56
-**Plans:** 0 plans
+**Plans:** 7 plans in 6 waves (W1: 57-01 | W2: 57-02 | W3: 57-03 checkpoint | W4: 57-04, 57-05 | W5: 57-06 | W6: 57-07 checkpoint)
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 57 to break down)
+- [ ] 57-01-PLAN.md — Shared scheduler-constants source of truth: server source-parses constants.js, hand-mirrored block deleted (kills WR-01) + dedicated D-12 invariants file seeded with the shared-source-sync lock [wave 1] (VIZ-PAL-03, VIZ-PAL-05)
+- [ ] 57-02-PLAN.md — Luminance-equalized identity palette: 8 identity hues (incl. new replay ice-cyan) in a tested band, oscillation off amber; replay-hue trace.js restructure (kills REPLAY_HOP_COLOR bit-shift); band-membership invariant [wave 2] (VIZ-PAL-01, VIZ-PAL-05)
+- [ ] 57-03-PLAN.md — Stage-1 founder checkpoint: palette-on-hull hue sign-off before motion work; ratchet approved hues + band bounds; capture Stage-1 screenshots (D-15) [wave 3, checkpoint] (VIZ-PAL-01, VIZ-PAL-07)
+- [ ] 57-04-PLAN.md — Four per-layer motion profiles (attack/halo/pulse/cadence/density), live re-homed pixel-equivalent, dim floors ≥0.6; monotonic SC3 ordering + floor invariants + migrate WR-02/REPLAY_DIM<1 locks [wave 4] (VIZ-PAL-02, VIZ-PAL-05)
+- [ ] 57-05-PLAN.md — Global bloom/tone-mapping + renderer exposure provisional recalibration (single composer, no selective bloom) [wave 4] (VIZ-PAL-06)
+- [ ] 57-06-PLAN.md — trace.js consumes per-layer motion profiles (salience from motion/scale) + WR-06 own-trace-scoped fades in all three branches [wave 5] (VIZ-PAL-02, VIZ-PAL-04)
+- [ ] 57-07-PLAN.md — Stage-2 founder checkpoint: full-system live tune (motion + floors + bloom + exposure), ratchet-lock all provisional values + tighten D-12 invariants + per-layer evidence + 2558-suite gate [wave 6, checkpoint] (VIZ-PAL-02, VIZ-PAL-06, VIZ-PAL-07, VIZ-PAL-05)
 
 ## Backlog
 
