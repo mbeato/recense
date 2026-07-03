@@ -974,6 +974,16 @@ export function initTrace(ctx) {
       if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
       if (ctx.logEvent) ctx.logEvent('trace', `kind=new_node seed=${seedId} intensity=${intensity.toFixed(2)}`);
       activate(seedNode, intensity, KIND_COLORS.new_node);
+      // Own-trace-scoped fade (CR-01): delete ONLY this branch's own seed id after
+      // its bounded animation window — never a global clear (mirrors the recall/
+      // replay/spontaneous fade pattern above; a concurrent trace's ids must survive).
+      {
+        const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS + 500;
+        setTimeout(() => {
+          ctx.traceNodes.delete(seedId);
+          if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+        }, fadeMs);
+      }
       return;
     }
 
@@ -991,6 +1001,15 @@ export function initTrace(ctx) {
       activate(seedNode, intensity,        KIND_COLORS.oscillation);
       setTimeout(() => activate(seedNode, intensity * 0.75, KIND_COLORS.oscillation), 280);
       setTimeout(() => activate(seedNode, intensity * 0.55, KIND_COLORS.oscillation), 560);
+      // Own-trace-scoped fade (CR-01): delete ONLY this branch's own seed id after
+      // the full strobe window (covers the +560ms tail) — never a global clear.
+      {
+        const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS + 700 + 500;
+        setTimeout(() => {
+          ctx.traceNodes.delete(seedId);
+          if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+        }, fadeMs);
+      }
       return;
     }
 
@@ -1018,6 +1037,20 @@ export function initTrace(ctx) {
       const hops = row.hops || [];
       const candidateHop = hops[0];
       const candidateNode = candidateHop ? ctx.idMap.get(candidateHop.node_id) : null;
+
+      // Own-trace-scoped fade (CR-01): delete ONLY the ids this branch added —
+      // [seedId] alone, or [seedId, candidateHop.node_id] when a candidate was
+      // realized in the render graph — after the full choreography (WF_SWEEP
+      // arrival blip + standard decay) settles. Never a global clear.
+      {
+        const revealedNodes = candidateNode ? [candidateNode, seedNode] : [seedNode];
+        const addedIds = candidateNode ? [seedId, candidateHop.node_id] : [seedId];
+        const fadeMs = WF_SWEEP + DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS + 500;
+        setTimeout(() => {
+          addedIds.forEach(id => ctx.traceNodes.delete(id));
+          if (ctx.revealTrace) ctx.revealTrace(revealedNodes, []);
+        }, fadeMs);
+      }
 
       if (candidateNode) {
         // Subordinate green blip: candidate → existing node
@@ -1048,6 +1081,15 @@ export function initTrace(ctx) {
     if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
     if (ctx.logEvent) ctx.logEvent('trace', `kind=${kind} (neutral) seed=${seedId} intensity=${intensity.toFixed(2)}`);
     activate(seedNode, intensity, KIND_COLORS.neutral);
+    // Own-trace-scoped fade (CR-01): delete ONLY this branch's own seed id after
+    // its bounded animation window — never a global clear.
+    {
+      const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS + 500;
+      setTimeout(() => {
+        ctx.traceNodes.delete(seedId);
+        if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+      }, fadeMs);
+    }
   }
 
   ctx.applyTrace = applyTrace;

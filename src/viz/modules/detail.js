@@ -415,10 +415,16 @@ export function initDetail(ctx) {
 
   /**
    * Focus a node without selecting it (quick-260612-swc): reveal it through
-   * the LOD if hidden (trace semantics — the next trace's fade-back may
-   * re-hide it), fly the camera, fire an amber activation pulse, and hold
-   * full framerate for the motion (markAnimating, NOT markActive — ambient
-   * rotation must not stop; 260612-r9m precedent).
+   * the LOD if hidden, fly the camera, fire an amber activation pulse, and
+   * hold full framerate for the motion (markAnimating, NOT markActive —
+   * ambient rotation must not stop; 260612-r9m precedent).
+   *
+   * Reveal lifetime (CR-01, Phase 57-08): sticky until page reload. This is
+   * a deliberate, user-driven reveal — the user explicitly flew the camera to
+   * an LOD-hidden node, so it stays visible; nothing re-hides it, and no fade
+   * timer is scheduled. This is NOT the automatic per-trace scoped-fade reveal
+   * that _applyIngestion/applyTrace use (trace.js) — those are bounded,
+   * this is bounded only by user action / reload.
    *
    * Deliberately does NOT call selectNode: in shell-compact mode selectNode
    * navigates to the /__recense/detail sentinel, which would reload the
