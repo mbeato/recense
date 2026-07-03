@@ -745,10 +745,16 @@ export function initTrace(ctx) {
         });
       }
 
+      // Own-trace-scoped fade (WR-06 / D-11): delete ONLY the node ids THIS trace
+      // added, never global-clear ctx.traceNodes — a concurrent trace of a different
+      // kind (e.g. a live recall arriving inside this fade window) must not have its
+      // just-added ids wiped by this timeout. This branch never adds to ctx.traceLinks
+      // (no persistent LOD links are held here — pathway lines are animated
+      // wavefronts), so it never touches that shared set.
+      const addedIds = pathNodes.map(n => n.id);
       const fadeMs = REPLAY_ATTACK_MS + DECAY_HOLD_MS + 500;
       setTimeout(() => {
-        ctx.traceNodes.clear();
-        ctx.traceLinks.clear();
+        addedIds.forEach(id => ctx.traceNodes.delete(id));
         if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
       }, fadeMs);
       return;
@@ -823,10 +829,16 @@ export function initTrace(ctx) {
         if (srcNode) spawnPulse(srcNode, node, SPONT_HOP_COLOR, SPONT_PULSE_THICKNESS);
       });
 
+      // Own-trace-scoped fade (WR-06 / D-11): delete ONLY the node ids THIS trace
+      // added, never global-clear ctx.traceNodes — spontaneous fires every
+      // SPONT_CADENCE_MS during idle, and a live/replay trace arriving inside a
+      // pending spontaneous fade window must not have its just-added ids wiped by
+      // this timeout. This branch never adds to ctx.traceLinks, so it never
+      // touches that shared set.
+      const addedIds = pathNodes.map(n => n.id);
       const fadeMs = SPONT_ATTACK_MS + DECAY_HOLD_MS + 500;
       setTimeout(() => {
-        ctx.traceNodes.clear();
-        ctx.traceLinks.clear();
+        addedIds.forEach(id => ctx.traceNodes.delete(id));
         if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
       }, fadeMs);
       return;
@@ -922,10 +934,15 @@ export function initTrace(ctx) {
     });
 
     // ── Fade the pathway back after the decay window ───────────────────────────
+    // Own-trace-scoped fade (WR-06 / D-11): delete ONLY the node ids THIS trace
+    // added, never global-clear ctx.traceNodes — a concurrent trace of a different
+    // kind (e.g. a pending replay/spontaneous fade) must not be clobbered by this
+    // timeout. This path never adds to ctx.traceLinks, so it never touches that
+    // shared set.
+    const addedIds = pathNodes.map(n => n.id);
     const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
     setTimeout(() => {
-      ctx.traceNodes.clear();
-      ctx.traceLinks.clear();
+      addedIds.forEach(id => ctx.traceNodes.delete(id));
       if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
     }, fadeMs);
   }
