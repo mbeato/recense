@@ -108,25 +108,9 @@ export const HOT = 0xffb866;
 // ============================================================================
 // Activation decay envelope (D-06)
 // ============================================================================
-// Replaces the old flat `node.__act -= dt * 0.6` (~1.6 s linear decay).
-// Three named phases: fast attack → hold at peak → exponential fade to floor.
-// Values are designer-tunable constants; adjust at the founder visual checkpoint.
-
-/** Fast brightness ramp after a node fires (ms). */
-export const DECAY_ATTACK_MS = 80;
-
-/** How long the node stays at peak brightness before fading (ms). */
-export const DECAY_HOLD_MS = 600;
-
-/** Exponential fade duration from peak → DECAY_FLOOR (ms). */
-export const DECAY_FADE_MS = 2500;
-
-/**
- * Activation floor — the node lingers at this fraction of peak after the
- * fade tail rather than snapping to zero. Low enough to be nearly invisible;
- * high enough to avoid a jarring hard-off at the end of the envelope.
- */
-export const DECAY_FLOOR = 0.04;
+// Re-homed pixel-equivalent into the Layer 1 (live) motion profile further
+// below (Phase 57 D-06/D-08) — names + values UNCHANGED, just grouped there
+// as the top profile alongside the other live salient-channel consts.
 
 // ============================================================================
 // Per-event kind colour palette (D-07 / D-04, luminance-equalized Phase 57 D-01/02/03/04)
@@ -371,14 +355,46 @@ export const FULL_FPS = 60;
 export const DEGRADE_FPS = 45;
 
 // ============================================================================
-// Phase 54 — ambient liveliness (tuned at founder visual checkpoint)
+// Phase 57 D-06/D-08 — four per-layer motion profiles (SC3 salience ordering)
 // ============================================================================
-// Three-layer activity hierarchy: live recall (brightest) > replay echo (dimmer,
-// real-but-past) > twinkle (faintest, decorative baseline). All values are spec
-// midpoints; founder dials them at the Plan 05 visual checkpoint. REPLAY_DIM < 1
-// is a hard invariant (replay can never escalate above live — SC3).
+// Salience ordering (live > replay > spontaneous > twinkle) moves OFF
+// brightness-of-a-saturated-hue and ONTO motion/scale: each layer below gets a
+// named motion-profile block — attack sharpness, halo/scale, pulse thickness,
+// cadence, density — forming a designed "character" (live: sharp attack + big
+// halo, the event; replay: soft echo; spontaneous: slow calm drift; twinkle:
+// micro-breathe). The two salient ordering channels — attack ms (sharper =
+// smaller ms) and halo/scale (bigger = more salient) — hold MONOTONICALLY
+// across all four layers and are locked by
+// tests/viz-activity-palette-invariants.test.ts ("D-06 motion-profile SC3
+// ordering"). Cadence and density are free to vary for feel (NOT
+// ordering-constrained). Every non-live value below is PROVISIONAL — ratchets
+// to a founder-approved number (± tolerance) at the Stage-2 checkpoint (D-09).
+// This plan authors the constants + locks only; 57-06 wires trace.js to
+// consume the new attack/halo/pulse-thickness channels.
 
-// Layer 1 — live recall amplification
+// ----------------------------------------------------------------------------
+// Layer 1 — live recall (the event: sharp attack, big halo)
+// ----------------------------------------------------------------------------
+// Re-homed pixel-equivalent from the original "Activation decay envelope" +
+// "Phase 54 ambient liveliness" sections (D-08) — names + values UNCHANGED,
+// only grouped here as the top motion profile. Downstream tests
+// (viz-ambient-liveliness.test.ts) import these names directly; do not rename.
+
+/** Fast brightness ramp after a node fires (ms) — live's attack-sharpness
+ *  channel (D-06 SC3 ordering: the sharpest of the four layers). */
+export const DECAY_ATTACK_MS = 80;
+
+/** How long the node stays at peak brightness before fading (ms). */
+export const DECAY_HOLD_MS = 600;
+
+/** Exponential fade duration from peak → DECAY_FLOOR (ms). */
+export const DECAY_FADE_MS = 2500;
+
+/** Activation floor — the node lingers at this fraction of peak after the
+ *  fade tail rather than snapping to zero. Low enough to be nearly invisible;
+ *  high enough to avoid a jarring hard-off at the end of the envelope. */
+export const DECAY_FLOOR = 0.04;
+
 /** Size-pulse gain multiplier; replaces the inline 0.35 (spec tuning range: 0.8–1.0). */
 export const ACT_SCALE_GAIN    = 1.05;
 
@@ -388,7 +404,21 @@ export const ACT_BRIGHTEN_GAIN = 0.95;
 /** Haze color-lerp factor; replaces the inline 0.8 (spec: raise for stronger haze color overshoot). */
 export const ACT_HAZE_LERP     = 0.95;
 
-// Layer 2 — replay echo
+/** Live's halo/scale channel (D-06 SC3 ordering: full-extent halo — the
+ *  biggest/most-salient of the four layers, "the event"). Expressed as a
+ *  multiplier of the node's peak-activation glow radius. PROVISIONAL —
+ *  ratchets at Stage 2 (D-09). */
+export const LIVE_HALO_SCALE = 1.0;
+
+/** Live's pulse-thickness channel (D-06) — traveling-pulse line-width
+ *  multiplier for spawnPulse; live's pulses are the thickest of the four
+ *  layers. PROVISIONAL — ratchets at Stage 2 (D-09). */
+export const LIVE_PULSE_THICKNESS = 1.0;
+
+// ----------------------------------------------------------------------------
+// Layer 2 — replay echo (soft echo of a recent real recall)
+// ----------------------------------------------------------------------------
+
 /** ms of no new rows before idle-replay begins (spec tuning range: 4000–6000). */
 export const REPLAY_IDLE_GAP_MS  = 5000;
 
@@ -397,35 +427,63 @@ export const REPLAY_IDLE_GAP_MS  = 5000;
  *  startVizServer init rather than re-declaring it. */
 export const REPLAY_CADENCE_MS   = 2500;
 
-/** Intensity multiplier vs. live recall — MUST be < 1 (honesty invariant SC3; spec: 0.4–0.6). */
-export const REPLAY_DIM          = 0.4;
+/** Replay's attack-sharpness channel (D-06 SC3 ordering: softer/slower than
+ *  live, sharper than spontaneous). Time-to-peak in ms for the replay echo's
+ *  brightness ramp. PROVISIONAL — ratchets at Stage 2 (D-09). */
+export const REPLAY_ATTACK_MS = 200;
+
+/** Replay's halo/scale channel (D-06 SC3 ordering: smaller than live's
+ *  full-extent halo, bigger than spontaneous's). PROVISIONAL — ratchets at
+ *  Stage 2 (D-09). */
+export const REPLAY_HALO_SCALE = 0.75;
+
+/** Replay's pulse-thickness channel (D-06) — thinner than live's, matching
+ *  the "soft echo" character. PROVISIONAL — ratchets at Stage 2 (D-09). */
+export const REPLAY_PULSE_THICKNESS = 0.7;
+
+/** Intensity multiplier vs. live recall — secondary dim cue (D-05), floored
+ *  at >= FLOOR_BOUND (0.6; see tests/viz-activity-palette-invariants.test.ts)
+ *  now that primary subordination comes from motion/scale (REPLAY_ATTACK_MS /
+ *  REPLAY_HALO_SCALE above), not brightness. Phase 57 D-05 retune: 0.4 → 0.7
+ *  (the old value sat below the perceptual floor once paired with a
+ *  luminance-equalized hue). MUST stay < 1 (SC3 honesty invariant: replay can
+ *  never escalate above live). */
+export const REPLAY_DIM          = 0.7;
 
 /** Number of recent real rows kept in the server-side replay ring buffer.
  *  Single authored source (D-10) — server.ts derives this value via source-parse at
  *  startVizServer init rather than re-declaring it. */
 export const REPLAY_HISTORY_N    = 40;
 
-// Layer 3 — ambient twinkle
-/** Nodes in the rotating twinkle subset (~0.5% of 15k corpus). */
-export const TWINKLE_COUNT      = 220;
+// ----------------------------------------------------------------------------
+// Layer 3 — spontaneous default-mode wandering (slow calm drift)
+// ----------------------------------------------------------------------------
+// Honest idle-emitted 1-hop spreads (real PRED_SET edges, no fabricated
+// content) — rendered strictly subordinate to replay so a genuinely-alive
+// brain with an empty replay buffer still reads as alive, without ever
+// escalating above the replay layer.
 
-/** Sine breathe period per twinkle node (ms; spec tuning range: 1500–2500). */
-export const TWINKLE_PERIOD_MS  = 2000;
+/** Spontaneous's attack-sharpness channel (D-06 SC3 ordering: slower than
+ *  replay, sharper/faster than twinkle's micro-breathe). Time-to-peak in ms.
+ *  PROVISIONAL — ratchets at Stage 2 (D-09). */
+export const SPONT_ATTACK_MS = 400;
 
-/** Brightness amplitude of the twinkle breathe — neutral tint lerp (raised from 0.18 at
- *  the founder checkpoint so ambient idle activity reads without the hull as backdrop). */
-export const TWINKLE_AMP        = 0.42;
+/** Spontaneous's halo/scale channel (D-06 SC3 ordering: smaller than
+ *  replay's, bigger than twinkle's). PROVISIONAL — ratchets at Stage 2 (D-09). */
+export const SPONT_HALO_SCALE = 0.55;
 
-// ============================================================================
-// Layer 4 — Phase 56 spontaneous default-mode wandering (tuned at founder checkpoint)
-// ============================================================================
-// Honest idle-emitted 1-hop spreads (real PRED_SET edges, no fabricated content) —
-// rendered strictly subordinate to replay so a genuinely-alive brain with an empty
-// replay buffer still reads as alive, without ever escalating above the replay layer.
+/** Spontaneous's pulse-thickness channel (D-06) — thinner than replay's,
+ *  matching the "slow calm drift" character. PROVISIONAL — ratchets at
+ *  Stage 2 (D-09). */
+export const SPONT_PULSE_THICKNESS = 0.5;
 
-/** Intensity multiplier vs. live recall — MUST be < REPLAY_DIM (0.4) (SC3 honesty
- *  invariant: spontaneous is the dimmest activity layer). Starting direction only. */
-export const SPONT_DIM          = 0.3;
+/** Intensity multiplier vs. live recall — secondary dim cue (D-05), floored
+ *  at >= FLOOR_BOUND (0.6) and MUST stay < REPLAY_DIM (spontaneous is the
+ *  dimmest activity layer, WR-02). Phase 57 D-05 retune: 0.3 → 0.6 (the old
+ *  value sat below the perceptual floor). Primary subordination now comes
+ *  from motion/scale (SPONT_ATTACK_MS / SPONT_HALO_SCALE above), not
+ *  brightness. */
+export const SPONT_DIM          = 0.6;
 
 /** ms between spontaneous emissions during idle (starting direction).
  *  Single authored source (D-10) — server.ts derives this value via source-parse at
@@ -449,11 +507,46 @@ export const SPONT_SEED_COUNT   = 2;
 export const SPONT_POOL_REFRESH_MS = 60000;
 
 /** Channel scale for spontaneous EDGE pulses only (56-05 founder tuning — at
- *  SPONT_DIM (0.3) the wavefront lines were near-invisible; thin additive lines
- *  need high luminance to register). 0.6 × pastel lavender 0xc9b8ff → line
- *  luminance ≈ 116: clearly visible, still well below live-amber full-intensity
- *  lines. Replay and spontaneous never co-render (spontaneous fires only when
- *  the replay buffer is empty), so per-pixel line-vs-line subordination is not
- *  load-bearing — the SC3 machine invariant lives on SPONT_DIM < REPLAY_DIM
- *  (node activations), which this constant does not touch. */
+ *  the pre-Phase-57 SPONT_DIM floor (0.3), the wavefront lines were
+ *  near-invisible; thin additive lines need high luminance to register). 0.6 ×
+ *  pastel lavender 0xc9b8ff → line luminance ≈ 116: clearly visible, still
+ *  well below live-amber full-intensity lines. Replay and spontaneous never
+ *  co-render (spontaneous fires only when the replay buffer is empty), so
+ *  per-pixel line-vs-line subordination is not load-bearing — the SC3 machine
+ *  invariant lives on SPONT_DIM < REPLAY_DIM (node activations), which this
+ *  constant does not touch. */
 export const SPONT_PULSE_SCALE  = 0.6;
+
+// ----------------------------------------------------------------------------
+// Layer 4 — ambient twinkle (micro-breathe, decorative baseline)
+// ----------------------------------------------------------------------------
+
+/** Nodes in the rotating twinkle subset (~0.5% of 15k corpus) — twinkle's
+ *  density channel (D-06); the only layer where population density is a
+ *  meaningful profile channel (live/replay/spontaneous are single-event
+ *  pulses, not a population). */
+export const TWINKLE_COUNT      = 220;
+
+/** Sine breathe period per twinkle node (ms; spec tuning range: 1500–2500). */
+export const TWINKLE_PERIOD_MS  = 2000;
+
+/** Twinkle's attack-sharpness channel (D-06 SC3 ordering: the slowest/least-
+ *  sharp of the four layers). Derived as a quarter of TWINKLE_PERIOD_MS — a
+ *  sine breathe's natural rise-to-peak. PROVISIONAL — ratchets at Stage 2
+ *  (D-09). */
+export const TWINKLE_ATTACK_MS = 500;
+
+/** Twinkle's halo/scale channel (D-06 SC3 ordering: the smallest/least-
+ *  salient of the four layers — decorative baseline only). PROVISIONAL —
+ *  ratchets at Stage 2 (D-09). */
+export const TWINKLE_HALO_SCALE = 0.3;
+
+/** Twinkle's pulse-thickness channel (D-06) — twinkle has no traveling edge
+ *  pulse today (per-node breathe only); this reserves the profile-shape value
+ *  for a future twinkle micro-pulse if one is ever added. PROVISIONAL —
+ *  ratchets at Stage 2 (D-09). */
+export const TWINKLE_PULSE_THICKNESS = 0.3;
+
+/** Brightness amplitude of the twinkle breathe — neutral tint lerp (raised from 0.18 at
+ *  the founder checkpoint so ambient idle activity reads without the hull as backdrop). */
+export const TWINKLE_AMP        = 0.42;
