@@ -1117,7 +1117,7 @@ Plans:
 - **VIZ-PAL-07**: Two-stage founder checkpoint — Stage 1 mid-phase palette hue sign-off, Stage 2 closing full-system tune — with provisional values ratcheted to founder-approved locks (D-16/D-09).
 
 **Depends on:** Phase 56
-**Plans:** 3/7 plans executed
+**Plans:** 5/7 plans executed
 
 Plans:
 **Wave 1**
@@ -1134,8 +1134,8 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 57-04-PLAN.md — Four per-layer motion profiles (attack/halo/pulse/cadence/density), live re-homed pixel-equivalent, dim floors ≥0.6; monotonic SC3 ordering + floor invariants + migrate WR-02/REPLAY_DIM<1 locks [wave 4] (VIZ-PAL-02, VIZ-PAL-05)
-- [ ] 57-05-PLAN.md — Global bloom/tone-mapping + renderer exposure provisional recalibration (single composer, no selective bloom) [wave 4] (VIZ-PAL-06)
+- [x] 57-04-PLAN.md — Four per-layer motion profiles (attack/halo/pulse/cadence/density), live re-homed pixel-equivalent, dim floors ≥0.6; monotonic SC3 ordering + floor invariants + migrate WR-02/REPLAY_DIM<1 locks [wave 4] (VIZ-PAL-02, VIZ-PAL-05)
+- [x] 57-05-PLAN.md — Global bloom/tone-mapping + renderer exposure provisional recalibration (single composer, no selective bloom) [wave 4] (VIZ-PAL-06)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
