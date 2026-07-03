@@ -1117,7 +1117,7 @@ Plans:
 - **VIZ-PAL-07**: Two-stage founder checkpoint — Stage 1 mid-phase palette hue sign-off, Stage 2 closing full-system tune — with provisional values ratcheted to founder-approved locks (D-16/D-09).
 
 **Depends on:** Phase 56
-**Plans:** 5/7 plans executed
+**Plans:** 6/7 plans executed
 
 Plans:
 **Wave 1**
@@ -1139,7 +1139,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 57-06-PLAN.md — trace.js consumes per-layer motion profiles (salience from motion/scale) + WR-06 own-trace-scoped fades in all three branches [wave 5] (VIZ-PAL-02, VIZ-PAL-04)
+- [x] 57-06-PLAN.md — trace.js consumes per-layer motion profiles (salience from motion/scale) + WR-06 own-trace-scoped fades in all three branches [wave 5] (VIZ-PAL-02, VIZ-PAL-04)
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
