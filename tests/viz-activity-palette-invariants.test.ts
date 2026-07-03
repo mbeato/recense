@@ -152,7 +152,7 @@ describe('D-02 luminance-band membership', () => {
   function parseKindColorHex(key: string): number {
     const match = constantsSrc.match(new RegExp(`\\b${key}:\\s*0x([0-9a-fA-F]+)`));
     expect(match, `KIND_COLOR.${key} not found in constants.js`).not.toBeNull();
-    return parseInt(match![1], 16);
+    return parseInt(match![1]!, 16);
   }
 
   for (const key of IDENTITY_KEYS) {

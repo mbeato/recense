@@ -247,26 +247,20 @@ export function initTrace(ctx) {
     // Spontaneous idle default-mode wandering (Phase 56) — dim indigo/violet,
     // distinct from recall amber and replay cyan (T-56-06).
     spontaneous:     new THREE.Color(KIND_COLOR.spontaneous),
+    // Replay echo of a recent real recall (Phase 57 D-01) — its OWN in-band
+    // identity hue (pale ice-cyan), no longer a bit-shift dim of recall_hop.
+    // Subordination to live still comes from REPLAY_DIM on node activation
+    // intensity; the pulse COLOR now reads the identity hue directly.
+    replay:          new THREE.Color(KIND_COLOR.replay),
   };
 
-  // Pre-dimmed cyan for replay-echo edge pulses — spawnPulse has no intensity knob, so a
-  // darker colour keeps replay pulses strictly dimmer than live (SC3), matching the
-  // REPLAY_DIM node-activation factor. Scale each channel by REPLAY_DIM and rebuild the hex
-  // (avoids THREE.Color.multiplyScalar so it also works under the minimal test colour stub).
-  // Built once (zero per-frame allocation).
-  const _rh = KIND_COLOR.recall_hop;
-  const REPLAY_HOP_COLOR = new THREE.Color(
-    (Math.round(((_rh >> 16) & 0xff) * REPLAY_DIM) << 16) |
-    (Math.round(((_rh >> 8) & 0xff) * REPLAY_DIM) << 8) |
-    Math.round((_rh & 0xff) * REPLAY_DIM),
-  );
-
-  // Pre-dimmed indigo for spontaneous-wandering edge pulses (Phase 56) — same
-  // bit-shift dim construction as REPLAY_HOP_COLOR (no multiplyScalar, so it
-  // works under the minimal test colour stub). Scaled by SPONT_PULSE_SCALE, not
-  // SPONT_DIM: at 0.3 the thin wavefront lines were near-invisible (56-05 founder
-  // tuning). 0.45 stays perceptually subordinate to replay (SC3) — indigo's
-  // luminance at 0.45 (≈62) < replay cyan's at REPLAY_DIM 0.4 (≈70).
+  // Pre-dimmed indigo for spontaneous-wandering edge pulses (Phase 56) — a
+  // bit-shift dim (no multiplyScalar, so it works under the minimal test
+  // colour stub). Scaled by SPONT_PULSE_SCALE, not SPONT_DIM: at 0.3 the thin
+  // wavefront lines were near-invisible (56-05 founder tuning). Replay's own
+  // pulse (KIND_COLORS.replay, above) no longer needs this construction —
+  // it reads its in-band identity hue directly (Phase 57 D-01) rather than
+  // dimming a borrowed hue.
   const _sh = KIND_COLOR.spontaneous;
   const SPONT_HOP_COLOR = new THREE.Color(
     (Math.round(((_sh >> 16) & 0xff) * SPONT_PULSE_SCALE) << 16) |
@@ -681,11 +675,12 @@ export function initTrace(ctx) {
         activate(node, intensity * REPLAY_DIM, hopColor);
       });
 
-      // Replay the honest seed→hop edge pulses too (pre-dimmed cyan, SC3), so an idle replay
-      // echo is structurally the same frame as the live recall — just dimmer. Recall rows only.
+      // Replay the honest seed→hop edge pulses too (replay's own identity hue, Phase 57 D-01),
+      // so an idle replay echo is structurally the same frame as the live recall — just its
+      // own hue, not a dimmed copy of live cyan. Recall rows only.
       if (isRecallReplay) {
         hopEntries.forEach(({ node, srcNode }) => {
-          if (srcNode) spawnPulse(srcNode, node, REPLAY_HOP_COLOR);
+          if (srcNode) spawnPulse(srcNode, node, KIND_COLORS.replay);
         });
       }
 
