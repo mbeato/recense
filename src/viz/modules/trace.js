@@ -40,13 +40,35 @@ import {
   ACT_SCALE_GAIN,
   ACT_BRIGHTEN_GAIN,
   ACT_HAZE_LERP,
+  LIVE_HALO_SCALE,
+  LIVE_PULSE_THICKNESS,
   REPLAY_DIM,
+  REPLAY_ATTACK_MS,
+  REPLAY_HALO_SCALE,
+  REPLAY_PULSE_THICKNESS,
   SPONT_DIM,
+  SPONT_ATTACK_MS,
+  SPONT_HALO_SCALE,
+  SPONT_PULSE_THICKNESS,
   SPONT_PULSE_SCALE,
   TWINKLE_COUNT,
   TWINKLE_PERIOD_MS,
+  TWINKLE_ATTACK_MS,
   TWINKLE_AMP,
 } from './constants.js';
+
+// ── Phase 57 D-06 per-layer motion profiles ─────────────────────────────────
+// activate()'s 4th arg and spawnPulse()'s 4th arg accept one of these; omitting
+// it defaults to LIVE_PROFILE / LIVE_PULSE_THICKNESS so every pre-existing call
+// site (the recall path, ingestion event kinds) stays pixel-equivalent to
+// pre-57-06 behavior (D-08) — LIVE_HALO_SCALE/LIVE_PULSE_THICKNESS are both 1.0.
+// Only the attack-ms (envelope ramp) and halo/scale (glow-orb radius) + pulse-
+// thickness (wavefront line width) channels are wired here; TWINKLE_HALO_SCALE
+// and TWINKLE_PULSE_THICKNESS stay unconsumed (twinkle has no halo or edge-pulse
+// mechanic — 57-04 documented them as reserved for a future twinkle micro-pulse).
+const LIVE_PROFILE   = { attackMs: DECAY_ATTACK_MS,  haloScale: LIVE_HALO_SCALE };
+const REPLAY_PROFILE = { attackMs: REPLAY_ATTACK_MS, haloScale: REPLAY_HALO_SCALE };
+const SPONT_PROFILE  = { attackMs: SPONT_ATTACK_MS,  haloScale: SPONT_HALO_SCALE };
 
 // ── Reusable scratch objects for pulse orientation (avoid per-frame alloc) ─
 const _dir = new THREE.Vector3();
@@ -194,15 +216,18 @@ export function traceEdgesFromHops(row, idMap) {
  * @param {number} now      - performance.now() at tick time (ms)
  * @param {number} t0       - when activate() was called (ms)
  * @param {number} peak     - activation level at the moment of firing (0–1)
+ * @param {number} [attackMs] - this activation's layer attack-ms (D-06 per-layer
+ *   motion profile); defaults to DECAY_ATTACK_MS (live) when omitted.
  * @returns {number}        - current level (0 = expired)
  */
-function evalEnvelope(now, t0, peak) {
+function evalEnvelope(now, t0, peak, attackMs) {
+  attackMs = attackMs ?? DECAY_ATTACK_MS;
   const elapsed = now - t0;
-  if (elapsed < DECAY_ATTACK_MS) {
+  if (elapsed < attackMs) {
     // Linear attack: 0 → peak
-    return peak * (elapsed / DECAY_ATTACK_MS);
+    return peak * (elapsed / attackMs);
   }
-  const afterAttack = elapsed - DECAY_ATTACK_MS;
+  const afterAttack = elapsed - attackMs;
   if (afterAttack < DECAY_HOLD_MS) {
     // Hold at peak
     return peak;
@@ -277,17 +302,22 @@ export function initTrace(ctx) {
   // In-flight node-flash halo records (FIX-52A)
   const halos = [];
 
-  // ── activate(node, level) ─────────────────────────────────────────────────
+  // ── activate(node, level, kindColor, profile) ─────────────────────────────
   // Raises the node's activation level and enqueues it for animation.
-  // Records __actT0 + __actPeak for the D-06 envelope evaluator in tick().
-  // If the new level is higher than the current peak, the envelope restarts.
+  // Records __actT0 + __actPeak + __actAttackMs for the D-06 envelope evaluator
+  // in tick(). If the new level is higher than the current peak, the envelope
+  // restarts. `profile` (Phase 57 D-06) carries this activation's per-layer
+  // attack-ms + halo-scale; omitted → LIVE_PROFILE (pixel-equivalent to pre-
+  // 57-06 behavior since LIVE_HALO_SCALE=1.0 and attackMs=DECAY_ATTACK_MS).
   //
   // Haze nodes (InstancedMesh, have __hazeIdx but no __mat) get a color-only
   // branch that drives ctx.hazeMesh.setColorAt — no per-frame setMatrixAt so
   // the 6k-instance matrix buffer stays untouched (performance constraint).
   // Regular nodes must have __mat to be rendered — early-return if absent.
-  function activate(node, level, kindColor) {
+  function activate(node, level, kindColor, profile) {
     if (!node) return;
+    const attackMs  = profile ? profile.attackMs  : LIVE_PROFILE.attackMs;
+    const haloScale = profile ? profile.haloScale : LIVE_PROFILE.haloScale;
 
     // Spawn (or coalesce) an additive halo for this activation (FIX-52A).
     // Lives in ctx.pulseGroup so the bloom pass catches it — same proven-visible
@@ -296,13 +326,15 @@ export function initTrace(ctx) {
     // guard bails for nodes not realized as a mesh/haze instance (the common
     // case at overview zoom), which previously suppressed every node flash.
     // Coalesce prevents unbounded stacking on rapid re-activations (oscillation
-    // strobes, repeated recalls).
+    // strobes, repeated recalls). haloScale (D-06) sizes the glow orb per-layer
+    // in tick() below — live's LIVE_HALO_SCALE=1.0 leaves the radius unchanged.
     if (ctx.pulseGroup) {
       let found = false;
       for (let hi = 0; hi < halos.length; hi++) {
         if (halos[hi].node === node) {
-          halos[hi].t0    = performance.now();
-          halos[hi].level = level;
+          halos[hi].t0        = performance.now();
+          halos[hi].level     = level;
+          halos[hi].haloScale = haloScale;
           if (halos[hi].mat.uniforms && halos[hi].mat.uniforms.uColor) {
             halos[hi].mat.uniforms.uColor.value.copy(kindColor || HOT_COLOR);
           }
@@ -324,28 +356,31 @@ export function initTrace(ctx) {
         });
         const mesh = new THREE.Mesh(_haloGeo, mat);
         ctx.pulseGroup.add(mesh);
-        halos.push({ node, t0: performance.now(), level, mesh, mat });
+        halos.push({ node, t0: performance.now(), level, mesh, mat, haloScale });
       }
     }
 
     // Per-node material/haze tint + scale path requires the node to be realized.
     if (node.__mat == null && node.__hazeIdx == null) return;
     if ((node.__act || 0) < level) {
-      node.__act      = level;
-      node.__actT0    = performance.now();
-      node.__actPeak  = level;
-      node.__actColor = kindColor || HOT_COLOR; // per-kind palette (D-03 / D-04)
+      node.__act        = level;
+      node.__actT0      = performance.now();
+      node.__actPeak    = level;
+      node.__actColor   = kindColor || HOT_COLOR; // per-kind palette (D-03 / D-04)
+      node.__actAttackMs = attackMs; // D-06 per-layer attack sharpness (evalEnvelope)
     }
     active.add(node);
   }
 
-  // ── spawnPulse(from, to) ──────────────────────────────────────────────────
+  // ── spawnPulse(from, to, color, thickness) ────────────────────────────────
   // Ignites a full-edge wavefront: a band of amber light races from→to and the
   // wire glows then decays (see WAVEFRONT_* shader above). Uses the shared
   // _pulseGeo; each wavefront owns only its (cheap) ShaderMaterial, disposed on
   // completion. Preserved for detail.js ripple — NOT called from applyTrace
   // (no honest source-seed→hop edge available from the server payload).
-  function spawnPulse(from, to, color) {
+  // `thickness` (Phase 57 D-06) scales the wire's XZ radius per-layer; omitted →
+  // LIVE_PULSE_THICKNESS (1.0, pixel-equivalent to pre-57-06 behavior).
+  function spawnPulse(from, to, color, thickness) {
     if (!ctx.pulseGroup || !from || !to) return;
     const mat = new THREE.ShaderMaterial({
       uniforms: {
@@ -361,7 +396,7 @@ export function initTrace(ctx) {
     });
     const mesh = new THREE.Mesh(_pulseGeo, mat);
     ctx.pulseGroup.add(mesh);
-    pulses.push({ from, to, t0: performance.now(), mesh, mat });
+    pulses.push({ from, to, t0: performance.now(), mesh, mat, thickness: thickness ?? LIVE_PULSE_THICKNESS });
   }
 
   // ── Per-frame tick (registered with the stats master rAF loop) ────────────
@@ -377,21 +412,23 @@ export function initTrace(ctx) {
     for (const node of [...active]) {
       // ── Haze (InstancedMesh) branch: color-only, no __mat / __mesh ──────────
       if (node.__hazeIdx != null && node.__hazeBase && ctx.hazeMesh) {
-        // D-06 envelope (or legacy fallback if __actT0 absent)
+        // D-06 envelope (or legacy fallback if __actT0 absent) — attackMs comes
+        // from this node's own per-layer profile (__actAttackMs), not a global.
         if (node.__actT0 != null) {
-          node.__act = evalEnvelope(now, node.__actT0, node.__actPeak || node.__act || 1);
+          node.__act = evalEnvelope(now, node.__actT0, node.__actPeak || node.__act || 1, node.__actAttackMs);
         } else {
           node.__act -= dt * 0.6; // legacy fallback (~1.6 s linear)
         }
         const elapsed = node.__actT0 != null ? (now - node.__actT0) : Infinity;
         const expired = node.__actT0 != null
-          ? elapsed >= DECAY_ATTACK_MS + DECAY_HOLD_MS + DECAY_FADE_MS
+          ? elapsed >= (node.__actAttackMs ?? DECAY_ATTACK_MS) + DECAY_HOLD_MS + DECAY_FADE_MS
           : node.__act <= 0.001;
         if (expired || node.__act <= 0) {
-          node.__act      = 0;
-          node.__actT0    = undefined;
-          node.__actPeak  = undefined;
-          node.__actColor = undefined;
+          node.__act        = 0;
+          node.__actT0      = undefined;
+          node.__actPeak    = undefined;
+          node.__actColor   = undefined;
+          node.__actAttackMs = undefined;
           active.delete(node);
           // Restore rest color — copy __hazeBase into the instance color buffer
           ctx.hazeMesh.setColorAt(node.__hazeIdx, node.__hazeBase);
@@ -411,21 +448,23 @@ export function initTrace(ctx) {
         active.delete(node);
         continue;
       }
-      // D-06 envelope (or legacy fallback if __actT0 absent)
+      // D-06 envelope (or legacy fallback if __actT0 absent) — attackMs comes
+      // from this node's own per-layer profile (__actAttackMs), not a global.
       if (node.__actT0 != null) {
-        node.__act = evalEnvelope(now, node.__actT0, node.__actPeak || node.__act || 1);
+        node.__act = evalEnvelope(now, node.__actT0, node.__actPeak || node.__act || 1, node.__actAttackMs);
       } else {
         node.__act -= dt * 0.6; // legacy fallback (~1.6 s linear)
       }
       const elapsed = node.__actT0 != null ? (now - node.__actT0) : Infinity;
       const expired = node.__actT0 != null
-        ? elapsed >= DECAY_ATTACK_MS + DECAY_HOLD_MS + DECAY_FADE_MS
+        ? elapsed >= (node.__actAttackMs ?? DECAY_ATTACK_MS) + DECAY_HOLD_MS + DECAY_FADE_MS
         : node.__act <= 0.001;
       if (expired || node.__act <= 0) {
-        node.__act      = 0;
-        node.__actT0    = undefined;
-        node.__actPeak  = undefined;
-        node.__actColor = undefined;
+        node.__act        = 0;
+        node.__actT0      = undefined;
+        node.__actPeak    = undefined;
+        node.__actColor   = undefined;
+        node.__actAttackMs = undefined;
         active.delete(node);
         // Restore base appearance — scale restores to __baseR, NOT 1: node radius
         // lives in mesh.scale (shared unit geometry, D-05), so setScalar(1) would
@@ -469,8 +508,11 @@ export function initTrace(ctx) {
 
       // Span the FULL edge: midpoint position, Y-scale = edge length, oriented
       // along the edge. The shader (not the geometry) carries the moving light.
+      // XZ scale = this pulse's per-layer thickness (D-06); live's
+      // LIVE_PULSE_THICKNESS=1.0 leaves the wire radius unchanged.
       p.mesh.position.set((fx + tx) / 2, (fy + ty) / 2, (fz + tz) / 2);
-      p.mesh.scale.set(1, len, 1);
+      const pt = p.thickness ?? LIVE_PULSE_THICKNESS;
+      p.mesh.scale.set(pt, len, pt);
       _dir.set(dx, dy, dz).normalize();
       _q.setFromUnitVectors(_up, _dir);
       p.mesh.setRotationFromQuaternion(_q);
@@ -504,16 +546,18 @@ export function initTrace(ctx) {
 
       // Grow→settle→fade. Eased grow (easeOutCubic) with a slight overshoot so it
       // breathes rather than pops; then a smooth ease-out fade of the glow
-      // intensity. Scale grows to HALO_RADIUS; intensity carries the envelope.
+      // intensity. Scale grows to HALO_RADIUS * this halo's per-layer haloScale
+      // (D-06) — live's LIVE_HALO_SCALE=1.0 leaves the radius unchanged.
+      const hs = h.haloScale ?? LIVE_HALO_SCALE;
       let scale, intensity;
       if (elapsed < HALO_ATTACK) {
         const t = elapsed / HALO_ATTACK;
         const e = 1 - Math.pow(1 - t, 3);          // easeOutCubic
-        scale     = HALO_RADIUS * (0.6 + 0.45 * e); // grow from 0.6→1.05R (soft overshoot)
+        scale     = HALO_RADIUS * hs * (0.6 + 0.45 * e); // grow from 0.6→1.05R (soft overshoot)
         intensity = e * h.level;
       } else {
         const t = (elapsed - HALO_ATTACK) / (HALO_LIFE_MS - HALO_ATTACK);
-        scale     = HALO_RADIUS * (1.05 - 0.05 * _smooth01(t)); // settle 1.05R→1.0R
+        scale     = HALO_RADIUS * hs * (1.05 - 0.05 * _smooth01(t)); // settle 1.05R→1.0R
         intensity = (1 - _smooth01(t)) * h.level;
       }
       h.mesh.scale.setScalar(scale < 0.001 ? 0.001 : scale);
@@ -538,11 +582,20 @@ export function initTrace(ctx) {
   //   - no size/scale changes on any node
   //   - subset built lazily once, rotated every TWINKLE_COUNT frames (Pitfall 2)
   //   - active nodes are skipped so a live/replay flash is never dimmed
+  //
+  // Phase 57 D-06 motion profile: twinkle's attack-sharpness channel
+  // (TWINKLE_ATTACK_MS, the slowest/least-sharp of the four layers) ramps each
+  // freshly-rotated subset's breathe amplitude in from 0 rather than snapping
+  // to full amplitude — the "slow calm drift" character. TWINKLE_HALO_SCALE and
+  // TWINKLE_PULSE_THICKNESS stay unconsumed here: twinkle has no halo or edge-
+  // pulse mechanic (setColorAt-only, per the invariants above); 57-04 documented
+  // both as reserved for a possible future twinkle micro-pulse/halo.
 
   // Twinkle state (persistent across frames, scoped to initTrace closure)
-  let twinkleSubset  = []; // persistent haze subset (built lazily)
-  let twinklePtr     = 0;  // window-start pointer for subset rotation
-  let twinkleFrame   = 0;  // frame counter for rotation cadence
+  let twinkleSubset   = []; // persistent haze subset (built lazily)
+  let twinklePtr      = 0;  // window-start pointer for subset rotation
+  let twinkleFrame    = 0;  // frame counter for rotation cadence
+  let twinkleSubsetT0 = 0;  // when the current subset was (re)built — attack ramp origin
 
   // Pre-built neutral/cool tint — intentionally NOT HOT amber and NOT any
   // KIND_COLOR event hue, so twinkle reads as decorative ambient (SC3 / D-04).
@@ -564,6 +617,7 @@ export function initTrace(ctx) {
         twinkleSubset.push(hazePool[(startIdx + i) % hazePool.length]);
       }
       twinklePtr++;
+      twinkleSubsetT0 = now; // D-06 attack ramp origin for the newly-rotated subset
     }
     twinkleFrame++;
 
@@ -573,12 +627,16 @@ export function initTrace(ctx) {
     const OFFSET = 750; // per-instance phase spread (ms)
     let didUpdate = false;
 
+    // D-06 attack-sharpness channel: ramp this subset's amplitude 0 → 1 over
+    // TWINKLE_ATTACK_MS instead of snapping to full breathe on every rotation.
+    const attackFactor = Math.min(1, (now - twinkleSubsetT0) / TWINKLE_ATTACK_MS);
+
     for (const node of twinkleSubset) {
       if (active.has(node)) continue;               // live/replay flash has priority
       if (node.__hazeIdx == null || !node.__hazeBase) continue; // safety guard
 
       const phase = (now + node.__hazeIdx * OFFSET) / TWINKLE_PERIOD_MS * TWO_PI;
-      const breath = TWINKLE_AMP * (0.5 + 0.5 * Math.sin(phase)); // range [0, TWINKLE_AMP]
+      const breath = TWINKLE_AMP * attackFactor * (0.5 + 0.5 * Math.sin(phase)); // range [0, TWINKLE_AMP]
       const twinkleColor = node.__hazeBase.clone().lerp(TWINKLE_TINT, breath);
       ctx.hazeMesh.setColorAt(node.__hazeIdx, twinkleColor);
       didUpdate = true;
@@ -658,7 +716,7 @@ export function initTrace(ctx) {
         })
         .filter(Boolean);
 
-      if (ctx.markAnimating) ctx.markAnimating(DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
+      if (ctx.markAnimating) ctx.markAnimating(REPLAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
 
       const pathNodes = seedEntries.map(e => e.node).concat(hopEntries.map(e => e.node));
       const seedIds = new Set(seedEntries.map(e => e.node.id));
@@ -666,28 +724,37 @@ export function initTrace(ctx) {
       hopEntries.forEach(e => ctx.traceNodes.add(e.node.id));
       if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
 
-      // Activate at REPLAY_DIM intensity — replay is always strictly dimmer than live (SC3).
+      // Activate at REPLAY_DIM intensity (bounded secondary cue, D-05) — replay's
+      // per-layer motion profile (REPLAY_PROFILE: attack ms + halo/scale, D-06) is
+      // the PRIMARY subordination signal; replay is always strictly dimmer than
+      // live regardless (SC3).
       const seedColor = isRecallReplay ? KIND_COLORS.recall_seed : undefined;
       const hopColor  = isRecallReplay ? KIND_COLORS.recall_hop  : undefined;
-      seedEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM, seedColor));
+      seedEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM, seedColor, REPLAY_PROFILE));
       hopEntries.forEach(({ node, intensity }) => {
         if (seedIds.has(node.id)) return;   // keep a node's seed role over the hop role
-        activate(node, intensity * REPLAY_DIM, hopColor);
+        activate(node, intensity * REPLAY_DIM, hopColor, REPLAY_PROFILE);
       });
 
       // Replay the honest seed→hop edge pulses too (replay's own identity hue, Phase 57 D-01),
       // so an idle replay echo is structurally the same frame as the live recall — just its
-      // own hue, not a dimmed copy of live cyan. Recall rows only.
+      // own hue and its own (thinner) REPLAY_PULSE_THICKNESS (D-06). Recall rows only.
       if (isRecallReplay) {
         hopEntries.forEach(({ node, srcNode }) => {
-          if (srcNode) spawnPulse(srcNode, node, KIND_COLORS.replay);
+          if (srcNode) spawnPulse(srcNode, node, KIND_COLORS.replay, REPLAY_PULSE_THICKNESS);
         });
       }
 
-      const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
+      // Own-trace-scoped fade (WR-06 / D-11): delete ONLY the node ids THIS trace
+      // added, never global-clear ctx.traceNodes — a concurrent trace of a different
+      // kind (e.g. a live recall arriving inside this fade window) must not have its
+      // just-added ids wiped by this timeout. This branch never adds to ctx.traceLinks
+      // (no persistent LOD links are held here — pathway lines are animated
+      // wavefronts), so it never touches that shared set.
+      const addedIds = pathNodes.map(n => n.id);
+      const fadeMs = REPLAY_ATTACK_MS + DECAY_HOLD_MS + 500;
       setTimeout(() => {
-        ctx.traceNodes.clear();
-        ctx.traceLinks.clear();
+        addedIds.forEach(id => ctx.traceNodes.delete(id));
         if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
       }, fadeMs);
       return;
@@ -737,7 +804,7 @@ export function initTrace(ctx) {
         })
         .filter(Boolean);
 
-      if (ctx.markAnimating) ctx.markAnimating(DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
+      if (ctx.markAnimating) ctx.markAnimating(SPONT_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS);
 
       const pathNodes = seedEntries.map(e => e.node).concat(hopEntries.map(e => e.node));
       const seedIds = new Set(seedEntries.map(e => e.node.id));
@@ -745,23 +812,33 @@ export function initTrace(ctx) {
       hopEntries.forEach(e => ctx.traceNodes.add(e.node.id));
       if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
 
-      // Activate at SPONT_DIM intensity — dim indigo, strictly dimmer than replay (SC3).
-      seedEntries.forEach(({ node, intensity }) => activate(node, intensity * SPONT_DIM, KIND_COLORS.spontaneous));
+      // Activate at SPONT_DIM intensity (bounded secondary cue, D-05) — dim indigo,
+      // strictly dimmer than replay (SC3). Spontaneous's per-layer motion profile
+      // (SPONT_PROFILE: attack ms + halo/scale, D-06) is the PRIMARY subordination
+      // signal — the slowest/smallest of the three fired-event layers.
+      seedEntries.forEach(({ node, intensity }) => activate(node, intensity * SPONT_DIM, KIND_COLORS.spontaneous, SPONT_PROFILE));
       hopEntries.forEach(({ node, intensity }) => {
         if (seedIds.has(node.id)) return;   // keep a node's seed role over the hop role
-        activate(node, intensity * SPONT_DIM, KIND_COLORS.spontaneous);
+        activate(node, intensity * SPONT_DIM, KIND_COLORS.spontaneous, SPONT_PROFILE);
       });
 
       // Draw the honest seed→hop pathway pulses only when srcNode is present (a real
-      // out-edge from the engine) — pre-dimmed indigo (SPONT_HOP_COLOR).
+      // out-edge from the engine) — pre-dimmed indigo (SPONT_HOP_COLOR), at
+      // spontaneous's own (thinnest of the three) SPONT_PULSE_THICKNESS (D-06).
       hopEntries.forEach(({ node, srcNode }) => {
-        if (srcNode) spawnPulse(srcNode, node, SPONT_HOP_COLOR);
+        if (srcNode) spawnPulse(srcNode, node, SPONT_HOP_COLOR, SPONT_PULSE_THICKNESS);
       });
 
-      const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
+      // Own-trace-scoped fade (WR-06 / D-11): delete ONLY the node ids THIS trace
+      // added, never global-clear ctx.traceNodes — spontaneous fires every
+      // SPONT_CADENCE_MS during idle, and a live/replay trace arriving inside a
+      // pending spontaneous fade window must not have its just-added ids wiped by
+      // this timeout. This branch never adds to ctx.traceLinks, so it never
+      // touches that shared set.
+      const addedIds = pathNodes.map(n => n.id);
+      const fadeMs = SPONT_ATTACK_MS + DECAY_HOLD_MS + 500;
       setTimeout(() => {
-        ctx.traceNodes.clear();
-        ctx.traceLinks.clear();
+        addedIds.forEach(id => ctx.traceNodes.delete(id));
         if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
       }, fadeMs);
       return;
@@ -857,10 +934,15 @@ export function initTrace(ctx) {
     });
 
     // ── Fade the pathway back after the decay window ───────────────────────────
+    // Own-trace-scoped fade (WR-06 / D-11): delete ONLY the node ids THIS trace
+    // added, never global-clear ctx.traceNodes — a concurrent trace of a different
+    // kind (e.g. a pending replay/spontaneous fade) must not be clobbered by this
+    // timeout. This path never adds to ctx.traceLinks, so it never touches that
+    // shared set.
+    const addedIds = pathNodes.map(n => n.id);
     const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + 500;
     setTimeout(() => {
-      ctx.traceNodes.clear();
-      ctx.traceLinks.clear();
+      addedIds.forEach(id => ctx.traceNodes.delete(id));
       if (ctx.revealTrace) ctx.revealTrace(pathNodes, []);
     }, fadeMs);
   }

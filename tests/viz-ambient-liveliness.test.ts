@@ -616,3 +616,67 @@ describe('SC1+SC5/server — server.ts structural invariants', () => {
   });
 
 });
+
+// =============================================================================
+// WR-06 / D-11 — own-trace-scoped fades (Phase 57 Plan 06)
+// 56-REVIEW.md WR-06: spontaneous fires every SPONT_CADENCE_MS during idle; a
+// live recall is exactly the event that ends idle; a live trace arriving inside
+// a pending spontaneous (or replay) fade window previously had its just-added
+// traceNodes wiped by that timeout's global `.clear()`. All three fade branches
+// must delete ONLY the ids each trace added.
+// =============================================================================
+
+describe('WR-06 / D-11 — own-trace-scoped fades', () => {
+
+  it('trace.js contains zero global ctx.traceNodes.clear() calls (source-guard)', () => {
+    const src = stripComments(readTraceJs());
+    expect(src).not.toContain('ctx.traceNodes.clear()');
+  });
+
+  it('trace.js contains zero global ctx.traceLinks.clear() calls in fade timeouts (source-guard)', () => {
+    const src = stripComments(readTraceJs());
+    expect(src).not.toContain('ctx.traceLinks.clear()');
+  });
+
+  it('trace.js has >=3 own-trace-scoped ctx.traceNodes.delete( call sites (one per fade branch)', () => {
+    const src = stripComments(readTraceJs());
+    const count = (src.match(/ctx\.traceNodes\.delete\(/g) ?? []).length;
+    expect(count).toBeGreaterThanOrEqual(3);
+  });
+
+  it('a live trace survives a concurrent spontaneous trace fade timeout (WR-06 regression guard)', () => {
+    // Capture scheduled fade callbacks instead of using the file-level no-op
+    // setTimeout, so the exact WR-06 race can be simulated: a spontaneous fade
+    // timeout firing AFTER a live trace has added its own node id to the same
+    // shared ctx.traceNodes set.
+    const scheduled: Array<() => void> = [];
+    const realSetTimeout = (globalThis as any).setTimeout;
+    (globalThis as any).setTimeout = (fn: any, _ms: number) => { scheduled.push(fn); return 0; };
+
+    const { node: spontSeed } = makeRegularNode('spont-seed');
+    const { node: liveSeed }  = makeRegularNode('live-seed');
+    const { ctx } = makeCtx([spontSeed, liveSeed]);
+
+    try {
+      // 1. Spontaneous trace fires first, schedules its own (scoped) fade timeout.
+      ctx.applyTrace({ seeds: [{ node_id: 'spont-seed', score: null }], hops: [], kind: 'spontaneous' });
+      expect(ctx.traceNodes.has('spont-seed')).toBe(true);
+
+      // 2. Before the spontaneous fade fires, a live recall arrives — a DIFFERENT
+      //    trace of a different kind — adding its own id to the same shared set.
+      ctx.applyTrace({ seeds: [{ node_id: 'live-seed', score: 0.9 }], hops: [] });
+      expect(ctx.traceNodes.has('live-seed')).toBe(true);
+
+      // 3. The spontaneous trace's fade timeout fires. Own-trace-scoped (D-11):
+      //    it must delete ONLY 'spont-seed', never clobber 'live-seed'.
+      expect(scheduled.length).toBeGreaterThanOrEqual(2); // spontaneous + live both scheduled a fade
+      scheduled[0]!();
+
+      expect(ctx.traceNodes.has('spont-seed')).toBe(false); // spontaneous's own id faded
+      expect(ctx.traceNodes.has('live-seed')).toBe(true);   // WR-06: live survives the collision
+    } finally {
+      (globalThis as any).setTimeout = realSetTimeout;
+    }
+  });
+
+});
