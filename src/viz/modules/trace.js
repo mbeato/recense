@@ -701,7 +701,10 @@ export function initTrace(ctx) {
       if (!seedEntries.length) return;        // all seeds absent from idMap → no-op
 
       // Recall replay rows mirror the live recall palette/pulses (dimmer); non-recall replay
-      // rows keep the neutral default activation (event-kind colouring is out of scope here).
+      // rows explicitly resolve to KIND_COLORS.neutral (CR-02) — previously seedColor/hopColor
+      // fell through to undefined here, which activate()'s `kindColor || HOT_COLOR` fallback
+      // resolved to live-amber, violating the D-04 amber-exclusivity invariant for a replayed
+      // ingestion-kind row. Event-kind colouring for ingestion kinds is still out of scope here.
       const isRecallReplay = !row.kind || row.kind === 'recall';
 
       const hopEntries = traceEdgesFromHops(row, ctx.idMap)
@@ -728,8 +731,8 @@ export function initTrace(ctx) {
       // per-layer motion profile (REPLAY_PROFILE: attack ms + halo/scale, D-06) is
       // the PRIMARY subordination signal; replay is always strictly dimmer than
       // live regardless (SC3).
-      const seedColor = isRecallReplay ? KIND_COLORS.recall_seed : undefined;
-      const hopColor  = isRecallReplay ? KIND_COLORS.recall_hop  : undefined;
+      const seedColor = isRecallReplay ? KIND_COLORS.recall_seed : KIND_COLORS.neutral;
+      const hopColor  = isRecallReplay ? KIND_COLORS.recall_hop : KIND_COLORS.neutral;
       seedEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM, seedColor, REPLAY_PROFILE));
       hopEntries.forEach(({ node, intensity }) => {
         if (seedIds.has(node.id)) return;   // keep a node's seed role over the hop role
@@ -974,6 +977,16 @@ export function initTrace(ctx) {
       if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
       if (ctx.logEvent) ctx.logEvent('trace', `kind=new_node seed=${seedId} intensity=${intensity.toFixed(2)}`);
       activate(seedNode, intensity, KIND_COLORS.new_node);
+      // Own-trace-scoped fade (CR-01): delete ONLY this branch's own seed id after
+      // its bounded animation window — never a global clear (mirrors the recall/
+      // replay/spontaneous fade pattern above; a concurrent trace's ids must survive).
+      {
+        const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS + 500;
+        setTimeout(() => {
+          ctx.traceNodes.delete(seedId);
+          if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+        }, fadeMs);
+      }
       return;
     }
 
@@ -991,6 +1004,15 @@ export function initTrace(ctx) {
       activate(seedNode, intensity,        KIND_COLORS.oscillation);
       setTimeout(() => activate(seedNode, intensity * 0.75, KIND_COLORS.oscillation), 280);
       setTimeout(() => activate(seedNode, intensity * 0.55, KIND_COLORS.oscillation), 560);
+      // Own-trace-scoped fade (CR-01): delete ONLY this branch's own seed id after
+      // the full strobe window (covers the +560ms tail) — never a global clear.
+      {
+        const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS + 700 + 500;
+        setTimeout(() => {
+          ctx.traceNodes.delete(seedId);
+          if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+        }, fadeMs);
+      }
       return;
     }
 
@@ -1018,6 +1040,20 @@ export function initTrace(ctx) {
       const hops = row.hops || [];
       const candidateHop = hops[0];
       const candidateNode = candidateHop ? ctx.idMap.get(candidateHop.node_id) : null;
+
+      // Own-trace-scoped fade (CR-01): delete ONLY the ids this branch added —
+      // [seedId] alone, or [seedId, candidateHop.node_id] when a candidate was
+      // realized in the render graph — after the full choreography (WF_SWEEP
+      // arrival blip + standard decay) settles. Never a global clear.
+      {
+        const revealedNodes = candidateNode ? [candidateNode, seedNode] : [seedNode];
+        const addedIds = candidateNode ? [seedId, candidateHop.node_id] : [seedId];
+        const fadeMs = WF_SWEEP + DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS + 500;
+        setTimeout(() => {
+          addedIds.forEach(id => ctx.traceNodes.delete(id));
+          if (ctx.revealTrace) ctx.revealTrace(revealedNodes, []);
+        }, fadeMs);
+      }
 
       if (candidateNode) {
         // Subordinate green blip: candidate → existing node
@@ -1048,6 +1084,15 @@ export function initTrace(ctx) {
     if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
     if (ctx.logEvent) ctx.logEvent('trace', `kind=${kind} (neutral) seed=${seedId} intensity=${intensity.toFixed(2)}`);
     activate(seedNode, intensity, KIND_COLORS.neutral);
+    // Own-trace-scoped fade (CR-01): delete ONLY this branch's own seed id after
+    // its bounded animation window — never a global clear.
+    {
+      const fadeMs = DECAY_ATTACK_MS + DECAY_HOLD_MS + PULSE_MS + 500;
+      setTimeout(() => {
+        ctx.traceNodes.delete(seedId);
+        if (ctx.revealTrace) ctx.revealTrace([seedNode], []);
+      }, fadeMs);
+    }
   }
 
   ctx.applyTrace = applyTrace;

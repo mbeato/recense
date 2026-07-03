@@ -99,7 +99,10 @@ if (typeof (globalThis as any).performance === 'undefined') {
 // @ts-ignore — browser ESM; no type declarations in this project
 import { initTrace } from '../src/viz/modules/trace.js';
 // @ts-ignore
-import { ACT_SCALE_GAIN, REPLAY_DIM, DECAY_ATTACK_MS } from '../src/viz/modules/constants.js';
+import { ACT_SCALE_GAIN, REPLAY_DIM, DECAY_ATTACK_MS, HOT, KIND_COLOR } from '../src/viz/modules/constants.js';
+// The mocked 'three' Color class (CR-02 assertions build expected colours with it).
+// @ts-ignore — no type declarations for 'three' in this project (see initTrace import above)
+import * as THREE from 'three';
 
 // ── Source-text helpers ────────────────────────────────────────────────────────
 const ROOT = path.resolve(__dirname, '..');
@@ -674,6 +677,79 @@ describe('WR-06 / D-11 — own-trace-scoped fades', () => {
 
       expect(ctx.traceNodes.has('spont-seed')).toBe(false); // spontaneous's own id faded
       expect(ctx.traceNodes.has('live-seed')).toBe(true);   // WR-06: live survives the collision
+    } finally {
+      (globalThis as any).setTimeout = realSetTimeout;
+    }
+  });
+
+});
+
+// =============================================================================
+// CR-01 / CR-02 gap closure (Phase 57-08) — WR-03-class code-path-selection
+// regression guards. 57-VERIFICATION.md found two blocker gaps introduced by
+// the 57-06 WR-06 fix: an ingestion-kind trace's traceNodes ids leaked forever
+// (CR-01), and a replayed non-recall row's undefined seedColor/hopColor fell
+// through activate()'s kindColor || HOT_COLOR fallback to live-amber (CR-02).
+// These lock the PATH the code takes, not just a constant's value.
+// =============================================================================
+
+describe('CR-01/CR-02 gap closure — Phase 57-08', () => {
+
+  it('CR-02: a replayed ingestion-kind row activates its seed at KIND_COLOR.neutral, never HOT amber', () => {
+    const { node } = makeRegularNode('seed-1');
+    const { ctx } = makeCtx([node]);
+
+    ctx.applyTrace({
+      seeds: [{ node_id: 'seed-1', score: 0.9 }],
+      hops: [],
+      replay: true,
+      kind: 'oscillation', // non-recall ingestion kind, replayed
+    });
+
+    expect(node.__actColor).toBeDefined();
+    const neutral = new THREE.Color(KIND_COLOR.neutral);
+    const hot = new THREE.Color(HOT);
+
+    // Matches the neutral slate hue exactly (D-04-compliant)...
+    expect(node.__actColor.r).toBeCloseTo(neutral.r);
+    expect(node.__actColor.g).toBeCloseTo(neutral.g);
+    expect(node.__actColor.b).toBeCloseTo(neutral.b);
+
+    // ...and does NOT match HOT amber (at least one channel differs) — the
+    // defect this test locks: reverting the CR-02 fix (seedColor back to
+    // undefined) would resolve __actColor to HOT via activate()'s
+    // `kindColor || HOT_COLOR` fallback, making this assertion fail.
+    const matchesHot = node.__actColor.r === hot.r
+      && node.__actColor.g === hot.g
+      && node.__actColor.b === hot.b;
+    expect(matchesHot).toBe(false);
+  });
+
+  it('CR-01: an ingestion-kind trace bounds ctx.traceNodes — its own scoped fade empties the set', () => {
+    // Capture the scheduled fade callback instead of using the file-level
+    // no-op setTimeout, so the fade can actually be fired and asserted
+    // (mirrors the WR-06 test's setTimeout-capture pattern above).
+    const scheduled: Array<() => void> = [];
+    const realSetTimeout = (globalThis as any).setTimeout;
+    (globalThis as any).setTimeout = (fn: any, _ms: number) => { scheduled.push(fn); return 0; };
+
+    const { node } = makeRegularNode('new-node-1');
+    const { ctx } = makeCtx([node]);
+
+    try {
+      ctx.applyTrace({ seeds: [{ node_id: 'new-node-1', score: 0.6 }], hops: [], kind: 'new_node' });
+
+      expect(ctx.traceNodes.has('new-node-1')).toBe(true);
+      expect(ctx.traceNodes.size).toBe(1);
+
+      // new_node schedules exactly one setTimeout — its own scoped fade.
+      expect(scheduled.length).toBe(1);
+      scheduled[0]!();
+
+      // The leak this test locks: without CR-01's scoped fade, traceNodes
+      // would never shrink back to 0 — a monotonic overview-LOD defeat.
+      expect(ctx.traceNodes.has('new-node-1')).toBe(false);
+      expect(ctx.traceNodes.size).toBe(0);
     } finally {
       (globalThis as any).setTimeout = realSetTimeout;
     }
