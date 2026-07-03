@@ -129,38 +129,69 @@ export const DECAY_FADE_MS = 2500;
 export const DECAY_FLOOR = 0.04;
 
 // ============================================================================
-// Per-event kind colour palette (D-07 / D-04)
+// Per-event kind colour palette (D-07 / D-04, luminance-equalized Phase 57 D-01/02/03/04)
 // ============================================================================
 // Single source of truth: every renderer reads KIND_COLOR instead of defining
 // its own hex literals.  Keys match the `kind` column in activation_trace
-// (plus `recall_seed` / `recall_hop` for the two visual roles in a recall row).
+// (plus `recall_seed` / `recall_hop` for the two visual roles in a recall row,
+// and `replay` for the idle-replay echo layer).
 //
 // Palette constraints:
 //   recall_seed = HOT amber  — the primary retrieval-activation signal
 //   recall_hop  = cyan       — subordinate 1-hop associations (thinner / dimmer)
 //   neutral     ≠ amber      — D-04 guard: amber is reserved for retrieval/hover
 //                              ONLY; neutral MUST use a different hue
+//   oscillation ≠ amber      — D-03(b) guard: amber-family (R≈G>B warm-orange)
+//                              is exclusively live's; oscillation must be a
+//                              genuinely different hue direction
+//
+// Phase 57 D-02: every entry below computes a Rec.709 relative luminance
+// Y = 0.2126R + 0.7152G + 0.0722B inside the PROVISIONAL band [170, 235]
+// (tests/viz-activity-palette-invariants.test.ts "D-02 luminance-band
+// membership") — the 56-05 lesson (saturated indigo Y≈138 vanished; pastel
+// lavender Y≈193 survived) generalized to the whole palette. Subordination
+// among activity layers comes from motion/scale/density (D-06, later plans),
+// never from a dark hue.
 
 /**
  * Per-event kind colours for the activation animation.
- * @type {{recall_seed: number, recall_hop: number, new_node: number, reconsolidation: number, oscillation: number, neutral: number}}
+ * @type {{recall_seed: number, recall_hop: number, new_node: number, reconsolidation: number, oscillation: number, neutral: number, spontaneous: number, replay: number}}
  */
 export const KIND_COLOR = {
-  /** Retrieval seed — amber (same as HOT; seeds are the primary activation) */
+  /** Retrieval seed — amber (same as HOT; seeds are the primary activation).
+   *  IDENTITY: live-amber. Y≈193. In-band, unchanged (56-05 anchor value). */
   recall_seed:     0xffb866,
-  /** 1-hop association — cyan (subordinate; thinner / dimmer than seeds) */
+  /** 1-hop association — cyan (subordinate; thinner / dimmer than seeds).
+   *  IDENTITY: live-cyan. Y≈195. In-band, unchanged. */
   recall_hop:      0x66d9ff,
-  /** New node encoding — soft sage-green (muted into the tissue palette) */
+  /** New node encoding — soft sage-green (muted into the tissue palette).
+   *  IDENTITY: sage-green. Y≈178. In-band, unchanged. */
   new_node:        0x8fbf9e,
-  /** Reconsolidation hero — warm rose-mauve (belief-update-in-place; the hero
-   *  hue, the warmest/most-saturated of the muted set so it still reads as the
-   *  signature event, but no longer hot magenta — sits with entity-rose/schema-mauve) */
-  reconsolidation: 0xc481a4,
-  /** Oscillation / instability — muted burnt amber (warm + unsettled, distinct
-   *  from the brighter recall-seed amber) */
-  oscillation:     0xc9824e,
-  /** Non-hero cascade events — muted slate (NON-amber per D-04) */
-  neutral:         0x8a93a6,
+  /** Reconsolidation hero — rose-mauve (belief-update-in-place; the hero hue,
+   *  the warmest/most-saturated of the muted set so it still reads as the
+   *  signature event, sitting with entity-rose/schema-mauve).
+   *  Phase 57 D-02 retune: 0xc481a4 → 0xd9a0bd — the original was below the
+   *  luminance band (Y≈146). Lifted lightness while keeping the rose-mauve
+   *  IDENTITY (R>B>G channel ordering unchanged); Y≈174 now in-band.
+   *  PROVISIONAL — ratchets at Stage 1 (D-09). Subordination to live comes
+   *  from motion/scale, not the hue. */
+  reconsolidation: 0xd9a0bd,
+  /** Oscillation / instability — warm coral-red (unsettled), deliberately
+   *  moved OUT of the amber family per D-03(b): amber is reserved for live
+   *  retrieval/hover only. Phase 57 D-02 retune: 0xc9824e → 0xe89c9c — the
+   *  original was both below the luminance band (Y≈141) AND an amber-family
+   *  hue (R≈G>B warm-orange signature). The new hue is a true coral red
+   *  (R dominant, G≈B, hue≈0°) — no amber signature — with Y≈172, in-band.
+   *  PROVISIONAL — ratchets at Stage 1 (D-09). Subordination to live comes
+   *  from motion/scale, not the hue. */
+  oscillation:     0xe89c9c,
+  /** Non-hero cascade events — slate (NON-amber per D-04).
+   *  Phase 57 D-02 retune: 0x8a93a6 → 0xaab3c4 — the original was below the
+   *  luminance band (Y≈146). Lifted lightness while keeping the cool slate
+   *  IDENTITY (B>G>R channel ordering unchanged); Y≈178 now in-band.
+   *  PROVISIONAL — ratchets at Stage 1 (D-09). Subordination to live comes
+   *  from motion/scale, not the hue. */
+  neutral:         0xaab3c4,
   /** Spontaneous idle 1-hop wandering (Phase 56) — pastel lavender, the
    *  default-mode-network hue. Distinct from recall amber and replay cyan so
    *  spontaneous activity is never mistaken for a live/replayed query result.
@@ -170,6 +201,15 @@ export const KIND_COLOR = {
    *  visibility. Subordination to live/replay comes from SPONT_DIM + density,
    *  not from a dark hue. */
   spontaneous:     0xc9b8ff,
+  /** Replay echo of a recent real recall (Phase 57 D-01) — pale ice-cyan, a
+   *  cooler/paler sibling of live recall_hop cyan per the D-04 semantic-hue-
+   *  family rule (a replayed hop reading as "a cooler echo of the live hop"
+   *  is semantically right). Previously replay had NO identity hue at all —
+   *  trace.js dimmed recall_hop by REPLAY_DIM, so replay literally rendered
+   *  as a darker copy of live cyan (the bug this phase fixes). Y≈225, in-band.
+   *  PROVISIONAL — ratchets at Stage 1 (D-09). Subordination to live comes
+   *  from motion/scale (REPLAY_DIM survives as the secondary cue), not the hue. */
+  replay:          0xb3ecf5,
 };
 
 // ============================================================================
