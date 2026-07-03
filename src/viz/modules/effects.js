@@ -135,7 +135,7 @@ export function initEffects(ctx) {
   // 3d-force-graph. We append:
   //   [RenderPass (auto)] → [UnrealBloomPass] → [OutputPass] (last = sRGB)
   //
-  // PROVISIONAL — Phase 57 D-13 recalibration for the luminance-banded identity
+  // LOCKED — Phase 57 D-13 recalibration for the luminance-banded identity
   // palette (57-02/57-03, LOCKED band [170, 228] on a 0-255 Rec.709 Y scale,
   // i.e. ~[0.667, 0.894] on the 0-1 scale this shader's luminosityThreshold
   // uses — LuminosityHighPassShader.js's `luminance()` IS the same Rec.709
@@ -151,13 +151,15 @@ export function initEffects(ctx) {
   // oscillation Y≈0.675) safely below the threshold band's ceiling reasoning
   // while giving HOT/replay/spontaneous (Y≈0.75-0.88) real headroom to flare.
   // Radius left at 0.4 (halo spread; no luminance-driven reason to change it).
-  // Founder dials the exact feel at the Stage-2 checkpoint (57-07).
+  // Founder-approved as-is at the Stage-2 checkpoint (57-07, D-09; verbal
+  // sign-off via the execute-phase checkpoint, 2026-07-03) — no value changes
+  // requested. Values below are now LOCKED, not provisional.
   const composer = Graph.postProcessingComposer();
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.6,   // strength  — PROVISIONAL (Stage-2, 57-07); eased from 0.7 so the wider in-band bloom set doesn't wash out
+    0.6,   // strength  — LOCKED (founder-approved as-is, Stage-2 57-07); eased from 0.7 so the wider in-band bloom set doesn't wash out
     0.4,   // radius    — tight bloom halo around activated nodes (unchanged; not luminance-driven)
-    0.72,  // threshold — PROVISIONAL (Stage-2, 57-07); eased from 0.75 to give HOT/replay/spontaneous real margin above the gate
+    0.72,  // threshold — LOCKED (founder-approved as-is, Stage-2 57-07); eased from 0.75 to give HOT/replay/spontaneous real margin above the gate
   );
   composer.addPass(bloomPass);
   composer.addPass(new OutputPass());  // tone-mapping + sRGB; MUST be last (A1 / r171)
