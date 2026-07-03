@@ -367,10 +367,13 @@ export const DEGRADE_FPS = 45;
 // across all four layers and are locked by
 // tests/viz-activity-palette-invariants.test.ts ("D-06 motion-profile SC3
 // ordering"). Cadence and density are free to vary for feel (NOT
-// ordering-constrained). Every non-live value below is PROVISIONAL — ratchets
-// to a founder-approved number (± tolerance) at the Stage-2 checkpoint (D-09).
-// This plan authors the constants + locks only; 57-06 wires trace.js to
-// consume the new attack/halo/pulse-thickness channels.
+// ordering-constrained).
+//
+// Stage-2 founder checkpoint (57-07, D-16): the founder tuned the full system
+// (motion profiles + dim floors + bloom + exposure) live over the real hull
+// and approved it AS-IS (verbal sign-off via the execute-phase checkpoint,
+// 2026-07-03) — no value changes requested. Every non-live value below is now
+// LOCKED, not provisional.
 
 // ----------------------------------------------------------------------------
 // Layer 1 — live recall (the event: sharp attack, big halo)
@@ -406,13 +409,13 @@ export const ACT_HAZE_LERP     = 0.95;
 
 /** Live's halo/scale channel (D-06 SC3 ordering: full-extent halo — the
  *  biggest/most-salient of the four layers, "the event"). Expressed as a
- *  multiplier of the node's peak-activation glow radius. PROVISIONAL —
- *  ratchets at Stage 2 (D-09). */
+ *  multiplier of the node's peak-activation glow radius. LOCKED —
+ *  founder-approved as-is at Stage-2 (57-07, D-09). */
 export const LIVE_HALO_SCALE = 1.0;
 
 /** Live's pulse-thickness channel (D-06) — traveling-pulse line-width
  *  multiplier for spawnPulse; live's pulses are the thickest of the four
- *  layers. PROVISIONAL — ratchets at Stage 2 (D-09). */
+ *  layers. LOCKED — founder-approved as-is at Stage-2 (57-07, D-09). */
 export const LIVE_PULSE_THICKNESS = 1.0;
 
 // ----------------------------------------------------------------------------
@@ -429,16 +432,17 @@ export const REPLAY_CADENCE_MS   = 2500;
 
 /** Replay's attack-sharpness channel (D-06 SC3 ordering: softer/slower than
  *  live, sharper than spontaneous). Time-to-peak in ms for the replay echo's
- *  brightness ramp. PROVISIONAL — ratchets at Stage 2 (D-09). */
+ *  brightness ramp. LOCKED — founder-approved as-is at Stage-2 (57-07, D-09). */
 export const REPLAY_ATTACK_MS = 200;
 
 /** Replay's halo/scale channel (D-06 SC3 ordering: smaller than live's
- *  full-extent halo, bigger than spontaneous's). PROVISIONAL — ratchets at
- *  Stage 2 (D-09). */
+ *  full-extent halo, bigger than spontaneous's). LOCKED — founder-approved
+ *  as-is at Stage-2 (57-07, D-09). */
 export const REPLAY_HALO_SCALE = 0.75;
 
 /** Replay's pulse-thickness channel (D-06) — thinner than live's, matching
- *  the "soft echo" character. PROVISIONAL — ratchets at Stage 2 (D-09). */
+ *  the "soft echo" character. LOCKED — founder-approved as-is at Stage-2
+ *  (57-07, D-09). */
 export const REPLAY_PULSE_THICKNESS = 0.7;
 
 /** Intensity multiplier vs. live recall — secondary dim cue (D-05), floored
@@ -447,7 +451,8 @@ export const REPLAY_PULSE_THICKNESS = 0.7;
  *  REPLAY_HALO_SCALE above), not brightness. Phase 57 D-05 retune: 0.4 → 0.7
  *  (the old value sat below the perceptual floor once paired with a
  *  luminance-equalized hue). MUST stay < 1 (SC3 honesty invariant: replay can
- *  never escalate above live). */
+ *  never escalate above live). LOCKED — founder-approved as-is at Stage-2
+ *  (57-07, D-09). */
 export const REPLAY_DIM          = 0.7;
 
 /** Number of recent real rows kept in the server-side replay ring buffer.
@@ -465,16 +470,17 @@ export const REPLAY_HISTORY_N    = 40;
 
 /** Spontaneous's attack-sharpness channel (D-06 SC3 ordering: slower than
  *  replay, sharper/faster than twinkle's micro-breathe). Time-to-peak in ms.
- *  PROVISIONAL — ratchets at Stage 2 (D-09). */
+ *  LOCKED — founder-approved as-is at Stage-2 (57-07, D-09). */
 export const SPONT_ATTACK_MS = 400;
 
 /** Spontaneous's halo/scale channel (D-06 SC3 ordering: smaller than
- *  replay's, bigger than twinkle's). PROVISIONAL — ratchets at Stage 2 (D-09). */
+ *  replay's, bigger than twinkle's). LOCKED — founder-approved as-is at
+ *  Stage-2 (57-07, D-09). */
 export const SPONT_HALO_SCALE = 0.55;
 
 /** Spontaneous's pulse-thickness channel (D-06) — thinner than replay's,
- *  matching the "slow calm drift" character. PROVISIONAL — ratchets at
- *  Stage 2 (D-09). */
+ *  matching the "slow calm drift" character. LOCKED — founder-approved as-is
+ *  at Stage-2 (57-07, D-09). */
 export const SPONT_PULSE_THICKNESS = 0.5;
 
 /** Intensity multiplier vs. live recall — secondary dim cue (D-05), floored
@@ -482,7 +488,7 @@ export const SPONT_PULSE_THICKNESS = 0.5;
  *  dimmest activity layer, WR-02). Phase 57 D-05 retune: 0.3 → 0.6 (the old
  *  value sat below the perceptual floor). Primary subordination now comes
  *  from motion/scale (SPONT_ATTACK_MS / SPONT_HALO_SCALE above), not
- *  brightness. */
+ *  brightness. LOCKED — founder-approved as-is at Stage-2 (57-07, D-09). */
 export const SPONT_DIM          = 0.6;
 
 /** ms between spontaneous emissions during idle (starting direction).
@@ -532,19 +538,19 @@ export const TWINKLE_PERIOD_MS  = 2000;
 
 /** Twinkle's attack-sharpness channel (D-06 SC3 ordering: the slowest/least-
  *  sharp of the four layers). Derived as a quarter of TWINKLE_PERIOD_MS — a
- *  sine breathe's natural rise-to-peak. PROVISIONAL — ratchets at Stage 2
- *  (D-09). */
+ *  sine breathe's natural rise-to-peak. LOCKED — founder-approved as-is at
+ *  Stage-2 (57-07, D-09). */
 export const TWINKLE_ATTACK_MS = 500;
 
 /** Twinkle's halo/scale channel (D-06 SC3 ordering: the smallest/least-
- *  salient of the four layers — decorative baseline only). PROVISIONAL —
- *  ratchets at Stage 2 (D-09). */
+ *  salient of the four layers — decorative baseline only). LOCKED —
+ *  founder-approved as-is at Stage-2 (57-07, D-09). */
 export const TWINKLE_HALO_SCALE = 0.3;
 
 /** Twinkle's pulse-thickness channel (D-06) — twinkle has no traveling edge
  *  pulse today (per-node breathe only); this reserves the profile-shape value
- *  for a future twinkle micro-pulse if one is ever added. PROVISIONAL —
- *  ratchets at Stage 2 (D-09). */
+ *  for a future twinkle micro-pulse if one is ever added. LOCKED —
+ *  founder-approved as-is at Stage-2 (57-07, D-09). */
 export const TWINKLE_PULSE_THICKNESS = 0.3;
 
 /** Brightness amplitude of the twinkle breathe — neutral tint lerp (raised from 0.18 at

@@ -181,11 +181,21 @@ describe('D-02 luminance-band membership', () => {
 //   - the WR-02 SPONT_DIM < REPLAY_DIM ordering lock (56-REVIEW.md), migrated in
 //     alongside the REPLAY_DIM < 1 lock previously in
 //     viz-ambient-liveliness.test.ts:482-489 (Phase 54) — D-12 consolidation.
+//
+// RATCHETED at Stage-2 (57-07, D-09): the founder tuned the full system live
+// over the real hull and approved every motion-profile/floor value AS-IS
+// (2026-07-03) — no attack-ms/halo-scale/dim-factor values changed from their
+// 57-04-authored state; FLOOR_BOUND below is updated from PROVISIONAL to
+// ratcheted/locked (see its own JSDoc for the exact rationale).
 
 /** Perceptual dim-factor floor (D-05) — every subordinate-layer dim factor
  *  must stay >= this fraction of live brightness on the dark bg now that a
- *  luminance-equalized hue sits underneath it. PROVISIONAL — ratchets to the
- *  founder-approved value at the Stage-2 checkpoint (D-09). */
+ *  luminance-equalized hue sits underneath it. RATCHETED at Stage-2 (57-07,
+ *  D-09): the founder approved the full system as-is (2026-07-03) with
+ *  REPLAY_DIM=0.7 / SPONT_DIM=0.6 unchanged — 0.6 is already the tightest
+ *  possible bound (it equals the approved SPONT_DIM exactly, the dimmest
+ *  locked layer), so no numeric change was needed, only this status update
+ *  from PROVISIONAL to ratcheted/locked. */
 const FLOOR_BOUND = 0.6;
 
 describe('D-06 motion-profile SC3 ordering + D-05 dim floors', () => {
