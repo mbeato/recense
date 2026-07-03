@@ -62,19 +62,40 @@ import { buildHonestOneHopTrace, type HonestTraceReader } from '../retrieval/hon
 const POLL_MS = 250;  // polling interval for activation_trace SSE broadcast
 const SEARCH_LIMIT = 20;  // BM25 result cap for /search?q= endpoint (T-19-03)
 
-// Phase 54 replay constants — mirrored from src/viz/modules/constants.js (browser-ESM;
-// not imported here to avoid a cross-boundary build dependency). Keep in sync with constants.js.
-const REPLAY_IDLE_GAP_MS = 5000;  // ms of silence before idle-replay activates (spec: 4000–6000)
-const REPLAY_CADENCE_MS  = 2500;  // ms between replay broadcasts (denser idle life — founder checkpoint)
-const REPLAY_HISTORY_N   = 40;    // max recent real rows in the server-side replay ring (deeper for variety)
+// Names of the scheduler scalars authored ONLY in src/viz/modules/constants.js (D-10).
+// The server derives these values at startVizServer init via source-parse — see
+// parseSchedulerScalars() below — instead of re-declaring them as literals (kills the
+// WR-01 client/server mirror-drift class: SPONT_HOP_TOPN had already drifted 6 vs 3).
+const SCHEDULER_SCALAR_NAMES = [
+  'REPLAY_IDLE_GAP_MS',
+  'REPLAY_CADENCE_MS',
+  'REPLAY_HISTORY_N',
+  'SPONT_CADENCE_MS',
+  'SPONT_SEED_COUNT',
+  'SPONT_HOP_TOPN',
+  'SPONT_POOL_REFRESH_MS',
+] as const;
+type SchedulerScalarName = (typeof SCHEDULER_SCALAR_NAMES)[number];
 
-// Phase 56 spontaneous-emitter constants — server-authoritative, mirroring the REPLAY_*
-// precedent above. Keep in sync with constants.js. Reuses REPLAY_IDLE_GAP_MS as the shared
-// idle signal (D-01a) — no second idle constant.
-const SPONT_CADENCE_MS       = 2500;   // ms between spontaneous idle broadcasts
-const SPONT_SEED_COUNT       = 2;      // distinct live seeds sampled per tick (56-05 founder tuning: 3→2)
-const SPONT_HOP_TOPN         = 3;      // per-seed honest-hop top-N (56-05 founder tuning: 6→3 — ~21 lit nodes/tick read cluttered; keep client constants.js copy in sync)
-const SPONT_POOL_REFRESH_MS  = 60000;  // how often the eligible-seed pool is rebuilt
+/**
+ * Parse every named scheduler scalar out of constants.js's source text (fail-fast: throws
+ * if any name is absent rather than silently defaulting — T-57-01). Reused across both
+ * dev (__dirname = src/viz/) and prod (__dirname = dist/src/viz/, per copy-viz-assets.cjs)
+ * since MODULES_ROOT resolves relative to __dirname either way. Exported for direct unit
+ * testing (D-10/D-12 shared-source-sync lock), mirroring the pickSpontaneousSeeds convention.
+ */
+export function parseSchedulerScalars(modulesRoot: string): Record<SchedulerScalarName, number> {
+  const src = fs.readFileSync(path.join(modulesRoot, 'constants.js'), 'utf8');
+  const result = {} as Record<SchedulerScalarName, number>;
+  for (const name of SCHEDULER_SCALAR_NAMES) {
+    const match = src.match(new RegExp(`export\\s+const\\s+${name}\\s*=\\s*([\\d.]+)`));
+    if (!match) {
+      throw new Error(`viz server: constants.js is missing required scheduler scalar '${name}'`);
+    }
+    result[name] = Number(match[1]);
+  }
+  return result;
+}
 
 /**
  * Sample `count` DISTINCT ids uniformly at random from `pool` using the injected `rng`
@@ -216,6 +237,20 @@ export function startVizServer(
   const settingsPath = opts?.settingsPath ?? defaultSettingsPath();
   // D-95: open our OWN read-only handle — never share a write-enabled instance.
   const db = new Database(dbPath, { readonly: true });
+
+  // D-10: derive the scheduler scalars from constants.js (the single authored source)
+  // rather than re-declaring hand-mirrored literals. One-time sync read at init —
+  // startVizServer is synchronous, and this small local read adds no per-request I/O
+  // (T-57-02).
+  const {
+    REPLAY_IDLE_GAP_MS,
+    REPLAY_CADENCE_MS,
+    REPLAY_HISTORY_N,
+    SPONT_CADENCE_MS,
+    SPONT_SEED_COUNT,
+    SPONT_HOP_TOPN,
+    SPONT_POOL_REFRESH_MS,
+  } = parseSchedulerScalars(MODULES_ROOT);
 
   // T-27-10: track in-flight slug generations to prevent duplicate concurrent spawns.
   // Key = slug, Value = Date.now() when the generate-doc CLI was first spawned for it.
