@@ -81,9 +81,10 @@ type SchedulerScalarName = (typeof SCHEDULER_SCALAR_NAMES)[number];
  * Parse every named scheduler scalar out of constants.js's source text (fail-fast: throws
  * if any name is absent rather than silently defaulting — T-57-01). Reused across both
  * dev (__dirname = src/viz/) and prod (__dirname = dist/src/viz/, per copy-viz-assets.cjs)
- * since MODULES_ROOT resolves relative to __dirname either way.
+ * since MODULES_ROOT resolves relative to __dirname either way. Exported for direct unit
+ * testing (D-10/D-12 shared-source-sync lock), mirroring the pickSpontaneousSeeds convention.
  */
-function parseSchedulerScalars(modulesRoot: string): Record<SchedulerScalarName, number> {
+export function parseSchedulerScalars(modulesRoot: string): Record<SchedulerScalarName, number> {
   const src = fs.readFileSync(path.join(modulesRoot, 'constants.js'), 'utf8');
   const result = {} as Record<SchedulerScalarName, number>;
   for (const name of SCHEDULER_SCALAR_NAMES) {
