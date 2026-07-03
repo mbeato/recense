@@ -485,7 +485,11 @@ export function startVizServer(
       }
       // Phase 54 (Task 1): push into replay ring — only rows with non-empty seeds arrays
       // (Pitfall 3: skip empty/malformed rows so replay never re-emits a no-op trace).
-      if (Array.isArray(seeds) && seeds.length > 0) {
+      // CR-02 defense-in-depth (Phase 57-08): also require null/recall kind — replay
+      // echoes recalls only (per TRIGGER-STEPS.md); ingestion-kind rows never enter the
+      // replay buffer at all. The client-side neutral fallback above remains as a second
+      // guard against any future regression; this admission guard is belt-and-suspenders.
+      if (Array.isArray(seeds) && seeds.length > 0 && (row.kind == null || row.kind === 'recall')) {
         replayBuffer.push({ id: row.id, ts: row.ts, query_id: row.query_id, seeds, hops, kind: row.kind ?? null });
         if (replayBuffer.length > REPLAY_HISTORY_N) {
           replayBuffer.splice(0, replayBuffer.length - REPLAY_HISTORY_N);

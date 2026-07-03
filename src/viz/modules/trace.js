@@ -701,7 +701,10 @@ export function initTrace(ctx) {
       if (!seedEntries.length) return;        // all seeds absent from idMap → no-op
 
       // Recall replay rows mirror the live recall palette/pulses (dimmer); non-recall replay
-      // rows keep the neutral default activation (event-kind colouring is out of scope here).
+      // rows explicitly resolve to KIND_COLORS.neutral (CR-02) — previously seedColor/hopColor
+      // fell through to undefined here, which activate()'s `kindColor || HOT_COLOR` fallback
+      // resolved to live-amber, violating the D-04 amber-exclusivity invariant for a replayed
+      // ingestion-kind row. Event-kind colouring for ingestion kinds is still out of scope here.
       const isRecallReplay = !row.kind || row.kind === 'recall';
 
       const hopEntries = traceEdgesFromHops(row, ctx.idMap)
@@ -728,8 +731,8 @@ export function initTrace(ctx) {
       // per-layer motion profile (REPLAY_PROFILE: attack ms + halo/scale, D-06) is
       // the PRIMARY subordination signal; replay is always strictly dimmer than
       // live regardless (SC3).
-      const seedColor = isRecallReplay ? KIND_COLORS.recall_seed : undefined;
-      const hopColor  = isRecallReplay ? KIND_COLORS.recall_hop  : undefined;
+      const seedColor = isRecallReplay ? KIND_COLORS.recall_seed : KIND_COLORS.neutral;
+      const hopColor  = isRecallReplay ? KIND_COLORS.recall_hop : KIND_COLORS.neutral;
       seedEntries.forEach(({ node, intensity }) => activate(node, intensity * REPLAY_DIM, seedColor, REPLAY_PROFILE));
       hopEntries.forEach(({ node, intensity }) => {
         if (seedIds.has(node.id)) return;   // keep a node's seed role over the hop role
