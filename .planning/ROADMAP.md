@@ -1117,7 +1117,7 @@ Plans:
 - **VIZ-PAL-07**: Two-stage founder checkpoint — Stage 1 mid-phase palette hue sign-off, Stage 2 closing full-system tune — with provisional values ratcheted to founder-approved locks (D-16/D-09).
 
 **Depends on:** Phase 56
-**Plans:** 8 plans (7/7 complete; 57-08 gap-closure planned after verification found CR-01/CR-02 blockers)
+**Plans:** 8/8 plans complete
 
 Plans:
 **Wave 1**
@@ -1147,7 +1147,7 @@ Plans:
 
 **Gap closure** *(after 57-VERIFICATION.md found 2 blockers)*
 
-- [ ] 57-08-PLAN.md — Close CR-01 (ctx.traceNodes permanent leak: scope the 5 _applyIngestion fades + honest focusNode comment) and CR-02 (replayed non-recall rows flash HOT amber: neutral fallback + server kind-filter) + 2 behavioral regression tests [wave 7, gap-closure] (VIZ-PAL-01, VIZ-PAL-02, VIZ-PAL-04)
+- [x] 57-08-PLAN.md — Close CR-01 (ctx.traceNodes permanent leak: scope the 5 _applyIngestion fades + honest focusNode comment) and CR-02 (replayed non-recall rows flash HOT amber: neutral fallback + server kind-filter) + 2 behavioral regression tests [wave 7, gap-closure] (VIZ-PAL-01, VIZ-PAL-02, VIZ-PAL-04)
 
 ## Backlog
 
