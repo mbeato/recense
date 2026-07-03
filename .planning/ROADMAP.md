@@ -1117,12 +1117,12 @@ Plans:
 - **VIZ-PAL-07**: Two-stage founder checkpoint — Stage 1 mid-phase palette hue sign-off, Stage 2 closing full-system tune — with provisional values ratcheted to founder-approved locks (D-16/D-09).
 
 **Depends on:** Phase 56
-**Plans:** 7 plans in 6 waves (W1: 57-01 | W2: 57-02 | W3: 57-03 checkpoint | W4: 57-04, 57-05 | W5: 57-06 | W6: 57-07 checkpoint)
+**Plans:** 1/7 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 57-01-PLAN.md — Shared scheduler-constants source of truth: server source-parses constants.js, hand-mirrored block deleted (kills WR-01) + dedicated D-12 invariants file seeded with the shared-source-sync lock [wave 1] (VIZ-PAL-03, VIZ-PAL-05)
+- [x] 57-01-PLAN.md — Shared scheduler-constants source of truth: server source-parses constants.js, hand-mirrored block deleted (kills WR-01) + dedicated D-12 invariants file seeded with the shared-source-sync lock [wave 1] (VIZ-PAL-03, VIZ-PAL-05)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
