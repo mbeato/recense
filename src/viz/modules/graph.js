@@ -664,6 +664,18 @@ export function initGraph(ctx) {
   // .backgroundColor above stays pure black as a safe clear color underneath.
   Graph.scene().background = new THREE.Color(BG_COLOR);
 
+  // Phase 57 D-13 calibration surface — renderer exposure/tone-mapping: left at
+  // THREE default (renderer.toneMapping = NoToneMapping, toneMappingExposure = 1)
+  // for this plan. Not set explicitly here on purpose: effects.js's OutputPass
+  // already re-encodes color-managed output (sRGB) last in the composer chain,
+  // and the D-02 luminance-banded palette + the 57-05 bloom recalibration
+  // (effects.js) are enough to make activation read against the hull without
+  // an additional global exposure/tone-curve change. The knob lives at
+  // `Graph.renderer().toneMapping` / `Graph.renderer().toneMappingExposure`
+  // (both THREE.WebGLRenderer properties) if the founder wants a global
+  // exposure push at the Stage-2 checkpoint (57-07) once bloom + motion
+  // profiles are tuned together on the real install.
+
   // Atmospheric depth: far nodes recede into the field instead of sitting equally
   // crisp (the flat-starfield tell). Linear fog matched to the background fades the
   // far side of the cloud into the aubergine; near side stays sharp. Near/far scale
