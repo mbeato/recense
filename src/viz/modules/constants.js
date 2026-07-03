@@ -146,12 +146,17 @@ export const DECAY_FLOOR = 0.04;
 //                              genuinely different hue direction
 //
 // Phase 57 D-02: every entry below computes a Rec.709 relative luminance
-// Y = 0.2126R + 0.7152G + 0.0722B inside the PROVISIONAL band [170, 235]
+// Y = 0.2126R + 0.7152G + 0.0722B inside the LOCKED band [170, 228]
 // (tests/viz-activity-palette-invariants.test.ts "D-02 luminance-band
 // membership") — the 56-05 lesson (saturated indigo Y≈138 vanished; pastel
 // lavender Y≈193 survived) generalized to the whole palette. Subordination
 // among activity layers comes from motion/scale/density (D-06, later plans),
 // never from a dark hue.
+//
+// Stage-1 founder checkpoint (57-03, D-16): every hue below was reviewed
+// live over the real hull and approved AS-IS (verbal sign-off via the
+// execute-phase checkpoint, 2026-07-03) — no per-kind hex changes requested.
+// Values below are now LOCKED, not provisional.
 
 /**
  * Per-event kind colours for the activation animation.
@@ -173,8 +178,8 @@ export const KIND_COLOR = {
    *  Phase 57 D-02 retune: 0xc481a4 → 0xd9a0bd — the original was below the
    *  luminance band (Y≈146). Lifted lightness while keeping the rose-mauve
    *  IDENTITY (R>B>G channel ordering unchanged); Y≈174 now in-band.
-   *  PROVISIONAL — ratchets at Stage 1 (D-09). Subordination to live comes
-   *  from motion/scale, not the hue. */
+   *  LOCKED — founder-approved as-is at Stage-1 (57-03, D-09). Subordination
+   *  to live comes from motion/scale, not the hue. */
   reconsolidation: 0xd9a0bd,
   /** Oscillation / instability — warm coral-red (unsettled), deliberately
    *  moved OUT of the amber family per D-03(b): amber is reserved for live
@@ -182,15 +187,15 @@ export const KIND_COLOR = {
    *  original was both below the luminance band (Y≈141) AND an amber-family
    *  hue (R≈G>B warm-orange signature). The new hue is a true coral red
    *  (R dominant, G≈B, hue≈0°) — no amber signature — with Y≈172, in-band.
-   *  PROVISIONAL — ratchets at Stage 1 (D-09). Subordination to live comes
-   *  from motion/scale, not the hue. */
+   *  LOCKED — founder-approved as-is at Stage-1 (57-03, D-09). Subordination
+   *  to live comes from motion/scale, not the hue. */
   oscillation:     0xe89c9c,
   /** Non-hero cascade events — slate (NON-amber per D-04).
    *  Phase 57 D-02 retune: 0x8a93a6 → 0xaab3c4 — the original was below the
    *  luminance band (Y≈146). Lifted lightness while keeping the cool slate
    *  IDENTITY (B>G>R channel ordering unchanged); Y≈178 now in-band.
-   *  PROVISIONAL — ratchets at Stage 1 (D-09). Subordination to live comes
-   *  from motion/scale, not the hue. */
+   *  LOCKED — founder-approved as-is at Stage-1 (57-03, D-09). Subordination
+   *  to live comes from motion/scale, not the hue. */
   neutral:         0xaab3c4,
   /** Spontaneous idle 1-hop wandering (Phase 56) — pastel lavender, the
    *  default-mode-network hue. Distinct from recall amber and replay cyan so
@@ -207,8 +212,9 @@ export const KIND_COLOR = {
    *  is semantically right). Previously replay had NO identity hue at all —
    *  trace.js dimmed recall_hop by REPLAY_DIM, so replay literally rendered
    *  as a darker copy of live cyan (the bug this phase fixes). Y≈225, in-band.
-   *  PROVISIONAL — ratchets at Stage 1 (D-09). Subordination to live comes
-   *  from motion/scale (REPLAY_DIM survives as the secondary cue), not the hue. */
+   *  LOCKED — founder-approved as-is at Stage-1 (57-03, D-09). Subordination
+   *  to live comes from motion/scale (REPLAY_DIM survives as the secondary
+   *  cue), not the hue. */
   replay:          0xb3ecf5,
 };
 
