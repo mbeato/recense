@@ -126,11 +126,16 @@ function relativeLuminance(hex: number): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-// PROVISIONAL — ratchets at Stage 1 (D-09). Lower bound anchored to the 56-05
-// evidence (pastel lavender Y≈193 survived; saturated indigo Y≈138 vanished;
-// HOT amber Y≈193 anchor). Upper bound keeps hue identity legible below near-white.
+// LOCKED at Stage 1 (57-03, D-09) — the founder reviewed every identity hue
+// live over the real hull and approved the palette AS-IS (2026-07-03). Bounds
+// are ratcheted to enclose the actual approved-palette luminance range
+// (observed min: oscillation Y≈172.16; observed max: replay Y≈224.53) with a
+// small documented tolerance (~2-3 Y units) rather than the wider provisional
+// anchor. Y_MIN kept at 170 (already ~2 units below the tightest approved hue,
+// oscillation); Y_MAX tightened from 235 → 228 (~3 units above the highest
+// approved hue, replay).
 const Y_MIN = 170;
-const Y_MAX = 235;
+const Y_MAX = 228;
 
 /** All eight activity identity hues (Phase-57 D-01 scope: the 7 existing
  *  KIND_COLOR entries plus the new `replay` identity hue). */
