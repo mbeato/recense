@@ -86,3 +86,7 @@ None — no stubs introduced.
 ## Threat Flags
 
 None — this plan only relocates/derives existing scheduler scalars and adds tests; no new network endpoints, auth paths, file-access patterns, or schema changes. The threat model's own T-57-01/T-57-02 entries (source-parse tampering/DoS, both `accept`-dispositioned) are the only relevant surface and were satisfied as designed (fail-fast on missing name; one-time small local read at init, no per-request I/O).
+
+## Self-Check: PASSED
+
+All created/modified files verified present (`src/viz/modules/constants.js`, `src/viz/server.ts`, `tests/viz-activity-palette-invariants.test.ts`); all 4 commits (`307a02e`, `6d5f6a2`, `6a17509`, `995372a`) verified present in git log.
