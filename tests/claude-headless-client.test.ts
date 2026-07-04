@@ -44,6 +44,7 @@ vi.mock('node:child_process', () => ({
 import {
   createClaudeHeadlessClient,
   createClaudeHeadlessSurveyClient,
+  buildChildEnv,
   buildHeadlessArgs,
   buildSurveyHeadlessArgs,
   SURVEY_SYSTEM,
@@ -252,6 +253,55 @@ describe('createClaudeHeadlessClient', () => {
 
     // Sink was cleared — never called.
     expect(captured).toHaveLength(0);
+  });
+});
+
+// ── Spawn env builder: buildChildEnv (billing strip + thinking-off default) ──
+
+describe('buildChildEnv', () => {
+  let savedApiKey: string | undefined;
+  let savedAuthToken: string | undefined;
+  let savedThinking: string | undefined;
+
+  beforeEach(() => {
+    savedApiKey = process.env['ANTHROPIC_API_KEY'];
+    savedAuthToken = process.env['ANTHROPIC_AUTH_TOKEN'];
+    savedThinking = process.env['MAX_THINKING_TOKENS'];
+    delete process.env['ANTHROPIC_API_KEY'];
+    delete process.env['ANTHROPIC_AUTH_TOKEN'];
+    delete process.env['MAX_THINKING_TOKENS'];
+  });
+
+  afterEach(() => {
+    const restore = (k: string, v: string | undefined) => {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    };
+    restore('ANTHROPIC_API_KEY', savedApiKey);
+    restore('ANTHROPIC_AUTH_TOKEN', savedAuthToken);
+    restore('MAX_THINKING_TOKENS', savedThinking);
+  });
+
+  it('defaults MAX_THINKING_TOKENS=0 when the parent env lacks it', () => {
+    expect(buildChildEnv().MAX_THINKING_TOKENS).toBe('0');
+  });
+
+  it('respects an explicit MAX_THINKING_TOKENS verbatim (escape hatch)', () => {
+    process.env['MAX_THINKING_TOKENS'] = '4096';
+    expect(buildChildEnv().MAX_THINKING_TOKENS).toBe('4096');
+  });
+
+  it('leaves an explicit MAX_THINKING_TOKENS=0 as 0', () => {
+    process.env['MAX_THINKING_TOKENS'] = '0';
+    expect(buildChildEnv().MAX_THINKING_TOKENS).toBe('0');
+  });
+
+  it('strips the billing keys even when set in the parent env', () => {
+    process.env['ANTHROPIC_API_KEY'] = 'sk-should-not-leak';
+    process.env['ANTHROPIC_AUTH_TOKEN'] = 'tok-should-not-leak';
+    const env = buildChildEnv();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
   });
 });
 

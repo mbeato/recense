@@ -117,6 +117,22 @@ function deriveFeatureTag(model: string): string {
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
+ * Build the spawn env: billing strip (load-bearing, see header) + thinking-off
+ * default. MAX_THINKING_TOKENS=0 disables claude -p's default thinking —
+ * validated by the 2026-07 ab-thinking A/B campaign (no correctness regression,
+ * -62..-71% tokens; extract output 3,877→134 tok/call in production). An explicit
+ * MAX_THINKING_TOKENS in the parent env is respected verbatim (eval control arms
+ * set a positive budget to re-enable thinking).
+ */
+export function buildChildEnv(): NodeJS.ProcessEnv {
+  const childEnv = { ...process.env };
+  delete childEnv['ANTHROPIC_API_KEY'];
+  delete childEnv['ANTHROPIC_AUTH_TOKEN'];
+  childEnv['MAX_THINKING_TOKENS'] ??= '0';
+  return childEnv;
+}
+
+/**
  * Build the `claude -p` argv. Exported for the unit test so the flag set + model are
  * asserted without spawning a real process.
  *
@@ -247,11 +263,8 @@ export function createClaudeHeadlessSurveyClient(config: EngineConfig, surveyDir
         const args = buildSurveyHeadlessArgs(useModel, SURVEY_SYSTEM, surveyDir);
 
         return new Promise<Anthropic.Message>(resolve => {
-          // BILLING GUARD: strip the keys so `claude -p` uses the Max subscription, not the API.
-          // Preserved verbatim from the default path (load-bearing).
-          const childEnv = { ...process.env };
-          delete childEnv['ANTHROPIC_API_KEY'];
-          delete childEnv['ANTHROPIC_AUTH_TOKEN'];
+          // BILLING GUARD + thinking-off default (load-bearing) — see buildChildEnv().
+          const childEnv = buildChildEnv();
 
           const shape = (text: string): Anthropic.Message =>
             ({ content: [{ type: 'text', text }] } as unknown as Anthropic.Message);
@@ -349,10 +362,8 @@ export function createClaudeHeadlessClient(config: EngineConfig): { client: Anth
         const args = buildHeadlessArgs(useModel, NEUTRAL_SYSTEM);
 
         return new Promise<Anthropic.Message>(resolve => {
-          // BILLING GUARD: strip the keys so `claude -p` uses the Max subscription, not the API.
-          const childEnv = { ...process.env };
-          delete childEnv['ANTHROPIC_API_KEY'];
-          delete childEnv['ANTHROPIC_AUTH_TOKEN'];
+          // BILLING GUARD + thinking-off default (load-bearing) — see buildChildEnv().
+          const childEnv = buildChildEnv();
 
           const shape = (text: string): Anthropic.Message =>
             ({ content: [{ type: 'text', text }] } as unknown as Anthropic.Message);
