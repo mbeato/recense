@@ -11,7 +11,9 @@
  *     construction: calling it again mid-flight just changes what the tick
  *     chases next frame — never queues, never jumps. Calls ctx.markActive()
  *     so stats.js's idle camera drift never fights an in-flight retarget
- *     (transition.js lesson 2).
+ *     (transition.js lesson 2). Also re-arms the damp loop (see interrupt
+ *     below) so a fresh programmatic move always takes over from wherever
+ *     the camera currently sits.
  *   - A ctx.registerTick callback that reads the current camera via the
  *     verified no-arg `Graph.cameraPosition()` accessor (RESEARCH Pattern 1),
  *     damps pos.{x,y,z} toward the target with CAM_POS_LAMBDA and
@@ -25,6 +27,16 @@
  *   - Skips the write once both pos and lookAt have settled within
  *     CAM_SETTLE_EPS of target, avoiding needless per-frame allocation once
  *     converged.
+ *   - User-interrupt: the damp loop only DRIVES the camera for programmatic
+ *     moves (focus flight, recenter, brain⇄corpus transition). It never owns
+ *     manual orbit/zoom. OrbitControls' own 'start' event (fired on both
+ *     pointer-drag orbit and wheel/pinch zoom) flips an internal `active`
+ *     flag off, which stops the per-frame write immediately — the camera
+ *     stays exactly where OrbitControls leaves it, with no resume-toward-
+ *     the-old-target once the user lets go (58-08 Stage-2 rejection: "snaps
+ *     back" was the damp loop fighting OrbitControls every frame). The next
+ *     ctx.setCameraTarget call re-arms `active` and resumes damping normally
+ *     from the camera's current (user-repositioned) pose.
  *
  * Exported pure helper (for unit testing without a live Graph/ctx):
  *   stepCameraDamp({ THREE, cur, targetPos, curLookAt, targetLookAt, dt })
@@ -87,11 +99,30 @@ export function initCamera(ctx) {
     ? { x: initial.lookAt.x, y: initial.lookAt.y, z: initial.lookAt.z }
     : { x: 0, y: 0, z: 0 };
 
+  // The damp loop only drives the camera while `active` is true — i.e. for
+  // programmatic moves. A manual orbit/zoom (OrbitControls 'start') flips it
+  // off so the user's input is never overridden; setCameraTarget flips it
+  // back on for the next programmatic move.
+  let active = false;
+
   ctx.setCameraTarget = (pos, lookAt) => {
     targetPos = pos;
     targetLookAt = lookAt;
+    active = true;
     if (typeof ctx.markActive === 'function') ctx.markActive(); // suppress idle drift (lesson 2)
   };
+
+  // Release the damp target the instant the user manually orbits or zooms.
+  // OrbitControls dispatches 'start' for both pointer-drag rotation/pan AND
+  // wheel/pinch zoom, so one listener covers both cases (58-08 Stage-2
+  // rejection: the tick used to keep steering the camera back toward a
+  // stale target underneath the user's own drag/zoom, reading as "snaps
+  // back"). This is an interrupt, not a pause — 'end' does NOT re-arm
+  // `active`; only the next ctx.setCameraTarget call does.
+  const controls = typeof ctx.Graph.controls === 'function' ? ctx.Graph.controls() : null;
+  if (controls && typeof controls.addEventListener === 'function') {
+    controls.addEventListener('start', () => { active = false; });
+  }
 
   let lastNow = null;
 
@@ -99,11 +130,14 @@ export function initCamera(ctx) {
     const dt = lastNow == null ? 1 / 60 : Math.min(0.1, (now - lastNow) / 1000);
     lastNow = now;
 
+    if (!active) return; // no programmatic move in flight — leave the camera to the user
+
     const cur = ctx.Graph.cameraPosition();
     if (!cur) return;
     const curLookAt = cur.lookAt || { x: 0, y: 0, z: 0 };
 
     if (settled(cur, targetPos, CAM_SETTLE_EPS) && settled(curLookAt, targetLookAt, CAM_SETTLE_EPS)) {
+      active = false; // reached target — release so a later manual interrupt is a no-op, not required
       return; // already at target — skip the write
     }
 

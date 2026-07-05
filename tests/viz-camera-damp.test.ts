@@ -27,7 +27,7 @@ vi.mock('three', () => ({
 // @ts-ignore — browser ESM, no type declarations; mocked above for this test
 import * as THREE from 'three';
 // @ts-ignore — browser ESM, no type declarations
-import { stepCameraDamp } from '../src/viz/modules/camera.js';
+import { stepCameraDamp, initCamera } from '../src/viz/modules/camera.js';
 
 type Vec3 = { x: number; y: number; z: number };
 
@@ -118,5 +118,120 @@ describe('stepCameraDamp', () => {
     expect(stepSize).toBeLessThan(remainingToNewTarget);
     // Heading toward the NEW target (leftward, x decreasing), not the old one.
     expect(next.x).toBeLessThan(preRetarget.x);
+  });
+});
+
+// =============================================================================
+// 58-08 Stage-2 rejection regression — user-interrupt releases the damp target
+// "feels bad like the camera is locked in one place — whenever i grab and drag
+// it moves but snaps back to original location, same with zoom" — the tick was
+// steering the camera back toward a stale programmatic target underneath the
+// user's own manual orbit/zoom. Fix: OrbitControls' 'start' event (fired for
+// both pointer-drag orbit and wheel/pinch zoom) releases the damp target
+// immediately; only a fresh ctx.setCameraTarget call re-arms it.
+// =============================================================================
+
+type CamState = { x: number; y: number; z: number; lookAt: { x: number; y: number; z: number } };
+
+/**
+ * Minimal ctx + mock Graph/controls for initCamera. cameraPositionSpy mimics
+ * the real accessor: no-arg call reads the current state; a (pos, lookAt, 0)
+ * call is the synchronous write branch this system always uses.
+ */
+function makeCameraCtx(initial: CamState) {
+  let camState: CamState = { ...initial, lookAt: { ...initial.lookAt } };
+  const cameraPositionSpy = vi.fn((pos?: any, lookAt?: any) => {
+    if (pos === undefined) {
+      return { x: camState.x, y: camState.y, z: camState.z, lookAt: { ...camState.lookAt } };
+    }
+    camState = { x: pos.x, y: pos.y, z: pos.z, lookAt: { ...lookAt } };
+    return undefined;
+  });
+
+  let startHandler: (() => void) | null = null;
+  const controls = {
+    addEventListener: (evt: string, handler: () => void) => {
+      if (evt === 'start') startHandler = handler;
+    },
+  };
+
+  const ticks: Array<(now: number) => void> = [];
+  const ctx: any = {
+    THREE,
+    Graph: {
+      cameraPosition: cameraPositionSpy,
+      controls: () => controls,
+    },
+    registerTick: (fn: (now: number) => void) => ticks.push(fn),
+    markActive: vi.fn(),
+  };
+
+  return {
+    ctx,
+    ticks,
+    getCamState: () => camState,
+    setCamState: (s: CamState) => { camState = s; },
+    fireUserInterrupt: () => { if (startHandler) (startHandler as () => void)(); },
+  };
+}
+
+describe('initCamera — user-interrupt releases the damp target (58-08 regression)', () => {
+  it('a fresh setCameraTarget drives the camera toward the target (sanity, before interrupt)', () => {
+    const { ctx, ticks, getCamState } = makeCameraCtx({ x: 0, y: 0, z: 0, lookAt: { x: 0, y: 0, z: 0 } });
+    initCamera(ctx);
+
+    ctx.setCameraTarget({ x: 100, y: 0, z: 0 }, { x: 50, y: 0, z: 0 });
+    ticks[0]!(1000);
+
+    expect(getCamState().x).toBeGreaterThan(0);
+  });
+
+  it('manual orbit/zoom (OrbitControls "start") releases the target — no snap-back on later ticks', () => {
+    const { ctx, ticks, getCamState, setCamState, fireUserInterrupt } =
+      makeCameraCtx({ x: 0, y: 0, z: 0, lookAt: { x: 0, y: 0, z: 0 } });
+    initCamera(ctx);
+
+    // Programmatic move in flight (e.g. node focus).
+    ctx.setCameraTarget({ x: 100, y: 0, z: 0 }, { x: 50, y: 0, z: 0 });
+    ticks[0]!(1000);
+    expect(getCamState().x).toBeGreaterThan(0);
+
+    // User grabs and drags (or zooms) — OrbitControls fires 'start'.
+    fireUserInterrupt();
+
+    // Simulate what OrbitControls itself does to the camera during the drag/
+    // zoom (outside this system's write path) — the user leaves it here.
+    const userLeftIt: CamState = { x: 999, y: 5, z: -20, lookAt: { x: 10, y: 0, z: 0 } };
+    setCamState(userLeftIt);
+
+    // Subsequent ticks (including well after, simulating "let go") must NOT
+    // steer the camera back toward the old target — this is the exact defect
+    // reported: "snaps back to original location".
+    ticks[0]!(1050);
+    ticks[0]!(1100);
+    ticks[0]!(3000);
+
+    expect(getCamState()).toEqual(userLeftIt);
+  });
+
+  it('a new programmatic move after an interrupt re-arms the damp loop from the user-repositioned pose', () => {
+    const { ctx, ticks, getCamState, setCamState, fireUserInterrupt } =
+      makeCameraCtx({ x: 0, y: 0, z: 0, lookAt: { x: 0, y: 0, z: 0 } });
+    initCamera(ctx);
+
+    ctx.setCameraTarget({ x: 100, y: 0, z: 0 }, { x: 50, y: 0, z: 0 });
+    ticks[0]!(1000);
+
+    fireUserInterrupt();
+    setCamState({ x: 999, y: 5, z: -20, lookAt: { x: 10, y: 0, z: 0 } });
+    ticks[0]!(1050); // interrupted — no movement
+
+    // Programmatic re-engagement (e.g. recenter, or a new node focus).
+    ctx.setCameraTarget({ x: -50, y: 0, z: 0 }, { x: 0, y: 0, z: 0 });
+    ticks[0]!(1100);
+
+    // Must move from the user's current (999,...) pose toward the NEW target,
+    // never resume toward the old (100,0,0) target.
+    expect(getCamState().x).toBeLessThan(999);
   });
 });
