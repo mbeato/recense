@@ -23,11 +23,9 @@
 import {
   MAX_FAN_OUT, PULSE_MS, MATCAP_MIX_LAMBDA,
   FOCUS_ANTICIPATION_PCT, FOCUS_ORBIT_MS, FOCUS_DOLLY_MS,
+  FOCUS_DIM_OPACITY, FOCUS_FOG_NEAR,
 } from './constants.js';
 import { focusNodeGeometry, unfocusNodeGeometry } from './graph.js';
-
-// Focus-dim opacity for nodes outside the selected neighborhood
-const FOCUS_DIM_OPACITY = 0.05;
 
 /**
  * Shell-compact context (quick-260612-sdk): the tray popover loads the page
@@ -220,6 +218,17 @@ export function initDetail(ctx) {
       ctx.hazeMat.opacity = FOCUS_DIM_OPACITY;
       ctx._hazeDimmed = true;
     }
+    // Tighten the scene fog near-plane while focused (D-07): a cheap depth
+    // cue that deepens the focus read alongside the dim. Save the prior
+    // (resting) value once, mirroring the haze _hazeDimmed save/restore
+    // idiom above — restored by clearFocusDim.
+    if (ctx.Graph && typeof ctx.Graph.scene === 'function') {
+      const fog = ctx.Graph.scene().fog;
+      if (fog) {
+        if (ctx._fogBaseNear == null) ctx._fogBaseNear = fog.near;
+        fog.near = FOCUS_FOG_NEAR;
+      }
+    }
   }
 
   /** Restore opacity of all focus-dimmed nodes (and the haze InstancedMesh). */
@@ -234,6 +243,11 @@ export function initDetail(ctx) {
         ? ctx.hazeMat._baseOpacity
         : ctx.hazeMat.opacity; // already correct if never saved
       ctx._hazeDimmed = false;
+    }
+    // Restore fog near-plane to its resting value (D-07)
+    if (ctx.Graph && typeof ctx.Graph.scene === 'function' && ctx._fogBaseNear != null) {
+      const fog = ctx.Graph.scene().fog;
+      if (fog) fog.near = ctx._fogBaseNear;
     }
   }
 

@@ -655,3 +655,15 @@ export const HOVER_LAMBDA = 10;
  *  subtle oscillation past the resting hover scale before settling back down
  *  to it). Never applied on the shrink leg (hover-leave settles directly to 1). */
 export const HOVER_OVERSHOOT = 1.05;
+
+/** Focus-dim opacity for nodes outside the selected neighborhood (D-07 —
+ *  moved from detail.js to join the named-constant discipline). Slightly
+ *  stronger than the pre-D-07 value so the non-neighbor recede reads more
+ *  decisively. Provisional — Claude's Discretion, ratcheted at Stage 2. */
+export const FOCUS_DIM_OPACITY = 0.035;
+
+/** Fog near-plane while a node is focused (D-07) — tighter than the resting
+ *  BRAIN_SCALE * 1.8, pulling a soft depth cue in toward the focus and
+ *  deepening the read alongside the dim. Restored to BRAIN_SCALE * 1.8 on
+ *  deselect (detail.js clearFocusDim). Provisional — Claude's Discretion. */
+export const FOCUS_FOG_NEAR = BRAIN_SCALE * 1.4;
