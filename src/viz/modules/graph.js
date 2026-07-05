@@ -45,6 +45,23 @@ const _sharedGeo = new THREE.SphereGeometry(1, 16, 16);
 // test is orientation-agnostic, a billboard quad's is not.
 const _hazeQuadGeo = new THREE.PlaneGeometry(2, 2);
 
+// Focus-tier geometry (Phase 58 Plan 04, D-12) — swapped onto the currently
+// selected node only via focusNodeGeometry/unfocusNodeGeometry below.
+// detail.js's focusCamera frames the selection at ~280 units, much closer
+// than any overview-distance node ever gets rendered at _sharedGeo's 16-seg
+// budget — at that proximity the facets read as a visible gem, not a smooth
+// orb. Same "swap mesh.geometry, don't allocate a new mesh" idiom as the
+// hover-scale/opacity swaps already used elsewhere in this file.
+const _focusGeo = new THREE.SphereGeometry(1, 32, 32);
+
+// Focus matcap texture (Phase 58 Plan 04, D-09/D-10/D-15) — a script-generated
+// grayscale-locked PNG (scripts/gen-matcap.mjs --check re-verifies it),
+// loaded once and shared across every node's compiled shader program via the
+// uMatcapTex uniform below. Sampled in the fragment shader and multiplied by
+// the node's own gl_FragColor (its LOCKED-palette hue) — the matcap only ever
+// shapes luminance, hue is untouched (D-10 D-04-safe).
+const _matcapTex = new THREE.TextureLoader().load('./vendor/matcaps/focus-matcap.png');
+
 // Haze nodes (unclassified — not a schema, not yet a schema member) render as
 // barely-there mist so the schema constellation reads at a glance, in BOTH
 // viewports (founder 2026-06-13: align the full window to the tray to fight
@@ -134,14 +151,23 @@ function makeNodeObject(node, ctx) {
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>',
-        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
+        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;\nvarying vec3 vViewNormal;')
       .replace('#include <begin_vertex>',
-        '#include <begin_vertex>\nvRimV = normalize(cameraPosition - (modelMatrix * vec4(transformed, 1.0)).xyz);\nvRimN = normalize(mat3(modelMatrix) * transformed);');
+        '#include <begin_vertex>\nvRimV = normalize(cameraPosition - (modelMatrix * vec4(transformed, 1.0)).xyz);\nvRimN = normalize(mat3(modelMatrix) * transformed);\nvViewNormal = normalize(normalMatrix * normal);');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>',
-        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
+        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;\nuniform sampler2D uMatcapTex;\nuniform float uMatcapMix;\nvarying vec3 vViewNormal;')
       .replace('#include <dithering_fragment>',
-        '#include <dithering_fragment>\nfloat _rim = pow(1.0 - abs(dot(normalize(vRimV), normalize(vRimN))), 2.0);\ngl_FragColor.rgb += _rim * 0.6 * mix(gl_FragColor.rgb, vec3(1.0), 0.3);');
+        '#include <dithering_fragment>\nfloat _rim = pow(1.0 - abs(dot(normalize(vRimV), normalize(vRimN))), 2.0);\ngl_FragColor.rgb += _rim * 0.6 * mix(gl_FragColor.rgb, vec3(1.0), 0.3);\nvec2 matcapUv = vViewNormal.xy * 0.495 + 0.5;\nvec3 matcapColor = texture2D(uMatcapTex, matcapUv).rgb * gl_FragColor.rgb;\ngl_FragColor.rgb = mix(gl_FragColor.rgb, matcapColor, uMatcapMix);');
+
+    // Focus-tier matcap (D-09/D-10/D-11): default mix is 0 (invisible) for
+    // every node — only detail.js's selection lifecycle ever raises it, and
+    // only for the focused node + its 1-hop neighbors. Stored on
+    // mat.userData mirroring the __baseOp/__baseR annotation convention
+    // below, so detail.js can drive it without reaching into `shader`.
+    shader.uniforms.uMatcapTex = { value: _matcapTex };
+    shader.uniforms.uMatcapMix = { value: 0 };
+    mat.userData.matcapMixUniform = shader.uniforms.uMatcapMix;
   };
 
   const mesh = new THREE.Mesh(_sharedGeo, mat);
@@ -157,6 +183,23 @@ function makeNodeObject(node, ctx) {
   node.__actGain = node.__cat === 'schema' ? 1.2 : 1.0; // schemas pulse brighter
 
   return mesh;
+}
+
+/**
+ * Swap a node's mesh onto the 32-seg focus geometry (D-12). Called by
+ * detail.js when the node becomes the current selection. No-op if the node
+ * has no mesh yet (e.g. an un-promoted haze node).
+ */
+export function focusNodeGeometry(node) {
+  if (node && node.__mesh) node.__mesh.geometry = _focusGeo;
+}
+
+/**
+ * Restore a node's mesh to the shared 16-seg geometry (D-05). Called by
+ * detail.js on deselect. Safe to call on a node that was never focused.
+ */
+export function unfocusNodeGeometry(node) {
+  if (node && node.__mesh) node.__mesh.geometry = _sharedGeo;
 }
 
 /**

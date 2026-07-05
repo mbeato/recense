@@ -50,10 +50,19 @@ vi.mock('three', () => {
     normalize() { return this; }
   }
   class Quaternion { setFromUnitVectors() { return this; } }
+  // Phase 58 Plan 04: detail.js's new graph.js import pulls in graph.js's
+  // module-scope scratch `_inv = new THREE.Matrix4()` — a minimal stub, never
+  // exercised by this test's own code paths.
+  class Matrix4 { elements = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]; }
   class CylinderGeometry {}
   class SphereGeometry { constructor(_r?: number, _w?: number, _h?: number) {} dispose() {} }
   class PlaneGeometry { constructor(_w?: number, _h?: number) {} dispose?() {} }
   class ShaderMaterial { uniforms: any = {}; constructor(_a: any) {} }
+  // Phase 58 Plan 04: detail.js now imports graph.js (focusNodeGeometry/
+  // unfocusNodeGeometry), whose module-scope _matcapTex loads a texture at
+  // import time — a minimal TextureLoader stub must be mocked even though
+  // this test never exercises the matcap path directly.
+  class TextureLoader { load(_url: string) { return {}; } }
 
   let _geoCounter = 0;
   class RingGeometry {
@@ -99,49 +108,57 @@ vi.mock('three', () => {
   const AdditiveBlending = 2;
   const DoubleSide  = 2;
   const BackSide    = 1;
-  return { Color, Vector3, Quaternion, CylinderGeometry, SphereGeometry, PlaneGeometry, ShaderMaterial, RingGeometry, MeshBasicMaterial, Mesh, Group, AdditiveBlending, DoubleSide, BackSide };
+  return { Color, Vector3, Quaternion, Matrix4, CylinderGeometry, SphereGeometry, PlaneGeometry, ShaderMaterial, TextureLoader, RingGeometry, MeshBasicMaterial, Mesh, Group, AdditiveBlending, DoubleSide, BackSide };
 });
 
 // ── DOM / browser globals ───────────────────────────────────────────────────
 // detail.js calls document.getElementById + querySelector, location.search,
 // window.innerWidth/innerHeight, BroadcastChannel, addEventListener.
-// Must be set BEFORE the module is imported.
+// Must be set BEFORE the module is imported. vi.hoisted (not a plain
+// top-level statement) is required as of Phase 58 Plan 04: detail.js now
+// imports graph.js, whose module scope reads window.innerWidth/innerHeight
+// at import-evaluation time — which, per ES module semantics, happens before
+// ANY of this file's own top-level statements run (static imports are fully
+// hoisted above the importing module's body). A plain assignment below the
+// import statement's textual position is NOT actually "before" in evaluation
+// order; vi.hoisted is vitest's supported escape hatch for exactly this.
+vi.hoisted(() => {
+  function makeNullEl() {
+    return {
+      textContent: '',
+      style: { display: '' },
+      className: '',
+      appendChild(_: any) {},
+      querySelector(_: string): any { return null; },
+      querySelectorAll(_: string) { return []; },
+      addEventListener(_: string, _cb: any) {},
+      removeEventListener(_: string, _cb: any) {},
+      classList: { add(_: string) {}, remove(_: string) {}, contains(_: string) { return false; } },
+      innerHTML: '',
+      dataset: {},
+    };
+  }
 
-function makeNullEl() {
-  return {
-    textContent: '',
-    style: { display: '' },
-    className: '',
-    appendChild(_: any) {},
-    querySelector(_: string): any { return null; },
-    querySelectorAll(_: string) { return []; },
+  (globalThis as any).document = {
+    getElementById: (_id: string) => makeNullEl(),
+    querySelector:  (_sel: string) => makeNullEl(),
+    createElement:  (_tag: string) => makeNullEl(),
     addEventListener(_: string, _cb: any) {},
     removeEventListener(_: string, _cb: any) {},
-    classList: { add(_: string) {}, remove(_: string) {}, contains(_: string) { return false; } },
-    innerHTML: '',
-    dataset: {},
+    body: makeNullEl(),
   };
-}
-
-(globalThis as any).document = {
-  getElementById: (_id: string) => makeNullEl(),
-  querySelector:  (_sel: string) => makeNullEl(),
-  createElement:  (_tag: string) => makeNullEl(),
-  addEventListener(_: string, _cb: any) {},
-  removeEventListener(_: string, _cb: any) {},
-  body: makeNullEl(),
-};
-(globalThis as any).window = {
-  innerWidth:  1024,
-  innerHeight: 768,
-  addEventListener(_: string, _cb: any) {},
-  removeEventListener(_: string, _cb: any) {},
-};
-(globalThis as any).location = { search: '', href: '' };
-(globalThis as any).BroadcastChannel = class { addEventListener() {} };
-if (typeof (globalThis as any).performance === 'undefined') {
-  (globalThis as any).performance = { now: () => Date.now() };
-}
+  (globalThis as any).window = {
+    innerWidth:  1024,
+    innerHeight: 768,
+    addEventListener(_: string, _cb: any) {},
+    removeEventListener(_: string, _cb: any) {},
+  };
+  (globalThis as any).location = { search: '', href: '' };
+  (globalThis as any).BroadcastChannel = class { addEventListener() {} };
+  if (typeof (globalThis as any).performance === 'undefined') {
+    (globalThis as any).performance = { now: () => Date.now() };
+  }
+});
 
 // @ts-ignore — browser ESM, no type declarations
 import { initDetail } from '../src/viz/modules/detail.js';

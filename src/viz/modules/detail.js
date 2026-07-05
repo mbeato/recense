@@ -20,7 +20,8 @@
  *            to clear own container structure (never with user data).
  */
 
-import { MAX_FAN_OUT, PULSE_MS } from './constants.js';
+import { MAX_FAN_OUT, PULSE_MS, MATCAP_MIX_LAMBDA } from './constants.js';
+import { focusNodeGeometry, unfocusNodeGeometry } from './graph.js';
 
 // Focus-dim opacity for nodes outside the selected neighborhood
 const FOCUS_DIM_OPACITY = 0.05;
@@ -141,6 +142,60 @@ export function initDetail(ctx) {
   }
 
   /**
+   * Focus-tier matcap fade (D-09/D-10/D-11): the currently focused node + its
+   * 1-hop neighbors read as lit glass beads, damped 0->1 on focus and back
+   * out on deselect. Tracked as its own small Map (node -> {uniform, target})
+   * — deliberately separate from dimmedNodes/applyFocusDim's keep set (which
+   * uses schema-membership for a schema selection) so the selected node
+   * always gets the matcap + 32-seg treatment regardless of dim mode.
+   * Never touches haze/overview nodes: a node with no mat.userData.
+   * matcapMixUniform (haze, or no __mesh yet) is a silent no-op (D-10).
+   */
+  const activeMatcap = new Map(); // node -> { uniform, target }
+  let matcapFocusNodes = [];      // the node + neighbors currently targeted at 1
+
+  function setMatcapTarget(node, target) {
+    const uniform = node && node.__mat && node.__mat.userData
+      && node.__mat.userData.matcapMixUniform;
+    if (!uniform) return;
+    activeMatcap.set(node, { uniform, target });
+  }
+
+  /** Fade the focused node + 1-hop neighbors in (D-09/D-10/D-11, D-12). */
+  function setNodeMatcap(node) {
+    clearNodeMatcap();
+    if (!node) return;
+    matcapFocusNodes = [node, ...getNeighbors(node)];
+    focusNodeGeometry(node); // swaps node.__mesh.geometry to graph.js's _focusGeo (32-seg, D-12) — focused node only
+    for (const n of matcapFocusNodes) setMatcapTarget(n, 1);
+  }
+
+  /** Fade the previous focus set back out and restore its geometry. */
+  function clearNodeMatcap() {
+    for (const n of matcapFocusNodes) setMatcapTarget(n, 0);
+    if (matcapFocusNodes[0]) unfocusNodeGeometry(matcapFocusNodes[0]); // restores _sharedGeo (undoes the _focusGeo swap)
+    matcapFocusNodes = [];
+  }
+
+  if (typeof ctx.registerTick === 'function' && ctx.THREE) {
+    let lastMatcapNow = null;
+    ctx.registerTick((now) => {
+      if (!activeMatcap.size) { lastMatcapNow = null; return; }
+      const dt = lastMatcapNow == null ? 1 / 60 : Math.min(0.1, (now - lastMatcapNow) / 1000);
+      lastMatcapNow = now;
+      for (const [node, entry] of activeMatcap) {
+        entry.uniform.value = ctx.THREE.MathUtils.damp(entry.uniform.value, entry.target, MATCAP_MIX_LAMBDA, dt);
+        // Settled at 0 (deselected/faded-out): drop it so the tick stays
+        // O(focused+neighbors), not O(allNodes).
+        if (entry.target === 0 && Math.abs(entry.uniform.value) < 0.002) {
+          entry.uniform.value = 0;
+          activeMatcap.delete(node);
+        }
+      }
+    });
+  }
+
+  /**
    * Focus mode: dim every node outside the selected neighborhood so the
    * clicked constellation stands alone. Opacity-only (restored on deselect);
    * never touches visibility, so LOD state is unaffected.
@@ -181,6 +236,10 @@ export function initDetail(ctx) {
 
   /** Remove the selection ring from the previous node and free its GPU resources. */
   function clearSelection() {
+    // Fade the previous focus set's matcap back out + restore its geometry
+    // (D-11) — runs on every selection change and on close/deselect.
+    clearNodeMatcap();
+
     if (selectionRing) {
       if (selectedNode && selectedNode.__mesh) selectedNode.__mesh.remove(selectionRing);
       // Dispose geometry + material — selectNode allocates a fresh RingGeometry +
@@ -563,6 +622,13 @@ export function initDetail(ctx) {
           dimmedNodes.push(n);
         }
       }
+
+      // Focus-tier matcap (D-09/D-10/D-11/D-12): the node + its 1-hop
+      // neighbors fade toward the lit-glass-bead look; the focused node also
+      // gets the smooth 32-seg geometry. Independent of the dim mode above
+      // (schema-membership vs neighborhood) so a schema selection still gets
+      // this on the node itself. No-op for haze-tier nodes (no __mesh yet).
+      setNodeMatcap(node);
     }
 
     // 7. Reset idle timer so the camera focus is not overridden immediately
