@@ -52,6 +52,7 @@ vi.mock('three', () => {
   class Quaternion { setFromUnitVectors() { return this; } }
   class CylinderGeometry {}
   class SphereGeometry { constructor(_r?: number, _w?: number, _h?: number) {} dispose() {} }
+  class PlaneGeometry { constructor(_w?: number, _h?: number) {} dispose?() {} }
   class ShaderMaterial { uniforms: any = {}; constructor(_a: any) {} }
 
   let _geoCounter = 0;
@@ -98,7 +99,7 @@ vi.mock('three', () => {
   const AdditiveBlending = 2;
   const DoubleSide  = 2;
   const BackSide    = 1;
-  return { Color, Vector3, Quaternion, CylinderGeometry, SphereGeometry, ShaderMaterial, RingGeometry, MeshBasicMaterial, Mesh, Group, AdditiveBlending, DoubleSide, BackSide };
+  return { Color, Vector3, Quaternion, CylinderGeometry, SphereGeometry, PlaneGeometry, ShaderMaterial, RingGeometry, MeshBasicMaterial, Mesh, Group, AdditiveBlending, DoubleSide, BackSide };
 });
 
 // ── DOM / browser globals ───────────────────────────────────────────────────

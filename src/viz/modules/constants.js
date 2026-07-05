@@ -556,3 +556,12 @@ export const TWINKLE_PULSE_THICKNESS = 0.3;
 /** Brightness amplitude of the twinkle breathe — neutral tint lerp (raised from 0.18 at
  *  the founder checkpoint so ambient idle activity reads without the hull as backdrop). */
 export const TWINKLE_AMP        = 0.42;
+
+// ============================================================================
+// Phase 58 — haze impostor
+// ============================================================================
+
+/** Below this fragment alpha, the haze billboard impostor is discarded
+ *  (alphaTest-style) rather than blended — keeps correct depth occlusion
+ *  between overlapping radial-falloff quads without needing a depth sort. */
+export const ALPHA_TEST_THRESHOLD = 0.02;

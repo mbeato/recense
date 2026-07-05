@@ -25,6 +25,7 @@ import {
   HOVER_SCALE,
   nodeRelSize,
   SETTLE_BUDGET_MS,
+  ALPHA_TEST_THRESHOLD,
 } from './constants.js';
 
 // ─── Shared geometry (D-05) ──────────────────────────────────────────────────
@@ -35,6 +36,14 @@ import {
 // rest and at HOVER_SCALE. Shared across all nodes, so this only raises vertex
 // count, not draw calls — vertex throughput is not the bottleneck (bloom/fillrate is).
 const _sharedGeo = new THREE.SphereGeometry(1, 16, 16);
+
+// Haze impostor billboard quad (Phase 58, RESEARCH Pattern 3) — one shared
+// unit quad backing every haze InstancedMesh instance; the vertex shader
+// billboards each instance to face the camera, so the geometry itself never
+// needs per-instance orientation. The haze raycast proxy (buildHazeLayer)
+// deliberately reuses _sharedGeo (spheres), NOT this quad — a sphere's hit
+// test is orientation-agnostic, a billboard quad's is not.
+const _hazeQuadGeo = new THREE.PlaneGeometry(2, 2);
 
 // Haze nodes (unclassified — not a schema, not yet a schema member) render as
 // barely-there mist so the schema constellation reads at a glance, in BOTH
@@ -379,13 +388,16 @@ function _hashIndex(idx, mod) {
 
 /**
  * Build ONE InstancedMesh for all __cat==='haze' nodes.
- * Each instance shares the existing _sharedGeo + a Fresnel-rim MeshBasicMaterial
- * (identical to makeNodeObject's haze branch) so the rendered look is unchanged.
+ * Each instance shares the _hazeQuadGeo billboard quad + a custom radial-
+ * falloff ShaderMaterial (Phase 58 — replaces the old shared-sphere Fresnel-
+ * rim MeshBasicMaterial with a camera-facing impostor; see buildHazeLayer body).
  * Positions scatter deterministically inside the brain occupancy volume; no
  * Math.random so reloads produce the same cloud shape.
  *
  * Sets on ctx:
- *   hazeMesh          — THREE.InstancedMesh (added to Graph.scene())
+ *   hazeMesh          — THREE.InstancedMesh, billboard quads (added to Graph.scene())
+ *   hazeRayProxy       — THREE.InstancedMesh, invisible spheres sharing hazeMesh's
+ *                        instanceMatrix (raycast target — orientation-agnostic)
  *   hazeInstanceMap   — Map<instanceId, node>
  *   hazeNodeIdMap     — Map<nodeId, instanceId>
  */
@@ -419,34 +431,70 @@ function buildHazeLayer(ctx) {
     if (occ.length) occupied = occ;
   }
 
-  // ── Material — mirrors makeNodeObject's haze branch exactly ─────────────
-  // Shared across all instances; hazeOpacityScale honored via the material opacity.
-  const hazeMat = new THREE.MeshBasicMaterial({
+  // ── Material — billboard radial-falloff impostor (RESEARCH Pattern 3) ────
+  // Replaces the old MeshBasicMaterial + Fresnel-rim onBeforeCompile with a
+  // custom ShaderMaterial: the vertex shader billboards every instance by
+  // rebuilding a camera-facing basis from the viewMatrix columns (discarding
+  // the instance's own rotation — zero CPU-side per-frame work for
+  // thousands of instances); the fragment shader does a radial smoothstep
+  // falloff and an alphaTest-style discard. NORMAL blending — never
+  // additive (RESEARCH Anti-Pattern / Pitfall 2): dense overlapping haze
+  // must never stack luminance across the LOCKED 0.72 bloom threshold
+  // (D-04, T-58-02). depthWrite stays true; the discard (not additive
+  // stacking) is what keeps mutual occlusion correct without a sort.
+  const hazeMat = new THREE.ShaderMaterial({
+    uniforms: {
+      hazeOpacity:        { value: HAZE_OPACITY * _hazeOpacityScale },
+      alphaTestThreshold:  { value: ALPHA_TEST_THRESHOLD },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying vec3 vInstanceColor;
+      void main() {
+        vUv = uv;
+        #ifdef USE_INSTANCING_COLOR
+          vInstanceColor = instanceColor;
+        #else
+          vInstanceColor = vec3(1.0);
+        #endif
+        vec3 instancePos = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        float instanceScale = length(instanceMatrix[0].xyz);
+        vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+        vec3 camUp    = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+        vec3 billboardPos = instancePos + (camRight * position.x + camUp * position.y) * instanceScale;
+        gl_Position = projectionMatrix * viewMatrix * vec4(billboardPos, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float hazeOpacity;
+      uniform float alphaTestThreshold;
+      varying vec2 vUv;
+      varying vec3 vInstanceColor;
+      void main() {
+        float dist = length(vUv - 0.5) * 2.0;
+        float alpha = smoothstep(1.0, 0.0, dist) * hazeOpacity;
+        if (alpha < alphaTestThreshold) discard;
+        gl_FragColor = vec4(vInstanceColor, alpha);
+      }
+    `,
     transparent: true,
-    opacity: HAZE_OPACITY * _hazeOpacityScale,
-    depthWrite: true,
-    // vertexColors needed so per-instance color (instanceColor attribute) is applied
-    vertexColors: false, // three.js InstancedMesh handles instanceColor separately
+    depthWrite:  true,
+    blending:    THREE.NormalBlending,
   });
 
-  // Same Fresnel-rim onBeforeCompile as makeNodeObject — ensures lit-sphere look
-  // matches individual node meshes exactly. Per-instance color comes through the
-  // automatic vColor attribute populated by THREE.js from instanceColor.
-  hazeMat.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>',
-        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
-      .replace('#include <begin_vertex>',
-        '#include <begin_vertex>\nvRimV = normalize(cameraPosition - (modelMatrix * vec4(transformed, 1.0)).xyz);\nvRimN = normalize(mat3(modelMatrix) * transformed);');
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>',
-        '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
-      .replace('#include <dithering_fragment>',
-        '#include <dithering_fragment>\nfloat _rim = pow(1.0 - abs(dot(normalize(vRimV), normalize(vRimN))), 2.0);\ngl_FragColor.rgb += _rim * 0.6 * mix(gl_FragColor.rgb, vec3(1.0), 0.3);');
-  };
+  // Backward-compat shim: detail.js's focus-dim path (clearFocusDim) reads
+  // and writes ctx.hazeMat.opacity directly, same as a built-in material.
+  // WebGLRenderer only auto-syncs `material.opacity` into a uniform for its
+  // own built-in materials — a raw ShaderMaterial gets no such wiring — so
+  // proxy the property onto the uniform that actually drives the fragment
+  // shader's falloff scale. Zero changes needed in detail.js.
+  Object.defineProperty(hazeMat, 'opacity', {
+    get()  { return this.uniforms.hazeOpacity.value; },
+    set(v) { this.uniforms.hazeOpacity.value = v; },
+  });
 
   // ── InstancedMesh ─────────────────────────────────────────────────────────
-  const hazeMesh = new THREE.InstancedMesh(_sharedGeo, hazeMat, hazeCount);
+  const hazeMesh = new THREE.InstancedMesh(_hazeQuadGeo, hazeMat, hazeCount);
   hazeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   hazeMesh.count = hazeCount;
 
@@ -531,6 +579,30 @@ function buildHazeLayer(ctx) {
   ctx.hazeNodeIdMap   = hazeNodeIdMap;
 
   ctx.Graph.scene().add(hazeMesh);
+
+  // ── Invisible raycast proxy (RESEARCH Open Question 2) ────────────────────
+  // Billboarded quads only face the camera in the vertex shader — their
+  // actual instanceMatrix rotation (never billboarded on the CPU side) makes
+  // raycasting against the quad geometry orientation-dependent and wrong.
+  // A same-transform InstancedMesh of orientation-agnostic spheres (shared
+  // _sharedGeo) gives correct, cheap hit-testing instead. Raycasting doesn't
+  // consult `.visible` (three.js Raycaster.intersect only checks layers), so
+  // `visible: false` here purely means "never rendered", not "never hit".
+  // The proxy's instanceMatrix is the SAME attribute object as hazeMesh's
+  // (not a copy) so the existing hide/restore-on-focus code (which mutates
+  // ctx.hazeMesh.setMatrixAt) keeps both in sync automatically, with zero
+  // proxy-specific bookkeeping.
+  const hazeRayProxy = new THREE.InstancedMesh(
+    _sharedGeo,
+    new THREE.MeshBasicMaterial({ visible: false }),
+    hazeCount,
+  );
+  hazeRayProxy.instanceMatrix = hazeMesh.instanceMatrix;
+  hazeRayProxy.count = hazeCount;
+  hazeRayProxy.visible = false;
+
+  ctx.hazeRayProxy = hazeRayProxy;
+  ctx.Graph.scene().add(hazeRayProxy);
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -879,7 +951,10 @@ export function initGraph(ctx) {
       _mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
 
       hazeRay.setFromCamera(_mouse, camera);
-      const hits = hazeRay.intersectObject(ctx.hazeMesh, false);
+      // Raycast the invisible sphere proxy, not the billboard quad mesh: the
+      // quad's actual (non-billboarded) instanceMatrix rotation would make
+      // hit-testing orientation-dependent and wrong (RESEARCH Open Question 2).
+      const hits = hazeRay.intersectObject(ctx.hazeRayProxy, false);
 
       if (hits.length && typeof hits[0].instanceId === 'number') {
         const instanceId = hits[0].instanceId;
@@ -962,7 +1037,9 @@ export function initGraph(ctx) {
       _mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
 
       hazeRay.setFromCamera(_mouse, camera);
-      const hits = hazeRay.intersectObject(ctx.hazeMesh, false);
+      // Raycast the invisible sphere proxy, not the billboard quad mesh —
+      // same orientation-agnostic reasoning as the hover raycast above.
+      const hits = hazeRay.intersectObject(ctx.hazeRayProxy, false);
 
       if (hits.length && typeof hits[0].instanceId === 'number') {
         const node = ctx.hazeInstanceMap.get(hits[0].instanceId);
