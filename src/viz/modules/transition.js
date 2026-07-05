@@ -40,18 +40,24 @@ export function createTransition(ctx, { brainEl, corpusEl, onBeforeReveal }) {
   const markActive = () => { if (typeof ctx.markActive === 'function') ctx.markActive(); };
   const canCam = () => !!(ctx.Graph && typeof ctx.Graph.cameraPosition === 'function');
 
+  // D-08 (Phase 58 Plan 06): both camera moves below now route through the
+  // shared damped system (ctx.setCameraTarget, D-05) instead of a direct
+  // fixed-duration Graph.cameraPosition tween — everything else in this
+  // module (homeCam capture, markActive calls, opacity-only fades, prepared-
+  // before-reveal sequencing) is untouched. DUR still governs the CSS fade
+  // timing and the reveal-gating delay() calls elsewhere in this file.
   function pullBackCamera() {
-    if (!canCam()) return;
+    if (!canCam() || typeof ctx.setCameraTarget !== 'function') return;
     const p = ctx.Graph.cameraPosition();
     if (!p) return;
     homeCam = { x: p.x, y: p.y, z: p.z }; // lesson 1: exact home, restored verbatim
-    ctx.Graph.cameraPosition(
-      { x: p.x * PULL_K, y: p.y * PULL_K, z: p.z * PULL_K }, { x: 0, y: 0, z: 0 }, DUR,
+    ctx.setCameraTarget(
+      { x: p.x * PULL_K, y: p.y * PULL_K, z: p.z * PULL_K }, { x: 0, y: 0, z: 0 },
     );
   }
   function diveCamera() {
-    if (canCam() && homeCam) {
-      ctx.Graph.cameraPosition({ x: homeCam.x, y: homeCam.y, z: homeCam.z }, { x: 0, y: 0, z: 0 }, DUR);
+    if (canCam() && typeof ctx.setCameraTarget === 'function' && homeCam) {
+      ctx.setCameraTarget({ x: homeCam.x, y: homeCam.y, z: homeCam.z }, { x: 0, y: 0, z: 0 });
     } else if (typeof ctx.recenter === 'function') {
       ctx.recenter(DUR);
     }
