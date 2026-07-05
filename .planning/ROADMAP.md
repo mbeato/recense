@@ -1158,7 +1158,7 @@ _(empty — no backlog items)_
 **Goal:** Nodes and interactions reach the July-2026 premium bar. Custom node presentation replaces default-orb feel per the research doc's ranked techniques: soft radial-falloff sprite impostors for the haze tier, matcap-mix on focus-tier nodes, SDF labels (troika) for schema super-nodes only; interaction motion gets a frame-rate-independent damped hover/selection grammar and two-phase orbit-then-dolly camera focus with interruptibility-as-a-rule. Everything stays cohesive with the LOCKED founder-approved desaturated palette, D-02 luminance band, 0.72 bloom threshold, and NoToneMapping (research explicitly rejects AgX/ACES — it would silently re-grade locked hues). Stay WebGL2 (3d-force-graph blocks WebGPU; no perf problem at 17k nodes). Presentation only — honesty invariant untouched.
 **Requirements**: D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08, D-09, D-10, D-11, D-12, D-13, D-14, D-15, D-16, HAZE-IMPOSTOR, HOVER-DAMP (CONTEXT.md decisions + research-ranked techniques; no REQUIREMENTS.md IDs — v9.0 tracks the unrelated engine milestone)
 **Depends on:** Phase 57 (activity palette LOCKED); consumes .planning/research/viz-polish-2026.md
-**Plans:** 6/8 plans executed
+**Plans:** 7/8 plans executed
 
 Plans:
 **Wave 1**
@@ -1184,7 +1184,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 58-07-PLAN.md — Damped asymmetric hover + focus depth deepening (dim + fog) [wave 6]
+- [x] 58-07-PLAN.md — Damped asymmetric hover + focus depth deepening (dim + fog) [wave 6]
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
