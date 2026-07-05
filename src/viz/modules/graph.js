@@ -23,6 +23,8 @@ import {
   HULL_ROT_Z,
   CONTAIN_STRENGTH,
   HOVER_SCALE,
+  HOVER_LAMBDA,
+  HOVER_OVERSHOOT,
   nodeRelSize,
   SETTLE_BUDGET_MS,
   ALPHA_TEST_THRESHOLD,
@@ -669,6 +671,57 @@ export function initGraph(ctx) {
   // Seed positions so layout starts inside the brain volume
   seedNodePositions(allNodes, brainVol);
 
+  // ── Damped asymmetric hover (replaces the HOVER_SCALE snap) ─────────────
+  // Grows with a slight overshoot (HOVER_SCALE * HOVER_OVERSHOOT, one
+  // oscillation) then settles; shrinks back to 1 with pure damp, no
+  // overshoot. Frame-rate independent via THREE.MathUtils.damp, mirroring
+  // stats.js's updateIdleDrift dt clamp. `_hoverSettling` tracks only the
+  // small set of hovering/settling nodes (not all nodes), and a node is
+  // dropped once its scale is within epsilon of its true resting target.
+  const _hoverSettling = new Set();
+  let _lastHoverNow = null;
+
+  function setHoverTarget(node, target) {
+    if (!node || !node.__mesh) return;
+    node.__hoverTarget = target;
+    if (target > 1) node.__hoverOvershot = false; // fresh hover-enter gets a fresh overshoot phase
+    _hoverSettling.add(node);
+  }
+
+  if (typeof ctx.registerTick === 'function') {
+    ctx.registerTick((now) => {
+      if (!_hoverSettling.size) { _lastHoverNow = null; return; }
+      const dt = _lastHoverNow == null ? 1 / 60 : Math.min(0.1, (now - _lastHoverNow) / 1000);
+      _lastHoverNow = now;
+      for (const node of _hoverSettling) {
+        const mesh = node.__mesh;
+        if (!mesh) { _hoverSettling.delete(node); continue; }
+        const baseR = node.__baseR || 2;
+        const target = node.__hoverTarget || 1;
+        const current = mesh.scale.x / baseR;
+
+        // Grow leg: chase the overshoot peak first, then swap to the true
+        // target once close to it — the swap-while-still-elevated IS the
+        // one-oscillation settle-back. Shrink leg never overshoots.
+        let stepTarget = target;
+        if (target > 1 && !node.__hoverOvershot) {
+          const overshoot = HOVER_SCALE * HOVER_OVERSHOOT;
+          stepTarget = overshoot;
+          if (current >= overshoot - 0.01) node.__hoverOvershot = true;
+        }
+
+        const next = THREE.MathUtils.damp(current, stepTarget, HOVER_LAMBDA, dt);
+        mesh.scale.setScalar(next * baseR);
+
+        const settled = target === 1 || node.__hoverOvershot;
+        if (settled && Math.abs(next - target) < 0.002) {
+          mesh.scale.setScalar(target * baseR);
+          _hoverSettling.delete(node);
+        }
+      }
+    });
+  }
+
   // ── ForceGraph3D init ──────────────────────────────────────────────────
   // nodeVisibility / linkVisibility read ctx lazily so lod.js callbacks are
   // picked up even if initLod ran first and set them synchronously.
@@ -687,21 +740,17 @@ export function initGraph(ctx) {
 
       if (!node) {
         tooltipEl.style.display = 'none';
-        if (ctx._hoveredNode && ctx._hoveredNode.__mesh) {
-          ctx._hoveredNode.__mesh.scale.setScalar(ctx._hoveredNode.__baseR || 2);
-        }
+        if (ctx._hoveredNode) setHoverTarget(ctx._hoveredNode, 1);
         ctx._hoveredNode = null;
         return;
       }
 
-      // Reset previously hovered scale
-      if (ctx._hoveredNode && ctx._hoveredNode !== node && ctx._hoveredNode.__mesh) {
-        ctx._hoveredNode.__mesh.scale.setScalar(ctx._hoveredNode.__baseR || 2);
+      // Reset previously hovered scale (damped, not a snap)
+      if (ctx._hoveredNode && ctx._hoveredNode !== node) {
+        setHoverTarget(ctx._hoveredNode, 1);
       }
       ctx._hoveredNode = node;
-      if (node.__mesh && node.__baseR) {
-        node.__mesh.scale.setScalar(node.__baseR * HOVER_SCALE);
-      }
+      setHoverTarget(node, HOVER_SCALE);
 
       // Tooltip: typographic label — a dim type·origin tag over a word-boundary
       // truncated title, instead of a raw 120-char text dump. textContent only —

@@ -635,3 +635,23 @@ export const FOCUS_ORBIT_MS = 300;
 /** D-06 dolly-in-phase gate (ms): held after the orbit phase before the
  *  focus sequence's final resting target has had time to settle. */
 export const FOCUS_DOLLY_MS = 600;
+
+// ============================================================================
+// Phase 58 — hover damp + focus depth (D-07, area 2 #1)
+// ============================================================================
+// Frame-rate-independent damped hover (graph.js's onNodeHover), asymmetric by
+// design: grow with a slight overshoot (one oscillation), shrink with none.
+// Plus the focus-depth deepening (detail.js applyFocusDim/clearFocusDim,
+// graph.js's scene fog) — a stronger non-neighbor dim and a tightened fog
+// near-plane while a node is focused, both restored on deselect. Feel
+// constants — UNLOCKED, tuned at the Stage-2 founder checkpoint (D-15).
+
+/** Exponential-damp smoothing rate for hover scale (THREE.MathUtils.damp,
+ *  graph.js registerTick). Same rate drives both the grow and shrink legs —
+ *  the asymmetry comes from the overshoot target swap, not a second lambda. */
+export const HOVER_LAMBDA = 10;
+
+/** Grow-leg overshoot peak, as a multiplier on HOVER_SCALE (~1.05 = one
+ *  subtle oscillation past the resting hover scale before settling back down
+ *  to it). Never applied on the shrink leg (hover-leave settles directly to 1). */
+export const HOVER_OVERSHOOT = 1.05;
