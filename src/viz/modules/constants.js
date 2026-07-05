@@ -620,3 +620,18 @@ export const CAM_POS_LAMBDA = 4;
  *  feel (RESEARCH Pitfall 4) with the new continuously-retargetable damp
  *  system. */
 export const CAM_LOOKAT_LAMBDA = 8;
+
+/** D-06 anticipation pull-back: fraction further from the dolly-in target the
+ *  camera nudges before committing to the orbit/dolly sequence (research
+ *  defaults land in the 3-5% range). */
+export const FOCUS_ANTICIPATION_PCT = 0.04;
+
+/** D-06 orbit-phase gate (ms): how long the orbit target is held before the
+ *  focus sequence advances to the dolly-in target. The damp system owns the
+ *  actual motion smoothing — this constant only gates WHEN the next target
+ *  is issued, not how the camera gets there. */
+export const FOCUS_ORBIT_MS = 300;
+
+/** D-06 dolly-in-phase gate (ms): held after the orbit phase before the
+ *  focus sequence's final resting target has had time to settle. */
+export const FOCUS_DOLLY_MS = 600;

@@ -915,16 +915,38 @@ export function initGraph(ctx) {
   // deterministically regardless of current pan/orbit (founder: restore Y/Z +
   // zoom/distance; X rotation doesn't matter). At boot (ms=0) target is already
   // origin, so this is visually identical to the prior framing call.
+  //
+  // D-05 (Phase 58 Plan 06): animated recenters (ms>0, i.e. #btn-recenter /
+  // detail.js closeDetail's unfocus) route through ctx.setCameraTarget — the
+  // shared damped camera system. The boot call (ms===0) runs INSIDE this same
+  // initGraph(ctx) call, BEFORE camera.js's initCamera(ctx) has had a chance
+  // to run (see app.js wiring order), so ctx.setCameraTarget does not exist
+  // yet at boot — drive Graph.cameraPosition directly there, byte-identical
+  // to the pre-migration framing. setCameraTarget requires a full {x,y,z}
+  // target (unlike the old accessor's partial-update semantics), so the
+  // animated branch merges the framing's explicit axes over the CURRENT
+  // camera position for whichever axis this framing doesn't specify (y for
+  // both branches; x for the full-window branch).
   function recenter(ms = 700) {
     const compact = Math.min(window.innerWidth, window.innerHeight) <= 500;
     // Pause idle drift around the transition so it lands (markActive). Skip at
     // boot (ms===0) to keep boot behavior unchanged.
     if (ms > 0 && ctx.markActive) ctx.markActive();
-    if (compact) {
-      const FRAME_X = -42;
-      Graph.cameraPosition({ x: FRAME_X, z: BRAIN_SCALE * 2.35 }, { x: FRAME_X, y: 0, z: 0 }, ms);
+    if (ms === 0 || typeof ctx.setCameraTarget !== 'function') {
+      if (compact) {
+        const FRAME_X = -42;
+        Graph.cameraPosition({ x: FRAME_X, z: BRAIN_SCALE * 2.35 }, { x: FRAME_X, y: 0, z: 0 }, 0);
+      } else {
+        Graph.cameraPosition({ z: BRAIN_SCALE * 2.2 }, { x: 0, y: 0, z: 0 }, 0);
+      }
     } else {
-      Graph.cameraPosition({ z: BRAIN_SCALE * 2.2 }, { x: 0, y: 0, z: 0 }, ms);
+      const cur = Graph.cameraPosition() || { x: 0, y: 0, z: 0 };
+      if (compact) {
+        const FRAME_X = -42;
+        ctx.setCameraTarget({ x: FRAME_X, y: cur.y, z: BRAIN_SCALE * 2.35 }, { x: FRAME_X, y: 0, z: 0 });
+      } else {
+        ctx.setCameraTarget({ x: cur.x, y: cur.y, z: BRAIN_SCALE * 2.2 }, { x: 0, y: 0, z: 0 });
+      }
     }
     if (ms > 0 && ctx.markActive) ctx.markActive();
   }
