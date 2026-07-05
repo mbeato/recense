@@ -565,3 +565,28 @@ export const TWINKLE_AMP        = 0.42;
  *  (alphaTest-style) rather than blended — keeps correct depth occlusion
  *  between overlapping radial-falloff quads without needing a depth sort. */
 export const ALPHA_TEST_THRESHOLD = 0.02;
+
+// ============================================================================
+// Phase 58 — schema labels (D-01..D-04, D-15)
+// ============================================================================
+// Diegetic troika-three-text SDF labels on the top-N highest-member-count
+// schema super-nodes (labels.js), depth-tested so opaque node meshes occlude
+// them naturally, faded in only on camera approach — the overview
+// constellation stays label-free.
+
+/** Number of top schemas (by member count, via ctx.schemaMembers) that get
+ *  an in-scene SDF label. A named tunable, not a magic number (D-02 scope). */
+export const LABEL_TOP_N = 30;
+
+/** World-space camera-to-node distance below which a label fades in (D-03
+ *  appear-on-approach). Provisional — Claude's Discretion, tuned against
+ *  detail.js's focus-camera offset (~300 units from a selected node, see
+ *  focusCamera()) vs. the overview camera distance (BRAIN_SCALE * 2.2 ≈ 1012
+ *  from the origin) — comfortably separates "approaching/focused on a node"
+ *  from "overview". Tune at the Stage-1 founder checkpoint (Plan 05). */
+export const LABEL_DISTANCE_THRESHOLD = 350;
+
+/** Schema-label slate color (D-03/D-15 locked family) — the same neutral
+ *  slate as KIND_COLOR.neutral; in-band luminance (tests/viz-activity-palette-
+ *  invariants.test.ts "D-15 label color lock"), never amber. */
+export const LABEL_COLOR = 0xaab3c4;

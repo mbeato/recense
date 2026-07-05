@@ -24,6 +24,7 @@ import { initStats }   from './stats.js';
 import { initHud }     from './hud.js';
 import { initLod }     from './lod.js';
 import { initGraph }   from './graph.js';
+import { initLabels }  from './labels.js';
 import { initEffects } from './effects.js';
 import { initTrace }   from './trace.js';
 import { initDetail }  from './detail.js';
@@ -218,6 +219,8 @@ const ctx = {
 //                          traceNodes, traceLinks, memberSchema, linkKey
 //   initGraph    creates:  Graph (reads nodeVisible/linkVis lazily via ctx closure)
 //                          hullGroup, pulseGroup
+//   initLabels   adds:     top-N schema SDF labels, appear-on-approach (reads
+//                          Graph, schemaMembers, registerTick — Phase 58 Plan 03)
 //   initEffects  adds:     bloom pass + Fresnel hull mesh (reads Graph, registerTick)
 //   initTrace    provides: applyTrace, activate, spawnPulse; registers its tick
 //   initDetail   provides: selectNode, closeDetail (reads THREE, adj, idMap)
@@ -226,6 +229,7 @@ initStats(ctx);
 initHud(ctx);
 initLod(ctx);
 initGraph(ctx);
+initLabels(ctx);   // Plan 58-03: top-N schema SDF labels — after initGraph/initLod
 initEffects(ctx);
 initTrace(ctx);
 initDetail(ctx);
