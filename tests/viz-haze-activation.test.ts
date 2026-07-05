@@ -65,6 +65,7 @@ vi.mock('three', () => {
   }
   class CylinderGeometry {}
   class SphereGeometry { constructor(_r?: number, _w?: number, _h?: number) {} }
+  class PlaneGeometry { constructor(_w?: number, _h?: number) {} dispose?() {} }
   class ShaderMaterial {
     uniforms: any = {};
     constructor(o: any) { this.uniforms = o?.uniforms ?? {}; }
@@ -91,7 +92,7 @@ vi.mock('three', () => {
     add(_m: any) {} remove(_m: any) {}
   }
   const AdditiveBlending = 2;
-  return { Color, Vector3, Quaternion, CylinderGeometry, SphereGeometry, ShaderMaterial, MeshBasicMaterial, Mesh, Group, AdditiveBlending };
+  return { Color, Vector3, Quaternion, CylinderGeometry, SphereGeometry, PlaneGeometry, ShaderMaterial, MeshBasicMaterial, Mesh, Group, AdditiveBlending };
 });
 
 // trace.js calls document.getElementById at module init time (D-102 test button wiring).

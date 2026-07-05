@@ -106,6 +106,10 @@ vi.mock('three', () => {
   }
 
   class SphereGeometry { constructor(_r?: number, _w?: number, _h?: number) {} }
+  // Phase 58: buildHazeLayer's module-scope _hazeQuadGeo constructs this at
+  // import time (graph.js top-level), so it must be mocked even though this
+  // test never exercises buildHazeLayer directly.
+  class PlaneGeometry { constructor(_w?: number, _h?: number) {} dispose?() {} }
   class MeshBasicMaterial {
     color = {}; transparent = false; depthWrite = true; opacity = 1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,7 +124,7 @@ vi.mock('three', () => {
   class Group { add(_m: any) {} remove(_m: any) {} }
   const AdditiveBlending = 2;
 
-  return { Euler, Matrix4, Vector3, SphereGeometry, MeshBasicMaterial, Mesh, Group, AdditiveBlending };
+  return { Euler, Matrix4, Vector3, SphereGeometry, PlaneGeometry, MeshBasicMaterial, Mesh, Group, AdditiveBlending };
 });
 
 // @ts-ignore — browser ESM; no type declarations

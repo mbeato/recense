@@ -25,6 +25,7 @@ import {
   HOVER_SCALE,
   nodeRelSize,
   SETTLE_BUDGET_MS,
+  ALPHA_TEST_THRESHOLD,
 } from './constants.js';
 
 // ─── Shared geometry (D-05) ──────────────────────────────────────────────────
@@ -444,7 +445,7 @@ function buildHazeLayer(ctx) {
   const hazeMat = new THREE.ShaderMaterial({
     uniforms: {
       hazeOpacity:        { value: HAZE_OPACITY * _hazeOpacityScale },
-      alphaTestThreshold:  { value: 0.02 }, // formalized as constants.js ALPHA_TEST_THRESHOLD in Task 2
+      alphaTestThreshold:  { value: ALPHA_TEST_THRESHOLD },
     },
     vertexShader: `
       varying vec2 vUv;
