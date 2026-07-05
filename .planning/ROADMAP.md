@@ -1152,3 +1152,62 @@ Plans:
 ## Backlog
 
 _(empty — no backlog items)_
+
+### Phase 58: Node Presentation & Motion Overhaul
+
+**Goal:** Nodes and interactions reach the July-2026 premium bar. Custom node presentation replaces default-orb feel per the research doc's ranked techniques: soft radial-falloff sprite impostors for the haze tier, matcap-mix on focus-tier nodes, SDF labels (troika) for schema super-nodes only; interaction motion gets a frame-rate-independent damped hover/selection grammar and two-phase orbit-then-dolly camera focus with interruptibility-as-a-rule. Everything stays cohesive with the LOCKED founder-approved desaturated palette, D-02 luminance band, 0.72 bloom threshold, and NoToneMapping (research explicitly rejects AgX/ACES — it would silently re-grade locked hues). Stay WebGL2 (3d-force-graph blocks WebGPU; no perf problem at 17k nodes). Presentation only — honesty invariant untouched.
+**Requirements**: D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08, D-09, D-10, D-11, D-12, D-13, D-14, D-15, D-16, HAZE-IMPOSTOR, HOVER-DAMP (CONTEXT.md decisions + research-ranked techniques; no REQUIREMENTS.md IDs — v9.0 tracks the unrelated engine milestone)
+**Depends on:** Phase 57 (activity palette LOCKED); consumes .planning/research/viz-polish-2026.md
+**Plans:** 2/8 plans executed
+
+Plans:
+**Wave 1**
+
+- [x] 58-01-PLAN.md — Vendor troika-three-text (+4 deps) + JetBrains Mono font + CDN-fallback patch (legitimacy gate) [wave 1]
+- [x] 58-02-PLAN.md — Soft-sprite haze impostors (billboard ShaderMaterial + alphaTest + raycast proxy) [wave 1]
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 58-03-PLAN.md — Diegetic SDF schema labels (top-N by member count, appear-on-approach) + LABEL_COLOR lock [wave 2]
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 58-04-PLAN.md — Focus-tier matcap mix (gen-matcap script + onBeforeCompile + damped fade) + 32-seg focus geo [wave 3]
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 58-05-PLAN.md — Stage-1 founder checkpoint: LOOK (haze + labels + matcap; troika keep/kill; no-CDN check) [wave 4]
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 58-06-PLAN.md — Unified damped interruptible camera system (orbit-then-dolly focus, transition re-drive) [wave 5]
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 58-07-PLAN.md — Damped asymmetric hover + focus depth deepening (dim + fog) [wave 6]
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 58-08-PLAN.md — Stage-2 founder checkpoint: MOTION (hover/flight/transition/dim-fog) + before/after fps [wave 7]
+
+### Phase 59: HUD Integration — visible-but-belong overlay
+
+**Goal:** The overlay chrome (search, topics, buttons, controls) stops feeling out of place and in the way: persistent but redesigned in the scene's own language — Liquid-Glass-style panels (blur + hairline specular, aubergine-tinted, no drop shadows on dark), auto-receding edge-docked rails, a vanilla-JS cmd-K palette unifying search/topics/settings access (~100 lines, no React dep), strict diegetic/screen-space split. Search stays functional but demoted (founder: brain-node search is occasional; human readability lives in the corpus view). Extend constants.js token discipline to the HUD CSS (anti-slop: no foreign palette ramps, protect amber-exclusivity). Absorbs pending todo viz-search-and-hull-quality (2026-06-12).
+**Requirements**: TBD
+**Depends on:** Phase 57 (palette); independent of Phase 58 (can run parallel)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 59 to break down)
+
+### Phase 60: Settings Stats Depth — usage + brain-health
+
+**Goal:** The settings surface grows two real dashboards replacing the bare usage readout. (1) Cost/usage: daily token burn, per-feature split (extract/judge/corpus_gen/schema_abstract), per-model, retail-$ equivalent, and before/after savings framing — all from token_usage_ledger (the 2026-07 thinking-off analysis, rendered live instead of hand-queried). (2) Brain-health: node growth over time, kind mix (facts/schemas/entities/docs), reconsolidations + tombstones per day, judge activity (fires, escalation rate), episodes pending vs consolidated, last sleep-pass time/duration/status. LLM-free queries only (online-path constraint); charts in the scene's design language per Phase 59 conventions. No research gate — ledger + graph schema already carry everything.
+**Requirements**: TBD
+**Depends on:** none hard; visually harmonizes with Phase 59 (soft dependency)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 60 to break down)
