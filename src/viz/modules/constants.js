@@ -590,3 +590,13 @@ export const LABEL_DISTANCE_THRESHOLD = 350;
  *  slate as KIND_COLOR.neutral; in-band luminance (tests/viz-activity-palette-
  *  invariants.test.ts "D-15 label color lock"), never amber. */
 export const LABEL_COLOR = 0xaab3c4;
+
+// ============================================================================
+// Phase 58 — focus matcap (D-09..D-12, D-15)
+// ============================================================================
+// Damped fade of the focus-tier matcap mix (detail.js, graph.js's
+// mat.userData.matcapMixUniform) toward 0 or 1 via THREE.MathUtils.damp — a
+// feel constant (D-15 UNLOCKED), not a correctness lock.
+
+/** Exponential-damp smoothing rate for the matcap mix fade-in/out (D-11). */
+export const MATCAP_MIX_LAMBDA = 8;
