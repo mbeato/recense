@@ -600,3 +600,23 @@ export const LABEL_COLOR = 0xaab3c4;
 
 /** Exponential-damp smoothing rate for the matcap mix fade-in/out (D-11). */
 export const MATCAP_MIX_LAMBDA = 8;
+
+// ============================================================================
+// Phase 58 — camera (D-05..D-08)
+// ============================================================================
+// One damped, interruptible camera-target system (camera.js) drives every
+// camera move — node focus (D-06 orbit-then-dolly), recenter/home framing,
+// the brain⇄corpus transition (D-08), and search fly-to (routes through
+// detail.js's selectNode, so it rides the same system for free). Feel
+// constants — UNLOCKED, tuned at the Stage-2 founder checkpoint (D-15).
+
+/** Exponential-damp smoothing rate for camera POSITION (THREE.MathUtils.damp,
+ *  camera.js registerTick). */
+export const CAM_POS_LAMBDA = 4;
+
+/** Exponential-damp smoothing rate for camera LOOKAT — deliberately higher
+ *  than CAM_POS_LAMBDA so the gaze settles on target before the body catches
+ *  up, reproducing the old tween-based accessor's "lookAt tweens at ms/3"
+ *  feel (RESEARCH Pitfall 4) with the new continuously-retargetable damp
+ *  system. */
+export const CAM_LOOKAT_LAMBDA = 8;

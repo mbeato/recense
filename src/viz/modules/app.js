@@ -24,6 +24,7 @@ import { initStats }   from './stats.js';
 import { initHud }     from './hud.js';
 import { initLod }     from './lod.js';
 import { initGraph }   from './graph.js';
+import { initCamera }  from './camera.js';
 import { initLabels }  from './labels.js';
 import { initEffects } from './effects.js';
 import { initTrace }   from './trace.js';
@@ -219,6 +220,9 @@ const ctx = {
 //                          traceNodes, traceLinks, memberSchema, linkKey
 //   initGraph    creates:  Graph (reads nodeVisible/linkVis lazily via ctx closure)
 //                          hullGroup, pulseGroup
+//   initCamera   provides: setCameraTarget — one damped-target camera system
+//                          driving focus/recenter/transition moves (reads
+//                          Graph, registerTick — Phase 58 Plan 06)
 //   initLabels   adds:     top-N schema SDF labels, appear-on-approach (reads
 //                          Graph, schemaMembers, registerTick — Phase 58 Plan 03)
 //   initEffects  adds:     bloom pass + Fresnel hull mesh (reads Graph, registerTick)
@@ -229,6 +233,7 @@ initStats(ctx);
 initHud(ctx);
 initLod(ctx);
 initGraph(ctx);
+initCamera(ctx);   // Plan 58-06: damped-target camera system — after initGraph, before initDetail/transition
 initLabels(ctx);   // Plan 58-03: top-N schema SDF labels — after initGraph/initLod
 initEffects(ctx);
 initTrace(ctx);

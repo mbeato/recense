@@ -1,0 +1,115 @@
+/**
+ * @module camera
+ * recense viz — one damped, interruptible camera-target system (Phase 58
+ * Plan 06, D-05).
+ *
+ * initCamera(ctx) implements:
+ *   - ctx.setCameraTarget(pos, lookAt) — retarget the damped camera. Every
+ *     other camera-driving module (detail.js focus, graph.js recenter,
+ *     transition.js pull-back/dive) calls this instead of
+ *     Graph.cameraPosition(pos, lookAt, ms>0) directly. Interruptible by
+ *     construction: calling it again mid-flight just changes what the tick
+ *     chases next frame — never queues, never jumps. Calls ctx.markActive()
+ *     so stats.js's idle camera drift never fights an in-flight retarget
+ *     (transition.js lesson 2).
+ *   - A ctx.registerTick callback that reads the current camera via the
+ *     verified no-arg `Graph.cameraPosition()` accessor (RESEARCH Pattern 1),
+ *     damps pos.{x,y,z} toward the target with CAM_POS_LAMBDA and
+ *     lookAt.{x,y,z} with CAM_LOOKAT_LAMBDA (deliberately higher — the gaze
+ *     settles before the body catches up, reproducing the old tween
+ *     accessor's lookAt/ms-3 feel, RESEARCH Pitfall 4), and writes back via
+ *     `Graph.cameraPosition(dampedPos, dampedLookAt, 0)` — the verified
+ *     SYNCHRONOUS branch, so this system never re-enters 3d-force-graph's own
+ *     internal TWEEN group (RESEARCH Anti-Pattern: two animators writing
+ *     camera.position in the same frame).
+ *   - Skips the write once both pos and lookAt have settled within
+ *     CAM_SETTLE_EPS of target, avoiding needless per-frame allocation once
+ *     converged.
+ *
+ * Exported pure helper (for unit testing without a live Graph/ctx):
+ *   stepCameraDamp({ THREE, cur, targetPos, curLookAt, targetLookAt, dt })
+ *
+ * @param {import('./constants.js').Ctx} ctx
+ */
+
+import { CAM_POS_LAMBDA, CAM_LOOKAT_LAMBDA } from './constants.js';
+
+/** Below this per-axis delta (world units), pos/lookAt are considered settled
+ *  and the per-frame write is skipped (avoids needless allocation once the
+ *  camera has converged on its target). */
+const CAM_SETTLE_EPS = 0.05;
+
+/**
+ * Pure damp step: given the current camera pos/lookAt and a target pos/
+ * lookAt, returns the next-frame damped values. No ctx/Graph/registerTick
+ * dependency — exported standalone so the damp math is unit-testable
+ * (tests/viz-camera-damp.test.ts) without a live three.js/Graph stack.
+ *
+ * @param {Object} args
+ * @param {{MathUtils: {damp: Function}}} args.THREE
+ * @param {{x:number,y:number,z:number}} args.cur
+ * @param {{x:number,y:number,z:number}} args.targetPos
+ * @param {{x:number,y:number,z:number}} args.curLookAt
+ * @param {{x:number,y:number,z:number}} args.targetLookAt
+ * @param {number} args.dt seconds since the last tick
+ * @returns {{pos:{x:number,y:number,z:number}, lookAt:{x:number,y:number,z:number}}}
+ */
+export function stepCameraDamp({ THREE, cur, targetPos, curLookAt, targetLookAt, dt }) {
+  const damp = THREE.MathUtils.damp;
+  return {
+    pos: {
+      x: damp(cur.x, targetPos.x, CAM_POS_LAMBDA, dt),
+      y: damp(cur.y, targetPos.y, CAM_POS_LAMBDA, dt),
+      z: damp(cur.z, targetPos.z, CAM_POS_LAMBDA, dt),
+    },
+    lookAt: {
+      x: damp(curLookAt.x, targetLookAt.x, CAM_LOOKAT_LAMBDA, dt),
+      y: damp(curLookAt.y, targetLookAt.y, CAM_LOOKAT_LAMBDA, dt),
+      z: damp(curLookAt.z, targetLookAt.z, CAM_LOOKAT_LAMBDA, dt),
+    },
+  };
+}
+
+/** True when every axis of `a` sits within `eps` of the matching axis of `b`. */
+function settled(a, b, eps) {
+  return Math.abs(a.x - b.x) < eps && Math.abs(a.y - b.y) < eps && Math.abs(a.z - b.z) < eps;
+}
+
+export function initCamera(ctx) {
+  if (!ctx.Graph || typeof ctx.Graph.cameraPosition !== 'function' || !ctx.registerTick) return;
+
+  // Seed the damped target from wherever the camera already sits (set by
+  // graph.js's boot-time recenter(0), which runs before this module inits —
+  // see app.js wiring order) so the very first tick is already settled.
+  const initial = ctx.Graph.cameraPosition(); // no-arg read: { x, y, z, lookAt }
+  let targetPos = { x: initial.x, y: initial.y, z: initial.z };
+  let targetLookAt = initial.lookAt
+    ? { x: initial.lookAt.x, y: initial.lookAt.y, z: initial.lookAt.z }
+    : { x: 0, y: 0, z: 0 };
+
+  ctx.setCameraTarget = (pos, lookAt) => {
+    targetPos = pos;
+    targetLookAt = lookAt;
+    if (typeof ctx.markActive === 'function') ctx.markActive(); // suppress idle drift (lesson 2)
+  };
+
+  let lastNow = null;
+
+  ctx.registerTick((now) => {
+    const dt = lastNow == null ? 1 / 60 : Math.min(0.1, (now - lastNow) / 1000);
+    lastNow = now;
+
+    const cur = ctx.Graph.cameraPosition();
+    if (!cur) return;
+    const curLookAt = cur.lookAt || { x: 0, y: 0, z: 0 };
+
+    if (settled(cur, targetPos, CAM_SETTLE_EPS) && settled(curLookAt, targetLookAt, CAM_SETTLE_EPS)) {
+      return; // already at target — skip the write
+    }
+
+    const { pos, lookAt } = stepCameraDamp({
+      THREE: ctx.THREE, cur, targetPos, curLookAt, targetLookAt, dt,
+    });
+    ctx.Graph.cameraPosition(pos, lookAt, 0); // ms=0 — the verified synchronous branch
+  });
+}
