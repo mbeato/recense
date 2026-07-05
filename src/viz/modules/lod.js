@@ -20,6 +20,8 @@
  *   expanded          — Set<schemaId>; schemas currently drilled-in by user
  *   traceNodes        — Set<nodeId>; nodes revealed by the active spreading-activation trace
  *   traceLinks        — Set<linkKey>; links revealed by the active trace
+ *   schemaMembers      — Map<schemaId, Set<memberId>>; built from 'abstracts' edges
+ *                        (Phase 58 Plan 03: labels.js top-N-by-member-count selection)
  *   memberSchema      — Map<memberId, schemaId>; inverse of 'abstracts' edges
  *   linkKey           — (link) → string; canonical '|'-delimited edge key
  *
@@ -291,6 +293,7 @@ export function initLod(ctx) {
   ctx.expanded          = expanded;
   ctx.traceNodes        = traceNodes;
   ctx.traceLinks        = traceLinks;
+  ctx.schemaMembers     = schemaMembers;   // Phase 58 Plan 03: labels.js top-N selection
   ctx.memberSchema      = memberSchema;
   ctx.linkKey           = linkKey;
   ctx.densityRevealed   = densityRevealed;   // member ids force-shown when sparse

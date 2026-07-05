@@ -252,3 +252,37 @@ describe('D-06 motion-profile SC3 ordering + D-05 dim floors', () => {
     });
   });
 });
+
+// =============================================================================
+// D-15 label color lock (Phase 58 Plan 03)
+// =============================================================================
+// labels.js's schema-label SDF text uses LABEL_COLOR — a standalone constant
+// (not part of KIND_COLOR), locked here with the same D-02 luminance-band
+// harness plus a non-amber-family check (D-03(b) reasoning: amber is a
+// warm-orange signature, R≈G>B; the label slate must stay cool, B>G>R).
+
+describe('D-15 label color lock', () => {
+  const constantsSrc = readConstantsJs();
+
+  /** Parse LABEL_COLOR's hex literal directly out of constants.js source text. */
+  function parseLabelColorHex(): number {
+    const match = constantsSrc.match(/export\s+const\s+LABEL_COLOR\s*=\s*0x([0-9a-fA-F]+)/);
+    expect(match, 'LABEL_COLOR not found in constants.js').not.toBeNull();
+    return parseInt(match![1]!, 16);
+  }
+
+  it('LABEL_COLOR computed luminance falls inside [Y_MIN, Y_MAX]', () => {
+    const y = relativeLuminance(parseLabelColorHex());
+    expect(y).toBeGreaterThanOrEqual(Y_MIN);
+    expect(y).toBeLessThanOrEqual(Y_MAX);
+  });
+
+  it('LABEL_COLOR is NOT amber-family (cool slate: B > G > R, opposite of amber R≈G>B)', () => {
+    const hex = parseLabelColorHex();
+    const r = (hex >> 16) & 0xff;
+    const g = (hex >> 8) & 0xff;
+    const b = hex & 0xff;
+    expect(b).toBeGreaterThan(g);
+    expect(g).toBeGreaterThan(r);
+  });
+});
