@@ -35,8 +35,15 @@
 import { Text } from '../vendor/troika/troika-three-text.esm.js';
 import { LABEL_TOP_N, LABEL_DISTANCE_THRESHOLD, LABEL_COLOR } from './constants.js';
 
-/** Vendored SDF label font (Plan 01) — relative to this module. */
-const FONT_URL = '../vendor/fonts/JetBrainsMono-Regular.ttf';
+/**
+ * Vendored SDF label font (Plan 01). Resolved to an absolute URL against
+ * THIS MODULE via import.meta.url — troika resolves plain relative font
+ * URLs against the document (its toAbsoluteURL uses an <a> element, since
+ * the actual fetch happens inside a blob-URL worker where module-relative
+ * resolution is impossible), so a bare '../vendor/...' string would only
+ * work while the page is served at the origin root.
+ */
+const FONT_URL = new URL('../vendor/fonts/JetBrainsMono-Regular.ttf', import.meta.url).href;
 
 /** Peak label opacity on approach (D-03: slate @ ~0.7 alpha). */
 const LABEL_TARGET_OPACITY = 0.7;
