@@ -22,7 +22,6 @@
 
 import {
   MAX_FAN_OUT, PULSE_MS, MATCAP_MIX_LAMBDA,
-  FOCUS_ANTICIPATION_PCT, FOCUS_ORBIT_MS, FOCUS_DOLLY_MS,
   FOCUS_DIM_OPACITY, FOCUS_FOG_NEAR,
 } from './constants.js';
 import { focusNodeGeometry, unfocusNodeGeometry } from './graph.js';
@@ -253,10 +252,6 @@ export function initDetail(ctx) {
 
   /** Remove the selection ring from the previous node and free its GPU resources. */
   function clearSelection() {
-    // Cancel any pending focus orbit/dolly phase timers (D-06) — a deselect
-    // mid-flight must not let a stale phase land its target after the fact.
-    clearFocusSequence();
-
     // Fade the previous focus set's matcap back out + restore its geometry
     // (D-11) — runs on every selection change and on close/deselect.
     clearNodeMatcap();
@@ -479,59 +474,28 @@ export function initDetail(ctx) {
     setTimeout(cleanup, 260);
   }
 
-  // ── D-06: orbit-then-dolly node focus, with an anticipation pull-back ─────
-  // Sequence: (a) pull-back — issued immediately, a small nudge FURTHER from
-  // the dolly target than wherever the camera currently sits; (b) orbit —
-  // issued after FOCUS_ORBIT_MS, rotates partway onto the dolly axis; (c)
-  // dolly-in — issued after a further FOCUS_DOLLY_MS, the final resting
-  // target (the original x+220/y+80/z+220 offset, D-06's geometric basis).
-  // All three phases are ctx.setCameraTarget calls — the shared damped system
-  // (camera.js, D-05) owns the actual motion smoothing; these two named
-  // constants only gate WHEN the next target is issued. focusTimers tracks
-  // the pending phase timeouts so a NEW focusCamera call (re-selecting mid-
-  // flight) cancels any stale phase still queued — interruptibility holds
-  // for the phase sequencing itself, not just the underlying damp.
-  const focusTimers = [];
-  function clearFocusSequence() {
-    for (const t of focusTimers) clearTimeout(t);
-    focusTimers.length = 0;
-  }
-
+  // ── Node focus: one continuous damped move to the focus pose ──────────────
+  // 58-08 Stage-2 second-round rejection: the prior orbit-then-dolly staged
+  // flight (anticipation pull-back → orbit → dolly, each its own
+  // ctx.setCameraTarget call gated by a phase timer) read as "2 repositions"
+  // and, because the phase timers kept re-issuing setCameraTarget mid-flight,
+  // could stomp a manual drag the instant it started. Replaced with a single
+  // setCameraTarget call to the final resting pose (the original x+220/
+  // y+80/z+220 offset) — the damped system (camera.js, D-05) glides there in
+  // one continuous move, and the 760b43b interrupt rule (OrbitControls
+  // 'start' releases the damp target; nothing re-arms it except an explicit
+  // programmatic setCameraTarget) holds throughout since no timer ever fires
+  // a second retarget.
   function focusCamera(node) {
     if (!ctx.Graph || typeof ctx.setCameraTarget !== 'function') return;
-    clearFocusSequence();
 
     const x = node.x || 0;
     const y = node.y || 0;
     const z = node.z || 0;
     const lookAt = { x, y, z };
-    // Dolly-in basis unchanged (D-06 keeps the existing offset-vector geometry)
     const dollyPos = { x: x + 220, y: y + 80, z: z + 220 };
 
-    const cur = (typeof ctx.Graph.cameraPosition === 'function' && ctx.Graph.cameraPosition()) || dollyPos;
-
-    // (a) Anticipation pull-back: nudge further from the dolly target along
-    // the current approach vector before committing (research defaults,
-    // 3-5% — FOCUS_ANTICIPATION_PCT).
-    const pullBackPos = {
-      x: cur.x - (dollyPos.x - cur.x) * FOCUS_ANTICIPATION_PCT,
-      y: cur.y - (dollyPos.y - cur.y) * FOCUS_ANTICIPATION_PCT,
-      z: cur.z - (dollyPos.z - cur.z) * FOCUS_ANTICIPATION_PCT,
-    };
-    // (b) Orbit: rotate onto the dolly axis at an intermediate distance.
-    const orbitPos = {
-      x: cur.x + (dollyPos.x - cur.x) * 0.6,
-      y: cur.y + (dollyPos.y - cur.y) * 0.6,
-      z: cur.z + (dollyPos.z - cur.z) * 0.6,
-    };
-
-    ctx.setCameraTarget(pullBackPos, lookAt);
-    focusTimers.push(setTimeout(() => {
-      ctx.setCameraTarget(orbitPos, lookAt);
-      focusTimers.push(setTimeout(() => {
-        ctx.setCameraTarget(dollyPos, lookAt);
-      }, FOCUS_DOLLY_MS));
-    }, FOCUS_ORBIT_MS));
+    ctx.setCameraTarget(dollyPos, lookAt);
   }
 
   /**
