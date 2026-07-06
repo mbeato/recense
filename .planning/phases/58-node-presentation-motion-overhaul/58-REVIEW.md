@@ -53,6 +53,8 @@ The first-party phase-58 code is generally solid: the camera interrupt logic, ho
 
 ### CR-01: Neutralized troika font-fallback never completes — labels with any glyph outside JetBrains Mono silently never render
 
+**Status:** fixed in cb52bc6 — second patch point added in resolveFallbacks' `.then` continuation (empty `fontUrls` → map fallback chars to font 0, load primary font if nothing resolved, `allDone()`); factory comment updated to note both sites; both sites pinned by `tests/viz-troika-fallback-patch.test.ts`.
+
 **File:** `src/viz/vendor/troika/troika-three-text.esm.js:463-471` (patch) and `:678-712` (unpatched consumer)
 **Issue:** The patched `getFontsForString` resolves with `{ fontUrls: [], chars: new Uint8Array(text.length) }`. The upstream consumer `resolveFallbacks` (lines 698-707) only ever calls `allDone()` from inside the `loadFont` callbacks of its `fontUrls.forEach(...)` loop:
 
@@ -95,6 +97,8 @@ Two compounding problems even if `allDone()` were reached: (a) the fallback rang
 
 ### WR-01: Schema selection silently reverts the D-07 fog tightening and haze recede
 
+**Status:** fixed in dd76003 — haze dim + fog tightening re-applied after the schema membership-dim loop.
+
 **File:** `src/viz/modules/detail.js:618-649`
 **Issue:** `selectNode` calls `applyFocusDim(node)` (dims node materials + `ctx.hazeMat` + tightens `fog.near` to `FOCUS_FOG_NEAR`), but the schema branch then calls `clearFocusDim()` (line 643) to swap neighborhood-dim for membership-dim — which *restores* `hazeMat.opacity` to `_baseOpacity` and `fog.near` to the resting value, then re-dims **only node materials** (lines 645-649). Net result: selecting a schema node gets neither the haze recede nor the D-07 fog depth cue that every other selection gets. Focus depth is one of this phase's two headline "focus" changes, so the inconsistency is user-visible on exactly the most prominent node class (schema super-nodes).
 **Fix:** After the membership-dim loop in the schema branch, re-apply the haze dim and fog tightening (or refactor `applyFocusDim` to accept a keep-set so both branches share one code path):
@@ -106,6 +110,8 @@ if (fog) { if (ctx._fogBaseNear == null) ctx._fogBaseNear = fog.near; fog.near =
 ```
 
 ### WR-02: Matcap fade never applies to members revealed by the same click (uniform not yet compiled)
+
+**Status:** fixed in 70dfa57 — activeMatcap stores target-only entries; the tick resolves the uniform lazily (pending until the material compiles; target-0 entries with no uniform dropped).
 
 **File:** `src/viz/modules/detail.js:157-162` (setMatcapTarget), `src/viz/modules/graph.js:153-173` (onBeforeCompile)
 **Issue:** `mat.userData.matcapMixUniform` is created inside `onBeforeCompile`, which three.js runs at the material's **first render**. On a schema drill-in click, graph.js adds the member meshes via `Graph.graphData(...)` and then `ctx.selectNode(node)` runs synchronously in the same handler — before the next frame renders. `setNodeMatcap` → `setMatcapTarget(neighbor, 1)` finds no `matcapMixUniform` on those freshly-created materials and silently drops them (line 161 `if (!uniform) return;`). Every 1-hop member revealed by the click therefore misses the "lit glass bead" treatment for that selection. The D-10 "silent no-op" comment covers haze nodes with *no mesh*; this case is real member nodes that will have the uniform one frame later.
@@ -127,11 +133,15 @@ for (const [node, entry] of activeMatcap) {
 
 ### WR-03: Label font URL is document-relative, not module-relative — works only by accident at the origin root
 
+**Status:** fixed in 5ae2fbe — FONT_URL now resolved to an absolute URL via `new URL('../vendor/fonts/...', import.meta.url).href` (robust under any serving subpath, stronger than the suggested document-relative form); comment corrected.
+
 **File:** `src/viz/modules/labels.js:38-39`
 **Issue:** `FONT_URL = '../vendor/fonts/JetBrainsMono-Regular.ttf'` is commented "relative to this module", but troika resolves font URLs against the **document**, not the importing module (`toAbsoluteURL` uses an `<a>` element — troika-three-text.esm.js:2013-2020 — because the actual fetch happens inside a blob-URL worker where module-relative resolution is impossible). It currently resolves to `/vendor/fonts/...` only because index.html is served at `/`, where the leading `../` collapses against the origin root. If the viz were ever served under a subpath (`/viz/`), labels' font would 404 while every other asset (all referenced as `./vendor/...`, e.g. graph.js:65's matcap) keeps working — a confusing partial breakage guaranteed by the wrong comment.
 **Fix:** `const FONT_URL = './vendor/fonts/JetBrainsMono-Regular.ttf';` and correct the comment to "document-relative (troika resolves against the page URL, not this module)".
 
 ### WR-04: Viz server serves the new .png/.ttf assets as text/plain
+
+**Status:** fixed in 944c11a — mime map extended with `.png → image/png` and `.ttf → font/ttf`.
 
 **File:** `src/viz/server.ts:192-197` (serveFile mime map); consumers `src/viz/modules/graph.js:65`, `src/viz/modules/labels.js:39`
 **Issue:** Phase 58 adds the first two non-JS/CSS/HTML assets served through `/vendor/*` (`focus-matcap.png`, `JetBrainsMono-Regular.ttf`), and `serveFile`'s mime map falls through to `text/plain` for both. The font survives because troika XHRs it as `arraybuffer` (mime ignored); the matcap survives only because `THREE.TextureLoader` → `<img>` decoding sniffs content regardless of `Content-Type`. That's two loads relying on browser leniency: adding `X-Content-Type-Options: nosniff` (a natural future hardening for this loopback server, and already the kind of header this codebase's threat-model work adds) would silently blank the matcap.
