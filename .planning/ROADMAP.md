@@ -1233,3 +1233,14 @@ Plans:
 Plans:
 
 - [ ] TBD (run /gsd-plan-phase 60 to break down)
+
+### Phase 61: Corpus Chrome — index column + project browsing
+
+**Goal:** The corpus view's chrome catches up to the Phase 59 HUD language and actually works for browsing. (1) Index column: redesign the corpus index/sidebar column so it reads in the same glass/token vocabulary as the Phase 59 chrome (founder verdict at the 59 D-15 checkpoint: current index column look is off). (2) Project browsing: fix the broken project-level browsing flow in the corpus view (founder verdict: "completely off") — navigating from a project to its docs and back should be the primary path (reader opens from corpus doc clicks, not standalone chrome — the rail reader icon was removed at the 59 checkpoint). Scope and exact defects to be captured via /gsd-discuss-phase 61 with the live install open.
+**Requirements**: TBD
+**Depends on:** Phase 59 (HUD token vocabulary + glass conventions; ships first)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-discuss-phase 61 then /gsd-plan-phase 61 to break down)
