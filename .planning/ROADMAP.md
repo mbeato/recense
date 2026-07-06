@@ -1199,11 +1199,28 @@ Plans:
 
 Plans:
 
+**Wave 1**
+
 - [ ] 59-01-PLAN.md — Token foundation: HUD_CSS_TOKENS + runtime CSS-var emission + @font-face + D-11/D-10 invariants
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 59-02-PLAN.md — Exhaustive CSS token migration (89 literals) + glass reskin of detail/settings/reader/tooltip + D-14 scan
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 59-03-PLAN.md — Vanilla ⌘K palette (Nodes BM25 / Topics / Commands, select-and-go) + search/topics/hud refactors
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 59-04-PLAN.md — Chrome shell: status chip + mid-right icon rail + left topics rail; delete old panel/search/dev-button DOM
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 59-05-PLAN.md — Auto-recede: idle + camera-flight + focus → opacity ghost; camera/stats state exposure
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 59-06-PLAN.md — Closing founder D-15 checkpoint on live install (glass + rails + palette + recede) + evidence record
 
 ### Phase 60: Settings Stats Depth — usage + brain-health
