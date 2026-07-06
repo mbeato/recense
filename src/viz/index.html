@@ -29,81 +29,93 @@
 <div id="graph"></div>
 
 <!-- Flat 2D Obsidian-style doc→doc corpus graph host (READER-04). Hidden by default;
-     the expanded-only #btn-corpus toggle shows it full-window (replacing the 3D brain)
+     the #rail-corpus toggle shows it full-window (replacing the 3D brain)
      and hides it again. Owned by modules/corpus.js (vendored 2D force-graph instance). -->
 <div id="corpus-graph"></div>
 
-<!-- Control strip / status surface — styled to recede by default (D-13) -->
-<div id="panel">
-  <div class="row status-row">
+<!-- Loading/error indicator (app.js) — standalone, independent of the D-01 chrome below -->
+<div id="detail-loading">Initializing graph…</div>
+
+<!-- Event log: hidden by default, now a palette command only (D-14 demoted surface) -->
+<div id="log"></div>
+
+<!-- D-01 status chip — top-left; scene center stays clear. SSE dot + live node count;
+     the node-type legend folds in on hover only, opacity/max-height, never pushing the
+     scene layout (D-02/D-09/D-13). Absorbs the old #panel status row + bottom-left legend. -->
+<div id="hud-chip">
+  <div class="hud-chip-status">
     <span id="sse-dot"></span>
     <span id="sse-label" class="lbl">connecting…</span>
-    <span class="count-wrap"><span class="sep">·</span>
+    <span class="count-wrap"><span class="hud-chip-sep">·</span>
       <span id="ncount" class="stat">—</span> <span class="lbl">nodes</span></span>
   </div>
-  <div class="row actions-row">
-    <button id="btn-tombstones">Show tombstones</button>
-    <button id="btn-reader" class="btn-sm">Reader</button>
-    <button id="btn-settings" class="btn-sm">Settings</button>
-    <button id="btn-log" class="btn-sm">Log</button>
+  <div class="hud-chip-legend">
+    <span class="dot dot-entity">●</span> entity&nbsp;
+    <span class="dot dot-fact">●</span> fact&nbsp;
+    <span class="dot dot-schema">●</span> schema
   </div>
-  <div id="detail-loading">Initializing graph…</div>
-  <!-- Search affordance — full-window only (D-03 / VIZ-07); CSS gates via .mode-window -->
-  <div id="search-wrap">
-    <div style="position:relative">
-      <input id="search-input" type="search" autocomplete="off"
-             placeholder="search nodes…" aria-label="Search nodes" />
-      <button id="search-clear" type="button" aria-label="Clear search"
-              style="display:none">×</button>
-    </div>
-    <div id="search-count" aria-live="polite"></div>
-    <!-- Incremental candidate list (VIZ-07 exploration) — populated as you type -->
-    <div id="search-results" role="listbox" aria-label="Search results"></div>
-  </div>
-  <!-- Topic browser — full-window only; broad entry point (VIZ-08 exploration) -->
-  <div id="topic-wrap">
-    <div id="topic-header">topics</div>
-    <div id="topic-list" role="listbox" aria-label="Topics"></div>
-  </div>
-  <!-- Event log: hidden by default, demoted to toggle (D-14) -->
-  <div id="log"></div>
 </div>
 
-<!-- Node type legend — discrete, bottom-left (founder, 2026-06-12) -->
-<div class="legend">
-  <span class="dot dot-entity">●</span> entity&nbsp;
-  <span class="dot dot-fact">●</span> fact&nbsp;
-  <span class="dot dot-schema">●</span> schema
+<!-- D-01/D-02 icon rail — mid-right, docked; one surface absorbing the old floating
+     corpus/recenter buttons plus the reader/settings toggles and the ⌘K search entry
+     point (D-03 single search surface). 5 icons max, inline outline SVG, currentColor
+     only — never amber (activation stays scene-reserved). -->
+<div id="hud-rail">
+  <button id="btn-reader" type="button" aria-label="Open reader" title="Open reader">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6" />
+      <line x1="8" y1="13" x2="16" y2="13" />
+      <line x1="8" y1="17" x2="16" y2="17" />
+      <line x1="8" y1="9" x2="10" y2="9" />
+    </svg>
+  </button>
+  <button id="btn-settings" type="button" aria-label="Open settings" title="Open settings">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  </button>
+  <!-- Corpus toggle (C1, 34-02): renamed from #btn-corpus into the rail (D-01/D-02
+       consolidation) — corpus.js's getElementById lookup + CSS follow this id. -->
+  <button id="rail-corpus" type="button" aria-label="Open corpus view" title="Open corpus view">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+    </svg>
+  </button>
+  <!-- Recenter camera (quick-260612-v79): renamed from #btn-recenter into the rail
+       (D-01/D-02 consolidation) — graph.js's getElementById lookup + CSS follow this id. -->
+  <button id="rail-recenter" type="button" aria-label="Recenter view" title="Recenter view">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <circle cx="12" cy="12" r="5" />
+      <line x1="12" y1="1" x2="12" y2="5" />
+      <line x1="12" y1="19" x2="12" y2="23" />
+      <line x1="1" y1="12" x2="5" y2="12" />
+      <line x1="19" y1="12" x2="23" y2="12" />
+    </svg>
+  </button>
+  <!-- Search magnifier (D-03 single search surface) — opens the ⌘K palette (hud.js wiring) -->
+  <button id="btn-search" type="button" aria-label="Search (⌘K)" title="Search (⌘K)">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  </button>
 </div>
 
-<!-- Corpus toggle — icon-only fixed button (C1, 34-02): top-level sibling of #btn-recenter,
-     expanded Brain Window only (CSS gate: display:none by default, shown under .mode-window).
-     Inline book SVG: no font/icon-lib dependency (net-zero rule). -->
-<button id="btn-corpus" type="button" aria-label="Corpus graph" title="Corpus">
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-  </svg>
-</button>
+<!-- D-01 topics rail — slim left-edge strip; expands on hover, rows populated by
+     topics.js (VIZ-08 schema browser), selection routes through ctx.selectNode. -->
+<div id="topics-rail"></div>
 
 <!-- Index sidebar host (WIKI-01): left sidebar docked over the corpus graph. Hidden by default;
      opens by default with the corpus view (corpus.js → ctx.openIndexSidebar). No toolbar button.
      The reopen handle (#index-reopen) is created by index.js and appended to the body. -->
 <div id="index-panel"></div>
-
-<!-- Recenter camera control (quick-260612-v79) — top-level, OUTSIDE #panel so
-     the compact `#panel { display:none }` rule never hides it. Inline crosshair
-     SVG: no font dependency, no external URL. -->
-<button id="btn-recenter" type="button" aria-label="Recenter camera" title="Recenter">
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-    <circle cx="12" cy="12" r="5" />
-    <line x1="12" y1="1" x2="12" y2="5" />
-    <line x1="12" y1="19" x2="12" y2="23" />
-    <line x1="1" y1="12" x2="5" y2="12" />
-    <line x1="19" y1="12" x2="23" y2="12" />
-  </svg>
-</button>
 
 <!-- Tap-to-dismiss layer behind the detail panel -->
 <div id="backdrop"></div>

@@ -78,7 +78,7 @@ await new Promise((resolve) => {
   document.head.appendChild(s);
 });
 
-// Tag the document so chrome (e.g. #btn-recenter) can align with each shell's
+// Tag the document so chrome (e.g. #rail-recenter) can align with each shell's
 // injected affordance: the popover (?shell=1) carries the expand button at
 // top:6/right:8 (26px); the promoted app window carries the collapse button at
 // top:10/right:12 (larger). Drives the context CSS in styles.css.
@@ -203,7 +203,7 @@ const ctx = {
     });
   },
 
-  showTombstones: false,  // toggled by hud.js initHud's btn-tombstones handler
+  showTombstones: false,  // toggled by hud.js's ctx.toggleTombstones (palette command)
 
   // Haze node ids temporarily promoted into the real graph by a focus-unhaze
   // (graph.js focusHazeNeighborhood) — getVisibleNodes/Links + lod.linkVis honor
@@ -244,7 +244,7 @@ initDetail(ctx);
 initSearch(ctx);  // Plan 19-01: after initDetail — reads ctx.activate, ctx.Graph, ctx.allNodes
 initTopics(ctx);  // Phase 19 exploration: topic browser — after initDetail (reads ctx.selectNode)
 initReader(ctx);  // Reader slice: doc overlay; fact-refs call ctx.selectNode (after initDetail)
-initCorpus(ctx);    // READER-04: flat 2D Obsidian corpus graph (#btn-corpus full-window toggle)
+initCorpus(ctx);    // READER-04: flat 2D Obsidian corpus graph (#rail-corpus full-window toggle)
 initIndex(ctx);     // WIKI-01: browsable text index — left sidebar over the corpus (no toolbar button)
 initSettings(ctx);  // Phase 44-06: in-app cost-controls panel (D-02/D-03 — no IPC)
 initPalette(ctx);   // Phase 59 Plan 03: ⌘K palette — joins LAST, needs ctx.selectNode/

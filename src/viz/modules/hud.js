@@ -4,17 +4,17 @@
  *
  * initHud(ctx) implements:
  *   - ctx.logEvent(cat, msg)    — append timestamped entry to the event log
- *   - ctx.setSSEStatus(live)    — update the slim SSE dot/label (D-13)
+ *   - ctx.setSSEStatus(live)    — update the slim SSE dot/label, now homed in
+ *     #hud-chip (D-13, Phase 59 Plan 04 re-home)
  *   - Window error + unhandledrejection handlers with _lastErrMsg dedupe +
  *     visible toast/badge surfacing (D-14: errors never silent without devtools)
  *   - EventSource('/events') wiring: onopen/onerror → status + log;
  *     SSE 'trace' event → ctx.applyTrace(seeds) (D-102 SSE half)
- *   - Event-log toggle (hidden by default, btn-log reveals it) (D-14)
- *   - Tombstone toggle (btn-tombstones) re-applies graphData + updates node count
+ *   - Event log + tombstone view-filter — the old dev-button DOM is gone
+ *     (Phase 59 Plan 04); ctx.toggleLog()/ctx.toggleTombstones() (Plan 03) are
+ *     now the ONLY invocation path, called by the palette's Commands section
  *   - Toast element for visible error surfacing
- *   - ctx.toggleLog() / ctx.toggleTombstones() exposed (Phase 59 Plan 03): the
- *     palette's Commands section calls these directly; closure state and SSE
- *     wiring are unchanged, only the invocation site grows a second caller.
+ *   - Rail magnifier (#hud-rail search icon) → ctx.openPalette() (Phase 59 Plan 04)
  *
  * Security: logEvent uses textContent for log lines; node data is never injected
  * into innerHTML. Toast text set via textContent.
@@ -26,8 +26,7 @@ export function initHud(ctx) {
   const sseLabelEl = document.getElementById('sse-label');
   const ncountEl   = document.getElementById('ncount');
   const logEl      = document.getElementById('log');
-  const btnLog     = document.getElementById('btn-log');
-  const btnTomb    = document.getElementById('btn-tombstones');
+  const btnSearch  = document.getElementById('btn-search');
 
   // ── Toast element (created once, reused) ───────────────────────────────────
   const toastEl = document.createElement('div');
@@ -87,9 +86,10 @@ export function initHud(ctx) {
     showToast(m);
   });
 
-  // ── Event log toggle (D-14: demoted, hidden by default) ───────────────────
-  // ctx.toggleLog exposed (Phase 59 Plan 03) so the palette's "Show event log"
-  // command can invoke the same logic the (soon-demoted) #btn-log click used.
+  // ── Event log toggle (D-14: demoted, palette-only) ────────────────────────
+  // ctx.toggleLog (Phase 59 Plan 03) is now the ONLY invocation path — its old
+  // dev-toggle DOM button was deleted in Plan 04; the palette's "Show event
+  // log" command calls this directly.
   function toggleLog() {
     if (!logEl) return;
     const isHidden = logEl.style.display === '' || logEl.style.display === 'none';
@@ -97,21 +97,17 @@ export function initHud(ctx) {
   }
   ctx.toggleLog = toggleLog;
 
-  if (btnLog) {
-    btnLog.addEventListener('click', toggleLog);
-  }
-
   // ── Tombstone toggle ───────────────────────────────────────────────────────
   // Exposes ctx.showTombstones so getVisibleNodes (set by app.js) can read it.
   ctx.showTombstones = false;
 
-  // ctx.toggleTombstones exposed (Phase 59 Plan 03) so the palette's "Toggle
-  // tombstones" command can invoke the same logic the (soon-demoted)
-  // #btn-tombstones click used — closure state and re-render unchanged.
+  // ctx.toggleTombstones (Phase 59 Plan 03) is now the ONLY invocation path —
+  // its old dev-toggle DOM button was deleted in Plan 04; the palette's
+  // "Toggle tombstones" command calls this directly. Closure state and
+  // re-render logic unchanged.
   function toggleTombstones() {
     showTombstones = !showTombstones;
     ctx.showTombstones = showTombstones;
-    if (btnTomb) btnTomb.textContent = showTombstones ? 'Hide tombstones' : 'Show tombstones';
 
     // Re-apply graph data respecting tombstone state. Links MUST be filtered
     // alongside nodes: the force engine throws "node not found" for any link
@@ -136,8 +132,11 @@ export function initHud(ctx) {
   }
   ctx.toggleTombstones = toggleTombstones;
 
-  if (btnTomb) {
-    btnTomb.addEventListener('click', toggleTombstones);
+  // ── Rail magnifier → ⌘K palette (Phase 59 Plan 04, D-03 single search surface) ──
+  if (btnSearch) {
+    btnSearch.addEventListener('click', () => {
+      if (typeof ctx.openPalette === 'function') ctx.openPalette();
+    });
   }
 
   // ── SSE EventSource('/events') wiring (D-102 SSE half) ────────────────────

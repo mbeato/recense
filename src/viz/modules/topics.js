@@ -9,8 +9,9 @@
  * abstracts-members as a cohesive region and opens the detail panel — so topic
  * membership stays engine-served (SC2), not a client-side approximation.
  *
- * Full-window only (gated by .mode-window CSS on #topic-wrap); graceful no-op
- * when the topic DOM is absent (popover / detail-page modes).
+ * Left-edge slim rail, hover-expand (Phase 59 Plan 04, gated by the compact
+ * @media hide-list on #topics-rail); graceful no-op when the topics-rail DOM
+ * is absent (popover / detail-page modes).
  *
  * Data timing: app.js builds ctx.allNodes / ctx.idMap / ctx.adj before any
  * initX(ctx) call (top-level await on /graph), so the schema set is available
@@ -27,8 +28,7 @@
  */
 
 export function initTopics(ctx) {
-  const wrapEl = document.getElementById('topic-wrap');
-  const listEl = document.getElementById('topic-list');
+  const railEl = document.getElementById('topics-rail');
 
   // Resolve the edge endpoint id whether or not 3d-force-graph has replaced
   // string endpoints with node objects yet.
@@ -56,12 +56,12 @@ export function initTopics(ctx) {
       .sort((a, b) => b.count - a.count || (a.node.value || '').localeCompare(b.node.value || ''));
   };
 
-  if (!wrapEl || !listEl) return;  // graceful no-op (popover / detail-page)
+  if (!railEl) return;  // graceful no-op (popover / detail-page)
 
   const schemas = ctx.listTopics();
 
   function render() {
-    listEl.textContent = '';   // textContent '' clears children (T-10-12 safe)
+    railEl.textContent = '';   // textContent '' clears children (T-10-12 safe)
     for (const { node, count } of schemas) {
       const row = document.createElement('div');
       row.className = 'topic-row';
@@ -83,7 +83,7 @@ export function initTopics(ctx) {
         if (ctx.selectNode) ctx.selectNode(node);   // 19-02 region glow + detail
         if (ctx.markActive) ctx.markActive();
       });
-      listEl.appendChild(row);
+      railEl.appendChild(row);
     }
   }
 

@@ -709,7 +709,7 @@ export function initDetail(ctx) {
     clearFocusDim();
     hidePanel();
     // Closing a focused node also unframes it: fly the camera back to the
-    // default overview (same framing source as #btn-recenter). clearSelection +
+    // default overview (same framing source as #rail-recenter). clearSelection +
     // clearFocusDim already drop the ring + dim; recenter completes the unfocus.
     if (typeof ctx.recenter === 'function') ctx.recenter();
   }

@@ -7,7 +7,7 @@
  *   - GET /graph (no filter) still returns all nodes and all edges
  *   - GET /graph?type=doc with no doc nodes returns {nodes:[], links:[]}
  *   - Source assertions: type='doc' filter and kind='doc_link' filter present in server.ts
- *   - Source assertions: #btn-corpus in reader.js, index.html, styles.css (expanded-only gate)
+ *   - Source assertions: #rail-corpus in corpus.js, index.html, styles.css (D-01/D-02 rail gate)
  *
  * IMPORTANT: uses a TEMP throwaway DB; never touches ~/.config/recense/recense.db.
  * No live generation in tests — spawn is mocked.
@@ -301,13 +301,14 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).toContain("'doc_reference'");
   });
 
-  it('source: corpus.js owns #btn-corpus + 2D force-graph + /graph?type=doc fetch', () => {
+  it('source: corpus.js owns #rail-corpus + 2D force-graph + /graph?type=doc fetch', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/modules/corpus.js'),
       'utf8',
     );
-    // Corpus toggle button is owned here (moved out of reader.js)
-    expect(src).toContain('btn-corpus');
+    // Corpus toggle button is owned here (moved out of reader.js; renamed into the
+    // mid-right icon rail by Phase 59 Plan 04, D-01/D-02).
+    expect(src).toContain('rail-corpus');
     // Fetches the corpus data from the doc-only endpoint
     expect(src).toContain('/graph?type=doc');
     // Uses the vendored 2D force-graph library (NOT the 3D brain instance)
@@ -386,9 +387,10 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
       'utf8',
     );
     // The corpus logic was extracted to corpus.js; reader.js should not reference
-    // btn-corpus or swapToCorpus anymore.
+    // the corpus toggle button (any of its historical ids) or swapToCorpus.
     expect(src).not.toContain('swapToCorpus');
     expect(src).not.toContain("getElementById('btn-corpus')");
+    expect(src).not.toContain("getElementById('rail-corpus')");
   });
 
   it('source: app.js injects the vendored force-graph bundle and inits corpus', () => {
@@ -400,22 +402,22 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).toContain('initCorpus');
   });
 
-  it('source: index.html has #btn-corpus button and #corpus-graph container', () => {
+  it('source: index.html has #rail-corpus button and #corpus-graph container', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/index.html'),
       'utf8',
     );
-    expect(src).toContain('btn-corpus');
+    expect(src).toContain('rail-corpus');
     expect(src).toContain('corpus-graph');
   });
 
-  it('source: styles.css has expanded-only gate for #btn-corpus + corpus container', () => {
+  it('source: styles.css styles #rail-corpus inside the mid-right icon rail + corpus container', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../src/viz/css/styles.css'),
       'utf8',
     );
-    expect(src).toContain('#btn-corpus');
-    expect(src).toContain('.mode-window #btn-corpus');
+    expect(src).toContain('#rail-corpus');
+    expect(src).toContain('#hud-rail');
     expect(src).toContain('#corpus-graph');
   });
 

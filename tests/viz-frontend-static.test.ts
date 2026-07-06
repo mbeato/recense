@@ -114,7 +114,10 @@ describe('shell', () => {
 
   it('contains the full HTML chrome id skeleton', () => {
     expect(html).toContain('id="graph"');
-    expect(html).toContain('id="panel"');
+    // Phase 59 Plan 04: #panel was replaced by the D-01 chip/rail/topics-rail footprint.
+    expect(html).toContain('id="hud-chip"');
+    expect(html).toContain('id="hud-rail"');
+    expect(html).toContain('id="topics-rail"');
     expect(html).toContain('id="detail"');
     expect(html).toContain('id="tooltip"');
     expect(html).toContain('id="backdrop"');

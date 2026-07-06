@@ -6,7 +6,7 @@
  * vendored 2D `force-graph` library (window.ForceGraph, injected by app.js) on its own
  * `#corpus-graph` container — it does NOT swap data into the ForceGraph3D brain instance.
  *
- * Toggle behaviour (#btn-corpus, expanded-only per D-07):
+ * Toggle behaviour (#rail-corpus, in the mid-right icon rail per Phase 59 Plan 04):
  *   - First Corpus open: lazy-init the 2D ForceGraph instance, fetch /graph?type=doc,
  *     show #corpus-graph full-window, hide the 3D brain (#graph). Button reads "Brain".
  *   - Brain toggle: hide #corpus-graph, restore the 3D brain UNTOUCHED (no rebuild,
@@ -100,14 +100,14 @@ const NODE_R = 5;
 const MAX_ZOOM = 2.5;
 
 /**
- * Initialise the flat 2D corpus graph + #btn-corpus toggle.
+ * Initialise the flat 2D corpus graph + #rail-corpus toggle.
  * Lazy: the ForceGraph instance is only built on the first Corpus open.
  *
  * @param {Object} ctx shared viz context (provides Graph = the 3D brain instance,
  *   used only to read nothing — corpus is independent; we hide/show #graph directly).
  */
 export function initCorpus(ctx) {
-  const corpusBtn = document.getElementById('btn-corpus');
+  const corpusBtn = document.getElementById('rail-corpus');
   const container = document.getElementById('corpus-graph');
   const brainEl = document.getElementById('graph');
   if (!corpusBtn || !container) return;
@@ -544,16 +544,14 @@ export function initCorpus(ctx) {
     corpusBtn.innerHTML = ICON_BOOK;
     corpusBtn.classList.remove('corpus-active');
   }
-  // B3 + 39-02 re-verify: the brain HUD — the top-left status #panel (which contains topics +
-  // search) — is hidden in corpus view so it doesn't overlap the index sidebar that now docks
-  // top-left; restored in brain view. The bottom-left .legend is separate and stays.
+  // B3 + 39-02 re-verify (re-homed Phase 59 Plan 04): the brain HUD — the top-left status
+  // chip and the left-edge topics rail — is hidden in corpus view so it doesn't overlap the
+  // index sidebar that now docks top-left; restored in brain view.
   function setTopicsSearchHidden(hidden) {
-    const panel = document.getElementById('panel');
-    const topicWrap = document.getElementById('topic-wrap');
-    const searchWrap = document.getElementById('search-wrap');
-    if (panel) panel.style.display = hidden ? 'none' : '';
-    if (topicWrap) topicWrap.style.display = hidden ? 'none' : '';
-    if (searchWrap) searchWrap.style.display = hidden ? 'none' : '';
+    const chip = document.getElementById('hud-chip');
+    const topicsRail = document.getElementById('topics-rail');
+    if (chip) chip.style.display = hidden ? 'none' : '';
+    if (topicsRail) topicsRail.style.display = hidden ? 'none' : '';
   }
 
   function goToCorpus() {

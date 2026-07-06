@@ -134,7 +134,10 @@ export function initReader(ctx) {
   function show() {
     panel.classList.add('open');
     document.documentElement.classList.add('reader-open');
-    btn.textContent = 'Brain';
+    // Phase 59 Plan 04: #btn-reader is now an icon-only rail button (D-01/D-02) —
+    // update the accessible name/tooltip instead of overwriting the SVG icon.
+    btn.setAttribute('aria-label', 'Close reader');
+    btn.setAttribute('title', 'Close reader');
     if (!loaded) { load(); loaded = true; }
     // Graph focus on cited atoms is a BRAIN-only enhancement (READER-02): only
     // apply it when the reader was opened from the brain. When opened over the
@@ -145,7 +148,8 @@ export function initReader(ctx) {
   function hide() {
     panel.classList.remove('open');
     document.documentElement.classList.remove('reader-open');
-    btn.textContent = 'Reader';
+    btn.setAttribute('aria-label', 'Open reader');
+    btn.setAttribute('title', 'Open reader');
     if (openFrom === 'corpus') {
       // Opened in-place over the corpus (Fix B): closing returns to the corpus —
       // do NOT show the brain or lift its focus. The corpus stayed mounted
@@ -226,7 +230,7 @@ export function initReader(ctx) {
     show();
   };
 
-  // NOTE: the doc→doc corpus graph (READER-04, #btn-corpus) is a SEPARATE flat 2D
+  // NOTE: the doc→doc corpus graph (READER-04, #rail-corpus) is a SEPARATE flat 2D
   // Obsidian-style view owned by corpus.js — it is NOT a data-swap on the 3D brain.
   // reader.js only owns the prose reader + fact-ref→atom focus + this in-place opener.
 
