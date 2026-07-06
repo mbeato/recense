@@ -35,6 +35,14 @@ function readServer(): string {
   return fs.readFileSync(path.resolve(ROOT, 'src/viz/server.ts'), 'utf8');
 }
 
+function readCssTokensJs(): string {
+  return fs.readFileSync(path.resolve(ROOT, 'src/viz/modules/css-tokens.js'), 'utf8');
+}
+
+function readStylesCss(): string {
+  return fs.readFileSync(path.resolve(ROOT, 'src/viz/css/styles.css'), 'utf8');
+}
+
 /** Strip JSDoc inner lines and standalone comment lines before token assertions. */
 function stripComments(src: string): string {
   return src.split('\n').filter(line => !/^\s*(\*|\/\/)/.test(line)).join('\n');
@@ -284,5 +292,65 @@ describe('D-15 label color lock', () => {
     const b = hex & 0xff;
     expect(b).toBeGreaterThan(g);
     expect(g).toBeGreaterThan(r);
+  });
+});
+
+// =============================================================================
+// D-11 shared motion tokens + D-10 HUD token single source (Phase 59 Plan 01)
+// =============================================================================
+// HUD_CSS_TOKENS in constants.js is the single authored home for the glass/
+// radius/motion recipe (59-UI-SPEC.md); css-tokens.js's emitHudTokens() is
+// the sole JS→CSS consumer, injecting a runtime `:root` block. These locks
+// guard the D-11 motion-token values and the D-10 single-source rule: no
+// glass/radius/motion/ease token value may ever be re-declared as a hardcoded
+// literal in styles.css (--index-width is the one grandfathered exception,
+// predating this token system).
+
+/** Extract the HUD_CSS_TOKENS object-literal body out of constants.js source text. */
+function extractHudCssTokensBlock(constantsSrc: string): string {
+  const match = constantsSrc.match(/export\s+const\s+HUD_CSS_TOKENS\s*=\s*\{([\s\S]*?)\n\};/);
+  expect(match, 'HUD_CSS_TOKENS block not found in constants.js').not.toBeNull();
+  return match![1]!;
+}
+
+/** Parse a single HUD_CSS_TOKENS entry's string value directly out of its source text. */
+function parseHudToken(block: string, key: string): string {
+  const match = block.match(new RegExp(`'${key}':\\s*'([^']*)'`));
+  expect(match, `HUD_CSS_TOKENS['${key}'] not found`).not.toBeNull();
+  return match![1]!;
+}
+
+describe('D-11 shared motion tokens', () => {
+  const constantsSrc = readConstantsJs();
+  const block = extractHudCssTokensBlock(constantsSrc);
+
+  it('HUD_CSS_TOKENS declares ease-out-soft, motion-fast, motion-base, motion-slow', () => {
+    for (const key of ['ease-out-soft', 'motion-fast', 'motion-base', 'motion-slow']) {
+      expect(block).toMatch(new RegExp(`'${key}':`));
+    }
+  });
+
+  it("ease-out-soft equals 'cubic-bezier(0.22, 1, 0.36, 1)' (no bounce/overshoot)", () => {
+    expect(parseHudToken(block, 'ease-out-soft')).toBe('cubic-bezier(0.22, 1, 0.36, 1)');
+  });
+});
+
+describe('D-10 HUD token single source', () => {
+  const cssTokensSrc = readCssTokensJs();
+  const stylesSrc = readStylesCss();
+
+  it('css-tokens.js imports HUD_CSS_TOKENS from constants.js (single source)', () => {
+    expect(cssTokensSrc).toMatch(/import\s*\{\s*HUD_CSS_TOKENS\s*\}\s*from\s*['"]\.\/constants\.js['"]/);
+  });
+
+  it('css-tokens.js emits a :root block and does not re-declare a token value as its own literal', () => {
+    expect(cssTokensSrc).toMatch(/:root/);
+    expect(cssTokensSrc).not.toMatch(/--glass-bg-ambient:\s*rgba/);
+    expect(cssTokensSrc).not.toMatch(/--ease-out-soft:\s*cubic-bezier/);
+  });
+
+  it('styles.css does not hardcode a --glass-/--radius-/--motion-/--ease- custom-property declaration (runtime-injected only; --index-width grandfathered)', () => {
+    const declarations = stylesSrc.match(/--(?:glass|radius|motion|ease)-[a-z-]*\s*:/g) ?? [];
+    expect(declarations).toHaveLength(0);
   });
 });
