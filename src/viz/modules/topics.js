@@ -20,12 +20,15 @@
  * Security: T-10-12 — topic names + counts reach the DOM via textContent only.
  * Palette: amber appears only as a hover/active border tint on HTML chrome; the
  * node glow itself is a Three.js material change via ctx.selectNode/ctx.activate.
+ *
+ * ctx.listTopics() exposed (Phase 59 Plan 03): the schema-list builder as a
+ * reusable helper — palette.js's Topics section calls it instead of
+ * re-deriving schema membership client-side (SC2 honesty invariant).
  */
 
 export function initTopics(ctx) {
   const wrapEl = document.getElementById('topic-wrap');
   const listEl = document.getElementById('topic-list');
-  if (!wrapEl || !listEl) return;  // graceful no-op (popover / detail-page)
 
   // Resolve the edge endpoint id whether or not 3d-force-graph has replaced
   // string endpoints with node objects yet.
@@ -41,12 +44,21 @@ export function initTopics(ctx) {
     return n;
   }
 
+  // ── Shared schema-list builder (Phase 59 Plan 03) ──────────────────────────
+  // Exposed on ctx (before the DOM guard below) so the palette's Topics section
+  // reuses this exact filter/sort — never a client-approximated topic list.
   // Schema set from the raw payload field `type` (always present; __cat may not
   // be assigned until 3d-force-graph builds the node meshes). Skip tombstoned.
-  const schemas = (ctx.allNodes || [])
-    .filter(n => n.type === 'schema' && !n.tombstoned)
-    .map(n => ({ node: n, count: memberCount(n) }))
-    .sort((a, b) => b.count - a.count || (a.node.value || '').localeCompare(b.node.value || ''));
+  ctx.listTopics = function listTopics() {
+    return (ctx.allNodes || [])
+      .filter(n => n.type === 'schema' && !n.tombstoned)
+      .map(n => ({ node: n, count: memberCount(n) }))
+      .sort((a, b) => b.count - a.count || (a.node.value || '').localeCompare(b.node.value || ''));
+  };
+
+  if (!wrapEl || !listEl) return;  // graceful no-op (popover / detail-page)
+
+  const schemas = ctx.listTopics();
 
   function render() {
     listEl.textContent = '';   // textContent '' clears children (T-10-12 safe)

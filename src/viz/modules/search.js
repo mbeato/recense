@@ -14,6 +14,9 @@
  *   - #search-count shows "1 match" / "N matches" via textContent (T-10-12)
  *   - No-match / error states via the count line + ctx.showToast on fetch fail
  *   - ctx.clearSearch exposed for detail.js topic-region mutual exclusion
+ *   - ctx.searchNodes(query) exposed (Phase 59 Plan 03): the fetch/sequence-
+ *     guard core as a reusable async helper — palette.js's Nodes section
+ *     calls it instead of reimplementing the debounced /search fetch.
  *
  * Why no full-graph dim on each keystroke: dimming every node (O(allNodes)) on
  * every debounced input was heavy and visually jumpy. The candidate list is the
@@ -39,6 +42,38 @@ export function initSearch(ctx) {
   const clearBtn  = document.getElementById('search-clear');
   const countEl   = document.getElementById('search-count');
   const resultsEl = document.getElementById('search-results');
+
+  // ── Reusable fetch helper (Phase 59 Plan 03) ───────────────────────────────
+  // Exposed on ctx BEFORE the DOM guard below so palette.js's Nodes section
+  // keeps working once Plan 04 deletes #search-wrap/#search-results entirely —
+  // this fetch + sequence-guard logic does not depend on the DOM search box.
+  // Same mySeq===seq stale-response guard as runSearch() below, copied
+  // verbatim (its own counter — never called concurrently with runSearch in
+  // practice since only one search surface is active at a time).
+  let extSeq = 0;
+  ctx.searchNodes = async function searchNodes(query) {
+    const value = String(query || '').trim();
+    if (value.length < 2) return [];
+
+    const mySeq = ++extSeq;
+    let ids;
+    try {
+      const resp = await fetch('/search?q=' + encodeURIComponent(value));
+      if (!resp.ok) throw new Error('status ' + resp.status);
+      ids = await resp.json();
+    } catch (_) {
+      if (mySeq === extSeq && ctx.showToast) ctx.showToast('search unavailable — try again');
+      return [];
+    }
+    if (mySeq !== extSeq) return [];  // a newer call superseded this response
+
+    const nodes = [];
+    for (const id of (ids || [])) {
+      const node = ctx.idMap && ctx.idMap.get(id);
+      if (node) nodes.push(node);
+    }
+    return nodes;
+  };
 
   // Graceful no-op: popover / detail-page mode has no search DOM (D-03 / CSS gate).
   if (!wrapEl || !inputEl) return;
