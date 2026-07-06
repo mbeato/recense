@@ -60,7 +60,7 @@ describe('filterSection — score + sort + cap', () => {
 
   it('supports a getLabel extractor for non-string items', () => {
     const objs = [{ label: 'Open settings' }, { label: 'Recenter view' }];
-    const result = filterSection('recent', objs, 10, o => o.label);
+    const result = filterSection('recent', objs, 10, (o: { label: string }) => o.label);
     expect(result).toHaveLength(1);
     expect(result[0].label).toBe('Recenter view');
   });
