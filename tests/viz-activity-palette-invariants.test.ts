@@ -354,3 +354,140 @@ describe('D-10 HUD token single source', () => {
     expect(declarations).toHaveLength(0);
   });
 });
+
+// =============================================================================
+// D-14 CSS token discipline — exhaustive literal ban + amber-exclusivity +
+// backdrop-filter allow-list (Phase 59 Plan 02)
+// =============================================================================
+// Plan 02 migrated every deduped color literal in styles.css to a var(--token)
+// reference sourced from constants.js's HUD_CSS_TOKENS. These locks make that
+// discipline machine-checked over the WHOLE stylesheet: no raw hex/rgba color
+// literal may ever reappear (D-14-A), the sanctioned amber family stays
+// confined to its named token set (D-14-B, RESEARCH Pitfall 6 — this must
+// PASS against the migrated stylesheet, not blanket-ban amber), and
+// backdrop-filter (the glass-reskin marker) stays confined to the D-12
+// selector allow-list, explicitly excluding #tooltip (anti-slop item 1).
+
+/** Any color-bearing CSS declaration line carrying a raw hex/rgba literal
+ *  (not already resolved through var(--...)). --index-width is grandfathered
+ *  (Plan 01, predates this token system, not a content color). */
+const COLOR_PROP_RE = /(background|color|border|box-shadow|fill|stroke)[^:]*:[^;]*(#[0-9a-fA-F]{3,8}|rgba?\()/;
+
+function findRawColorLiteralLines(css: string): string[] {
+  return css
+    .split('\n')
+    .filter(line => !line.includes('--index-width'))
+    .filter(line => !line.includes('var(--'))
+    .filter(line => COLOR_PROP_RE.test(line));
+}
+
+/** Parse styles.css into flat {selector, body} rule blocks (comments stripped
+ *  first). Naive/non-nesting — correct for this codebase's plain CSS (no
+ *  SCSS-style nested rules); @media wrapper braces are dropped as unmatched
+ *  leftovers, which is fine since only the innermost rule blocks matter here. */
+function parseCssBlocks(css: string): { selector: string; body: string }[] {
+  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const blocks: { selector: string; body: string }[] = [];
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(noComments))) {
+    blocks.push({ selector: m[1]!.trim().replace(/\s+/g, ' '), body: m[2]! });
+  }
+  return blocks;
+}
+
+describe('D-14 CSS token discipline', () => {
+  const stylesSrc = readStylesCss();
+  const constantsSrc = readConstantsJs();
+
+  describe('D-14-A: literal ban — every color-bearing declaration resolves through var(--token)', () => {
+    it('zero raw hex/rgba literals remain in styles.css (excluding --index-width)', () => {
+      expect(findRawColorLiteralLines(stylesSrc)).toEqual([]);
+    });
+
+    it('RED-under-injection: a reintroduced raw literal is caught (gate-has-teeth proof)', () => {
+      const injected = stylesSrc.replace(
+        'background: var(--bg-scene);',
+        'background: #ff00ff;'
+      );
+      expect(injected).not.toBe(stylesSrc);
+      expect(findRawColorLiteralLines(injected).length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('D-14-B: amber-exclusivity — single named token family, no new literal', () => {
+    /** The sanctioned amber-family (rgba(217,160,92,*) / #d9a05c) — RESEARCH
+     *  Pitfall 6: confined to this small named token set (interfaces note
+     *  "a single named accent-amber-tint token (or a small named set)"). */
+    const AMBER_ALLOWED_KEYS = [
+      'accent-amber-solid',
+      'accent-amber-tint',
+      'accent-amber-tint-soft',
+      'accent-amber-tint-strong',
+    ];
+    const AMBER_VALUE_RE = /rgba\(\s*217,\s*160,\s*92|#d9a05c/i;
+
+    it('every HUD_CSS_TOKENS entry with an amber-family value is in the named allow-list', () => {
+      const block = extractHudCssTokensBlock(constantsSrc);
+      const entryRe = /'([a-z0-9-]+)':\s*'([^']*)'/g;
+      let m;
+      const amberKeys: string[] = [];
+      while ((m = entryRe.exec(block))) {
+        if (AMBER_VALUE_RE.test(m[2]!)) amberKeys.push(m[1]!);
+      }
+      expect(amberKeys.length).toBeGreaterThan(0);
+      for (const key of amberKeys) {
+        expect(AMBER_ALLOWED_KEYS).toContain(key);
+      }
+    });
+
+    it('styles.css contains zero raw amber-family literal (amber referenced only via var())', () => {
+      const rawAmberLines = stylesSrc
+        .split('\n')
+        .filter(line => AMBER_VALUE_RE.test(line) && !line.includes('var(--'));
+      expect(rawAmberLines).toEqual([]);
+    });
+  });
+
+  describe('D-14-C: backdrop-filter allow-list (D-12 glass surfaces only, never #tooltip)', () => {
+    /** D-12's exact glass-surface list (UI-SPEC anti-slop item 1): chip/rails/
+     *  topics-rail/#palette (not yet built — future plans) plus the currently-
+     *  built #panel (pre-rename "chip"), #detail, #settings-panel, #reader,
+     *  .toast. */
+    const ALLOWED_SELECTORS = new Set([
+      '#panel',
+      '#chip',
+      '.chip',
+      '#rail',
+      '.rail',
+      '#rails',
+      '.rails',
+      '#topics-rail',
+      '.topics-rail',
+      '#palette',
+      '#detail',
+      '#settings-panel',
+      '#reader',
+      '.toast',
+    ]);
+
+    const blocks = parseCssBlocks(stylesSrc);
+    const backdropBlocks = blocks.filter(b => /backdrop-filter\s*:/.test(b.body));
+
+    it('at least one rule block currently uses backdrop-filter (sanity — the recipe is applied)', () => {
+      expect(backdropBlocks.length).toBeGreaterThan(0);
+    });
+
+    it('every rule block using backdrop-filter is in the D-12 selector allow-list', () => {
+      for (const b of backdropBlocks) {
+        expect(ALLOWED_SELECTORS.has(b.selector), `unexpected backdrop-filter on selector: ${b.selector}`).toBe(true);
+      }
+    });
+
+    it('#tooltip rule block has zero backdrop-filter (Pitfall 1 — deliberate contrast-first exception)', () => {
+      const tooltipBlock = blocks.find(b => b.selector === '#tooltip');
+      expect(tooltipBlock).toBeTruthy();
+      expect(tooltipBlock!.body).not.toMatch(/backdrop-filter/);
+    });
+  });
+});
