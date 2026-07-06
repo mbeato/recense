@@ -457,9 +457,13 @@ Original MIT license applies
 // fetch-then-catch explicitly re-tries the default CDN on failure). recense vendors everything and
 // must make zero runtime network calls (T-10-10), so this client is neutralized to a no-op:
 // getFontsForString(...) resolves immediately with no fallback fonts, so a genuinely uncovered
-// glyph renders as tofu/blank via the primary font instead of ever fetching. Schema names are
-// engine-derived ASCII/Latin, so the visible cost is ~zero. If this three.js chunk-style patch
-// point ever needs to change on a troika upgrade, this whole function body is the one to re-apply.
+// glyph renders as tofu/blank via the primary font instead of ever fetching. Label text is
+// arbitrary (schema names are LLM-extracted from user memory content), so uncovered glyphs
+// (emoji/CJK/RTL) ARE reachable in normal operation. NOTE: this neutralization requires a
+// SECOND patch point inside createFontResolver's resolveFallbacks below (search "PATCHED
+// continuation"): upstream only calls allDone() from inside per-fontUrl loadFont callbacks,
+// so an empty fontUrls array would otherwise never complete and permanently wedge that Text
+// instance's sync pipeline. On a troika upgrade, BOTH patch sites must be re-applied.
 function unicodeFontResolverClientFactory(){
   return {
     CodePointSet: function CodePointSet(){},
@@ -685,6 +689,33 @@ function createFontResolver(fontParser, unicodeFontResolverClient) {
           weight,
           dataUrl: unicodeFontsURL
         }).then(({fontUrls, chars}) => {
+          // PATCHED continuation (T-10-10, second patch point — see the
+          // unicodeFontResolverClientFactory comment above): the neutralized
+          // client always resolves with fontUrls = [], but the original code
+          // below only calls allDone() from inside the per-fontUrl loadFont
+          // callbacks, so an empty array would never complete and this Text
+          // instance's sync pipeline would wedge forever. With no fallback
+          // fonts, resolve every fallback char to font 0 (primary — uncovered
+          // glyphs render as tofu) and finish now. If nothing resolved to a
+          // user font at all (all-fallback text, e.g. pure emoji),
+          // fontResolutions is empty, so load the primary font first —
+          // otherwise typesetting would index an undefined font.
+          if (!fontUrls.length) {
+            fallbackRanges.forEach(range => {
+              for (let i = range[0]; i <= range[1]; i++) {
+                charResolutions[i] = 0;
+              }
+            });
+            if (!fontResolutions.length && userFonts.length) {
+              loadFont(userFonts[0].src, fontObj => {
+                fontResolutions[0] = fontObj;
+                allDone();
+              });
+            } else {
+              allDone();
+            }
+            return;
+          }
           // Extract results and put them back in the main array
           const fontIndexOffset = fontResolutions.length;
           let charIdx = 0;
