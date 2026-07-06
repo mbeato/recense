@@ -1195,11 +1195,16 @@ Plans:
 **Goal:** The overlay chrome (search, topics, buttons, controls) stops feeling out of place and in the way: persistent but redesigned in the scene's own language — Liquid-Glass-style panels (blur + hairline specular, aubergine-tinted, no drop shadows on dark), auto-receding edge-docked rails, a vanilla-JS cmd-K palette unifying search/topics/settings access (~100 lines, no React dep), strict diegetic/screen-space split. Search stays functional but demoted (founder: brain-node search is occasional; human readability lives in the corpus view). Extend constants.js token discipline to the HUD CSS (anti-slop: no foreign palette ramps, protect amber-exclusivity). Absorbs pending todo viz-search-and-hull-quality (2026-06-12).
 **Requirements**: TBD
 **Depends on:** Phase 57 (palette); independent of Phase 58 (can run parallel)
-**Plans:** 0 plans
+**Plans:** 6 plans
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 59 to break down)
+- [ ] 59-01-PLAN.md — Token foundation: HUD_CSS_TOKENS + runtime CSS-var emission + @font-face + D-11/D-10 invariants
+- [ ] 59-02-PLAN.md — Exhaustive CSS token migration (89 literals) + glass reskin of detail/settings/reader/tooltip + D-14 scan
+- [ ] 59-03-PLAN.md — Vanilla ⌘K palette (Nodes BM25 / Topics / Commands, select-and-go) + search/topics/hud refactors
+- [ ] 59-04-PLAN.md — Chrome shell: status chip + mid-right icon rail + left topics rail; delete old panel/search/dev-button DOM
+- [ ] 59-05-PLAN.md — Auto-recede: idle + camera-flight + focus → opacity ghost; camera/stats state exposure
+- [ ] 59-06-PLAN.md — Closing founder D-15 checkpoint on live install (glass + rails + palette + recede) + evidence record
 
 ### Phase 60: Settings Stats Depth — usage + brain-health
 
