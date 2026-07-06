@@ -203,7 +203,7 @@ const ctx = {
     });
   },
 
-  showTombstones: false,  // toggled by hud.js initHud's btn-tombstones handler
+  showTombstones: false,  // toggled by hud.js's ctx.toggleTombstones (palette command)
 
   // Haze node ids temporarily promoted into the real graph by a focus-unhaze
   // (graph.js focusHazeNeighborhood) — getVisibleNodes/Links + lod.linkVis honor
