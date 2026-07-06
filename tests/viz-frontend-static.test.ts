@@ -178,7 +178,12 @@ describe('css', () => {
   });
 
   it('sets the deep warm-aubergine background (Recense brand field, 2026-06-12)', () => {
-    expect(css).toMatch(/background\s*:\s*#170f1d/i);
+    // Phase 59 D-14: styles.css no longer hardcodes this literal — it references
+    // the single-authored token (constants.js HUD_CSS_TOKENS['bg-scene']), which
+    // css-tokens.js emits into :root at runtime.
+    expect(css).toMatch(/background\s*:\s*var\(--bg-scene\)/i);
+    const constantsSrc = fs.readFileSync(path.join(MODULES_DIR, 'constants.js'), 'utf8');
+    expect(constantsSrc).toMatch(/'bg-scene':\s*'#170f1d'/);
   });
 
   it('has no external CDN URLs in the stylesheet (T-10-10)', () => {

@@ -687,6 +687,109 @@ export const HUD_CSS_TOKENS = {
   'motion-base': '200ms',
   'motion-slow': '220ms',
   'recede-ghost-opacity': '0.12',
+
+  // ── D-14 exhaustive content-color catalog (Plan 02) ──────────────────────
+  // Every remaining deduped styles.css literal, semantic-named by role.
+  // Locked families only (aubergine/hairline/slate/amber) — no new saturated
+  // violet (anti-slop item 2).
+
+  // Scene surfaces
+  'bg-scene': '#170f1d',
+  'text-body': '#aab2bc',
+  'tooltip-bg': 'rgba(20, 14, 26, 0.93)',
+  'surface-btn-icon': 'rgba(26, 18, 32, 0.7)',
+  'surface-header-sticky': 'rgba(20, 14, 26, 0.97)',
+  'surface-index-panel': 'rgba(23, 15, 29, 0.97)',
+
+  // Text / neutral grays
+  'text-secondary': '#9a90a4',
+  'text-bright': '#e7dfec',
+  'text-heading-2': '#e0d6e8',
+  'text-heading-3': '#b9a9c4',
+  'text-detail-title': '#ccd2da',
+  'text-muted': '#565e68',
+  'text-muted-alt': '#6b5f73',
+  'text-dim': '#57505e',
+  'text-subtle': '#5a636e',
+  'text-body-mauve': '#a99db3',
+  'text-hover-slate': '#c8cfd8',
+  'text-bright-mauve': '#c8bcd0',
+  'text-mauve-rest': '#8b7090',
+  'text-body-reader': '#c2bac9',
+  'text-recede': '#9a8aa4',
+  'text-warm-neutral': '#d9cbc0',
+  'text-stat': '#7fae93',
+  'text-data-value': '#9aa4b0',
+  'text-log': '#454c56',
+  'text-hull-credit': '#2a2f37',
+  'text-conn-link': '#8a95a3',
+  'text-meta-diff-val': '#a08090',
+  'text-btn-regen': '#b0a0ba',
+  'text-settings-error': '#9a7080',
+  'text-doc-progress-label': '#8b7e95',
+  'text-settings-label': '#b9aec5',
+  'accent-toggle-mauve': '#8b8098',
+
+  // Amber family — the sanctioned exclusive exception (D-14-B allow-list, RESEARCH Pitfall 6)
+  'accent-amber-solid': '#d9a05c',
+  'accent-amber-tint': 'rgba(217, 160, 92, 0.45)',
+  'accent-amber-tint-soft': 'rgba(217, 160, 92, 0.14)',
+  'accent-amber-tint-strong': 'rgba(217, 160, 92, 0.5)',
+
+  // Pre-existing gold "active step" accent (Phase 34 doc-progress) — a distinct
+  // rgb triple from the canonical amber family above, not subject to D-14-B.
+  'accent-gold-active': '#c8a94a',
+  'accent-gold-active-fill': 'rgba(200, 169, 74, 0.55)',
+
+  // Node-type dot legend (mirrors TYPE_COLOR above, as CSS hex strings)
+  'type-entity': '#9c7080',
+  'type-fact': '#6d7890',
+  'type-schema': '#82698c',
+
+  // Rose family — stale/tombstone/destructive markers (never amber)
+  'rose-doc-ref': 'rgba(156, 112, 128, 0.6)',
+  'rose-stale-border': 'rgba(156, 112, 128, 0.85)',
+  'rose-stale-bg': 'rgba(156, 112, 128, 0.08)',
+  'rose-done-text': 'rgba(156, 112, 128, 0.75)',
+  'rose-done-fill': 'rgba(156, 112, 128, 0.42)',
+  'rose-missing-border': 'rgba(150, 90, 90, 0.6)',
+  'rose-tombstoned-border': 'rgba(150, 60, 60, 0.7)',
+
+  // Error / destructive red
+  'error-text': '#f08080',
+  'error-bg': 'rgba(220, 60, 60, 0.14)',
+  'error-border': 'rgba(220, 60, 60, 0.38)',
+  'error-badge-bg': 'rgba(220, 60, 60, 0.18)',
+  'error-badge-border': 'rgba(220, 60, 60, 0.48)',
+
+  // Hairline / input / scrollbar family (rgba(170,150,180,*) + rgba(140,150,165,*))
+  'input-bg': 'rgba(170, 150, 180, 0.07)',
+  'input-border': 'rgba(170, 150, 180, 0.18)',
+  'divider-faint': 'rgba(140, 150, 165, 0.11)',
+  'log-divider': 'rgba(140, 150, 165, 0.1)',
+  'section-divider-faint': 'rgba(140, 150, 165, 0.08)',
+  'scrollbar-thumb': 'rgba(170, 150, 180, 0.28)',
+  'scrollbar-thumb-hover': 'rgba(170, 150, 180, 0.45)',
+  'row-hover-bg': 'rgba(170, 150, 180, 0.08)',
+  'reader-hover-divider': 'rgba(170, 150, 180, 0.1)',
+  'settings-save-border': 'rgba(170, 150, 180, 0.25)',
+  'settings-save-hover-bg': 'rgba(140, 150, 165, 0.18)',
+  'settings-save-hover-border': 'rgba(170, 150, 180, 0.4)',
+  'index-search-focus-border': 'rgba(170, 150, 180, 0.5)',
+
+  // Warm-mauve hairline family (rgba(139,112,144,*)) — reader/settings/index chrome
+  'banner-bg': 'rgba(139, 112, 144, 0.09)',
+  'banner-border': 'rgba(139, 112, 144, 0.4)',
+  'btn-regen-bg': 'rgba(139, 112, 144, 0.14)',
+  'btn-regen-border': 'rgba(139, 112, 144, 0.35)',
+  'btn-regen-hover-bg': 'rgba(139, 112, 144, 0.24)',
+  'backlinks-hover-border': 'rgba(139, 112, 144, 0.7)',
+  'progress-track-bg': 'rgba(139, 112, 144, 0.13)',
+  'index-hairline': 'rgba(139, 112, 144, 0.22)',
+  'index-sidebar-divider': 'rgba(139, 112, 144, 0.18)',
+  'index-search-bg': 'rgba(139, 112, 144, 0.08)',
+  'index-search-focus-bg': 'rgba(139, 112, 144, 0.12)',
+  'index-heading-divider': 'rgba(139, 112, 144, 0.2)',
 };
 
 /** Idle timer before ambient HUD chrome recedes (D-08). Provisional — ratcheted at D-15. */
