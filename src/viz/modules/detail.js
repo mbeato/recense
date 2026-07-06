@@ -647,6 +647,21 @@ export function initDetail(ctx) {
           n.__mat.opacity = FOCUS_DIM_OPACITY;
           dimmedNodes.push(n);
         }
+        // clearFocusDim() above also restored the haze opacity and fog
+        // near-plane that applyFocusDim set — re-apply both so a schema
+        // selection gets the same haze recede + D-07 fog depth cue as every
+        // other selection (only the node-dim keep set differs).
+        if (ctx.hazeMat) {
+          ctx.hazeMat.opacity = FOCUS_DIM_OPACITY;
+          ctx._hazeDimmed = true;
+        }
+        if (ctx.Graph && typeof ctx.Graph.scene === 'function') {
+          const fog = ctx.Graph.scene().fog;
+          if (fog) {
+            if (ctx._fogBaseNear == null) ctx._fogBaseNear = fog.near;
+            fog.near = FOCUS_FOG_NEAR;
+          }
+        }
       }
 
       // Focus-tier matcap (D-09/D-10/D-11/D-12): the node + its 1-hop
