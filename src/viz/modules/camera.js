@@ -112,6 +112,11 @@ export function initCamera(ctx) {
     if (typeof ctx.markActive === 'function') ctx.markActive(); // suppress idle drift (lesson 2)
   };
 
+  // Read-only in-flight signal (Phase 59 Plan 05, D-08/D-09): true whenever a
+  // programmatic move is currently driving the camera. hud-recede.js reads
+  // this to deepen the chrome recede during camera flights.
+  ctx.isCameraInFlight = () => active;
+
   // Release the damp target the instant the user manually orbits or zooms.
   // OrbitControls dispatches 'start' for both pointer-drag rotation/pan AND
   // wheel/pinch zoom, so one listener covers both cases (58-08 Stage-2
