@@ -199,10 +199,26 @@ export function initStats(ctx) {
   // update() applies no rotation — verified empirically), so we rotate the
   // camera position around the target's vertical axis ourselves each idle
   // frame. Stops instantly on interaction because the gate is ctx.isIdle().
+  //
+  // Also gated on ctx.isCameraInFlight() (camera.js, Phase 59 Plan 05):
+  // without this, a still-in-flight programmatic move (e.g. detail.js
+  // focus/closeDetail's recenter, CAM_POS_LAMBDA≈2s to settle) can outlast
+  // the 1200ms idle timeout, so this drift starts rotating cam.position
+  // WHILE camera.js's damp tick is still writing it back toward the fixed
+  // flight target every frame. The two writers fight every frame — camera.js
+  // pulls back toward target, drift immediately nudges away again — so the
+  // flight's settled() check (camera.js) never converges within
+  // CAM_SETTLE_EPS, `active` wedges true forever, and the net motion reads as
+  // frozen (found live, 260706 founder report: rotation stuck after
+  // focus→unfocus, needing a manual drag+release — the drag's OrbitControls
+  // 'start' event is what actually unwedges `active`, incidentally "fixing"
+  // it). Waiting for isCameraInFlight() to clear lets the flight settle
+  // undisturbed, then drift resumes on its own — no drag required.
   const IDLE_ORBIT_RAD_PER_SEC = 0.08; // full orbit ≈ 80s — visibly ambient (founder: 0.02 read as static, 2026-06-12)
   let lastDriftNow = null;
   function updateIdleDrift(now) {
-    if (!ctx.isIdle()) { lastDriftNow = null; return; }
+    const inFlight = typeof ctx.isCameraInFlight === 'function' && ctx.isCameraInFlight();
+    if (!ctx.isIdle() || inFlight) { lastDriftNow = null; return; }
     const cam = ctx.Graph && typeof ctx.Graph.camera === 'function'
       ? ctx.Graph.camera()
       : null;
