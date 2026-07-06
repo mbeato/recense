@@ -179,7 +179,8 @@ const CSS_ROOT = path.resolve(VIZ_ROOT, 'css');
 
 /**
  * Serve a file from the filesystem with:
- *   - MIME type enforcement (.html → text/html, .js/.mjs → text/javascript, else text/plain)
+ *   - MIME type enforcement (.html → text/html, .js/.mjs → text/javascript,
+ *     .css → text/css, .png → image/png, .ttf → font/ttf, else text/plain)
  *   - 404 on read error
  */
 function serveFile(res: http.ServerResponse, fp: string): void {
@@ -194,6 +195,8 @@ function serveFile(res: http.ServerResponse, fp: string): void {
       ext === '.html' ? 'text/html' :
       (ext === '.js' || ext === '.mjs') ? 'text/javascript' :
       ext === '.css' ? 'text/css' :
+      ext === '.png' ? 'image/png' :
+      ext === '.ttf' ? 'font/ttf' :
       'text/plain';
     res.writeHead(200, { 'content-type': mime });
     res.end(buf);
