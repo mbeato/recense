@@ -37,6 +37,7 @@ import { initCorpus }    from './corpus.js';
 import { initIndex }     from './index.js';
 import { initSettings }  from './settings.js';
 import { initPalette }   from './palette.js';
+import { initHudRecede } from './hud-recede.js';
 
 // ── Spike 001: window.THREE MUST be set BEFORE injecting 3d-force-graph.min.js ─
 // The UMD bundle reads window.THREE at parse time to acquire the THREE namespace.
@@ -251,6 +252,9 @@ initPalette(ctx);   // Phase 59 Plan 03: ⌘K palette — joins LAST, needs ctx.
                      // ctx.searchNodes/ctx.listTopics/ctx.toggle*/ctx.openReader/
                      // ctx.openCorpus/ctx.recenter/ctx.isCorpusOpen/ctx.isReaderOpen
                      // all wired by the modules above
+initHudRecede(ctx); // Phase 59 Plan 05: chip/rail/topics-rail auto-recede — after the
+                    // chrome exists (Plan 04) and reads ctx.msSinceActive/
+                    // ctx.isCameraInFlight (Task 1 of this plan)
 
 // Clear bootstrap loading message now that modules are wired — but NOT when it
 // carries the load-error or empty-graph message set above (clearing those would

@@ -69,6 +69,14 @@ export function initStats(ctx) {
 
   ctx.isIdle = () => (performance.now() - lastActiveTime) > IDLE_TIMEOUT_MS;
 
+  // Raw elapsed-since-active (Phase 59 Plan 05, D-08): read-only export so a
+  // HUD-owned threshold (HUD_IDLE_TIMEOUT_MS) can be applied independently of
+  // this module's own IDLE_TIMEOUT_MS scene-drift threshold — do not conflate
+  // the two (RESEARCH Pitfall 2). Reuses the same lastActiveTime var, which
+  // markActive() (called by the existing global mousemove listener) already
+  // resets on every move.
+  ctx.msSinceActive = () => performance.now() - lastActiveTime;
+
   // ── Quality tier ──────────────────────────────────────────────────────────
   let currentTier = QualityTier.FULL;
 

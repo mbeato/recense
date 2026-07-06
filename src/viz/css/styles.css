@@ -675,6 +675,29 @@ button:hover {
 .topic-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topic-count { color: var(--text-muted); font-size: 10px; flex: none; }
 
+/* ── Auto-recede (Phase 59 Plan 05, D-08/D-09/D-10) — opacity-only, driven by
+   hud-recede.js. Idle-mouse / camera-flight / focus all fade the chip/rail/
+   topics-rail to a hairline ghost; hover always restores full presence.
+   #topics-rail's own hover-EXPAND (width) stays untouched here — recede only
+   ever animates opacity, never layout (D-09). ── */
+#hud-chip.hud-receded,
+#hud-rail.hud-receded,
+#topics-rail.hud-receded {
+  opacity: var(--recede-ghost-opacity);
+}
+/* Focus/detail-open deepens the recede with a quicker drop (D-10). */
+#hud-chip.hud-receded.hud-recede-fast,
+#hud-rail.hud-receded.hud-recede-fast,
+#topics-rail.hud-receded.hud-recede-fast {
+  transition: opacity var(--motion-fast) var(--ease-out-soft);
+}
+/* Hover always wins over recede — reaching for the chrome returns presence. */
+#hud-chip.hud-receded:hover,
+#hud-rail.hud-receded:hover,
+#topics-rail.hud-receded:hover {
+  opacity: 1;
+}
+
 /* ── Reader overlay (slice) ──────────────────────────────────────────────────
    Left-anchored reading column — the brain stays visible to the right, so the
    Reader/Brain toggle reads as two altitudes of one surface, not two apps. */
