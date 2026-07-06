@@ -104,9 +104,15 @@ export function initReader(ctx) {
   const panel = document.getElementById('reader');
   const body = document.getElementById('reader-body');
   const titleEl = document.getElementById('reader-title');
+  // #btn-reader was removed from the rail (59-06 founder checkpoint feedback —
+  // the reader is opened from the corpus view or the ⌘K palette's "Open reader"
+  // command, not from standalone rail chrome). btn is now optional: every use
+  // below is null-guarded so the rest of this module's functionality (ctx.openReader/
+  // ctx.closeReader/ctx.isReaderOpen, in-place open/close, corpus + palette entry
+  // points) is unaffected by its absence.
   const btn = document.getElementById('btn-reader');
   const closeBtn = document.getElementById('reader-close');
-  if (!panel || !body || !btn) return;
+  if (!panel || !body) return;
 
   // Provenance of the current reader open:
   //   'brain'  → opened from the 3D brain (the 27-03 hero path) — toggle/close
@@ -134,10 +140,13 @@ export function initReader(ctx) {
   function show() {
     panel.classList.add('open');
     document.documentElement.classList.add('reader-open');
-    // Phase 59 Plan 04: #btn-reader is now an icon-only rail button (D-01/D-02) —
+    // Phase 59 Plan 04: #btn-reader was an icon-only rail button (D-01/D-02) —
     // update the accessible name/tooltip instead of overwriting the SVG icon.
-    btn.setAttribute('aria-label', 'Close reader');
-    btn.setAttribute('title', 'Close reader');
+    // 59-06: the button was removed from the rail entirely; guard its absence.
+    if (btn) {
+      btn.setAttribute('aria-label', 'Close reader');
+      btn.setAttribute('title', 'Close reader');
+    }
     if (!loaded) { load(); loaded = true; }
     // Graph focus on cited atoms is a BRAIN-only enhancement (READER-02): only
     // apply it when the reader was opened from the brain. When opened over the
@@ -148,8 +157,10 @@ export function initReader(ctx) {
   function hide() {
     panel.classList.remove('open');
     document.documentElement.classList.remove('reader-open');
-    btn.setAttribute('aria-label', 'Open reader');
-    btn.setAttribute('title', 'Open reader');
+    if (btn) {
+      btn.setAttribute('aria-label', 'Open reader');
+      btn.setAttribute('title', 'Open reader');
+    }
     if (openFrom === 'corpus') {
       // Opened in-place over the corpus (Fix B): closing returns to the corpus —
       // do NOT show the brain or lift its focus. The corpus stayed mounted
@@ -162,7 +173,10 @@ export function initReader(ctx) {
     liftGraphFocus();
   }
 
-  btn.addEventListener('click', () => (panel.classList.contains('open') ? hide() : show()));
+  // 59-06: the rail toggle button is gone; the reader is now opened via
+  // corpus.js/index.js/detail.js's ctx.openReader() calls or the palette's
+  // "Open reader" command (which calls ctx.openReader() directly).
+  if (btn) btn.addEventListener('click', () => (panel.classList.contains('open') ? hide() : show()));
 
   // ── ctx exposure for the palette's D-06 view-switch (Phase 59 Plan 03) ──────
   // closeReader() wraps the EXISTING hide() verbatim — no change to its brain/
@@ -171,8 +185,9 @@ export function initReader(ctx) {
   ctx.closeReader = function closeReader() { hide(); };
   ctx.isReaderOpen = function isReaderOpen() { return panel.classList.contains('open'); };
 
-  // In-panel close: the open #reader panel covers #btn-reader, so the toggle is
-  // unreachable from inside the reader. The header × calls hide() (which lifts focus).
+  // In-panel close: the reader has no rail toggle to click again (59-06 removed
+  // it), so the header × is the only in-panel close affordance; it calls hide()
+  // (which lifts focus).
   if (closeBtn) closeBtn.addEventListener('click', () => hide());
 
   // Escape closes the reader when open (only when the reader has focus context —

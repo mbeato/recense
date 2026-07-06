@@ -57,20 +57,14 @@
 </div>
 
 <!-- D-01/D-02 icon rail — mid-right, docked; one surface absorbing the old floating
-     corpus/recenter buttons plus the reader/settings toggles and the ⌘K search entry
-     point (D-03 single search surface). 5 icons max, inline outline SVG, currentColor
-     only — never amber (activation stays scene-reserved). -->
+     corpus/recenter buttons plus the settings toggle and the ⌘K search entry
+     point (D-03 single search surface). 4 icons max, inline outline SVG, currentColor
+     only — never amber (activation stays scene-reserved). The reader is no longer
+     surfaced here (59-06 founder checkpoint feedback): a single doc is opened from
+     the corpus view by clicking a doc, not from standalone rail chrome. Reader
+     access is now the ⌘K palette's "Open reader" command only (reader.js itself is
+     unchanged — see its null-guarded #btn-reader lookup). -->
 <div id="hud-rail">
-  <button id="btn-reader" type="button" aria-label="Open reader" title="Open reader">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-      <path d="M14 3v6h6" />
-      <line x1="8" y1="13" x2="16" y2="13" />
-      <line x1="8" y1="17" x2="16" y2="17" />
-      <line x1="8" y1="9" x2="10" y2="9" />
-    </svg>
-  </button>
   <button id="btn-settings" type="button" aria-label="Open settings" title="Open settings">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
