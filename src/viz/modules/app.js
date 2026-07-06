@@ -36,6 +36,7 @@ import { initReader }  from './reader.js';
 import { initCorpus }    from './corpus.js';
 import { initIndex }     from './index.js';
 import { initSettings }  from './settings.js';
+import { initPalette }   from './palette.js';
 
 // ── Spike 001: window.THREE MUST be set BEFORE injecting 3d-force-graph.min.js ─
 // The UMD bundle reads window.THREE at parse time to acquire the THREE namespace.
@@ -246,6 +247,10 @@ initReader(ctx);  // Reader slice: doc overlay; fact-refs call ctx.selectNode (a
 initCorpus(ctx);    // READER-04: flat 2D Obsidian corpus graph (#btn-corpus full-window toggle)
 initIndex(ctx);     // WIKI-01: browsable text index — left sidebar over the corpus (no toolbar button)
 initSettings(ctx);  // Phase 44-06: in-app cost-controls panel (D-02/D-03 — no IPC)
+initPalette(ctx);   // Phase 59 Plan 03: ⌘K palette — joins LAST, needs ctx.selectNode/
+                     // ctx.searchNodes/ctx.listTopics/ctx.toggle*/ctx.openReader/
+                     // ctx.openCorpus/ctx.recenter/ctx.isCorpusOpen/ctx.isReaderOpen
+                     // all wired by the modules above
 
 // Clear bootstrap loading message now that modules are wired — but NOT when it
 // carries the load-error or empty-graph message set above (clearing those would

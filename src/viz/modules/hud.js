@@ -12,6 +12,9 @@
  *   - Event-log toggle (hidden by default, btn-log reveals it) (D-14)
  *   - Tombstone toggle (btn-tombstones) re-applies graphData + updates node count
  *   - Toast element for visible error surfacing
+ *   - ctx.toggleLog() / ctx.toggleTombstones() exposed (Phase 59 Plan 03): the
+ *     palette's Commands section calls these directly; closure state and SSE
+ *     wiring are unchanged, only the invocation site grows a second caller.
  *
  * Security: logEvent uses textContent for log lines; node data is never injected
  * into innerHTML. Toast text set via textContent.
@@ -85,45 +88,56 @@ export function initHud(ctx) {
   });
 
   // ── Event log toggle (D-14: demoted, hidden by default) ───────────────────
+  // ctx.toggleLog exposed (Phase 59 Plan 03) so the palette's "Show event log"
+  // command can invoke the same logic the (soon-demoted) #btn-log click used.
+  function toggleLog() {
+    if (!logEl) return;
+    const isHidden = logEl.style.display === '' || logEl.style.display === 'none';
+    logEl.style.display = isHidden ? 'block' : 'none';
+  }
+  ctx.toggleLog = toggleLog;
+
   if (btnLog) {
-    btnLog.addEventListener('click', () => {
-      if (!logEl) return;
-      const isHidden = logEl.style.display === '' || logEl.style.display === 'none';
-      logEl.style.display = isHidden ? 'block' : 'none';
-    });
+    btnLog.addEventListener('click', toggleLog);
   }
 
   // ── Tombstone toggle ───────────────────────────────────────────────────────
   // Exposes ctx.showTombstones so getVisibleNodes (set by app.js) can read it.
   ctx.showTombstones = false;
 
+  // ctx.toggleTombstones exposed (Phase 59 Plan 03) so the palette's "Toggle
+  // tombstones" command can invoke the same logic the (soon-demoted)
+  // #btn-tombstones click used — closure state and re-render unchanged.
+  function toggleTombstones() {
+    showTombstones = !showTombstones;
+    ctx.showTombstones = showTombstones;
+    if (btnTomb) btnTomb.textContent = showTombstones ? 'Hide tombstones' : 'Show tombstones';
+
+    // Re-apply graph data respecting tombstone state. Links MUST be filtered
+    // alongside nodes: the force engine throws "node not found" for any link
+    // whose endpoint was removed from the node array (app.js getVisibleLinks).
+    let visibleNodes;
+    if (typeof ctx.getVisibleNodes === 'function') {
+      // app.js sets getVisibleNodes to read ctx.showTombstones
+      visibleNodes = ctx.getVisibleNodes();
+    } else {
+      // Fallback: direct filter if getVisibleNodes not yet set
+      visibleNodes = (ctx.allNodes || []).filter(n => showTombstones || !n.tombstoned);
+    }
+    const visibleLinks = typeof ctx.getVisibleLinks === 'function'
+      ? ctx.getVisibleLinks()
+      : (ctx.allLinks || []);
+
+    if (ctx.Graph && typeof ctx.Graph.graphData === 'function') {
+      ctx.Graph.graphData({ nodes: visibleNodes, links: visibleLinks });
+    }
+    if (ncountEl) ncountEl.textContent = String(visibleNodes.length);
+    logEvent('hud', showTombstones ? 'tombstones shown' : 'tombstones hidden');
+  }
+  ctx.toggleTombstones = toggleTombstones;
+
   if (btnTomb) {
-    btnTomb.addEventListener('click', () => {
-      showTombstones = !showTombstones;
-      ctx.showTombstones = showTombstones;
-      btnTomb.textContent = showTombstones ? 'Hide tombstones' : 'Show tombstones';
-
-      // Re-apply graph data respecting tombstone state. Links MUST be filtered
-      // alongside nodes: the force engine throws "node not found" for any link
-      // whose endpoint was removed from the node array (app.js getVisibleLinks).
-      let visibleNodes;
-      if (typeof ctx.getVisibleNodes === 'function') {
-        // app.js sets getVisibleNodes to read ctx.showTombstones
-        visibleNodes = ctx.getVisibleNodes();
-      } else {
-        // Fallback: direct filter if getVisibleNodes not yet set
-        visibleNodes = (ctx.allNodes || []).filter(n => showTombstones || !n.tombstoned);
-      }
-      const visibleLinks = typeof ctx.getVisibleLinks === 'function'
-        ? ctx.getVisibleLinks()
-        : (ctx.allLinks || []);
-
-      if (ctx.Graph && typeof ctx.Graph.graphData === 'function') {
-        ctx.Graph.graphData({ nodes: visibleNodes, links: visibleLinks });
-      }
-      if (ncountEl) ncountEl.textContent = String(visibleNodes.length);
-      logEvent('hud', showTombstones ? 'tombstones shown' : 'tombstones hidden');
-    });
+    btnTomb.addEventListener('click', toggleTombstones);
   }
 
   // ── SSE EventSource('/events') wiring (D-102 SSE half) ────────────────────

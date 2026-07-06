@@ -418,6 +418,94 @@ button:hover {
   opacity: 1;
 }
 
+/* ── ⌘K command palette (Phase 59 Plan 03 / D-03..D-07) ──────────────────────
+   Window-mode only — the ⌘K keydown gating lives in palette.js (checks
+   .mode-window); this stylesheet gates the DOM itself out of the compact
+   popover below (Pitfall 7). Focused-tier glass (same recipe as #detail/
+   #settings-panel/#reader). Open/close is opacity-only (D-09/D-11 — no
+   top/left/width/height animated); the static translateX(-50%) below is
+   for centering only, never animated. */
+#palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  display: none;   /* transparent click-catcher, mirrors the existing #backdrop */
+}
+#palette-backdrop.open { display: block; }
+
+#palette {
+  position: fixed;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: none;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--glass-bg-focused);
+  border: 1px solid var(--glass-border-focused);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(var(--glass-blur-md));
+  box-shadow: var(--glass-specular);
+  opacity: 0;
+  transition: opacity var(--motion-slow) var(--ease-out-soft);
+}
+#palette.open {
+  display: block;
+  opacity: 1;
+}
+
+#palette-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border: none;
+  border-bottom: 1px solid var(--glass-border-focused);
+  background: transparent;
+  color: var(--text-bright);
+  font-family: 'JetBrains Mono HUD', monospace;
+  font-size: 13px;
+  outline: none;
+}
+#palette-input::placeholder { color: var(--text-muted); }
+
+#palette-results { padding: 8px 0 16px; }
+
+.palette-section-heading {
+  padding: 8px 16px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.palette-row {
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--text-body);
+  cursor: pointer;
+}
+.palette-row:hover { background: var(--row-hover-bg); }
+
+#palette-empty {
+  display: none;   /* palette.js toggles this inline based on total result count */
+  padding: 24px 16px;
+  text-align: center;
+}
+#palette-empty-heading {
+  font-size: 13px;
+  color: var(--text-bright);
+  margin-bottom: 4px;
+}
+#palette-empty-body {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .error-badge {
   display: inline-block;
   background: var(--error-badge-bg);
@@ -445,6 +533,10 @@ button:hover {
   .legend { display: none; }
   /* Recenter button stays visible at popover scale (quick-260612-v79) */
   #btn-recenter { display: flex; }
+  /* ⌘K palette never appears in the compact tray popover — glance-only, no
+     palette (hard out-of-scope, CONTEXT.md); the keydown gate in palette.js
+     never even arms outside .mode-window, this is the belt-and-suspenders DOM lock */
+  #palette, #palette-backdrop { display: none !important; }
   /* Detail panel must fit inside the small window */
   #detail {
     width: calc(100vw - 24px);

@@ -17,6 +17,10 @@
  * renderMarkdown is a PURE string→string function (no DOM) so it is unit-testable in node.
  * Module top-level is side-effect-free; all DOM access is inside initReader.
  *
+ * ctx.closeReader() / ctx.isReaderOpen() exposed (Phase 59 Plan 03): the
+ * palette's D-06 view-switch closes the reader before a node/topic fly-to so
+ * the damped camera never animates on a hidden brain canvas.
+ *
  * Security: all node/fact values go through escapeHtml before any innerHTML assignment
  * (T-10-12 / T-27-08). The only innerHTML assignment is renderMarkdown output (pure,
  * all user-supplied text escaped). Staleness banner count text and prev_value diff row
@@ -155,6 +159,13 @@ export function initReader(ctx) {
   }
 
   btn.addEventListener('click', () => (panel.classList.contains('open') ? hide() : show()));
+
+  // ── ctx exposure for the palette's D-06 view-switch (Phase 59 Plan 03) ──────
+  // closeReader() wraps the EXISTING hide() verbatim — no change to its brain/
+  // corpus branch logic or liftGraphFocus/returnToCorpus behaviour. isReaderOpen()
+  // is a pure read of the same open-state class hide()/show() already toggle.
+  ctx.closeReader = function closeReader() { hide(); };
+  ctx.isReaderOpen = function isReaderOpen() { return panel.classList.contains('open'); };
 
   // In-panel close: the open #reader panel covers #btn-reader, so the toggle is
   // unreachable from inside the reader. The header × calls hide() (which lifts focus).
