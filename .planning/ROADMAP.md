@@ -1195,13 +1195,13 @@ Plans:
 **Goal:** The overlay chrome (search, topics, buttons, controls) stops feeling out of place and in the way: persistent but redesigned in the scene's own language — Liquid-Glass-style panels (blur + hairline specular, aubergine-tinted, no drop shadows on dark), auto-receding edge-docked rails, a vanilla-JS cmd-K palette unifying search/topics/settings access (~100 lines, no React dep), strict diegetic/screen-space split. Search stays functional but demoted (founder: brain-node search is occasional; human readability lives in the corpus view). Extend constants.js token discipline to the HUD CSS (anti-slop: no foreign palette ramps, protect amber-exclusivity). Absorbs pending todo viz-search-and-hull-quality (2026-06-12).
 **Requirements**: TBD
 **Depends on:** Phase 57 (palette); independent of Phase 58 (can run parallel)
-**Plans:** 6 plans
+**Plans:** 1/6 plans executed
 
 Plans:
 
 **Wave 1**
 
-- [ ] 59-01-PLAN.md — Token foundation: HUD_CSS_TOKENS + runtime CSS-var emission + @font-face + D-11/D-10 invariants
+- [x] 59-01-PLAN.md — Token foundation: HUD_CSS_TOKENS + runtime CSS-var emission + @font-face + D-11/D-10 invariants
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
