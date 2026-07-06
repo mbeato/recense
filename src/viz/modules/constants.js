@@ -655,3 +655,61 @@ export const FOCUS_DIM_OPACITY = 0.035;
  *  deepening the read alongside the dim. Restored to BRAIN_SCALE * 1.8 on
  *  deselect (detail.js clearFocusDim). Provisional — Claude's Discretion. */
 export const FOCUS_FOG_NEAR = BRAIN_SCALE * 1.4;
+
+// ============================================================================
+// Phase 59 — HUD design tokens (D-11/D-14 single authored source)
+// ============================================================================
+// The glass/radius/motion recipe pinned in 59-UI-SPEC.md, exported as a plain
+// object so css-tokens.js's emitHudTokens() can build the runtime `:root`
+// CSS-custom-property block from it — the JS→CSS consumer of this single
+// authored source (mirrors server.ts's parseSchedulerScalars, but via native
+// ESM import, no regex). These values are provisional per D-08/D-09,
+// ratcheted at the D-15 checkpoint.
+
+/**
+ * HUD glass/radius/motion recipe — CSS-var suffix (no leading `--`) to value.
+ * @type {Record<string, string>}
+ */
+export const HUD_CSS_TOKENS = {
+  'glass-bg-ambient': 'rgba(26, 18, 32, 0.66)',
+  'glass-bg-focused': 'rgba(26, 18, 32, 0.90)',
+  'glass-blur-sm': '8px',
+  'glass-blur-md': '14px',
+  'glass-border': 'rgba(170, 150, 180, 0.12)',
+  'glass-border-focused': 'rgba(140, 150, 165, 0.16)',
+  'glass-specular': 'inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+  'radius-xs': '4px',
+  'radius-sm': '7px',
+  'radius-md': '11px',
+  'radius-lg': '12px',
+  'ease-out-soft': 'cubic-bezier(0.22, 1, 0.36, 1)',
+  'motion-fast': '120ms',
+  'motion-base': '200ms',
+  'motion-slow': '220ms',
+  'recede-ghost-opacity': '0.12',
+};
+
+/** Idle timer before ambient HUD chrome recedes (D-08). Provisional — ratcheted at D-15. */
+export const HUD_IDLE_TIMEOUT_MS = 4000;
+
+/** Target opacity for HUD chrome at rest/idle/focus-deepened (D-09). Provisional — ratcheted at D-15.
+ *  Kept in sync with HUD_CSS_TOKENS['recede-ghost-opacity'] (same 0.12 literal). */
+export const RECEDE_GHOST_OPACITY = 0.12;
+
+/** Palette input debounce (ms) — reuses search.js's existing DEBOUNCE_MS value verbatim. */
+export const PALETTE_DEBOUNCE_MS = 200;
+
+/** Palette Nodes-section result cap. */
+export const PALETTE_CAP_NODES = 8;
+
+/** Palette Topics-section result cap. */
+export const PALETTE_CAP_TOPICS = 6;
+
+/** Palette Commands-section result cap. */
+export const PALETTE_CAP_COMMANDS = 8;
+
+/** Palette z-index — above #settings-panel (41), below the tray-injected 70-tier. */
+export const PALETTE_Z_INDEX = 50;
+
+/** Palette backdrop z-index — just under the palette itself. */
+export const PALETTE_BACKDROP_Z_INDEX = 49;
