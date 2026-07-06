@@ -677,6 +677,14 @@ export const HUD_CSS_TOKENS = {
   'glass-blur-md': '14px',
   'glass-border': 'rgba(170, 150, 180, 0.12)',
   'glass-border-focused': 'rgba(140, 150, 165, 0.16)',
+  // #palette-only glass tuning (59-06 founder checkpoint feedback): the shared
+  // "focused" tier (glass-bg-focused/glass-blur-md, still used by #detail/
+  // #settings-panel/#reader) covered the scene too heavily for a centered
+  // overlay. Palette gets its own, more-transparent tier so the brain/graph
+  // reads through it while it stays centered (founder chose transparency over
+  // repositioning) — roughly half the focused-tier alpha, shallower blur.
+  'glass-bg-palette': 'rgba(26, 18, 32, 0.42)',
+  'glass-blur-palette': '8px',
   'glass-specular': 'inset 0 1px 0 rgba(255, 255, 255, 0.06)',
   'radius-xs': '4px',
   'radius-sm': '7px',

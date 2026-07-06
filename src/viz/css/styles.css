@@ -462,10 +462,13 @@ button:hover {
   max-width: calc(100vw - 32px);
   max-height: 60vh;
   overflow-y: auto;
-  background: var(--glass-bg-focused);
+  /* 59-06 founder checkpoint feedback: palette-only glass tier (more
+     transparent than the shared #detail/#settings-panel/#reader "focused"
+     tier) so the brain/graph reads through the centered panel. */
+  background: var(--glass-bg-palette);
   border: 1px solid var(--glass-border-focused);
   border-radius: var(--radius-lg);
-  backdrop-filter: blur(var(--glass-blur-md));
+  backdrop-filter: blur(var(--glass-blur-palette));
   box-shadow: var(--glass-specular);
   opacity: 0;
   transition: opacity var(--motion-slow) var(--ease-out-soft);
