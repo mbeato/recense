@@ -139,6 +139,21 @@
   <div id="reader-body"></div>
 </div>
 
+<!-- ⌘K command palette (Phase 59 Plan 03 / D-03..D-07): Nodes/Topics/Commands
+     unified behind one input. Hidden by default; window-mode only (CSS gate +
+     palette.js's own .mode-window keydown check, RESEARCH Pitfall 7). -->
+<div id="palette-backdrop"></div>
+<div id="palette">
+  <input id="palette-input" type="text" autocomplete="off"
+         placeholder="Search nodes, topics, commands…"
+         aria-label="Search nodes, topics, commands" />
+  <div id="palette-results" role="listbox" aria-label="Palette results"></div>
+  <div id="palette-empty">
+    <div id="palette-empty-heading">No matches</div>
+    <div id="palette-empty-body">Try a different search term, or press Esc to close.</div>
+  </div>
+</div>
+
 <!-- Floating hover tooltip -->
 <div id="tooltip"></div>
 
