@@ -144,21 +144,24 @@ export function initDetail(ctx) {
   /**
    * Focus-tier matcap fade (D-09/D-10/D-11): the currently focused node + its
    * 1-hop neighbors read as lit glass beads, damped 0->1 on focus and back
-   * out on deselect. Tracked as its own small Map (node -> {uniform, target})
+   * out on deselect. Tracked as its own small Map (node -> {target}; the
+   * uniform is resolved lazily in the tick, because onBeforeCompile only
+   * creates matcapMixUniform at the material's FIRST render — after the
+   * synchronous click handler that sets the target, so members revealed by
+   * the same click would otherwise be silently skipped)
    * — deliberately separate from dimmedNodes/applyFocusDim's keep set (which
    * uses schema-membership for a schema selection) so the selected node
    * always gets the matcap + 32-seg treatment regardless of dim mode.
-   * Never touches haze/overview nodes: a node with no mat.userData.
-   * matcapMixUniform (haze, or no __mesh yet) is a silent no-op (D-10).
+   * Never touches haze/overview nodes: a node whose material never compiles
+   * a matcapMixUniform (haze: no __mat) fades nothing — its entry stays
+   * inert until cleared on deselect (D-10).
    */
-  const activeMatcap = new Map(); // node -> { uniform, target }
+  const activeMatcap = new Map(); // node -> { target }
   let matcapFocusNodes = [];      // the node + neighbors currently targeted at 1
 
   function setMatcapTarget(node, target) {
-    const uniform = node && node.__mat && node.__mat.userData
-      && node.__mat.userData.matcapMixUniform;
-    if (!uniform) return;
-    activeMatcap.set(node, { uniform, target });
+    if (!node) return;
+    activeMatcap.set(node, { target });
   }
 
   /** Fade the focused node + 1-hop neighbors in (D-09/D-10/D-11, D-12). */
@@ -184,11 +187,22 @@ export function initDetail(ctx) {
       const dt = lastMatcapNow == null ? 1 / 60 : Math.min(0.1, (now - lastMatcapNow) / 1000);
       lastMatcapNow = now;
       for (const [node, entry] of activeMatcap) {
-        entry.uniform.value = ctx.THREE.MathUtils.damp(entry.uniform.value, entry.target, MATCAP_MIX_LAMBDA, dt);
+        // Resolve the uniform lazily: it only exists after the material's
+        // first render (onBeforeCompile), which is one frame AFTER the click
+        // handler that set the target for members revealed by that same
+        // click (schema drill-in). Until then the entry stays pending;
+        // target-0 entries with no uniform have nothing to fade out.
+        const uniform = node.__mat && node.__mat.userData
+          && node.__mat.userData.matcapMixUniform;
+        if (!uniform) {
+          if (entry.target === 0) activeMatcap.delete(node);
+          continue;
+        }
+        uniform.value = ctx.THREE.MathUtils.damp(uniform.value, entry.target, MATCAP_MIX_LAMBDA, dt);
         // Settled at 0 (deselected/faded-out): drop it so the tick stays
         // O(focused+neighbors), not O(allNodes).
-        if (entry.target === 0 && Math.abs(entry.uniform.value) < 0.002) {
-          entry.uniform.value = 0;
+        if (entry.target === 0 && Math.abs(uniform.value) < 0.002) {
+          uniform.value = 0;
           activeMatcap.delete(node);
         }
       }
