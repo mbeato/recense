@@ -5,6 +5,16 @@
    warm amber as the ONLY activation signal. Never reintroduce cyan/teal.
    ============================================================================ */
 
+/* Vendored JetBrains Mono (Regular/400 only) — instrument-panel readouts
+   (chip counter, palette input, rail state). Phase 59 D-11/UI-SPEC Typography.
+   No CDN: local file, matches labels.js's vendored-font discipline. */
+@font-face {
+  font-family: 'JetBrains Mono HUD';
+  src: url('../vendor/fonts/JetBrainsMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+
 /* ── Reset + layout skeleton ─────────────────────────────────────────────── */
 html, body {
   margin: 0;

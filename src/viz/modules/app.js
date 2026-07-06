@@ -20,6 +20,7 @@
  */
 
 import * as THREE from 'three';
+import { emitHudTokens } from './css-tokens.js';
 import { initStats }   from './stats.js';
 import { initHud }     from './hud.js';
 import { initLod }     from './lod.js';
@@ -229,6 +230,7 @@ const ctx = {
 //   initTrace    provides: applyTrace, activate, spawnPulse; registers its tick
 //   initDetail   provides: selectNode, closeDetail (reads THREE, adj, idMap)
 
+emitHudTokens();   // Phase 59 Plan 01: inject :root HUD token block before any styled DOM renders
 initStats(ctx);
 initHud(ctx);
 initLod(ctx);
