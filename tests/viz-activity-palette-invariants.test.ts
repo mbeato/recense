@@ -450,20 +450,14 @@ describe('D-14 CSS token discipline', () => {
   });
 
   describe('D-14-C: backdrop-filter allow-list (D-12 glass surfaces only, never #tooltip)', () => {
-    /** D-12's exact glass-surface list (UI-SPEC anti-slop item 1): chip/rails/
-     *  topics-rail/#palette (not yet built — future plans) plus the currently-
-     *  built #panel (pre-rename "chip"), #detail, #settings-panel, #reader,
-     *  .toast. */
+    /** D-12's exact glass-surface list (UI-SPEC anti-slop item 1): the D-01 status
+     *  chip/icon rail/topics rail (Phase 59 Plan 04 landed these as #hud-chip/
+     *  #hud-rail/#topics-rail, superseding the pre-rename #panel placeholder),
+     *  #palette, #detail, #settings-panel, #reader, .toast. */
     const ALLOWED_SELECTORS = new Set([
-      '#panel',
-      '#chip',
-      '.chip',
-      '#rail',
-      '.rail',
-      '#rails',
-      '.rails',
+      '#hud-chip',
+      '#hud-rail',
       '#topics-rail',
-      '.topics-rail',
       '#palette',
       '#detail',
       '#settings-panel',

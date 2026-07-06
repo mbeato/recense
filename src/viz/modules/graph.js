@@ -958,14 +958,14 @@ export function initGraph(ctx) {
   // frontal lobe at popover size. Passing lookAt also moves controls.target,
   // keeping the ambient idle rotation centered on the brain, not the origin.
   // recenter(ms) is the single framing source (quick-260612-v79): boot calls
-  // recenter(0) for the instant founder-tuned framing; #btn-recenter animates it.
+  // recenter(0) for the instant founder-tuned framing; #rail-recenter animates it.
   // `compact` is read at CALL time so it's correct in either viewport. The
   // explicit {0,0,0} lookAt resets controls.target so framing restores
   // deterministically regardless of current pan/orbit (founder: restore Y/Z +
   // zoom/distance; X rotation doesn't matter). At boot (ms=0) target is already
   // origin, so this is visually identical to the prior framing call.
   //
-  // D-05 (Phase 58 Plan 06): animated recenters (ms>0, i.e. #btn-recenter /
+  // D-05 (Phase 58 Plan 06): animated recenters (ms>0, i.e. #rail-recenter /
   // detail.js closeDetail's unfocus) route through ctx.setCameraTarget — the
   // shared damped camera system. The boot call (ms===0) runs INSIDE this same
   // initGraph(ctx) call, BEFORE camera.js's initCamera(ctx) has had a chance
@@ -1021,7 +1021,7 @@ export function initGraph(ctx) {
 
   // Always-visible recenter control (visible in compact popover where #panel is
   // display:none). graph.js owns framing — recenter is in scope, no ctx lookup.
-  const btnRecenter = document.getElementById('btn-recenter');
+  const btnRecenter = document.getElementById('rail-recenter');
   if (btnRecenter) btnRecenter.addEventListener('click', () => recenter());
 
   // ── Haze InstancedMesh raycasting (T3) ───────────────────────────────────
