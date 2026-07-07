@@ -14,12 +14,19 @@
  *     (transition.js lesson 2). Also re-arms the damp loop (see interrupt
  *     below) so a fresh programmatic move always takes over from wherever
  *     the camera currently sits.
- *   - A ctx.registerTick callback that reads the current camera via the
- *     verified no-arg `Graph.cameraPosition()` accessor (RESEARCH Pattern 1),
- *     damps pos.{x,y,z} toward the target with CAM_POS_LAMBDA and
- *     lookAt.{x,y,z} with CAM_LOOKAT_LAMBDA (deliberately higher — the gaze
- *     settles before the body catches up, reproducing the old tween
- *     accessor's lookAt/ms-3 feel, RESEARCH Pitfall 4), and writes back via
+ *   - A ctx.registerTick callback that reads the current camera position via
+ *     the verified no-arg `Graph.cameraPosition()` accessor (RESEARCH Pattern
+ *     1) but the current LOOK TARGET via `controls.target` directly — NOT
+ *     the accessor's `lookAt` field, which is a synthetic point 1000 world
+ *     units ahead along the camera's facing ray (vendor `h()` helper), only
+ *     coincidentally correct when the camera-to-target distance is ~1000
+ *     (260706 founder regression: for a node focus flight, ~321 units away,
+ *     this synthetic point never converges to the real target, so `active`
+ *     wedged true forever — see camera-in-flight tests). Damps pos.{x,y,z}
+ *     toward the target with CAM_POS_LAMBDA and lookAt.{x,y,z} with
+ *     CAM_LOOKAT_LAMBDA (deliberately higher — the gaze settles before the
+ *     body catches up, reproducing the old tween accessor's lookAt/ms-3 feel,
+ *     RESEARCH Pitfall 4), and writes back via
  *     `Graph.cameraPosition(dampedPos, dampedLookAt, 0)` — the verified
  *     SYNCHRONOUS branch, so this system never re-enters 3d-force-graph's own
  *     internal TWEEN group (RESEARCH Anti-Pattern: two animators writing
@@ -139,7 +146,22 @@ export function initCamera(ctx) {
 
     const cur = ctx.Graph.cameraPosition();
     if (!cur) return;
-    const curLookAt = cur.lookAt || { x: 0, y: 0, z: 0 };
+    // Read the REAL current gaze point from OrbitControls (`controls.target`)
+    // instead of `cur.lookAt`. The vendor no-arg cameraPosition() accessor
+    // synthesizes `lookAt` as camera.position + 1000*forwardUnitVector — a
+    // fixed-length-1000 point along the camera's facing ray, not the actual
+    // target — so it only coincidentally matches the real target when the
+    // camera-to-target distance happens to be ~1000 (never true for a node
+    // focus flight, ~321 units away). Comparing that synthetic point against
+    // targetLookAt in settled() below could never converge, so `active` wedged
+    // true forever after any focus/recenter flight (260706 founder regression
+    // — fd8f224's isCameraInFlight() gate in stats.js then waited forever on a
+    // flag that could never clear itself). `controls.target` is a live
+    // property (read fresh here, not a cached reference) and is exactly what
+    // the write path below sets, so this is the correct value to damp/settle.
+    const curLookAt = (controls && controls.target)
+      ? { x: controls.target.x, y: controls.target.y, z: controls.target.z }
+      : (cur.lookAt || { x: 0, y: 0, z: 0 });
 
     if (settled(cur, targetPos, CAM_SETTLE_EPS) && settled(curLookAt, targetLookAt, CAM_SETTLE_EPS)) {
       active = false; // reached target — release so a later manual interrupt is a no-op, not required
