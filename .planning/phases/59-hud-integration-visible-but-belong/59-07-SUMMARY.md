@@ -79,6 +79,15 @@ None - no external service configuration required.
 
 CR-01 is closed. `emitHudTokens()` now runs unconditionally before the `DETAIL_ID` branch, so both viz boot paths inject the HUD token block. The regression test fails if the call site ever moves back inside the else-arm or after the branch, locking this against silent regression. `npx tsc --noEmit -p .` clean; full suite green (2645 passed / 4 skipped, up from 2642/4 pre-plan — the 3 new tests all pass).
 
+## Self-Check: PASSED
+
+- FOUND: src/viz/modules/app.js
+- FOUND: tests/viz-detail-page-token-injection.test.ts
+- FOUND: .planning/phases/59-hud-integration-visible-but-belong/59-07-SUMMARY.md
+- FOUND: 9979ab7 (Task 1 commit)
+- FOUND: 415b0c5 (Task 2 commit)
+- FOUND: fa48261 (SUMMARY commit)
+
 ---
 *Phase: 59-hud-integration-visible-but-belong*
 *Completed: 2026-07-08*
