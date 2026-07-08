@@ -1195,7 +1195,7 @@ Plans:
 **Goal:** The overlay chrome (search, topics, buttons, controls) stops feeling out of place and in the way: persistent but redesigned in the scene's own language — Liquid-Glass-style panels (blur + hairline specular, aubergine-tinted, no drop shadows on dark), auto-receding edge-docked rails, a vanilla-JS cmd-K palette unifying search/topics/settings access (~100 lines, no React dep), strict diegetic/screen-space split. Search stays functional but demoted (founder: brain-node search is occasional; human readability lives in the corpus view). Extend constants.js token discipline to the HUD CSS (anti-slop: no foreign palette ramps, protect amber-exclusivity). Absorbs pending todo viz-search-and-hull-quality (2026-06-12).
 **Requirements**: TBD
 **Depends on:** Phase 57 (palette); independent of Phase 58 (can run parallel)
-**Plans:** 6/6 complete + 1 gap-closure plan (59-07)
+**Plans:** 7/7 plans complete
 
 Plans:
 
@@ -1225,7 +1225,7 @@ Plans:
 
 **Wave 7** *(gap closure — CR-01 from 59-VERIFICATION.md)*
 
-- [ ] 59-07-PLAN.md — Fix CR-01: relocate emitHudTokens() ahead of the DETAIL_ID branch so the /?detail=<id> tray detail window injects the :root token block (no longer unstyled) + regression test locking detail-path reachability
+- [x] 59-07-PLAN.md — Fix CR-01: relocate emitHudTokens() ahead of the DETAIL_ID branch so the /?detail=<id> tray detail window injects the :root token block (no longer unstyled) + regression test locking detail-path reachability
 
 ### Phase 60: Settings Stats Depth — usage + brain-health
 
