@@ -733,7 +733,7 @@ Plans:
 
 **Requirements:** none (no Phase-44 IDs in REQUIREMENTS.md; plans trace to locked decisions D-01..D-12 in 44-CONTEXT.md)
 
-**Plans:** 6/6 plans complete
+**Plans:** 6/6 complete + 1 gap-closure plan (59-07)
 
 - [x] 44-01-PLAN.md — Settings types + merge loader (settings.json, env>file>preset>DEFAULT precedence, D-12 core guardrail)
 - [x] 44-02-PLAN.md — Wire merged config into sleep-pass + ingest call sites (corpus-gen + schema-induction gating, env still wins)
@@ -755,7 +755,7 @@ Plans:
   2. When `ANTHROPIC_API_KEY` is present in `~/.claude/settings.json`, `init` blocks on an acknowledgement and `recense doctor` flags it as a failing dimension until resolved, and recense never edits that file
   3. `recense doctor` verifies the `claude` CLI is present + logged in, and no longer reports a missing Anthropic key as a failure under subscription mode
 
-**Plans:** 6/6 plans complete
+**Plans:** 6/6 complete + 1 gap-closure plan (59-07)
 
 Plans:
 **Wave 1**
@@ -1195,7 +1195,7 @@ Plans:
 **Goal:** The overlay chrome (search, topics, buttons, controls) stops feeling out of place and in the way: persistent but redesigned in the scene's own language — Liquid-Glass-style panels (blur + hairline specular, aubergine-tinted, no drop shadows on dark), auto-receding edge-docked rails, a vanilla-JS cmd-K palette unifying search/topics/settings access (~100 lines, no React dep), strict diegetic/screen-space split. Search stays functional but demoted (founder: brain-node search is occasional; human readability lives in the corpus view). Extend constants.js token discipline to the HUD CSS (anti-slop: no foreign palette ramps, protect amber-exclusivity). Absorbs pending todo viz-search-and-hull-quality (2026-06-12).
 **Requirements**: TBD
 **Depends on:** Phase 57 (palette); independent of Phase 58 (can run parallel)
-**Plans:** 6/6 plans complete
+**Plans:** 6/6 complete + 1 gap-closure plan (59-07)
 
 Plans:
 
@@ -1222,6 +1222,10 @@ Plans:
 **Wave 6** *(blocked on Wave 5 completion)*
 
 - [x] 59-06-PLAN.md — Closing founder D-15 checkpoint on live install (glass + rails + palette + recede) + evidence record
+
+**Wave 7** *(gap closure — CR-01 from 59-VERIFICATION.md)*
+
+- [ ] 59-07-PLAN.md — Fix CR-01: relocate emitHudTokens() ahead of the DETAIL_ID branch so the /?detail=<id> tray detail window injects the :root token block (no longer unstyled) + regression test locking detail-path reachability
 
 ### Phase 60: Settings Stats Depth — usage + brain-health
 
