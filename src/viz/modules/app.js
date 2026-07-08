@@ -45,6 +45,12 @@ import { initHudRecede } from './hud-recede.js';
 // find THREE and the canvas will be black / throw immediately.
 window.THREE = THREE;
 
+// Phase 59 Plan 07 (CR-01 fix): inject the :root HUD token block before the
+// DETAIL_ID branch splits, so BOTH the /?detail=<id> boot path and the
+// graph-boot path get themed — emitHudTokens does not touch window.THREE or
+// depend on the branch below, so relocating it earlier is safe (D-12).
+emitHudTokens();
+
 // ── Detail mode branch — /?detail=<id> renders the lean detail page ──────────
 const DETAIL_ID = new URLSearchParams(location.search).get('detail');
 
@@ -232,7 +238,6 @@ const ctx = {
 //   initTrace    provides: applyTrace, activate, spawnPulse; registers its tick
 //   initDetail   provides: selectNode, closeDetail (reads THREE, adj, idMap)
 
-emitHudTokens();   // Phase 59 Plan 01: inject :root HUD token block before any styled DOM renders
 initStats(ctx);
 initHud(ctx);
 initLod(ctx);
