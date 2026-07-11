@@ -65,6 +65,10 @@ import { buildHonestOneHopTrace, type HonestTraceReader } from '../retrieval/hon
 
 const POLL_MS = 250;  // polling interval for activation_trace SSE broadcast
 const SEARCH_LIMIT = 20;  // BM25 result cap for /search?q= endpoint (T-19-03)
+// GET /stats/brain-health last_sleep_pass (Phase 60, D-14): no persisted pass-boundary
+// record exists (No Analog Found), so a "batch" is approximated as every
+// consolidation_event row within this window of the most recent event.
+const BATCH_WINDOW_MS = 30 * 60_000; // 30 minutes
 
 // Names of the scheduler scalars authored ONLY in src/viz/modules/constants.js (D-10).
 // The server derives these values at startVizServer init via source-parse — see
@@ -509,6 +513,54 @@ export function startVizServer(
     FROM token_usage_ledger
     WHERE ts > ?
     GROUP BY model
+  `);
+
+  // Compile GET /stats/brain-health prepared statements once (Phase 60, D-13/D-14,
+  // T-44-18 read-only). node.created_at does not exist (D-13) — growth is
+  // reconstructed from node-birth consolidation_event rows (event_type in the
+  // node-creation set with a non-null node_id); the handler accumulates the
+  // per-day counts into a running total and flags the series `approximate: true`
+  // per D-13 (old events may have been pruned, so this is a lower bound).
+  const stmtNodeGrowthDaily = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date, COUNT(*) AS count
+    FROM consolidation_event
+    WHERE node_id IS NOT NULL
+      AND event_type IN ('schema_emitted', 'confirm', 'extend', 'contradict_append_new')
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtKindMix = db.prepare(`
+    SELECT type, COUNT(*) AS count FROM node WHERE tombstoned = 0 GROUP BY type
+  `);
+  const stmtReconsPerDay = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date, COUNT(*) AS count
+    FROM consolidation_event
+    WHERE event_type IN ('contradict_reconcile', 'contradict_force_destabilize', 'contradict_oscillation')
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtTombstonesPerDay = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date, COUNT(*) AS count
+    FROM consolidation_event
+    WHERE event_type IN ('contradict_reconcile', 'contradict_force_destabilize', 'schema_falsified')
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtJudgeFires = db.prepare(`
+    SELECT COUNT(*) AS count FROM token_usage_ledger WHERE feature_tag = 'judge'
+  `);
+  const stmtJudgeEscalated = db.prepare(`
+    SELECT COUNT(*) AS count FROM token_usage_ledger WHERE feature_tag = 'judge' AND model = ?
+  `);
+  const stmtEpisodesByConsolidated = db.prepare(`
+    SELECT consolidated, COUNT(*) AS count FROM episode GROUP BY consolidated
+  `);
+  // last_sleep_pass (D-14, No-Analog-Found): no persisted last-pass record exists.
+  // Approximate a "batch" as every consolidation_event row within BATCH_WINDOW_MS
+  // of the most recent event — honest best-effort, never a fabricated success flag.
+  const stmtLastEventMaxTs = db.prepare(`SELECT MAX(ts) AS maxTs FROM consolidation_event`);
+  const stmtLastEventBatchSpan = db.prepare(`
+    SELECT MIN(ts) AS minTs, MAX(ts) AS maxTs FROM consolidation_event WHERE ts >= ?
   `);
 
   // Compile /events polling statement once.
@@ -1441,6 +1493,77 @@ export function startVizServer(
           by_model: byModel,
           retail_usd: retailUsd,
           cost_event_deltas: costEventDeltas,
+        }));
+      } catch {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── GET /stats/brain-health (Phase 60, D-13/D-14) ─────────────────────────
+    // Six honest metric groups + a derived last-sleep-pass. Uses the read-only DB
+    // handle (T-44-18). Empty DB → zeroed groups, not error.
+    if (url === '/stats/brain-health') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'content-type': 'text/plain' });
+        res.end('method not allowed');
+        return;
+      }
+      try {
+        type DayCountRow = { date: string; count: number };
+
+        const growthRows = stmtNodeGrowthDaily.all() as DayCountRow[];
+        let cumulative = 0;
+        const growthPoints = growthRows.map((r) => {
+          cumulative += r.count;
+          return { date: r.date, count: cumulative };
+        });
+
+        const kindRows = stmtKindMix.all() as Array<{ type: string; count: number }>;
+        const kindMix: Record<string, number> = { entity: 0, fact: 0, schema: 0, doc: 0, insight: 0 };
+        for (const r of kindRows) {
+          if (r.type in kindMix) kindMix[r.type] = r.count;
+        }
+
+        const reconsolidationsPerDay = stmtReconsPerDay.all() as DayCountRow[];
+        const tombstonesPerDay = stmtTombstonesPerDay.all() as DayCountRow[];
+
+        const judgeModel = loadMergedConfig(dbPath, process.env, settingsPath).claudeHeadlessJudgeModel;
+        const judgeFires = (stmtJudgeFires.get() as { count: number }).count;
+        const judgeEscalated = (stmtJudgeEscalated.get(judgeModel) as { count: number }).count;
+        const escalationRate = judgeFires > 0 ? judgeEscalated / judgeFires : 0;
+
+        const episodeRows = stmtEpisodesByConsolidated.all() as Array<{ consolidated: number; count: number }>;
+        let pending = 0;
+        let consolidated = 0;
+        for (const r of episodeRows) {
+          if (r.consolidated === 0) pending = r.count;
+          else consolidated = r.count;
+        }
+
+        // Derive last_sleep_pass (D-14, honest-labeling — never fabricate a success flag).
+        const maxTsRow = stmtLastEventMaxTs.get() as { maxTs: number | null };
+        let lastSleepPass: { ts: number | null; duration_ms: number | null; status: string };
+        if (maxTsRow.maxTs == null) {
+          lastSleepPass = { ts: null, duration_ms: null, status: 'none' };
+        } else {
+          const batch = stmtLastEventBatchSpan.get(maxTsRow.maxTs - BATCH_WINDOW_MS) as {
+            minTs: number;
+            maxTs: number;
+          };
+          lastSleepPass = { ts: maxTsRow.maxTs, duration_ms: batch.maxTs - batch.minTs, status: 'unknown' };
+        }
+
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          node_growth: { points: growthPoints, approximate: true },
+          kind_mix: kindMix,
+          reconsolidations_per_day: reconsolidationsPerDay,
+          tombstones_per_day: tombstonesPerDay,
+          judge_activity: { fires: judgeFires, escalation_rate: escalationRate },
+          episodes: { pending, consolidated },
+          last_sleep_pass: lastSleepPass,
         }));
       } catch {
         res.writeHead(500, { 'content-type': 'text/plain' });

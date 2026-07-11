@@ -281,3 +281,165 @@ describe('GET /stats/usage', () => {
     expect(r.statusCode).toBe(403);
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /stats/brain-health
+// ---------------------------------------------------------------------------
+
+function insertNode(
+  id: string,
+  type: string,
+  value: string,
+  tombstoned: number,
+): void {
+  const writeDb = new Database(tmpDbPath);
+  writeDb.prepare(`
+    INSERT INTO node (id, type, value, value_hash, origin, s, c, last_access, tombstoned)
+    VALUES (?, ?, ?, ?, 'observed', 0.1, 0.5, ?, ?)
+  `).run(id, type, value, `hash-${id}`, Date.now(), tombstoned);
+  writeDb.close();
+}
+
+function insertConsolidationEvent(
+  id: string,
+  ts: number,
+  event_type: string,
+  node_id: string | null,
+): void {
+  const writeDb = new Database(tmpDbPath);
+  writeDb.prepare(`
+    INSERT INTO consolidation_event (id, ts, schema_version, event_type, node_id)
+    VALUES (?, ?, 1, ?, ?)
+  `).run(id, ts, event_type, node_id);
+  writeDb.close();
+}
+
+function insertEpisode(id: string, consolidated: number): void {
+  const writeDb = new Database(tmpDbPath);
+  writeDb.prepare(`
+    INSERT INTO episode (id, ts, content, origin, salience, consolidated, role, session_id)
+    VALUES (?, ?, ?, 'observed', 0.5, ?, 'user', 'sess-1')
+  `).run(id, Date.now(), `content-${id}`, consolidated);
+  writeDb.close();
+}
+
+describe('GET /stats/brain-health', () => {
+  it('returns 200 with every group zeroed and status=none when the DB is empty', async () => {
+    const r = await makeRequest(port, '/stats/brain-health');
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['content-type']).toContain('application/json');
+    const json = JSON.parse(r.body) as {
+      node_growth: { points: unknown[]; approximate: boolean };
+      kind_mix: Record<string, number>;
+      reconsolidations_per_day: unknown[];
+      tombstones_per_day: unknown[];
+      judge_activity: { fires: number; escalation_rate: number };
+      episodes: { pending: number; consolidated: number };
+      last_sleep_pass: { ts: number | null; duration_ms: number | null; status: string };
+    };
+    expect(json.node_growth.points).toEqual([]);
+    expect(json.node_growth.approximate).toBe(true);
+    expect(json.kind_mix).toEqual({ entity: 0, fact: 0, schema: 0, doc: 0, insight: 0 });
+    expect(json.reconsolidations_per_day).toEqual([]);
+    expect(json.tombstones_per_day).toEqual([]);
+    expect(json.judge_activity).toEqual({ fires: 0, escalation_rate: 0 });
+    expect(json.episodes).toEqual({ pending: 0, consolidated: 0 });
+    expect(json.last_sleep_pass).toEqual({ ts: null, duration_ms: null, status: 'none' });
+  });
+
+  it('returns all six metric groups + a derived last_sleep_pass from a seeded fixture', async () => {
+    const now = Date.now();
+
+    // kind_mix fixture: 1 entity, 2 live facts + 1 tombstoned fact (excluded), 1 schema, 1 doc, 1 insight.
+    insertNode('n-entity-1', 'entity', 'Entity One', 0);
+    insertNode('n-fact-1', 'fact', 'Fact One', 0);
+    insertNode('n-fact-2', 'fact', 'Fact Two', 0);
+    insertNode('n-fact-tombstoned', 'fact', 'Dead Fact', 1);
+    insertNode('n-schema-1', 'schema', 'Schema One', 0);
+    insertNode('n-doc-1', 'doc', 'Doc One', 0);
+    insertNode('n-insight-1', 'insight', 'Insight One', 0);
+
+    // node_growth fixture: 3 birth events on 3 distinct days.
+    insertConsolidationEvent('ev-extend-1', now - 3 * 86_400_000, 'extend', 'n-fact-1');
+    insertConsolidationEvent('ev-append-1', now - 2 * 86_400_000, 'contradict_append_new', 'n-fact-2');
+    insertConsolidationEvent('ev-schema-1', now - 1 * 86_400_000, 'schema_emitted', 'n-schema-1');
+
+    // reconsolidation/tombstone fixture, clustered within the last 5 minutes ("the last batch").
+    const batchStart = now - 5 * 60_000;
+    insertConsolidationEvent('ev-reconcile-1', batchStart, 'contradict_reconcile', 'n-fact-1');
+    insertConsolidationEvent('ev-destab-1', now - 3 * 60_000, 'contradict_force_destabilize', 'n-fact-2');
+    insertConsolidationEvent('ev-osc-1', now - 2 * 60_000, 'contradict_oscillation', 'n-fact-1');
+    insertConsolidationEvent('ev-falsified-1', now, 'schema_falsified', 'n-schema-1');
+
+    // judge activity fixture: 3 judge calls, 2 on the Sonnet judge model (escalated).
+    insertLedgerRow(now, 'judge', 'claude-sonnet-4-6', 100, 50, 0.01);
+    insertLedgerRow(now, 'judge', 'claude-sonnet-4-6', 100, 50, 0.01);
+    insertLedgerRow(now, 'judge', 'claude-haiku-4-5', 100, 50, 0.001);
+
+    // episodes fixture: 2 pending, 3 consolidated.
+    insertEpisode('ep-1', 0);
+    insertEpisode('ep-2', 0);
+    insertEpisode('ep-3', 1);
+    insertEpisode('ep-4', 1);
+    insertEpisode('ep-5', 1);
+
+    await restartServer();
+
+    const r = await makeRequest(port, '/stats/brain-health');
+    expect(r.statusCode).toBe(200);
+    const json = JSON.parse(r.body) as {
+      node_growth: { points: Array<{ date: string; count: number }>; approximate: boolean };
+      kind_mix: Record<string, number>;
+      reconsolidations_per_day: Array<{ date: string; count: number }>;
+      tombstones_per_day: Array<{ date: string; count: number }>;
+      judge_activity: { fires: number; escalation_rate: number };
+      episodes: { pending: number; consolidated: number };
+      last_sleep_pass: { ts: number | null; duration_ms: number | null; status: string };
+    };
+
+    expect(json.node_growth.approximate).toBe(true);
+    expect(json.node_growth.points.length).toBe(3);
+    expect(json.node_growth.points[2]!.count).toBe(3); // cumulative running total
+
+    expect(json.kind_mix).toEqual({ entity: 1, fact: 2, schema: 1, doc: 1, insight: 1 });
+
+    const reconTotal = json.reconsolidations_per_day.reduce((sum, r) => sum + r.count, 0);
+    expect(reconTotal).toBe(3); // reconcile + force_destabilize + oscillation
+
+    const tombTotal = json.tombstones_per_day.reduce((sum, r) => sum + r.count, 0);
+    expect(tombTotal).toBe(3); // reconcile + force_destabilize + schema_falsified
+
+    expect(json.judge_activity.fires).toBe(3);
+    expect(json.judge_activity.escalation_rate).toBeGreaterThan(0);
+    expect(json.judge_activity.escalation_rate).toBeLessThanOrEqual(1);
+    expect(json.judge_activity.escalation_rate).toBeCloseTo(2 / 3);
+
+    expect(json.episodes.pending).toBe(2);
+    expect(json.episodes.consolidated).toBe(3);
+
+    expect(json.last_sleep_pass.status).toBe('unknown');
+    expect(json.last_sleep_pass.ts).toBe(now);
+    expect(json.last_sleep_pass.duration_ms).toBeGreaterThan(0);
+    expect(json.last_sleep_pass.duration_ms).toBeLessThanOrEqual(5 * 60_000 + 1000);
+  });
+
+  it('never emits an "ok"/"success" literal for last_sleep_pass.status', async () => {
+    insertConsolidationEvent('ev-1', Date.now(), 'confirm', 'n-1');
+    await restartServer();
+    const r = await makeRequest(port, '/stats/brain-health');
+    const json = JSON.parse(r.body) as { last_sleep_pass: { status: string } };
+    expect(json.last_sleep_pass.status).not.toBe('ok');
+    expect(json.last_sleep_pass.status).not.toBe('success');
+    expect(json.last_sleep_pass.status).toBe('unknown');
+  });
+
+  it('returns 405 for non-GET methods', async () => {
+    const r = await makeRequest(port, '/stats/brain-health', 'POST', '{}');
+    expect(r.statusCode).toBe(405);
+  });
+
+  it('returns 403 for a non-loopback Host header (DNS-rebinding guard)', async () => {
+    const r = await makeRequest(port, '/stats/brain-health', 'GET', undefined, 'evil.com');
+    expect(r.statusCode).toBe(403);
+  });
+});
