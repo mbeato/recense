@@ -86,8 +86,7 @@ export function initPalette(ctx) {
 
   // ── Command registry (D-02/D-04) ────────────────────────────────────────────
   // { id, label, run(ctx), visibleIn? } — visibleIn is an optional view-name
-  // array ('brain'|'corpus'|'reader'); entries without it show in every view.
-  // Extensible: Phase 60's "Open usage stats" appends without structural change.
+  // array ('brain'|'corpus'|'reader'|'stats'); entries without it show in every view.
   const commands = [
     { id: 'toggle-tombstones', label: 'Toggle tombstones',
       run: c => { if (c.toggleTombstones) c.toggleTombstones(); } },
@@ -101,6 +100,10 @@ export function initPalette(ctx) {
       run: c => { if (c.openCorpus) c.openCorpus(); } },
     { id: 'recenter', label: 'Recenter view', visibleIn: ['brain'],
       run: c => { if (c.recenter) c.recenter(220); } },
+    // Phase 60 D-04/UI-SPEC — opens the stats takeover on its default (Usage) tab.
+    // visibleIn omits 'stats' so the command self-hides while the dashboard is open.
+    { id: 'open-stats', label: 'Open stats', visibleIn: ['brain', 'reader', 'corpus'],
+      run: c => { if (c.openStatsDashboard) c.openStatsDashboard(); } },
   ];
 
   // ── View detection (D-06) — pure read of EXISTING state, no new coupling ───
@@ -109,6 +112,7 @@ export function initPalette(ctx) {
       || document.documentElement.classList.contains('reader-open');
   }
   function currentView() {
+    if (ctx.isStatsDashboardOpen && ctx.isStatsDashboardOpen()) return 'stats';
     if (ctx.isCorpusOpen && ctx.isCorpusOpen()) return 'corpus';
     if (readerIsOpen()) return 'reader';
     return 'brain';
