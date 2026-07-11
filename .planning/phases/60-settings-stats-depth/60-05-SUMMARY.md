@@ -105,3 +105,13 @@ None. Both entry points are fully wired to the live `ctx.openStatsDashboard`/`ct
 ---
 *Phase: 60-settings-stats-depth*
 *Completed: 2026-07-11*
+
+## Self-Check: PASSED
+
+- FOUND: src/viz/modules/settings.js
+- FOUND: src/viz/modules/palette.js
+- FOUND: tests/viz-settings-panel.test.ts
+- FOUND: .planning/phases/60-settings-stats-depth/60-05-SUMMARY.md
+- FOUND commit: c5a7ce0
+- FOUND commit: 1d6691f
+- FOUND commit: d07d349
