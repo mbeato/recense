@@ -530,11 +530,20 @@ export function startVizServer(
   // node-creation set with a non-null node_id); the handler accumulates the
   // per-day counts into a running total and flags the series `approximate: true`
   // per D-13 (old events may have been pruned, so this is a lower bound).
+  // Event set = events that MINT a node (consolidator.ts applyDecision):
+  //   'extend' / 'unrelated' / 'contradict_append_new' / 'contradict_oscillation'
+  //   each upsert a brand-new node; 'schema_emitted' mints a schema node.
+  // Excluded: 'confirm' strengthens the EXISTING candidate (node_id is the existing
+  // node, not a birth); 'contradict_hold' creates nothing. 'contradict_reconcile'
+  // and the force-reconcile variant of 'contradict_force_destabilize' mint a
+  // replacement node but tombstone the superseded one — net-zero growth, so they
+  // are deliberately excluded (documented choice per the D-13 approximation flag).
   const stmtNodeGrowthDaily = db.prepare(`
     SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date, COUNT(*) AS count
     FROM consolidation_event
     WHERE node_id IS NOT NULL
-      AND event_type IN ('schema_emitted', 'confirm', 'extend', 'contradict_append_new')
+      AND event_type IN ('schema_emitted', 'extend', 'unrelated',
+                         'contradict_append_new', 'contradict_oscillation')
     GROUP BY date
     ORDER BY date ASC
   `);

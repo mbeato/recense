@@ -359,8 +359,12 @@ describe('GET /stats/brain-health', () => {
     insertNode('n-doc-1', 'doc', 'Doc One', 0);
     insertNode('n-insight-1', 'insight', 'Insight One', 0);
 
-    // node_growth fixture: 3 birth events on 3 distinct days.
+    // node_growth fixture: birth events across 3 past days ('unrelated' IS a birth —
+    // the standalone new-node branch), plus a 'confirm' that must NOT count (it
+    // strengthens the existing candidate; node_id is the existing node, not a birth).
     insertConsolidationEvent('ev-extend-1', now - 3 * 86_400_000, 'extend', 'n-fact-1');
+    insertConsolidationEvent('ev-unrelated-1', now - 3 * 86_400_000, 'unrelated', 'n-fact-2');
+    insertConsolidationEvent('ev-confirm-1', now - 2 * 86_400_000, 'confirm', 'n-fact-1');
     insertConsolidationEvent('ev-append-1', now - 2 * 86_400_000, 'contradict_append_new', 'n-fact-2');
     insertConsolidationEvent('ev-schema-1', now - 1 * 86_400_000, 'schema_emitted', 'n-schema-1');
 
@@ -398,8 +402,11 @@ describe('GET /stats/brain-health', () => {
     };
 
     expect(json.node_growth.approximate).toBe(true);
-    expect(json.node_growth.points.length).toBe(3);
-    expect(json.node_growth.points[2]!.count).toBe(3); // cumulative running total
+    // 4 birth days: extend+unrelated (-3d), contradict_append_new (-2d, confirm on
+    // that day excluded — not a birth), schema_emitted (-1d), contradict_oscillation
+    // (today, from the recon fixture below — it mints a coexisting node).
+    expect(json.node_growth.points.length).toBe(4);
+    expect(json.node_growth.points[3]!.count).toBe(5); // cumulative running total
 
     expect(json.kind_mix).toEqual({ entity: 1, fact: 2, schema: 1, doc: 1, insight: 1 });
 
