@@ -824,3 +824,19 @@ export const PALETTE_Z_INDEX = 50;
 
 /** Palette backdrop z-index — just under the palette itself. */
 export const PALETTE_BACKDROP_Z_INDEX = 49;
+
+// ============================================================================
+// Phase 60 — Settings Stats Depth: cost-event markers
+// ============================================================================
+
+/**
+ * Dated cost-lever markers rendered on the Usage-tab daily-burn chart (D-10,
+ * D-11). Drives the live before/after avg-daily-burn delta computed from the
+ * ledger — never hand-queried. New events = one-line addition here, no code
+ * change elsewhere.
+ * @type {{date: string, label: string}[]}
+ */
+export const COST_EVENTS = [
+  { date: '2026-07-03', label: 'MAX_THINKING_TOKENS=0' },
+  { date: '2026-06-25', label: 'consolSkipThreshold tuned (Phase 42)' },
+];

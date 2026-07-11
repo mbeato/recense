@@ -18,6 +18,10 @@
  *   GET /settings            → {preset, overrides, effective} merged config (44-05, D-03)
  *   POST /settings           → write settings.json with key-whitelisted payload (44-05, D-03)
  *   GET /usage               → 30d + all-time token readout by feature (44-05, D-09/D-10)
+ *   GET /stats/usage?window= → windowed daily/weekly burn buckets + per-feature/per-model
+ *                              totals + retail-$ + cost-event before/after deltas (Phase 60, D-09/D-10/D-11/D-12)
+ *   GET /stats/brain-health  → node growth, kind mix, reconsolidations/tombstones per day,
+ *                              judge activity, episodes pending/consolidated, last sleep-pass (Phase 60, D-13/D-14)
  *
  * Security invariants (threat model T-10-07/08/09/10/11, T-27-08/09/10/11, T-44-15..18):
  *   T-10-07: path-traversal guard — resolves absolute path and asserts it stays
@@ -61,6 +65,10 @@ import { buildHonestOneHopTrace, type HonestTraceReader } from '../retrieval/hon
 
 const POLL_MS = 250;  // polling interval for activation_trace SSE broadcast
 const SEARCH_LIMIT = 20;  // BM25 result cap for /search?q= endpoint (T-19-03)
+// GET /stats/brain-health last_sleep_pass (Phase 60, D-14): no persisted pass-boundary
+// record exists (No Analog Found), so a "batch" is approximated as every
+// consolidation_event row within this window of the most recent event.
+const BATCH_WINDOW_MS = 30 * 60_000; // 30 minutes
 
 // Names of the scheduler scalars authored ONLY in src/viz/modules/constants.js (D-10).
 // The server derives these values at startVizServer init via source-parse — see
@@ -95,6 +103,34 @@ export function parseSchedulerScalars(modulesRoot: string): Record<SchedulerScal
     result[name] = Number(match[1]);
   }
   return result;
+}
+
+/** One dated cost-lever marker parsed from constants.js's COST_EVENTS array (D-11). */
+export interface CostEventMarker {
+  date: string;
+  label: string;
+}
+
+/**
+ * Parse the COST_EVENTS array literal out of constants.js's source text (fail-fast,
+ * mirroring parseSchedulerScalars() above — T-60-09 single-source: the marker list is
+ * authored ONLY in constants.js, D-11, and MUST NOT be re-declared as a server literal
+ * or the client/server mirror-drift class parseSchedulerScalars already exists to kill
+ * would reopen for cost markers). Exported for direct unit testing.
+ */
+export function parseCostEvents(modulesRoot: string): CostEventMarker[] {
+  const src = fs.readFileSync(path.join(modulesRoot, 'constants.js'), 'utf8');
+  const arrayMatch = src.match(/export\s+const\s+COST_EVENTS\s*=\s*\[([\s\S]*?)\];/);
+  if (!arrayMatch) {
+    throw new Error("viz server: constants.js is missing required 'COST_EVENTS' array");
+  }
+  const entries: CostEventMarker[] = [];
+  const entryRe = /\{\s*date:\s*'([^']*)'\s*,\s*label:\s*'([^']*)'\s*\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = entryRe.exec(arrayMatch[1]!)) !== null) {
+    entries.push({ date: m[1]!, label: m[2]! });
+  }
+  return entries;
 }
 
 /**
@@ -254,6 +290,10 @@ export function startVizServer(
     SPONT_HOP_TOPN,
     SPONT_POOL_REFRESH_MS,
   } = parseSchedulerScalars(MODULES_ROOT);
+
+  // D-11: source-parse cost-event markers from constants.js at init (same fail-fast
+  // single-source mechanism as the scheduler scalars above) — never re-declared here.
+  const costEvents = parseCostEvents(MODULES_ROOT);
 
   // T-27-10: track in-flight slug generations to prevent duplicate concurrent spawns.
   // Key = slug, Value = Date.now() when the generate-doc CLI was first spawned for it.
@@ -438,6 +478,89 @@ export function startVizServer(
            SUM(total_cost_usd)     AS total_cost_usd
     FROM token_usage_ledger
     GROUP BY feature_tag
+  `);
+
+  // Compile GET /stats/usage prepared statements once (Phase 60, D-09/D-10/D-12,
+  // T-44-18 read-only). Daily buckets (window=7d/30d/90d) and weekly buckets
+  // (window=all) both take a single ts cutoff bind (0 = no lower bound / all-time).
+  // Bucketing follows the same strftime idiom stmtUsage30d's neighbours use for
+  // grouping — no new query shape, just a different GROUP BY key.
+  const stmtUsageDailyBuckets = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date,
+           SUM(input_tokens + output_tokens) AS tokens,
+           SUM(total_cost_usd)               AS cost_usd
+    FROM token_usage_ledger
+    WHERE ts > ?
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtUsageWeeklyBuckets = db.prepare(`
+    SELECT strftime('%Y-%W', ts/1000, 'unixepoch') AS date,
+           SUM(input_tokens + output_tokens) AS tokens,
+           SUM(total_cost_usd)               AS cost_usd
+    FROM token_usage_ledger
+    WHERE ts > ?
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtUsageByModel = db.prepare(`
+    SELECT model,
+           SUM(input_tokens)       AS input_tokens,
+           SUM(output_tokens)      AS output_tokens,
+           SUM(cache_write_tokens) AS cache_write_tokens,
+           SUM(cache_read_tokens)  AS cache_read_tokens,
+           SUM(total_cost_usd)     AS total_cost_usd
+    FROM token_usage_ledger
+    WHERE ts > ?
+    GROUP BY model
+  `);
+
+  // Compile GET /stats/brain-health prepared statements once (Phase 60, D-13/D-14,
+  // T-44-18 read-only). node.created_at does not exist (D-13) — growth is
+  // reconstructed from node-birth consolidation_event rows (event_type in the
+  // node-creation set with a non-null node_id); the handler accumulates the
+  // per-day counts into a running total and flags the series `approximate: true`
+  // per D-13 (old events may have been pruned, so this is a lower bound).
+  const stmtNodeGrowthDaily = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date, COUNT(*) AS count
+    FROM consolidation_event
+    WHERE node_id IS NOT NULL
+      AND event_type IN ('schema_emitted', 'confirm', 'extend', 'contradict_append_new')
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtKindMix = db.prepare(`
+    SELECT type, COUNT(*) AS count FROM node WHERE tombstoned = 0 GROUP BY type
+  `);
+  const stmtReconsPerDay = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date, COUNT(*) AS count
+    FROM consolidation_event
+    WHERE event_type IN ('contradict_reconcile', 'contradict_force_destabilize', 'contradict_oscillation')
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtTombstonesPerDay = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date, COUNT(*) AS count
+    FROM consolidation_event
+    WHERE event_type IN ('contradict_reconcile', 'contradict_force_destabilize', 'schema_falsified')
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtJudgeFires = db.prepare(`
+    SELECT COUNT(*) AS count FROM token_usage_ledger WHERE feature_tag = 'judge'
+  `);
+  const stmtJudgeEscalated = db.prepare(`
+    SELECT COUNT(*) AS count FROM token_usage_ledger WHERE feature_tag = 'judge' AND model = ?
+  `);
+  const stmtEpisodesByConsolidated = db.prepare(`
+    SELECT consolidated, COUNT(*) AS count FROM episode GROUP BY consolidated
+  `);
+  // last_sleep_pass (D-14, No-Analog-Found): no persisted last-pass record exists.
+  // Approximate a "batch" as every consolidation_event row within BATCH_WINDOW_MS
+  // of the most recent event — honest best-effort, never a fabricated success flag.
+  const stmtLastEventMaxTs = db.prepare(`SELECT MAX(ts) AS maxTs FROM consolidation_event`);
+  const stmtLastEventBatchSpan = db.prepare(`
+    SELECT MIN(ts) AS minTs, MAX(ts) AS maxTs FROM consolidation_event WHERE ts >= ?
   `);
 
   // Compile /events polling statement once.
@@ -1302,6 +1425,145 @@ export function startVizServer(
           window_days: 30,
           rolling_30d: summarise(rows30d),
           all_time: summarise(rowsAll),
+        }));
+      } catch {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── GET /stats/usage?window= (Phase 60, D-09/D-10/D-11/D-12) ─────────────
+    // Windowed daily-bucketed (weekly for window=all) token burn, per-feature and
+    // per-model totals, retail-$ equivalent, and live before/after avg-daily-burn
+    // deltas for each COST_EVENTS marker (source-parsed from constants.js, D-11).
+    // Uses the read-only DB handle (T-44-18). Empty ledger → zeroed aggregates, not error.
+    if (url === '/stats/usage') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'content-type': 'text/plain' });
+        res.end('method not allowed');
+        return;
+      }
+      try {
+        type BucketRow = { date: string; tokens: number; cost_usd: number };
+
+        const rawWindow = new URLSearchParams(req.url?.split('?')[1] ?? '').get('window');
+        const ALLOWED_WINDOWS = new Set(['7d', '30d', '90d', 'all']);
+        const window = rawWindow !== null && ALLOWED_WINDOWS.has(rawWindow) ? rawWindow : '30d';
+
+        const now = Date.now();
+        const cutoff =
+          window === '7d' ? now - 7 * 86_400_000 :
+          window === '90d' ? now - 90 * 86_400_000 :
+          window === 'all' ? 0 :
+          now - 30 * 86_400_000; // '30d' default
+
+        const bucketGranularity: 'daily' | 'weekly' = window === 'all' ? 'weekly' : 'daily';
+        const buckets = (
+          bucketGranularity === 'weekly' ? stmtUsageWeeklyBuckets : stmtUsageDailyBuckets
+        ).all(cutoff) as BucketRow[];
+
+        const byFeature = stmtUsage30d.all(cutoff);
+        const byModel = stmtUsageByModel.all(cutoff);
+
+        let retailUsd = 0;
+        for (const b of buckets) retailUsd += b.cost_usd ?? 0;
+
+        // T-60-01: window is validated against ALLOWED_WINDOWS above; cutoff is always
+        // bound via '?' — no raw param ever reaches SQL text.
+        const costEventDeltas = costEvents.map((marker) => {
+          const before = buckets.filter((b) => b.date < marker.date);
+          const after = buckets.filter((b) => b.date >= marker.date);
+          const avg = (rows: BucketRow[]) =>
+            rows.length === 0 ? 0 : rows.reduce((sum, r) => sum + (r.tokens ?? 0), 0) / rows.length;
+          return {
+            date: marker.date,
+            label: marker.label,
+            before_avg: avg(before),
+            after_avg: avg(after),
+          };
+        });
+
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          window,
+          bucket_granularity: bucketGranularity,
+          buckets,
+          by_feature: byFeature,
+          by_model: byModel,
+          retail_usd: retailUsd,
+          cost_event_deltas: costEventDeltas,
+        }));
+      } catch {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── GET /stats/brain-health (Phase 60, D-13/D-14) ─────────────────────────
+    // Six honest metric groups + a derived last-sleep-pass. Uses the read-only DB
+    // handle (T-44-18). Empty DB → zeroed groups, not error.
+    if (url === '/stats/brain-health') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'content-type': 'text/plain' });
+        res.end('method not allowed');
+        return;
+      }
+      try {
+        type DayCountRow = { date: string; count: number };
+
+        const growthRows = stmtNodeGrowthDaily.all() as DayCountRow[];
+        let cumulative = 0;
+        const growthPoints = growthRows.map((r) => {
+          cumulative += r.count;
+          return { date: r.date, count: cumulative };
+        });
+
+        const kindRows = stmtKindMix.all() as Array<{ type: string; count: number }>;
+        const kindMix: Record<string, number> = { entity: 0, fact: 0, schema: 0, doc: 0, insight: 0 };
+        for (const r of kindRows) {
+          if (r.type in kindMix) kindMix[r.type] = r.count;
+        }
+
+        const reconsolidationsPerDay = stmtReconsPerDay.all() as DayCountRow[];
+        const tombstonesPerDay = stmtTombstonesPerDay.all() as DayCountRow[];
+
+        const judgeModel = loadMergedConfig(dbPath, process.env, settingsPath).claudeHeadlessJudgeModel;
+        const judgeFires = (stmtJudgeFires.get() as { count: number }).count;
+        const judgeEscalated = (stmtJudgeEscalated.get(judgeModel) as { count: number }).count;
+        const escalationRate = judgeFires > 0 ? judgeEscalated / judgeFires : 0;
+
+        const episodeRows = stmtEpisodesByConsolidated.all() as Array<{ consolidated: number; count: number }>;
+        let pending = 0;
+        let consolidated = 0;
+        for (const r of episodeRows) {
+          if (r.consolidated === 0) pending = r.count;
+          else consolidated = r.count;
+        }
+
+        // Derive last_sleep_pass (D-14, honest-labeling — never fabricate a success flag).
+        const maxTsRow = stmtLastEventMaxTs.get() as { maxTs: number | null };
+        let lastSleepPass: { ts: number | null; duration_ms: number | null; status: string };
+        if (maxTsRow.maxTs == null) {
+          lastSleepPass = { ts: null, duration_ms: null, status: 'none' };
+        } else {
+          const batch = stmtLastEventBatchSpan.get(maxTsRow.maxTs - BATCH_WINDOW_MS) as {
+            minTs: number;
+            maxTs: number;
+          };
+          lastSleepPass = { ts: maxTsRow.maxTs, duration_ms: batch.maxTs - batch.minTs, status: 'unknown' };
+        }
+
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          node_growth: { points: growthPoints, approximate: true },
+          kind_mix: kindMix,
+          reconsolidations_per_day: reconsolidationsPerDay,
+          tombstones_per_day: tombstonesPerDay,
+          judge_activity: { fires: judgeFires, escalation_rate: escalationRate },
+          episodes: { pending, consolidated },
+          last_sleep_pass: lastSleepPass,
         }));
       } catch {
         res.writeHead(500, { 'content-type': 'text/plain' });
