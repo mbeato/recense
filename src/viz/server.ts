@@ -494,8 +494,17 @@ export function startVizServer(
     GROUP BY date
     ORDER BY date ASC
   `);
+  // Phase 60-03 fix (Rule 1): the original '%Y-%W' week-number grouping key is not a
+  // parseable calendar date, but the client (stats-dashboard.js/charts.js fmtDate)
+  // renders every bucket's `date` as a real date for the X-axis/hover — required by
+  // the UI-SPEC's "weekly-bucket tick labels the bucket start date". Group by the
+  // Monday-start ISO week date instead (same GROUP BY shape, different key expression,
+  // per this block's own "different GROUP BY key" comment above): subtract
+  // ((weekday + 6) % 7) days from each row's date to land on that week's Monday.
   const stmtUsageWeeklyBuckets = db.prepare(`
-    SELECT strftime('%Y-%W', ts/1000, 'unixepoch') AS date,
+    SELECT date(ts/1000, 'unixepoch',
+             '-' || ((CAST(strftime('%w', ts/1000, 'unixepoch') AS INTEGER) + 6) % 7) || ' days'
+           ) AS date,
            SUM(input_tokens + output_tokens) AS tokens,
            SUM(total_cost_usd)               AS cost_usd
     FROM token_usage_ledger

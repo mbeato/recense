@@ -546,7 +546,8 @@ button:hover {
   #hud-chip,
   #topics-rail,
   #log,
-  #detail-loading { display: none; }
+  #detail-loading,
+  #stats-view { display: none; }
   /* Collapse the rail's own glass chrome — only #rail-recenter escapes below,
      restyled as a standalone icon-only control (mirrors the old #btn-recenter). */
   #hud-rail {
@@ -1453,4 +1454,176 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
 .index-entry:hover {
   color: var(--text-bright);
   background: var(--index-search-focus-bg);
+}
+
+/* ── Stats dashboard takeover (Phase 60, D-01/D-02/D-14) ──────────────────────
+   Full-window surface replacing the 3D brain — same structural tier as
+   #corpus-graph (fixed/inset:0/display:none→.open{block}, opacity-fade
+   companion class) but one z-index above it. Deliberately NOT glass — near-
+   opaque flat surface only (60-UI-SPEC "Glass Discipline": #stats-view is
+   NOT in the D-14-C backdrop-filter allow-list, so it must never request
+   blur). Chart cards inside use the same flat-surface + hairline discipline,
+   never backdrop-filter. */
+#stats-view {
+  position: fixed;
+  inset: 0;
+  z-index: 6;             /* above #corpus-graph (5), below #hud-chip/#hud-rail/palette chrome */
+  display: none;
+  background: var(--surface-index-panel);
+  opacity: 0;
+  transition: opacity var(--motion-slow) var(--ease-out-soft);
+  overflow-y: auto;
+}
+#stats-view.open { display: block; }
+#stats-view.stats-in { opacity: 1; }
+
+#stats-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  background: var(--surface-header-sticky);
+  padding: 32px 32px 16px;
+  border-bottom: 1px solid var(--divider-faint);
+}
+
+#stats-tabs { display: flex; gap: 24px; }
+
+.stats-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-recede);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.stats-tab:hover { color: var(--text-hover-slate); }
+.stats-tab.active {
+  color: var(--text-bright);
+  border-bottom-color: var(--accent-toggle-mauve);
+}
+
+#stats-range { display: flex; gap: 8px; margin-left: auto; }
+
+.stats-range-pill {
+  background: none;
+  border: 1px solid var(--divider-faint);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--text-recede);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.stats-range-pill:hover { color: var(--text-hover-slate); }
+.stats-range-pill.active {
+  color: var(--text-bright);
+  border-color: var(--accent-toggle-mauve);
+  background: var(--row-hover-bg);
+}
+
+#stats-refresh {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-mauve-rest);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+#stats-refresh:hover {
+  color: var(--accent-toggle-mauve);
+  background: var(--reader-hover-divider);
+}
+
+#stats-as-of {
+  font-family: 'JetBrains Mono HUD', monospace;
+  font-size: 10px;
+  color: var(--text-recede);
+  white-space: nowrap;
+}
+
+#stats-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-mauve-rest);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+#stats-close:hover {
+  color: var(--text-hover-slate);
+  background: var(--reader-hover-divider);
+}
+
+#stats-body { padding: 24px 32px 48px; }
+
+.stats-tab-panel { display: none; }
+.stats-tab-panel.active { display: block; }
+
+/* Chart card — flat surface, hairline border, NO backdrop-filter (D-14 invariant) */
+.chart-card {
+  background: var(--chart-card);
+  border: 1px solid var(--divider-faint);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 24px;
+}
+.chart-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.chart-card-title {
+  font-size: 13px;
+  color: var(--text-bright);
+}
+
+/* Headline readout tile (retail-$, total tokens) — same flat surface as a chart card */
+.stats-headline-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stats-headline-value {
+  font-family: 'JetBrains Mono HUD', monospace;
+  font-size: 28px;
+  color: var(--text-bright);
+}
+.stats-headline-label {
+  font-size: 10px;
+  color: var(--text-recede);
+}
+
+/* Empty / error state copy — replaces a chart card's contents, never a broken shell */
+.stats-empty-state,
+.stats-error-state {
+  color: var(--text-muted-alt);
+  font-size: 13px;
+  font-style: italic;
+  padding: 24px 0;
+  text-align: center;
 }
