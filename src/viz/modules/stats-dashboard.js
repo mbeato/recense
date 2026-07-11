@@ -22,11 +22,33 @@
  */
 
 import { line, bar, axis, legend, attachHover, SVG_NS, niceTicks, linearScale, fmtDate, fmtTokens } from './charts.js';
-import { NEUTRAL_SERIES_RAMP, COST_EVENTS } from './constants.js';
+import { NEUTRAL_SERIES_RAMP, COST_EVENTS, KIND_COLOR, TYPE_COLOR } from './constants.js';
 
 const RETAIL_LABEL = 'API-retail equivalent (subscription-billed: $0 marginal)';
 const FEATURE_ORDER = ['extract', 'judge', 'corpus_gen', 'schema_abstract'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Brain-Health copy (D-13, UI-SPEC Copywriting Contract, verbatim).
+const NODE_GROWTH_CAPTION = 'Derived from event history — approximate where older events were pruned.';
+
+// Identity-hue → CSS hex string (KIND_COLOR/TYPE_COLOR are 0xRRGGBB numbers; charts.js's
+// SVG builders take CSS color strings) — D-08: only these two locked palettes feed
+// Brain-Health series colors, never a hand-picked hex literal (never the forbidden
+// live-activation warm hue either — see UI-SPEC Chart Series Color Contract).
+function hex(n) {
+  return '#' + n.toString(16).padStart(6, '0');
+}
+
+// Kind-mix bar order + identity hues (60-UI-SPEC "Brain Health tab" color table) — always
+// all five series so the legend never drops a kind, even at count 0 (Empty/Sparse Contract
+// governs the whole-chart empty state, not per-series padding within this fixed taxonomy).
+const KIND_MIX_SERIES = [
+  { key: 'fact', label: 'fact', color: hex(TYPE_COLOR.fact) },
+  { key: 'entity', label: 'entity', color: hex(TYPE_COLOR.entity) },
+  { key: 'schema', label: 'schema', color: hex(TYPE_COLOR.schema) },
+  { key: 'doc', label: 'doc', color: hex(KIND_COLOR.replay) },
+  { key: 'insight', label: 'insight', color: hex(KIND_COLOR.spontaneous) },
+];
 
 // Chart geometry: a fixed internal coordinate system, stretched to the container's
 // actual width via a viewBox + width:100% SVG (no DOM measurement needed at render
@@ -57,7 +79,6 @@ export function initStatsDashboard(ctx) {
   let isOpen = false;
   let currentTab = 'usage';
   let currentRange = '30d';
-  let healthPlaceholderRendered = false;
 
   // ── Show / hide (D-02 — replaces the 3D brain / flat corpus, mirrors corpus.js's
   //    setTopicsSearchHidden HUD-hide behavior) ────────────────────────────────
@@ -110,11 +131,13 @@ export function initStatsDashboard(ctx) {
     if (tabHealthBtn) tabHealthBtn.classList.toggle('active', currentTab === 'health');
     if (usageTabEl) usageTabEl.classList.toggle('active', currentTab === 'usage');
     if (healthTabEl) healthTabEl.classList.toggle('active', currentTab === 'health');
-    if (currentTab === 'health') renderHealthTab();
   }
 
-  if (tabUsageBtn) tabUsageBtn.addEventListener('click', () => setTab('usage'));
-  if (tabHealthBtn) tabHealthBtn.addEventListener('click', () => setTab('health'));
+  // Tab click fetches fresh data for the tab it switches to — this is the "first
+  // activation" trigger for Brain Health (D-14); show()'s own load() call below
+  // handles the initial-open case, so these two triggers never double-fetch.
+  if (tabUsageBtn) tabUsageBtn.addEventListener('click', () => { setTab('usage'); load(); });
+  if (tabHealthBtn) tabHealthBtn.addEventListener('click', () => { setTab('health'); load(); });
 
   // ── Range switcher (D-12 — 'all' re-fetches weekly-granularity buckets) ─────
 
@@ -137,7 +160,8 @@ export function initStatsDashboard(ctx) {
     asOfEl.textContent = 'as of ' + two(now.getHours()) + ':' + two(now.getMinutes()) + ':' + two(now.getSeconds());
   }
 
-  // ── Fetch /stats/usage (non-fatal, mirrors settings.js's fetchSettings/fetchUsage) ──
+  // ── Fetch /stats/usage + /stats/brain-health (non-fatal, mirrors settings.js's
+  //    fetchSettings/fetchUsage try/catch-return-null pattern) ──────────────────
 
   async function fetchUsage(range) {
     try {
@@ -149,15 +173,31 @@ export function initStatsDashboard(ctx) {
     }
   }
 
+  async function fetchBrainHealth() {
+    try {
+      const res = await fetch('/stats/brain-health');
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_) {
+      return null;
+    }
+  }
+
   let loadToken = 0;
 
   async function load() {
-    const range = currentRange;
     const token = ++loadToken;
-    const data = await fetchUsage(range);
-    if (token !== loadToken) return; // superseded by a later range switch/refresh
-    stampAsOf();
-    renderUsageTab(usageTabEl, data);
+    if (currentTab === 'health') {
+      const data = await fetchBrainHealth();
+      if (token !== loadToken) return; // superseded by a later tab switch/refresh
+      stampAsOf();
+      renderHealthTab(healthTabEl, data);
+    } else {
+      const data = await fetchUsage(currentRange);
+      if (token !== loadToken) return; // superseded by a later range switch/refresh
+      stampAsOf();
+      renderUsageTab(usageTabEl, data);
+    }
   }
 
   // ── Usage tab render (empty/error state contract — Task 3 fills in the chart suite) ──
@@ -422,15 +462,369 @@ export function initStatsDashboard(ctx) {
     }
   }
 
-  // Placeholder only — 60-04 implements the full Brain Health tab; this module
-  // never fetches /stats/brain-health (that fetch belongs to 60-04's own module code).
-  function renderHealthTab() {
-    if (healthPlaceholderRendered || !healthTabEl) return;
-    healthPlaceholderRendered = true;
-    healthTabEl.textContent = '';
-    const placeholder = document.createElement('div');
-    placeholder.className = 'stats-empty-state';
-    placeholder.textContent = 'Brain Health — coming soon';
-    healthTabEl.appendChild(placeholder);
+  // ── Brain Health tab (D-13/D-14) ─────────────────────────────────────────────
+  // node growth, kind mix, reconsolidations/tombstones per day, judge activity,
+  // episode backlog, and an honest last-sleep-pass readout — all from a single
+  // /stats/brain-health fetch (routed through load() above).
+
+  // A truly fresh brain: no growth events, no nodes of any kind, no recon/tombstone
+  // days, no episodes, no judge fires. Any one real signal takes the tab out of the
+  // empty state (per-chart "no X yet" copy then covers a partially-empty brain).
+  function isBrainHealthEmpty(data) {
+    const growthPoints = (data.node_growth && data.node_growth.points) || [];
+    const kindMix = data.kind_mix || {};
+    const kindMixTotal = Object.values(kindMix).reduce((sum, n) => sum + (n || 0), 0);
+    const reconDays = (data.reconsolidations_per_day || []).length;
+    const tombDays = (data.tombstones_per_day || []).length;
+    const episodesTotal = ((data.episodes && data.episodes.pending) || 0)
+      + ((data.episodes && data.episodes.consolidated) || 0);
+    const judgeFires = (data.judge_activity && data.judge_activity.fires) || 0;
+    return growthPoints.length === 0 && kindMixTotal === 0 && reconDays === 0
+      && tombDays === 0 && episodesTotal === 0 && judgeFires === 0;
+  }
+
+  // Pure geometry for a {date,count}[] time series — no axis()/legend() call inside
+  // (each chart calls those itself, at its own source line, mirroring the Usage tab's
+  // renderFeatureSplit/renderModelSplit precedent so every chart's axis/legend stays
+  // independently grep-verifiable rather than hidden inside a shared closure).
+  function buildLineChartSvg(points, height) {
+    const svg = createChartSvg(CHART_W, height);
+    const maxVal = points.reduce((m, p) => Math.max(m, p.count || 0), 0);
+    const ticks = niceTicks(0, maxVal);
+    const niceMax = ticks[ticks.length - 1] || 1;
+    const yScale = linearScale([0, niceMax], [height - MARGIN.bottom, MARGIN.top]);
+    const xScale = linearScale([0, Math.max(points.length - 1, 1)], [MARGIN.left, CHART_W - MARGIN.right]);
+    const pxPoints = points.map((p, i) => ({
+      x: xScale(i), y: yScale(p.count || 0), date: p.date, value: p.count || 0,
+      formatValue: (v) => String(v),
+    }));
+    return { svg, ticks, yScale, xScale, pxPoints };
+  }
+
+  // Pure geometry for a small labeled-category bar chart (kind-mix / judge-activity /
+  // episodes) — same axis/legend-at-call-site discipline as buildLineChartSvg above.
+  function buildBarChartSvg(entries, height) {
+    const svg = createChartSvg(CHART_W, height);
+    const maxVal = entries.reduce((m, e) => Math.max(m, e.tokens), 0);
+    const ticks = niceTicks(0, maxVal);
+    const niceMax = ticks[ticks.length - 1] || 1;
+    const yScale = linearScale([0, niceMax], [height - MARGIN.bottom, MARGIN.top]);
+    const innerW = CHART_W - MARGIN.left - MARGIN.right;
+    const slot = innerW / entries.length;
+    const barWidth = Math.min(56, slot * 0.5);
+    const bars = entries.map((e, i) => {
+      const cx = MARGIN.left + slot * (i + 0.5);
+      const y = yScale(e.tokens);
+      return { x: cx - barWidth / 2, y, width: barWidth, height: (height - MARGIN.bottom) - y };
+    });
+    const xTicks = entries.map((e, i) => ({ x: MARGIN.left + slot * (i + 0.5), label: e.label }));
+    return { svg, ticks, yScale, bars, xTicks };
+  }
+
+  function renderChartEmpty(container, card, text) {
+    const empty = document.createElement('div');
+    empty.className = 'stats-empty-state';
+    empty.textContent = text; // textContent only — T-44-19
+    card.appendChild(empty);
+    container.appendChild(card);
+  }
+
+  // Focal chart (D-06 — largest card, top of the tab): cumulative node growth,
+  // KIND_COLOR.new_node, D-13 approximation caption, D-07 nearest-point hover.
+  function renderNodeGrowthChart(container, nodeGrowth) {
+    const card = makeCard('Node growth');
+    card.classList.add('chart-card-primary');
+    const points = (nodeGrowth && nodeGrowth.points) || [];
+
+    if (points.length === 0) {
+      renderChartEmpty(container, card, 'no node growth recorded yet');
+      return;
+    }
+
+    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(points, BURN_H);
+    const color = hex(KIND_COLOR.new_node);
+
+    svg.appendChild(axis({
+      orientation: 'y', ticks, scale: yScale,
+      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+    }));
+    svg.appendChild(axis({
+      orientation: 'x', xTicks: pickXTicks(points, xScale), chartBottom: BURN_H - MARGIN.bottom,
+    }));
+    svg.appendChild(line(pxPoints, { color }));
+    svg.appendChild(legend([{ label: 'nodes', color }], { x: CHART_W - 90, y: MARGIN.top - 4 }));
+
+    card.appendChild(svg);
+    attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BURN_H - MARGIN.bottom, color });
+
+    if (nodeGrowth && nodeGrowth.approximate) {
+      const caption = document.createElement('div');
+      caption.textContent = NODE_GROWTH_CAPTION; // textContent only — T-44-19, D-13 verbatim
+      caption.style.fontSize = '10px';
+      caption.style.color = 'var(--text-recede)';
+      caption.style.marginTop = '8px';
+      card.appendChild(caption);
+    }
+
+    container.appendChild(card);
+  }
+
+  // Kind-mix grouped bar (fact/entity/schema/doc/insight) — always all five series
+  // (fixed taxonomy, not a variable feature/model list) so the legend never drops one.
+  function renderKindMixChart(container, kindMix) {
+    const card = makeCard('Kind mix');
+    const entries = KIND_MIX_SERIES.map((s) => ({
+      label: s.label, tokens: (kindMix && kindMix[s.key]) || 0, color: s.color,
+    }));
+    const total = entries.reduce((sum, e) => sum + e.tokens, 0);
+
+    if (total === 0) {
+      renderChartEmpty(container, card, 'no nodes recorded yet');
+      return;
+    }
+
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H);
+
+    svg.appendChild(axis({
+      orientation: 'y', ticks, scale: yScale,
+      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+    }));
+    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+    entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
+    svg.appendChild(legend(
+      entries.map((e) => ({ label: e.label, color: e.color })),
+      { x: MARGIN.left, y: MARGIN.top - 4 },
+    ));
+
+    card.appendChild(svg);
+    container.appendChild(card);
+  }
+
+  // Reconsolidations/day line — KIND_COLOR.reconsolidation (rose-mauve), D-07 hover.
+  function renderReconChart(container, points) {
+    const card = makeCard('Reconsolidations / day');
+    const list = points || [];
+
+    if (list.length === 0) {
+      renderChartEmpty(container, card, 'no reconsolidations recorded yet');
+      return;
+    }
+
+    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, BAR_H);
+    const color = hex(KIND_COLOR.reconsolidation);
+
+    svg.appendChild(axis({
+      orientation: 'y', ticks, scale: yScale,
+      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+    }));
+    svg.appendChild(axis({
+      orientation: 'x', xTicks: pickXTicks(list, xScale), chartBottom: BAR_H - MARGIN.bottom,
+    }));
+    svg.appendChild(line(pxPoints, { color }));
+    svg.appendChild(legend([{ label: 'reconsolidations', color }], { x: CHART_W - 140, y: MARGIN.top - 4 }));
+
+    card.appendChild(svg);
+    attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BAR_H - MARGIN.bottom, color });
+    container.appendChild(card);
+  }
+
+  // Tombstones/day line — KIND_COLOR.oscillation (coral), D-07 hover.
+  function renderTombstoneChart(container, points) {
+    const card = makeCard('Tombstones / day');
+    const list = points || [];
+
+    if (list.length === 0) {
+      renderChartEmpty(container, card, 'no tombstones recorded yet');
+      return;
+    }
+
+    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, BAR_H);
+    const color = hex(KIND_COLOR.oscillation);
+
+    svg.appendChild(axis({
+      orientation: 'y', ticks, scale: yScale,
+      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+    }));
+    svg.appendChild(axis({
+      orientation: 'x', xTicks: pickXTicks(list, xScale), chartBottom: BAR_H - MARGIN.bottom,
+    }));
+    svg.appendChild(line(pxPoints, { color }));
+    svg.appendChild(legend([{ label: 'tombstones', color }], { x: CHART_W - 110, y: MARGIN.top - 4 }));
+
+    card.appendChild(svg);
+    attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BAR_H - MARGIN.bottom, color });
+    container.appendChild(card);
+  }
+
+  // Judge-activity comparison bar — fires (KIND_COLOR.recall_hop, cyan) vs. escalated
+  // count (KIND_COLOR.neutral, slate), escalated derived from the server's
+  // judge_activity.escalation_rate (D-14: /stats/brain-health returns fires/
+  // escalation_rate as running totals, not a dated per-day series, so the dual-line
+  // time chart the plan sketched isn't representable from the live response shape —
+  // a two-bar comparison in the same identity hues, with the honest escalation-rate
+  // percentage in its own legend label, renders the same two numbers without
+  // fabricating dates the API doesn't provide).
+  function renderJudgeActivityChart(container, judgeActivity) {
+    const card = makeCard('Judge activity');
+    const fires = (judgeActivity && judgeActivity.fires) || 0;
+    const escalationRate = (judgeActivity && judgeActivity.escalation_rate) || 0;
+
+    if (fires === 0) {
+      renderChartEmpty(container, card, 'no judge activity recorded yet');
+      return;
+    }
+
+    const escalated = Math.round(fires * escalationRate);
+    const pct = Math.round(escalationRate * 100);
+    const entries = [
+      { label: 'fires', tokens: fires, color: hex(KIND_COLOR.recall_hop) },
+      { label: 'escalated (' + pct + '%)', tokens: escalated, color: hex(KIND_COLOR.neutral) },
+    ];
+
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H);
+
+    svg.appendChild(axis({
+      orientation: 'y', ticks, scale: yScale,
+      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+    }));
+    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+    entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
+    svg.appendChild(legend(
+      entries.map((e) => ({ label: e.label, color: e.color })),
+      { x: MARGIN.left, y: MARGIN.top - 4 },
+    ));
+
+    card.appendChild(svg);
+    container.appendChild(card);
+  }
+
+  // Episodes pending-vs-consolidated paired bar — pending KIND_COLOR.neutral,
+  // consolidated KIND_COLOR.new_node.
+  function renderEpisodesChart(container, episodes) {
+    const card = makeCard('Episodes pending vs. consolidated');
+    const pending = (episodes && episodes.pending) || 0;
+    const consolidated = (episodes && episodes.consolidated) || 0;
+
+    if (pending === 0 && consolidated === 0) {
+      renderChartEmpty(container, card, 'no episodes recorded yet');
+      return;
+    }
+
+    const entries = [
+      { label: 'pending', tokens: pending, color: hex(KIND_COLOR.neutral) },
+      { label: 'consolidated', tokens: consolidated, color: hex(KIND_COLOR.new_node) },
+    ];
+
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H);
+
+    svg.appendChild(axis({
+      orientation: 'y', ticks, scale: yScale,
+      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+    }));
+    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+    entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
+    svg.appendChild(legend(
+      entries.map((e) => ({ label: e.label, color: e.color })),
+      { x: MARGIN.left, y: MARGIN.top - 4 },
+    ));
+
+    card.appendChild(svg);
+    container.appendChild(card);
+  }
+
+  // "{n}m ago" / "{n}h ago" / "{n}d ago" relative-time formatter for the last-sleep-
+  // pass tile — computed locally from the server's raw ts (epoch ms).
+  function relativeTimeFromMs(ts) {
+    const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (diffSec < 60) return 'just now';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return diffMin + 'm ago';
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return diffHr + 'h ago';
+    const diffDay = Math.floor(diffHr / 24);
+    return diffDay + 'd ago';
+  }
+
+  // "{n}s" / "{n}m {n}s" / "{n}h {n}m" duration formatter for the last-sleep-pass tile.
+  function formatDurationMs(ms) {
+    if (ms == null || ms < 0) return '0s';
+    const sec = Math.round(ms / 1000);
+    if (sec < 60) return sec + 's';
+    const min = Math.floor(sec / 60);
+    const remSec = sec % 60;
+    if (min < 60) return remSec > 0 ? min + 'm ' + remSec + 's' : min + 'm';
+    const hr = Math.floor(min / 60);
+    const remMin = min % 60;
+    return remMin > 0 ? hr + 'h ' + remMin + 'm' : hr + 'h';
+  }
+
+  // Freshness window for the last-sleep-pass tile's healthy/stale color (Claude's
+  // Discretion default — no per-user sleepFrequencyHours signal is threaded through
+  // this fetch; 24h comfortably covers the settings.js default of 1h between passes
+  // while not flagging a merely-quiet brain as broken).
+  const SLEEP_PASS_STALE_MS = 24 * 60 * 60 * 1000;
+
+  // Last-sleep-pass readout tile (D-14, NOT a chart — no axis()/legend()). Reads
+  // status/ts/duration_ms from the server; the server only ever sends an honest
+  // 'unknown' (a pass happened, batch boundary approximated) or 'none' (never
+  // happened) — this tile never fabricates a healthy status word of its own.
+  function renderLastSleepPassTile(container, lastSleepPass) {
+    const tile = document.createElement('div');
+    tile.className = 'chart-card stats-headline-tile';
+
+    const readout = document.createElement('div');
+    readout.className = 'stats-headline-label';
+    readout.style.fontSize = '13px';
+
+    const status = lastSleepPass && lastSleepPass.status;
+    const ts = lastSleepPass && lastSleepPass.ts;
+    const durationMs = lastSleepPass && lastSleepPass.duration_ms;
+
+    if (status === 'none' || ts == null) {
+      readout.textContent = 'no sleep pass has run yet'; // textContent only — T-44-19, verbatim
+      readout.style.color = 'var(--error-text)';
+    } else {
+      const stale = (Date.now() - ts) > SLEEP_PASS_STALE_MS;
+      // textContent only — T-44-19; verbatim copy shape, relative time + duration derived locally
+      readout.textContent = 'last sleep pass: ' + relativeTimeFromMs(ts) + ' (' + formatDurationMs(durationMs) + ')';
+      readout.style.color = stale ? 'var(--error-text)' : 'var(--text-stat)';
+    }
+
+    tile.appendChild(readout);
+    container.appendChild(tile);
+  }
+
+  function renderHealthTab(container, data) {
+    if (!container) return;
+    container.textContent = '';
+
+    if (!data) {
+      const err = document.createElement('div');
+      err.className = 'stats-error-state';
+      err.textContent = 'could not load brain-health stats'; // textContent only — T-44-19
+      container.appendChild(err);
+      return;
+    }
+
+    if (isBrainHealthEmpty(data)) {
+      const empty = document.createElement('div');
+      empty.className = 'stats-empty-state';
+      const heading = document.createElement('div');
+      heading.textContent = 'No brain activity yet'; // textContent only — T-44-19
+      const body = document.createElement('div');
+      body.textContent = 'Metrics appear after the first sleep pass consolidates episodes into the brain.';
+      empty.appendChild(heading);
+      empty.appendChild(body);
+      container.appendChild(empty);
+      return;
+    }
+
+    renderNodeGrowthChart(container, data.node_growth);
+    renderKindMixChart(container, data.kind_mix);
+    renderReconChart(container, data.reconsolidations_per_day);
+    renderTombstoneChart(container, data.tombstones_per_day);
+    renderJudgeActivityChart(container, data.judge_activity);
+    renderEpisodesChart(container, data.episodes);
+    renderLastSleepPassTile(container, data.last_sleep_pass);
   }
 }
