@@ -56,6 +56,8 @@ function onMove(ev) {
 }
 ```
 
+**Outcome:** fixed — 7ff8b87. attachHover.onMove now converts clientX into viewBox units via `vb.width / rect.width` before nearestPointIndex.
+
 ### CR-02: Node-growth query counts `confirm` events (no node created) and omits `unrelated` (the standalone new-node branch) — the focal chart misrepresents growth
 
 **File:** `src/viz/server.ts:533-540` (`stmtNodeGrowthDaily`)
@@ -73,6 +75,8 @@ WHERE node_id IS NOT NULL
 ```
 (Decide explicitly whether `contradict_reconcile` / `contradict_force_destabilize` replacements count as births — they mint a node but tombstone one; net-zero is defensible, but document the choice.)
 
+**Outcome:** fixed — a57d5c3. Event set corrected to the node-minting events (`schema_emitted`, `extend`, `unrelated`, `contradict_append_new`, `contradict_oscillation`); `confirm` excluded. Documented choice: `contradict_reconcile` and force-reconcile `contradict_force_destabilize` are excluded as net-zero (mint + tombstone). Fixture now seeds `confirm` (must not count) and `unrelated` (must count).
+
 ### CR-03: `judge_activity.escalation_rate` is structurally always 1.0 (or 0) in production — the metric cannot measure what it claims
 
 **File:** `src/viz/server.ts:558-563, 1541-1544`
@@ -83,11 +87,15 @@ WHERE node_id IS NOT NULL
 The test fixture (viz-stats-routes.test.ts:375-377) inserts a `('judge', 'claude-haiku-4-5')` row that **cannot occur in production**, manufacturing the 2/3 rate the assertion checks — the test masks the defect.
 **Fix:** Either (a) add a `setHeadlessFeature('judge')` bracket around the judge phase so cheap-judge Haiku rows are tagged `'judge'` (also fixing the extract-split pollution), or (b) drop the escalated bar and render only honest fires until the ledger can distinguish tiers. Update the test fixture to production-realistic rows.
 
+**Outcome:** fixed — 6d42c56. Verified against live engine source: no `setHeadlessFeature('judge')` bracket exists, so every `feature_tag='judge'` row is Sonnet by construction — the ledger cannot measure escalation. Server now reports `escalation_rate: null` (honest unavailability, per the no-fabricated-metrics posture); client renders only the fires bar when the rate is null (escalated bar returns automatically if a real numeric rate ever ships). Impossible ('judge','claude-haiku-4-5') fixture row replaced with production-realistic all-Sonnet rows.
+
 ### CR-04: Cost-event marker tooltip is clobbered by the chart hover handler — the D-10/D-11 before/after delta can never be read
 
 **File:** `src/viz/modules/stats-dashboard.js:309-335` (with `src/viz/modules/charts.js:329-336`)
 **Issue:** `appendMarkers` attaches `mouseenter`/`mousemove` on the marker `<g>` to show the delta text in the shared `#tooltip`, and `attachHover` attaches a `mousemove` listener on the parent `<svg>` that rewrites `tooltip.textContent` with the nearest-point "{date} — {value}" text. Both fire for the same pointer event (the marker's handler at the `<g>`, then the svg's during bubble), so the svg handler overwrites the marker's delta text on every single mousemove. The marker delta — the load-bearing half of D-10/D-11 (before/after avg-daily-burn) — flashes for at most one frame and is effectively unreadable. Additionally the hover target is a 1px-wide dashed line, which is nearly impossible to hit.
 **Fix:** In `attachHover.onMove`, skip when the event originates inside a marker group (`if (ev.target.closest && ev.target.closest('.chart-marker')) return;`), and widen the marker hit area (e.g. an invisible 8px-wide `<rect>` inside the marker `<g>` with `pointer-events: all`).
+
+**Outcome:** fixed — f5dba26. attachHover.onMove skips events originating inside `.chart-marker` (marker owns the shared tooltip while hovered); each marker gains an invisible 8px-wide `pointer-events:all` hit rect.
 
 ## Warnings
 
@@ -104,6 +112,8 @@ function flyToNode(target) {
 }
 ```
 
+**Outcome:** fixed — e6bd0c9. `flyToNode` closes the stats takeover (via `ctx.closeStatsDashboard`) before the reader/corpus closes and the camera flight.
+
 ### WR-02: `setOtherViewsHidden(false)` unconditionally restores `#hud-chip`/`#topics-rail`, clobbering corpus view's hidden state
 
 **File:** `src/viz/modules/stats-dashboard.js:86-91, 108-114`
@@ -115,6 +125,8 @@ if (hudChip) hudChip.style.display = (hidden || corpusOpen) ? 'none' : '';
 if (topicsRail) topicsRail.style.display = (hidden || corpusOpen) ? 'none' : '';
 ```
 
+**Outcome:** fixed — 88d467e. `setOtherViewsHidden(false)` only restores `#hud-chip`/`#topics-rail` when `ctx.isCorpusOpen()` is false.
+
 ### WR-03: Cost-event markers older than the selected window render at the first bucket with a fabricated `before_avg = 0`
 
 **File:** `src/viz/modules/stats-dashboard.js:298-307` (with `src/viz/server.ts:1483-1494`)
@@ -124,17 +136,23 @@ if (topicsRail) topicsRail.style.display = (hidden || corpusOpen) ? 'none' : '';
 if (buckets.length && m.date < buckets[0].date) continue;
 ```
 
+**Outcome:** fixed — e8302a6. `buildMarkers` skips events with `m.date < buckets[0].date` — out-of-window markers no longer render at bucket 0 with a fabricated before_avg.
+
 ### WR-04: Zero-usage days are absent from daily buckets — the x-axis distorts time and "avg daily burn" is per-active-day, not per-day
 
 **File:** `src/viz/server.ts:488-496, 1483-1494` (with `src/viz/modules/stats-dashboard.js:367`)
 **Issue:** `stmtUsageDailyBuckets` groups only rows that exist; days with no ledger writes produce no bucket. The client scales x by array index (`linearScale([0, buckets.length-1], ...)`), so a 30d window with 12 active days renders 12 evenly spaced points — gaps compress and the burn line's slope misrepresents time. The D-10/D-11 `before_avg`/`after_avg` divide by `rows.length` (active days only), so a lever that reduced usage to zero on most days *raises* the after-average instead of lowering it — the delta is biased against exactly the levers it exists to showcase.
 **Fix:** Zero-fill the date range server-side (generate the calendar span from cutoff→today, defaulting missing dates to `{tokens: 0, cost_usd: 0}`) before returning buckets; deltas then divide by calendar days.
 
+**Outcome:** fixed — d711598. Daily buckets are zero-filled server-side across the calendar span (cutoff→now); before/after deltas now divide by calendar days. Weekly (window=all) unfilled (cutoff=0 has no start); empty-ledger `[]` contract preserved.
+
 ### WR-05: Tombstones/day overcounts `contradict_force_destabilize` and misses merge tombstones
 
 **File:** `src/viz/server.ts:551-557`
 **Issue:** The tombstone event set counts every `contradict_force_destabilize` row, but that event type has two variants (consolidator.ts:1306-1352): the oscillation variant appends a coexisting node and **does not tombstone**; only the force-reconcile variant does. Meanwhile `entity_merge`/`fact_merge` (dedup passes, sink.ts:64-65) tombstone loser nodes and are not counted, and `contradict_oscillation` in the reconsolidations chart similarly counts append-new coexistence events as "reconsolidations." The per-day chart both over- and under-counts with no caption acknowledging it (the D-13 approximation caption is only on node growth).
 **Fix:** Either refine the sets (exclude oscillation-variant destabilize is not distinguishable from the event row alone — so at minimum add the merge events and an approximation caption to these charts), or persist a `tombstoned` flag in the event payload going forward.
+
+**Outcome:** fixed — caa619e. `entity_merge`/`fact_merge` added to the tombstone set; recon and tombstone charts both carry an approximation caption (the force-destabilize oscillation variant is not distinguishable from the event row alone — documented in the prepared-statement comment). Fixture seeds an `entity_merge` row.
 
 ### WR-06: `.settings-usage-link` has no CSS rule — default browser blue/underlined anchor on the dark panel
 
@@ -153,13 +171,19 @@ if (buckets.length && m.date < buckets[0].date) continue;
 .settings-usage-link:hover { color: var(--text-bright); }
 ```
 
+**Outcome:** fixed — ea2ddd8. `.settings-usage-link` rule added using existing tokens (`--text-bright-mauve`, `--banner-border`, `--text-bright` on hover).
+
 ### WR-07: Settings save can never remove an override — reverting to the preset default silently keeps the stale value, and "(modified)" sticks forever
 
 **File:** `src/viz/modules/settings.js:287-301` (with `src/viz/server.ts:1369-1374`)
 **Issue:** Two halves combine into a one-way ratchet. Client: `save()` omits a key from `newOverrides` when its value equals the preset default (`presetDefaults[field.key] !== val` check). Server: POST /settings merges `{ ...current.overrides, ...newOverrides }`, so an omitted key **retains its old override**. Net effect: once a toggle is overridden (e.g. `schemaInductionEnabled: false`), flipping it back to the preset default and saving sends nothing for that key, the server keeps the old override, and the re-render from the returned effective config flips the toggle back — the user's revert is silently discarded. Additionally, all five number fields are absent from `PRESET_DEFAULTS`, so `presetDefaults[key] === undefined` is always true and every save writes all number fields as overrides — `hasOverrides` is permanently non-empty after the first save and the header shows "(modified)" forever. Pre-existing (44-06) but in-scope and directly load-bearing for this panel's correctness.
 **Fix:** Send explicit removals — e.g. client sends the full desired overrides object and the server *replaces* rather than merges (`overrides: newOverrides ?? current.overrides`), or client sends `null` for keys to clear and the server deletes them.
 
+**Outcome:** fixed — a35e6ba. Server POST /settings now REPLACES stored overrides with the posted set (requests without an overrides key leave them untouched); client save() compares number fields against real engine defaults (DEFAULT_THRESHOLDS + corpusGenMax 25) so reverted fields are omitted and genuinely cleared, and "(modified)" no longer sticks forever. viz-settings-routes.test.ts updated to assert replace semantics + no-overrides-key preservation.
+
 ## Info
+
+_Info findings below were not in the fix scope (`--fix` covers Critical + Warning only) and remain open._
 
 ### IN-01: charts.js docstring claims "this module never hard-codes a color" but every builder has a hard-coded hex default
 
@@ -214,3 +238,10 @@ if (buckets.length && m.date < buckets[0].date) continue;
 _Reviewed: 2026-07-11_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
+
+## Fix Outcome Summary
+
+All 4 Critical and 7 Warning findings fixed (11/11), one atomic commit each (`fix(60): <id> ...`, 7ff8b87..a35e6ba). Verification: `npx tsc --noEmit` clean; `viz-stats-routes` / `viz-charts-geometry` / `viz-frontend-static` / `viz-settings-panel` / `viz-hud-palette` / `viz-activity-palette-invariants` all green (149 tests), plus `viz-server` / `viz-settings-routes` / `viz-index-route` regression-checked green. Info findings (IN-01..IN-08) remain open.
+
+_Fixed: 2026-07-11_
+_Fixer: Claude (gsd-code-fixer)_
