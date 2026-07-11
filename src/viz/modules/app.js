@@ -36,6 +36,7 @@ import { initReader }  from './reader.js';
 import { initCorpus }    from './corpus.js';
 import { initIndex }     from './index.js';
 import { initSettings }  from './settings.js';
+import { initStatsDashboard } from './stats-dashboard.js';
 import { initPalette }   from './palette.js';
 import { initHudRecede } from './hud-recede.js';
 
@@ -253,6 +254,9 @@ initReader(ctx);  // Reader slice: doc overlay; fact-refs call ctx.selectNode (a
 initCorpus(ctx);    // READER-04: flat 2D Obsidian corpus graph (#rail-corpus full-window toggle)
 initIndex(ctx);     // WIKI-01: browsable text index — left sidebar over the corpus (no toolbar button)
 initSettings(ctx);  // Phase 44-06: in-app cost-controls panel (D-02/D-03 — no IPC)
+initStatsDashboard(ctx); // Phase 60 Plan 03: full-window Usage/Brain-Health takeover
+                     // (D-01/D-02) — after initSettings so ctx.openStatsDashboard is
+                     // ready before initPalette wires its 'open-stats' command.
 initPalette(ctx);   // Phase 59 Plan 03: ⌘K palette — joins LAST, needs ctx.selectNode/
                      // ctx.searchNodes/ctx.listTopics/ctx.toggle*/ctx.openReader/
                      // ctx.openCorpus/ctx.recenter/ctx.isCorpusOpen/ctx.isReaderOpen
