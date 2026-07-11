@@ -303,6 +303,10 @@ export function initStatsDashboard(ctx) {
     if (granularity !== 'daily') return [];
     const markers = [];
     for (const m of COST_EVENTS) {
+      // Skip events older than the window — findIndex would otherwise resolve
+      // them all to bucket 0, visually claiming they happened on the window's
+      // first day (with a fabricated before_avg of 0 in the tooltip).
+      if (buckets.length && m.date < buckets[0].date) continue;
       const idx = buckets.findIndex((b) => b.date >= m.date);
       if (idx === -1) continue;
       markers.push({ date: m.date, label: m.label, idx });
