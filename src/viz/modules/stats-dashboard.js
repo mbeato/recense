@@ -30,6 +30,10 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Brain-Health copy (D-13, UI-SPEC Copywriting Contract, verbatim).
 const NODE_GROWTH_CAPTION = 'Derived from event history — approximate where older events were pruned.';
+// Recon/tombstone charts: event rows cannot distinguish every variant (e.g. the
+// oscillation variant of contradict_force_destabilize appends a coexisting node
+// and does not tombstone), so both per-day counts are honest approximations.
+const EVENT_COUNT_CAPTION = 'Derived from event history — approximate: event rows do not distinguish every variant.';
 
 // Identity-hue → CSS hex string (KIND_COLOR/TYPE_COLOR are 0xRRGGBB numbers; charts.js's
 // SVG builders take CSS color strings) — D-08: only these two locked palettes feed
@@ -645,6 +649,14 @@ export function initStatsDashboard(ctx) {
 
     card.appendChild(svg);
     attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BAR_H - MARGIN.bottom, color });
+
+    const caption = document.createElement('div');
+    caption.textContent = EVENT_COUNT_CAPTION; // textContent only — T-44-19
+    caption.style.fontSize = '10px';
+    caption.style.color = 'var(--text-recede)';
+    caption.style.marginTop = '8px';
+    card.appendChild(caption);
+
     container.appendChild(card);
   }
 
@@ -673,6 +685,14 @@ export function initStatsDashboard(ctx) {
 
     card.appendChild(svg);
     attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BAR_H - MARGIN.bottom, color });
+
+    const caption = document.createElement('div');
+    caption.textContent = EVENT_COUNT_CAPTION; // textContent only — T-44-19
+    caption.style.fontSize = '10px';
+    caption.style.color = 'var(--text-recede)';
+    caption.style.marginTop = '8px';
+    card.appendChild(caption);
+
     container.appendChild(card);
   }
 

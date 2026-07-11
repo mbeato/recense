@@ -557,10 +557,18 @@ export function startVizServer(
     GROUP BY date
     ORDER BY date ASC
   `);
+  // Tombstone set includes the dedup-pass merges ('entity_merge'/'fact_merge'
+  // tombstone their loser nodes). APPROXIMATE: 'contradict_force_destabilize' has
+  // two variants not distinguishable from the event row alone — the force-reconcile
+  // variant tombstones, the oscillation variant appends a coexisting node and does
+  // not — so this per-day count can overcount; the client renders an approximation
+  // caption on this chart (and on reconsolidations/day, whose 'contradict_oscillation'
+  // rows are coexistence appends, not in-place updates).
   const stmtTombstonesPerDay = db.prepare(`
     SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date, COUNT(*) AS count
     FROM consolidation_event
-    WHERE event_type IN ('contradict_reconcile', 'contradict_force_destabilize', 'schema_falsified')
+    WHERE event_type IN ('contradict_reconcile', 'contradict_force_destabilize',
+                         'schema_falsified', 'entity_merge', 'fact_merge')
     GROUP BY date
     ORDER BY date ASC
   `);

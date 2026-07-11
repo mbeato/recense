@@ -381,6 +381,7 @@ describe('GET /stats/brain-health', () => {
     insertConsolidationEvent('ev-reconcile-1', batchStart, 'contradict_reconcile', 'n-fact-1');
     insertConsolidationEvent('ev-destab-1', now - 3 * 60_000, 'contradict_force_destabilize', 'n-fact-2');
     insertConsolidationEvent('ev-osc-1', now - 2 * 60_000, 'contradict_oscillation', 'n-fact-1');
+    insertConsolidationEvent('ev-merge-1', now - 1 * 60_000, 'entity_merge', 'n-entity-1');
     insertConsolidationEvent('ev-falsified-1', now, 'schema_falsified', 'n-schema-1');
 
     // judge activity fixture: 3 judge calls, all Sonnet — production-realistic:
@@ -425,7 +426,7 @@ describe('GET /stats/brain-health', () => {
     expect(reconTotal).toBe(3); // reconcile + force_destabilize + oscillation
 
     const tombTotal = json.tombstones_per_day.reduce((sum, r) => sum + r.count, 0);
-    expect(tombTotal).toBe(3); // reconcile + force_destabilize + schema_falsified
+    expect(tombTotal).toBe(4); // reconcile + force_destabilize + schema_falsified + entity_merge
 
     expect(json.judge_activity.fires).toBe(3);
     // escalation_rate is honestly unavailable (null) — the ledger cannot
