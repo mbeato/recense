@@ -124,6 +124,9 @@ export function initPalette(ctx) {
   // isCorpusOpen(), always lands on brain. Checking corpus first and reader
   // second would let the reader-close undo the corpus->brain switch.
   function flyToNode(target) {
+    // Stats takeover covers the whole window (#stats-view z:6, #graph hidden) —
+    // close it first so the damped camera never animates on a hidden canvas (D-06).
+    if (ctx.isStatsDashboardOpen && ctx.isStatsDashboardOpen() && ctx.closeStatsDashboard) ctx.closeStatsDashboard();
     if (readerIsOpen() && ctx.closeReader) ctx.closeReader();
     if (ctx.isCorpusOpen && ctx.isCorpusOpen() && ctx.showBrainFromCorpus) ctx.showBrainFromCorpus();
     if (ctx.selectNode) ctx.selectNode(target);
