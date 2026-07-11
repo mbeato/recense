@@ -18,6 +18,10 @@
  *   GET /settings            → {preset, overrides, effective} merged config (44-05, D-03)
  *   POST /settings           → write settings.json with key-whitelisted payload (44-05, D-03)
  *   GET /usage               → 30d + all-time token readout by feature (44-05, D-09/D-10)
+ *   GET /stats/usage?window= → windowed daily/weekly burn buckets + per-feature/per-model
+ *                              totals + retail-$ + cost-event before/after deltas (Phase 60, D-09/D-10/D-11/D-12)
+ *   GET /stats/brain-health  → node growth, kind mix, reconsolidations/tombstones per day,
+ *                              judge activity, episodes pending/consolidated, last sleep-pass (Phase 60, D-13/D-14)
  *
  * Security invariants (threat model T-10-07/08/09/10/11, T-27-08/09/10/11, T-44-15..18):
  *   T-10-07: path-traversal guard — resolves absolute path and asserts it stays
@@ -95,6 +99,34 @@ export function parseSchedulerScalars(modulesRoot: string): Record<SchedulerScal
     result[name] = Number(match[1]);
   }
   return result;
+}
+
+/** One dated cost-lever marker parsed from constants.js's COST_EVENTS array (D-11). */
+export interface CostEventMarker {
+  date: string;
+  label: string;
+}
+
+/**
+ * Parse the COST_EVENTS array literal out of constants.js's source text (fail-fast,
+ * mirroring parseSchedulerScalars() above — T-60-09 single-source: the marker list is
+ * authored ONLY in constants.js, D-11, and MUST NOT be re-declared as a server literal
+ * or the client/server mirror-drift class parseSchedulerScalars already exists to kill
+ * would reopen for cost markers). Exported for direct unit testing.
+ */
+export function parseCostEvents(modulesRoot: string): CostEventMarker[] {
+  const src = fs.readFileSync(path.join(modulesRoot, 'constants.js'), 'utf8');
+  const arrayMatch = src.match(/export\s+const\s+COST_EVENTS\s*=\s*\[([\s\S]*?)\];/);
+  if (!arrayMatch) {
+    throw new Error("viz server: constants.js is missing required 'COST_EVENTS' array");
+  }
+  const entries: CostEventMarker[] = [];
+  const entryRe = /\{\s*date:\s*'([^']*)'\s*,\s*label:\s*'([^']*)'\s*\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = entryRe.exec(arrayMatch[1]!)) !== null) {
+    entries.push({ date: m[1]!, label: m[2]! });
+  }
+  return entries;
 }
 
 /**
@@ -254,6 +286,10 @@ export function startVizServer(
     SPONT_HOP_TOPN,
     SPONT_POOL_REFRESH_MS,
   } = parseSchedulerScalars(MODULES_ROOT);
+
+  // D-11: source-parse cost-event markers from constants.js at init (same fail-fast
+  // single-source mechanism as the scheduler scalars above) — never re-declared here.
+  const costEvents = parseCostEvents(MODULES_ROOT);
 
   // T-27-10: track in-flight slug generations to prevent duplicate concurrent spawns.
   // Key = slug, Value = Date.now() when the generate-doc CLI was first spawned for it.
@@ -438,6 +474,41 @@ export function startVizServer(
            SUM(total_cost_usd)     AS total_cost_usd
     FROM token_usage_ledger
     GROUP BY feature_tag
+  `);
+
+  // Compile GET /stats/usage prepared statements once (Phase 60, D-09/D-10/D-12,
+  // T-44-18 read-only). Daily buckets (window=7d/30d/90d) and weekly buckets
+  // (window=all) both take a single ts cutoff bind (0 = no lower bound / all-time).
+  // Bucketing follows the same strftime idiom stmtUsage30d's neighbours use for
+  // grouping — no new query shape, just a different GROUP BY key.
+  const stmtUsageDailyBuckets = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date,
+           SUM(input_tokens + output_tokens) AS tokens,
+           SUM(total_cost_usd)               AS cost_usd
+    FROM token_usage_ledger
+    WHERE ts > ?
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtUsageWeeklyBuckets = db.prepare(`
+    SELECT strftime('%Y-%W', ts/1000, 'unixepoch') AS date,
+           SUM(input_tokens + output_tokens) AS tokens,
+           SUM(total_cost_usd)               AS cost_usd
+    FROM token_usage_ledger
+    WHERE ts > ?
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+  const stmtUsageByModel = db.prepare(`
+    SELECT model,
+           SUM(input_tokens)       AS input_tokens,
+           SUM(output_tokens)      AS output_tokens,
+           SUM(cache_write_tokens) AS cache_write_tokens,
+           SUM(cache_read_tokens)  AS cache_read_tokens,
+           SUM(total_cost_usd)     AS total_cost_usd
+    FROM token_usage_ledger
+    WHERE ts > ?
+    GROUP BY model
   `);
 
   // Compile /events polling statement once.
@@ -1302,6 +1373,74 @@ export function startVizServer(
           window_days: 30,
           rolling_30d: summarise(rows30d),
           all_time: summarise(rowsAll),
+        }));
+      } catch {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('internal error');
+      }
+      return;
+    }
+
+    // ── GET /stats/usage?window= (Phase 60, D-09/D-10/D-11/D-12) ─────────────
+    // Windowed daily-bucketed (weekly for window=all) token burn, per-feature and
+    // per-model totals, retail-$ equivalent, and live before/after avg-daily-burn
+    // deltas for each COST_EVENTS marker (source-parsed from constants.js, D-11).
+    // Uses the read-only DB handle (T-44-18). Empty ledger → zeroed aggregates, not error.
+    if (url === '/stats/usage') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'content-type': 'text/plain' });
+        res.end('method not allowed');
+        return;
+      }
+      try {
+        type BucketRow = { date: string; tokens: number; cost_usd: number };
+
+        const rawWindow = new URLSearchParams(req.url?.split('?')[1] ?? '').get('window');
+        const ALLOWED_WINDOWS = new Set(['7d', '30d', '90d', 'all']);
+        const window = rawWindow !== null && ALLOWED_WINDOWS.has(rawWindow) ? rawWindow : '30d';
+
+        const now = Date.now();
+        const cutoff =
+          window === '7d' ? now - 7 * 86_400_000 :
+          window === '90d' ? now - 90 * 86_400_000 :
+          window === 'all' ? 0 :
+          now - 30 * 86_400_000; // '30d' default
+
+        const bucketGranularity: 'daily' | 'weekly' = window === 'all' ? 'weekly' : 'daily';
+        const buckets = (
+          bucketGranularity === 'weekly' ? stmtUsageWeeklyBuckets : stmtUsageDailyBuckets
+        ).all(cutoff) as BucketRow[];
+
+        const byFeature = stmtUsage30d.all(cutoff);
+        const byModel = stmtUsageByModel.all(cutoff);
+
+        let retailUsd = 0;
+        for (const b of buckets) retailUsd += b.cost_usd ?? 0;
+
+        // T-60-01: window is validated against ALLOWED_WINDOWS above; cutoff is always
+        // bound via '?' — no raw param ever reaches SQL text.
+        const costEventDeltas = costEvents.map((marker) => {
+          const before = buckets.filter((b) => b.date < marker.date);
+          const after = buckets.filter((b) => b.date >= marker.date);
+          const avg = (rows: BucketRow[]) =>
+            rows.length === 0 ? 0 : rows.reduce((sum, r) => sum + (r.tokens ?? 0), 0) / rows.length;
+          return {
+            date: marker.date,
+            label: marker.label,
+            before_avg: avg(before),
+            after_avg: avg(after),
+          };
+        });
+
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          window,
+          bucket_granularity: bucketGranularity,
+          buckets,
+          by_feature: byFeature,
+          by_model: byModel,
+          retail_usd: retailUsd,
+          cost_event_deltas: costEventDeltas,
         }));
       } catch {
         res.writeHead(500, { 'content-type': 'text/plain' });
