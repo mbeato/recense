@@ -1231,12 +1231,28 @@ Plans:
 
 **Goal:** The settings surface grows two real dashboards replacing the bare usage readout. (1) Cost/usage: daily token burn, per-feature split (extract/judge/corpus_gen/schema_abstract), per-model, retail-$ equivalent, and before/after savings framing — all from token_usage_ledger (the 2026-07 thinking-off analysis, rendered live instead of hand-queried). (2) Brain-health: node growth over time, kind mix (facts/schemas/entities/docs), reconsolidations + tombstones per day, judge activity (fires, escalation rate), episodes pending vs consolidated, last sleep-pass time/duration/status. LLM-free queries only (online-path constraint); charts in the scene's design language per Phase 59 conventions. No research gate — ledger + graph schema already carry everything.
 **Requirements**: TBD
-**Depends on:** none hard; visually harmonizes with Phase 59 (soft dependency)
-**Plans:** 0 plans
+**Depends on:** Phase 59 (HARD — dashboards render in 59's Liquid-Glass HUD language and are reached via its ⌘K palette; D-01); Phase 57 identity hues
+**Plans:** 6 plans (4 waves)
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 60 to break down)
+**Wave 1** *(parallel — no file overlap)*
+
+- [ ] 60-01-PLAN.md — Backend: read-only GET /stats/usage + /stats/brain-health routes (bucketed burn, per-feature/model, retail-$, cost-event deltas, six brain-health groups, derived last-sleep-pass)
+- [ ] 60-02-PLAN.md — Foundations: COST_EVENTS + NEUTRAL_SERIES_RAMP constants + hand-rolled inline-SVG chart helpers (charts.js), zero new deps
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 60-03-PLAN.md — Full-window #stats-view takeover shell (glass-free) + tabs/range/refresh + Usage tab render + app.js wiring
+
+**Wave 3** *(blocked on 60-03; parallel with each other)*
+
+- [ ] 60-04-PLAN.md — Brain Health tab: all six metric groups + honest last-sleep-pass tile (identity hues)
+- [ ] 60-05-PLAN.md — Navigation wiring: settings.js D-04 link replacement + ⌘K "Open stats" command
+
+**Wave 4** *(blocked on 60-04 + 60-05)*
+
+- [ ] 60-06-PLAN.md — Closing founder live-install sign-off checkpoint
 
 ### Phase 61: Corpus Chrome — index column + project browsing
 
