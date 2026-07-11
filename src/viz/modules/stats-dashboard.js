@@ -656,6 +656,144 @@ export function initStatsDashboard(ctx) {
     container.appendChild(card);
   }
 
+  // Judge-activity comparison bar — fires (KIND_COLOR.recall_hop, cyan) vs. escalated
+  // count (KIND_COLOR.neutral, slate), escalated derived from the server's
+  // judge_activity.escalation_rate (D-14: /stats/brain-health returns fires/
+  // escalation_rate as running totals, not a dated per-day series, so the dual-line
+  // time chart the plan sketched isn't representable from the live response shape —
+  // a two-bar comparison in the same identity hues, with the honest escalation-rate
+  // percentage in its own legend label, renders the same two numbers without
+  // fabricating dates the API doesn't provide).
+  function renderJudgeActivityChart(container, judgeActivity) {
+    const card = makeCard('Judge activity');
+    const fires = (judgeActivity && judgeActivity.fires) || 0;
+    const escalationRate = (judgeActivity && judgeActivity.escalation_rate) || 0;
+
+    if (fires === 0) {
+      renderChartEmpty(container, card, 'no judge activity recorded yet');
+      return;
+    }
+
+    const escalated = Math.round(fires * escalationRate);
+    const pct = Math.round(escalationRate * 100);
+    const entries = [
+      { label: 'fires', tokens: fires, color: hex(KIND_COLOR.recall_hop) },
+      { label: 'escalated (' + pct + '%)', tokens: escalated, color: hex(KIND_COLOR.neutral) },
+    ];
+
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H);
+
+    svg.appendChild(axis({
+      orientation: 'y', ticks, scale: yScale,
+      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+    }));
+    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+    entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
+    svg.appendChild(legend(
+      entries.map((e) => ({ label: e.label, color: e.color })),
+      { x: MARGIN.left, y: MARGIN.top - 4 },
+    ));
+
+    card.appendChild(svg);
+    container.appendChild(card);
+  }
+
+  // Episodes pending-vs-consolidated paired bar — pending KIND_COLOR.neutral,
+  // consolidated KIND_COLOR.new_node.
+  function renderEpisodesChart(container, episodes) {
+    const card = makeCard('Episodes pending vs. consolidated');
+    const pending = (episodes && episodes.pending) || 0;
+    const consolidated = (episodes && episodes.consolidated) || 0;
+
+    if (pending === 0 && consolidated === 0) {
+      renderChartEmpty(container, card, 'no episodes recorded yet');
+      return;
+    }
+
+    const entries = [
+      { label: 'pending', tokens: pending, color: hex(KIND_COLOR.neutral) },
+      { label: 'consolidated', tokens: consolidated, color: hex(KIND_COLOR.new_node) },
+    ];
+
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H);
+
+    svg.appendChild(axis({
+      orientation: 'y', ticks, scale: yScale,
+      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+    }));
+    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+    entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
+    svg.appendChild(legend(
+      entries.map((e) => ({ label: e.label, color: e.color })),
+      { x: MARGIN.left, y: MARGIN.top - 4 },
+    ));
+
+    card.appendChild(svg);
+    container.appendChild(card);
+  }
+
+  // "{n}m ago" / "{n}h ago" / "{n}d ago" relative-time formatter for the last-sleep-
+  // pass tile — computed locally from the server's raw ts (epoch ms).
+  function relativeTimeFromMs(ts) {
+    const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (diffSec < 60) return 'just now';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return diffMin + 'm ago';
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return diffHr + 'h ago';
+    const diffDay = Math.floor(diffHr / 24);
+    return diffDay + 'd ago';
+  }
+
+  // "{n}s" / "{n}m {n}s" / "{n}h {n}m" duration formatter for the last-sleep-pass tile.
+  function formatDurationMs(ms) {
+    if (ms == null || ms < 0) return '0s';
+    const sec = Math.round(ms / 1000);
+    if (sec < 60) return sec + 's';
+    const min = Math.floor(sec / 60);
+    const remSec = sec % 60;
+    if (min < 60) return remSec > 0 ? min + 'm ' + remSec + 's' : min + 'm';
+    const hr = Math.floor(min / 60);
+    const remMin = min % 60;
+    return remMin > 0 ? hr + 'h ' + remMin + 'm' : hr + 'h';
+  }
+
+  // Freshness window for the last-sleep-pass tile's healthy/stale color (Claude's
+  // Discretion default — no per-user sleepFrequencyHours signal is threaded through
+  // this fetch; 24h comfortably covers the settings.js default of 1h between passes
+  // while not flagging a merely-quiet brain as broken).
+  const SLEEP_PASS_STALE_MS = 24 * 60 * 60 * 1000;
+
+  // Last-sleep-pass readout tile (D-14, NOT a chart — no axis()/legend()). Reads
+  // status/ts/duration_ms from the server; the server only ever sends an honest
+  // 'unknown' (a pass happened, batch boundary approximated) or 'none' (never
+  // happened) — this tile never fabricates a healthy status word of its own.
+  function renderLastSleepPassTile(container, lastSleepPass) {
+    const tile = document.createElement('div');
+    tile.className = 'chart-card stats-headline-tile';
+
+    const readout = document.createElement('div');
+    readout.className = 'stats-headline-label';
+    readout.style.fontSize = '13px';
+
+    const status = lastSleepPass && lastSleepPass.status;
+    const ts = lastSleepPass && lastSleepPass.ts;
+    const durationMs = lastSleepPass && lastSleepPass.duration_ms;
+
+    if (status === 'none' || ts == null) {
+      readout.textContent = 'no sleep pass has run yet'; // textContent only — T-44-19, verbatim
+      readout.style.color = 'var(--error-text)';
+    } else {
+      const stale = (Date.now() - ts) > SLEEP_PASS_STALE_MS;
+      // textContent only — T-44-19; verbatim copy shape, relative time + duration derived locally
+      readout.textContent = 'last sleep pass: ' + relativeTimeFromMs(ts) + ' (' + formatDurationMs(durationMs) + ')';
+      readout.style.color = stale ? 'var(--error-text)' : 'var(--text-stat)';
+    }
+
+    tile.appendChild(readout);
+    container.appendChild(tile);
+  }
+
   function renderHealthTab(container, data) {
     if (!container) return;
     container.textContent = '';
@@ -685,5 +823,8 @@ export function initStatsDashboard(ctx) {
     renderKindMixChart(container, data.kind_mix);
     renderReconChart(container, data.reconsolidations_per_day);
     renderTombstoneChart(container, data.tombstones_per_day);
+    renderJudgeActivityChart(container, data.judge_activity);
+    renderEpisodesChart(container, data.episodes);
+    renderLastSleepPassTile(container, data.last_sleep_pass);
   }
 }
