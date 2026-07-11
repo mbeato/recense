@@ -86,8 +86,12 @@ export function initStatsDashboard(ctx) {
   function setOtherViewsHidden(hidden) {
     if (graphEl) graphEl.style.visibility = hidden ? 'hidden' : '';
     if (corpusEl) corpusEl.style.visibility = hidden ? 'hidden' : '';
-    if (hudChip) hudChip.style.display = hidden ? 'none' : '';
-    if (topicsRail) topicsRail.style.display = hidden ? 'none' : '';
+    // Corpus view keeps #hud-chip/#topics-rail hidden while it is open (B3 layout
+    // rule, corpus.js setTopicsSearchHidden) — restoring them here on stats close
+    // would clobber that shared DOM state, so only re-show when corpus is closed.
+    const corpusOpen = !!(ctx.isCorpusOpen && ctx.isCorpusOpen());
+    if (hudChip) hudChip.style.display = (hidden || corpusOpen) ? 'none' : '';
+    if (topicsRail) topicsRail.style.display = (hidden || corpusOpen) ? 'none' : '';
   }
 
   function show(tab) {
