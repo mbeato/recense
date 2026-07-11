@@ -1179,6 +1179,18 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   border-color: var(--settings-save-hover-border);
 }
 
+/* Stats-dashboard link (Phase 60 D-04) — token-styled so the anchor never
+   renders with user-agent blue/underline on the dark panel. */
+.settings-usage-link {
+  display: inline-block;
+  margin: 8px 0;
+  font-size: 12.5px;
+  color: var(--text-bright-mauve);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--banner-border);
+}
+.settings-usage-link:hover { color: var(--text-bright); }
+
 /* ── Usage readout ───────────────────────────────────────────────────────── */
 .settings-usage-section { margin: 4px 0 8px; }
 
