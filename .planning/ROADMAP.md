@@ -1232,7 +1232,7 @@ Plans:
 **Goal:** The settings surface grows two real dashboards replacing the bare usage readout. (1) Cost/usage: daily token burn, per-feature split (extract/judge/corpus_gen/schema_abstract), per-model, retail-$ equivalent, and before/after savings framing — all from token_usage_ledger (the 2026-07 thinking-off analysis, rendered live instead of hand-queried). (2) Brain-health: node growth over time, kind mix (facts/schemas/entities/docs), reconsolidations + tombstones per day, judge activity (fires, escalation rate), episodes pending vs consolidated, last sleep-pass time/duration/status. LLM-free queries only (online-path constraint); charts in the scene's design language per Phase 59 conventions. No research gate — ledger + graph schema already carry everything.
 **Requirements**: TBD
 **Depends on:** Phase 59 (HARD — dashboards render in 59's Liquid-Glass HUD language and are reached via its ⌘K palette; D-01); Phase 57 identity hues
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 
@@ -1252,7 +1252,7 @@ Plans:
 
 **Wave 4** *(blocked on 60-04 + 60-05)*
 
-- [ ] 60-06-PLAN.md — Closing founder live-install sign-off checkpoint
+- [x] 60-06-PLAN.md — Closing founder live-install sign-off checkpoint
 
 ### Phase 61: Corpus Chrome — index column + project browsing
 
