@@ -263,8 +263,12 @@ describe('security', () => {
   });
 
   it('has no external http(s) URLs across the corpus (except 127.0.0.1)', () => {
-    const external = corpus.match(/https?:\/\/(?!127\.0\.0\.1)[a-zA-Z0-9][^\s'"<>]*/g);
-    expect(external).toBeNull();
+    // Exempts the W3C SVG XML namespace URI (Phase 60 charts.js SVG_NS,
+    // used only as a createElementNS() string argument — never fetched over
+    // the network, not a phone-home/CDN risk this guard targets).
+    const external = (corpus.match(/https?:\/\/(?!127\.0\.0\.1)[a-zA-Z0-9][^\s'"<>]*/g) || [])
+      .filter(url => url !== 'http://www.w3.org/2000/svg');
+    expect(external).toEqual([]);
   });
 
   it('has no shell IPC coupling across the corpus (D-102)', () => {

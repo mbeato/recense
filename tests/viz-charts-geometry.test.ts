@@ -82,12 +82,9 @@ describe('nearestPointIndex', () => {
 });
 
 describe('charts.js source guards', () => {
-  it('never uses innerHTML with interpolation', () => {
+  it('never uses innerHTML anywhere (T-44-19)', () => {
     const src = readChartsJs();
-    // Flags any innerHTML assignment using a template literal or string
-    // concatenation (interpolated dynamic content) — a bare `.innerHTML = '<svg...'`
-    // static literal is not in use anywhere in this file at all (T-44-19).
-    expect(/\.innerHTML\s*=/.test(src)).toBe(false);
+    expect(/innerHTML/.test(src)).toBe(false);
   });
 
   it('never contains an amber-family literal (D-08 amber-exclusivity)', () => {
