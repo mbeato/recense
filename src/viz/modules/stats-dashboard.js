@@ -321,6 +321,18 @@ export function initStatsDashboard(ctx) {
       markerLine.setAttribute('stroke-dasharray', '4,3');
       g.appendChild(markerLine);
 
+      // Invisible 8px-wide hit target — the 1px dashed line alone is nearly
+      // impossible to hover; pointer-events="all" makes the transparent rect
+      // hoverable so the D-10/D-11 delta tooltip is actually reachable.
+      const hitRect = document.createElementNS(SVG_NS, 'rect');
+      hitRect.setAttribute('x', String(x - 4));
+      hitRect.setAttribute('y', String(MARGIN.top));
+      hitRect.setAttribute('width', '8');
+      hitRect.setAttribute('height', String((BURN_H - MARGIN.bottom) - MARGIN.top));
+      hitRect.setAttribute('fill', 'none');
+      hitRect.setAttribute('pointer-events', 'all');
+      g.appendChild(hitRect);
+
       const delta = deltas.find((d) => d.date === m.date && d.label === m.label);
       const deltaText = delta
         ? m.label + ': ' + fmtTokens(delta.before_avg) + '/day → ' + fmtTokens(delta.after_avg) + '/day'

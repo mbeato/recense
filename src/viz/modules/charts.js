@@ -314,6 +314,10 @@ export function attachHover(svg, points, opts) {
   svg.appendChild(dot);
 
   function onMove(ev) {
+    // Cost-event markers own the shared #tooltip while hovered (D-10/D-11 delta
+    // text) — skip the generic nearest-point handler so it doesn't overwrite the
+    // marker's tooltip on every bubbled mousemove.
+    if (ev.target && ev.target.closest && ev.target.closest('.chart-marker')) return;
     const rect = svg.getBoundingClientRect();
     // The chart renders with viewBox="0 0 760 H" + width:100% (stretched to the
     // card width), so cursor position must be converted from screen pixels into
