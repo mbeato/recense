@@ -280,20 +280,30 @@ export function initSettings(ctx) {
 
   async function save(presetSel, formFields) {
     const newPreset = presetSel.value;
-    const presetDefaults = PRESET_DEFAULTS[newPreset] || {};
+    // Baseline = engine defaults for every form key (number fields included —
+    // without them, presetDefaults[key] === undefined made EVERY number field an
+    // override on every save, so "(modified)" stuck forever), with the preset's
+    // own defaults layered on top. corpusGenMax's engine default is 25 (config.ts).
+    const baselineDefaults = {
+      corpusGenMax: 25,
+      ...DEFAULT_THRESHOLDS,
+      ...(PRESET_DEFAULTS[newPreset] || {}),
+    };
     const newOverrides = {};
 
-    // Collect non-default values from form fields as overrides (D-11).
+    // Collect non-default values from form fields as overrides (D-11). This is
+    // the FULL desired override set: the server replaces (not merges) stored
+    // overrides, so a field reverted to its default is genuinely cleared.
     for (const field of formFields) {
       if (field.type === 'boolean') {
         const val = field.el.checked;
-        if (presetDefaults[field.key] === undefined || presetDefaults[field.key] !== val) {
+        if (baselineDefaults[field.key] === undefined || baselineDefaults[field.key] !== val) {
           newOverrides[field.key] = val;
         }
       } else if (field.type === 'number') {
         const val = parseFloat(field.el.value);
         if (!isNaN(val)) {
-          if (presetDefaults[field.key] === undefined || presetDefaults[field.key] !== val) {
+          if (baselineDefaults[field.key] === undefined || baselineDefaults[field.key] !== val) {
             newOverrides[field.key] = val;
           }
         }

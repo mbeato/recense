@@ -1385,14 +1385,18 @@ export function startVizServer(
               newOverrides = validated as SettingsFile['overrides'];
             }
 
-            // Merge onto current SettingsFile (preset-or-current, overrides merged in).
+            // Apply onto current SettingsFile (preset-or-current). When the request
+            // carries an overrides object it REPLACES the stored set (the client
+            // sends the full desired overrides each save) — merging would make
+            // override removal impossible: a key omitted because the user reverted
+            // it to the preset default would silently keep its stale stored value
+            // (one-way ratchet). Requests without an overrides key leave the
+            // stored set untouched.
             const current = loadSettingsFile(settingsPath) ??
               ({ preset: 'standard' as PresetName, overrides: {} } satisfies SettingsFile);
             const updated: SettingsFile = {
               preset: newPreset ?? current.preset,
-              overrides: newOverrides !== undefined
-                ? { ...current.overrides, ...newOverrides }
-                : current.overrides,
+              overrides: newOverrides ?? current.overrides,
             };
 
             // Ensure ~/.config/recense/ exists before first write (D-04).

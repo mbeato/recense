@@ -188,17 +188,27 @@ describe('POST /settings', () => {
     expect(json.preset).toBe('lite');
   });
 
-  it('updates a whitelisted override key and merges with existing overrides', async () => {
+  it('replaces stored overrides with the posted set (override removal works)', async () => {
     // Set initial override
     await makeRequest(port, '/settings', 'POST', JSON.stringify({ overrides: { consolSkipThreshold: 0.3 } }));
-    // Add another override — first one should be preserved
+    // Post a new full override set — the client always sends the full desired
+    // set, so an omitted key means "reverted to default" and must be CLEARED
+    // (merging would ratchet stale overrides forever — Phase 60 WR-07).
     const r = await makeRequest(port, '/settings', 'POST', JSON.stringify({ overrides: { corpusGenMax: 10 } }));
     expect(r.statusCode).toBe(200);
     const json = JSON.parse(r.body) as { overrides: Record<string, unknown>; effective: Record<string, unknown> };
-    expect(json.overrides['consolSkipThreshold']).toBe(0.3);
+    expect(json.overrides['consolSkipThreshold']).toBeUndefined();
     expect(json.overrides['corpusGenMax']).toBe(10);
-    expect(json.effective['consolSkipThreshold']).toBe(0.3);
     expect(json.effective['corpusGenMax']).toBe(10);
+  });
+
+  it('leaves stored overrides untouched when the request has no overrides key', async () => {
+    await makeRequest(port, '/settings', 'POST', JSON.stringify({ overrides: { consolSkipThreshold: 0.3 } }));
+    const r = await makeRequest(port, '/settings', 'POST', JSON.stringify({ preset: 'lite' }));
+    expect(r.statusCode).toBe(200);
+    const json = JSON.parse(r.body) as { preset: string; overrides: Record<string, unknown> };
+    expect(json.preset).toBe('lite');
+    expect(json.overrides['consolSkipThreshold']).toBe(0.3);
   });
 
   it('returns 400 for an unknown override key (T-44-15 key whitelist)', async () => {
