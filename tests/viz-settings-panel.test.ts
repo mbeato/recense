@@ -510,9 +510,9 @@ describe('initSettings — Save (POST /settings)', () => {
   });
 });
 
-// ── Task 2 Tests: token-usage readout ─────────────────────────────────────────
+// ── Task 2 Tests: per-toggle usage lines + D-04 dashboard link ────────────────
 
-describe('initSettings — token-usage readout (Task 2)', () => {
+describe('initSettings — token-usage readout (Task 2 + Phase 60 D-04)', () => {
   it('calls fetch("/usage") on open', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(makeSettingsResponse()) });
     // A second call for /usage needs its own response, so use implementation:
@@ -527,54 +527,46 @@ describe('initSettings — token-usage readout (Task 2)', () => {
     expect(mockFetch.mock.calls.some((args: any[]) => args[0] === '/usage')).toBe(true);
   });
 
-  it('renders 30d headline with token count', async () => {
+  it('renders per-toggle usage lines adjacent to core/schema/corpus rows (D-09)', async () => {
     const body = await openAndRender(makeSettingsResponse(), makeUsageResponse());
-    const headline = findFirst(body, '.settings-usage-headline');
-    expect(headline).not.toBeNull();
-    expect(headline!.textContent).toContain('tokens');
-    expect(headline!.textContent).toContain('this period you spent');
+    const usageLines = findAll(body, '.settings-usage-line');
+    // One line per appendUsageLines() call site: core (extract+judge), schema, corpus.
+    expect(usageLines.length).toBe(3);
+    const allText = usageLines.map(l => l.textContent).join(' ');
+    expect(allText).toContain('tokens this month');
   });
 
-  it('renders per-feature lines for extraction, judging, schema, corpus (D-09)', async () => {
-    const body = await openAndRender(makeSettingsResponse(), makeUsageResponse());
-    const featureLines = findAll(body, '.settings-usage-feature-line');
-    expect(featureLines.length).toBeGreaterThanOrEqual(4);
-
-    const allText = featureLines.map(l => l.textContent).join(' ');
-    expect(allText).toContain('extraction');
-    expect(allText).toContain('judging');
-    expect(allText).toContain('schema abstraction');
-    expect(allText).toContain('corpus docs');
-  });
-
-  it('renders all-time total line (D-10)', async () => {
-    const body = await openAndRender(makeSettingsResponse(), makeUsageResponse());
-    const allTime = findFirst(body, '.settings-usage-alltime');
-    expect(allTime).not.toBeNull();
-    expect(allTime!.textContent).toContain('all time');
-    expect(allTime!.textContent).toContain('tokens');
-  });
-
-  it('renders empty-state message when usage data is zeroed', async () => {
-    const body = await openAndRender(makeSettingsResponse(), makeZeroUsageResponse());
-    const empty = findFirst(body, '.settings-usage-empty');
-    expect(empty).not.toBeNull();
-    expect(empty!.textContent).toContain('no usage recorded yet');
-  });
-
-  it('renders empty-state message when /usage returns non-ok (null usageData)', async () => {
+  it('renders "View usage stats →" link that opens the stats takeover (D-04)', async () => {
+    const ctx: any = { openStatsDashboard: vi.fn() };
     mockFetch.mockImplementation((url: string) => {
       if (url === '/settings') return Promise.resolve({ ok: true, json: () => Promise.resolve(makeSettingsResponse()) });
-      if (url === '/usage')    return Promise.resolve({ ok: false });
+      if (url === '/usage')    return Promise.resolve({ ok: true, json: () => Promise.resolve(makeUsageResponse()) });
       return Promise.resolve({ ok: false });
     });
-    initSettings({});
+    initSettings(ctx);
     fakeBtn.trigger('click');
     await flush();
 
-    const empty = findFirst(fakeBody, '.settings-usage-empty');
-    expect(empty).not.toBeNull();
-    expect(empty!.textContent).toContain('no usage recorded yet');
+    const link = findFirst(fakeBody, '.settings-usage-link');
+    expect(link).not.toBeNull();
+    expect(link!.textContent).toBe('View usage stats →');
+
+    link!.trigger('click', { preventDefault: () => {} });
+    expect(ctx.openStatsDashboard).toHaveBeenCalled();
+  });
+
+  it('does not throw when clicking the usage link and ctx.openStatsDashboard is absent', async () => {
+    const body = await openAndRender(makeSettingsResponse(), makeUsageResponse());
+    const link = findFirst(body, '.settings-usage-link');
+    expect(link).not.toBeNull();
+    expect(() => link!.trigger('click', { preventDefault: () => {} })).not.toThrow();
+  });
+
+  it('does not render the old standalone 30d/all-time readout block (D-04)', async () => {
+    const body = await openAndRender(makeSettingsResponse(), makeUsageResponse());
+    expect(findFirst(body, '.settings-usage-headline')).toBeNull();
+    expect(findFirst(body, '.settings-usage-feature-line')).toBeNull();
+    expect(findFirst(body, '.settings-usage-alltime')).toBeNull();
   });
 
   it('usage values are set via textContent — no innerHTML for dynamic values (T-44-19)', async () => {
@@ -609,7 +601,7 @@ describe('initSettings — token-usage readout (Task 2)', () => {
     expect(innerHTMLWrites).toHaveLength(0);
   });
 
-  it('large token counts use k/M abbreviation for readability', async () => {
+  it('large token counts use k/M abbreviation for readability in per-toggle lines', async () => {
     const bigUsage = {
       window_days: 30,
       rolling_30d: {
@@ -627,13 +619,9 @@ describe('initSettings — token-usage readout (Task 2)', () => {
     };
 
     const body = await openAndRender(makeSettingsResponse(), bigUsage);
-    const headline = findFirst(body, '.settings-usage-headline');
-    expect(headline).not.toBeNull();
+    const usageLines = findAll(body, '.settings-usage-line');
+    const allText = usageLines.map(l => l.textContent).join(' ');
     // Should use "1.5M" not "1500000"
-    expect(headline!.textContent).toContain('1.5M');
-
-    const allTime = findFirst(body, '.settings-usage-alltime');
-    expect(allTime).not.toBeNull();
-    expect(allTime!.textContent).toContain('5.2M');
+    expect(allText).toContain('1.5M');
   });
 });
