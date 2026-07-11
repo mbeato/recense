@@ -315,7 +315,13 @@ export function attachHover(svg, points, opts) {
 
   function onMove(ev) {
     const rect = svg.getBoundingClientRect();
-    const xPixel = ev.clientX - rect.left;
+    // The chart renders with viewBox="0 0 760 H" + width:100% (stretched to the
+    // card width), so cursor position must be converted from screen pixels into
+    // viewBox units before comparing against points[].x — the two coordinate
+    // systems only coincide at exactly 760px rendered width.
+    const vb = svg.viewBox.baseVal;
+    const scaleX = rect.width > 0 ? vb.width / rect.width : 1;
+    const xPixel = (ev.clientX - rect.left) * scaleX;
     const idx = nearestPointIndex(points, xPixel);
     if (idx < 0) return;
     const p = points[idx];
