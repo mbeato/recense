@@ -333,7 +333,7 @@ describe('GET /stats/brain-health', () => {
       kind_mix: Record<string, number>;
       reconsolidations_per_day: unknown[];
       tombstones_per_day: unknown[];
-      judge_activity: { fires: number; escalation_rate: number };
+      judge_activity: { fires: number; escalation_rate: number | null };
       episodes: { pending: number; consolidated: number };
       last_sleep_pass: { ts: number | null; duration_ms: number | null; status: string };
     };
@@ -342,7 +342,7 @@ describe('GET /stats/brain-health', () => {
     expect(json.kind_mix).toEqual({ entity: 0, fact: 0, schema: 0, doc: 0, insight: 0 });
     expect(json.reconsolidations_per_day).toEqual([]);
     expect(json.tombstones_per_day).toEqual([]);
-    expect(json.judge_activity).toEqual({ fires: 0, escalation_rate: 0 });
+    expect(json.judge_activity).toEqual({ fires: 0, escalation_rate: null });
     expect(json.episodes).toEqual({ pending: 0, consolidated: 0 });
     expect(json.last_sleep_pass).toEqual({ ts: null, duration_ms: null, status: 'none' });
   });
@@ -375,10 +375,13 @@ describe('GET /stats/brain-health', () => {
     insertConsolidationEvent('ev-osc-1', now - 2 * 60_000, 'contradict_oscillation', 'n-fact-1');
     insertConsolidationEvent('ev-falsified-1', now, 'schema_falsified', 'n-schema-1');
 
-    // judge activity fixture: 3 judge calls, 2 on the Sonnet judge model (escalated).
+    // judge activity fixture: 3 judge calls, all Sonnet — production-realistic:
+    // feature_tag='judge' rows are ALWAYS the Sonnet judge model (deriveFeatureTag
+    // in claude-headless-client.ts tags Haiku rows 'extract'), which is exactly why
+    // the server cannot measure escalation and reports escalation_rate: null.
     insertLedgerRow(now, 'judge', 'claude-sonnet-4-6', 100, 50, 0.01);
     insertLedgerRow(now, 'judge', 'claude-sonnet-4-6', 100, 50, 0.01);
-    insertLedgerRow(now, 'judge', 'claude-haiku-4-5', 100, 50, 0.001);
+    insertLedgerRow(now, 'judge', 'claude-sonnet-4-6', 100, 50, 0.01);
 
     // episodes fixture: 2 pending, 3 consolidated.
     insertEpisode('ep-1', 0);
@@ -396,7 +399,7 @@ describe('GET /stats/brain-health', () => {
       kind_mix: Record<string, number>;
       reconsolidations_per_day: Array<{ date: string; count: number }>;
       tombstones_per_day: Array<{ date: string; count: number }>;
-      judge_activity: { fires: number; escalation_rate: number };
+      judge_activity: { fires: number; escalation_rate: number | null };
       episodes: { pending: number; consolidated: number };
       last_sleep_pass: { ts: number | null; duration_ms: number | null; status: string };
     };
@@ -417,9 +420,9 @@ describe('GET /stats/brain-health', () => {
     expect(tombTotal).toBe(3); // reconcile + force_destabilize + schema_falsified
 
     expect(json.judge_activity.fires).toBe(3);
-    expect(json.judge_activity.escalation_rate).toBeGreaterThan(0);
-    expect(json.judge_activity.escalation_rate).toBeLessThanOrEqual(1);
-    expect(json.judge_activity.escalation_rate).toBeCloseTo(2 / 3);
+    // escalation_rate is honestly unavailable (null) — the ledger cannot
+    // distinguish escalated judge calls (no-fabricated-metrics posture).
+    expect(json.judge_activity.escalation_rate).toBeNull();
 
     expect(json.episodes.pending).toBe(2);
     expect(json.episodes.consolidated).toBe(3);

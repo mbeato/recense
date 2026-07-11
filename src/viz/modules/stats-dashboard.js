@@ -656,30 +656,31 @@ export function initStatsDashboard(ctx) {
     container.appendChild(card);
   }
 
-  // Judge-activity comparison bar — fires (KIND_COLOR.recall_hop, cyan) vs. escalated
-  // count (KIND_COLOR.neutral, slate), escalated derived from the server's
-  // judge_activity.escalation_rate (D-14: /stats/brain-health returns fires/
-  // escalation_rate as running totals, not a dated per-day series, so the dual-line
-  // time chart the plan sketched isn't representable from the live response shape —
-  // a two-bar comparison in the same identity hues, with the honest escalation-rate
-  // percentage in its own legend label, renders the same two numbers without
-  // fabricating dates the API doesn't provide).
+  // Judge-activity bar — fires (KIND_COLOR.recall_hop, cyan). The server reports
+  // escalation_rate: null (unavailable) because the ledger cannot distinguish
+  // escalated judge calls (feature_tag='judge' rows are Sonnet by construction —
+  // see server.ts's stmtJudgeFires comment); rendering a bar from that would
+  // fabricate a metric. If the server ever ships a real numeric rate, the second
+  // "escalated" bar (KIND_COLOR.neutral, slate) renders again with its honest
+  // percentage in the legend label.
   function renderJudgeActivityChart(container, judgeActivity) {
     const card = makeCard('Judge activity');
     const fires = (judgeActivity && judgeActivity.fires) || 0;
-    const escalationRate = (judgeActivity && judgeActivity.escalation_rate) || 0;
+    const escalationRate = judgeActivity ? judgeActivity.escalation_rate : null;
 
     if (fires === 0) {
       renderChartEmpty(container, card, 'no judge activity recorded yet');
       return;
     }
 
-    const escalated = Math.round(fires * escalationRate);
-    const pct = Math.round(escalationRate * 100);
     const entries = [
       { label: 'fires', tokens: fires, color: hex(KIND_COLOR.recall_hop) },
-      { label: 'escalated (' + pct + '%)', tokens: escalated, color: hex(KIND_COLOR.neutral) },
     ];
+    if (typeof escalationRate === 'number') {
+      const escalated = Math.round(fires * escalationRate);
+      const pct = Math.round(escalationRate * 100);
+      entries.push({ label: 'escalated (' + pct + '%)', tokens: escalated, color: hex(KIND_COLOR.neutral) });
+    }
 
     const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H);
 

@@ -564,11 +564,16 @@ export function startVizServer(
     GROUP BY date
     ORDER BY date ASC
   `);
+  // NOTE (no-fabricated-metrics): the ledger CANNOT measure judge escalation.
+  // feature_tag for judge calls is derived from the model name (claude-headless-
+  // client.ts deriveFeatureTag: Haiku→'extract', Sonnet→'judge'; there is no
+  // setHeadlessFeature('judge') bracket), so every feature_tag='judge' row is a
+  // Sonnet row by construction — a "escalated / fires" ratio computed from these
+  // rows is structurally 1.0 regardless of the twoTierJudge setting. The handler
+  // therefore reports escalation_rate: null (unavailable) until the ledger can
+  // distinguish tiers; only honest fires are counted here.
   const stmtJudgeFires = db.prepare(`
     SELECT COUNT(*) AS count FROM token_usage_ledger WHERE feature_tag = 'judge'
-  `);
-  const stmtJudgeEscalated = db.prepare(`
-    SELECT COUNT(*) AS count FROM token_usage_ledger WHERE feature_tag = 'judge' AND model = ?
   `);
   const stmtEpisodesByConsolidated = db.prepare(`
     SELECT consolidated, COUNT(*) AS count FROM episode GROUP BY consolidated
@@ -1547,10 +1552,10 @@ export function startVizServer(
         const reconsolidationsPerDay = stmtReconsPerDay.all() as DayCountRow[];
         const tombstonesPerDay = stmtTombstonesPerDay.all() as DayCountRow[];
 
-        const judgeModel = loadMergedConfig(dbPath, process.env, settingsPath).claudeHeadlessJudgeModel;
+        // escalation_rate is null (unavailable) — the ledger cannot distinguish
+        // escalated judge calls; see the stmtJudgeFires comment above.
         const judgeFires = (stmtJudgeFires.get() as { count: number }).count;
-        const judgeEscalated = (stmtJudgeEscalated.get(judgeModel) as { count: number }).count;
-        const escalationRate = judgeFires > 0 ? judgeEscalated / judgeFires : 0;
+        const escalationRate: number | null = null;
 
         const episodeRows = stmtEpisodesByConsolidated.all() as Array<{ consolidated: number; count: number }>;
         let pending = 0;
