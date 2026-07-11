@@ -11,8 +11,11 @@
  *     mirror reader.js 452-463 — zero innerHTML for dynamic values)
  *
  * Implements: D-02 (no IPC), D-03 (frontend settings.json consumer),
- *             D-09 (feature line maps 1:1 to its toggle), D-10 (30d + all-time readout),
+ *             D-09 (feature line maps 1:1 to its toggle),
  *             D-11 (preset + overrides + divergence label), D-12 (core always-on, no toggle)
+ *             D-04 (Phase 60): the standalone 30d/all-time usage readout is replaced
+ *             by a single "View usage stats →" link into the stats takeover
+ *             (ctx.openStatsDashboard) — per-toggle usage lines (D-09) stay.
  */
 
 // Preset defaults mirrored from PRESET_CONFIGS (src/lib/config.ts) — used
@@ -31,7 +34,7 @@ const DEFAULT_THRESHOLDS = {
   sleepFrequencyHours:          1,
 };
 
-export function initSettings(_ctx) {
+export function initSettings(ctx) {
   const panel = document.getElementById('settings-panel');
   if (!panel) return;
 
@@ -252,8 +255,16 @@ export function initSettings(_ctx) {
 
     appendDivider(bodyEl);
 
-    // ── Token usage readout (D-09 / D-10) ─────────────────────────────────────
-    appendFullUsageReadout(bodyEl, usageData);
+    // ── Stats dashboard link (D-04) ─────────────────────────────────────────────
+    const usageLink = document.createElement('a');
+    usageLink.className = 'settings-usage-link'; // new class, styled per Phase 59 tokens
+    usageLink.href = '#';
+    usageLink.textContent = 'View usage stats →'; // textContent only — T-44-19
+    usageLink.addEventListener('click', ev => {
+      ev.preventDefault();
+      if (typeof ctx.openStatsDashboard === 'function') ctx.openStatsDashboard();
+    });
+    bodyEl.appendChild(usageLink);
 
     // ── Save button ───────────────────────────────────────────────────────────
     const saveBtn = document.createElement('button');
@@ -381,95 +392,6 @@ export function initSettings(_ctx) {
       ? fmtTokens(totalTokens) + ' tokens this month (~$' + totalCost.toFixed(4) + ')'
       : '0 tokens this month';
     parent.appendChild(lineEl);
-  }
-
-  // ── Full usage readout (D-09 / D-10) ─────────────────────────────────────────
-
-  /**
-   * Appends the complete token-usage section: 30d headline, per-feature breakdown
-   * (each line maps to its toggle — D-09), and all-time total (D-10).
-   * SECURITY: all values rendered via textContent (T-44-19).
-   */
-  function appendFullUsageReadout(parent, usageData) {
-    const section = document.createElement('div');
-    section.className = 'settings-usage-section';
-
-    const usageHead = document.createElement('div');
-    usageHead.className = 'settings-section-subhead';
-    usageHead.textContent = 'token usage';
-    section.appendChild(usageHead);
-
-    // Empty / null guard
-    if (!usageData) {
-      const na = document.createElement('div');
-      na.className = 'settings-usage-empty';
-      na.textContent = 'no usage recorded yet'; // static string — textContent is fine
-      section.appendChild(na);
-      parent.appendChild(section);
-      return;
-    }
-
-    const { rolling_30d, all_time } = usageData;
-    const total30d   = (rolling_30d && rolling_30d.totalTokens)  || 0;
-    const totalAllTime = (all_time && all_time.totalTokens) || 0;
-
-    if (total30d === 0 && totalAllTime === 0) {
-      const na = document.createElement('div');
-      na.className = 'settings-usage-empty';
-      na.textContent = 'no usage recorded yet';
-      section.appendChild(na);
-      parent.appendChild(section);
-      return;
-    }
-
-    // 30d headline (D-10) — textContent only for all values — T-44-19
-    const headline = document.createElement('div');
-    headline.className = 'settings-usage-headline';
-    const costStr = (rolling_30d && rolling_30d.totalCostUsd)
-      ? ' (~$' + rolling_30d.totalCostUsd.toFixed(4) + ')'
-      : '';
-    headline.textContent =
-      'this period you spent ' + fmtTokens(total30d) + ' tokens' + costStr;
-    section.appendChild(headline);
-
-    // Per-feature breakdown (D-09) — each line maps to its toggle
-    // Feature order matches the toggle order: core (extract+judge), schema, corpus
-    const FEATURE_LABELS = [
-      { tag: 'extract',        label: 'extraction' },
-      { tag: 'judge',          label: 'judging' },
-      { tag: 'schema_abstract', label: 'schema abstraction' },
-      { tag: 'corpus_gen',     label: 'corpus docs' },
-    ];
-    const byFeature = (rolling_30d && rolling_30d.byFeature) || [];
-
-    for (const { tag, label } of FEATURE_LABELS) {
-      const row = byFeature.find(r => r.feature_tag === tag);
-      // /usage rows carry input_tokens + output_tokens (no combined field) — sum
-      // them like the route's headline totalTokens so per-feature lines aren't 0.
-      const tokens = row ? (row.input_tokens || 0) + (row.output_tokens || 0) : 0;
-      const cost   = (row && row.total_cost_usd) || 0;
-
-      const lineEl = document.createElement('div');
-      lineEl.className = 'settings-usage-feature-line';
-      // textContent only — T-44-19 (label is static; tokens/cost are numbers)
-      lineEl.textContent = label + ': '
-        + (tokens > 0
-          ? fmtTokens(tokens) + ' tokens (~$' + cost.toFixed(4) + ')'
-          : '0 tokens');
-      section.appendChild(lineEl);
-    }
-
-    // All-time total (D-10) — textContent only — T-44-19
-    const allTimeEl = document.createElement('div');
-    allTimeEl.className = 'settings-usage-alltime';
-    const allTimeCost = (all_time && all_time.totalCostUsd)
-      ? ' (~$' + all_time.totalCostUsd.toFixed(4) + ')'
-      : '';
-    allTimeEl.textContent =
-      'all time: ' + fmtTokens(totalAllTime) + ' tokens' + allTimeCost;
-    section.appendChild(allTimeEl);
-
-    parent.appendChild(section);
   }
 
   // ── Format helpers ─────────────────────────────────────────────────────────
