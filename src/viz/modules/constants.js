@@ -798,6 +798,9 @@ export const HUD_CSS_TOKENS = {
   'index-search-bg': 'rgba(139, 112, 144, 0.08)',
   'index-search-focus-bg': 'rgba(139, 112, 144, 0.12)',
   'index-heading-divider': 'rgba(139, 112, 144, 0.2)',
+
+  // Phase 60 — stats dashboard chart-card flat surface (D-05, no glass — see 60-UI-SPEC "Glass Discipline")
+  'chart-card': 'rgba(26, 18, 32, 0.4)',
 };
 
 /** Idle timer before ambient HUD chrome recedes (D-08). Provisional — ratcheted at D-15. */
@@ -824,3 +827,30 @@ export const PALETTE_Z_INDEX = 50;
 
 /** Palette backdrop z-index — just under the palette itself. */
 export const PALETTE_BACKDROP_Z_INDEX = 49;
+
+// ============================================================================
+// Phase 60 — Settings Stats Depth: cost-event markers + non-activity chart ramp
+// ============================================================================
+
+/**
+ * Dated cost-lever markers rendered on the Usage-tab daily-burn chart (D-10,
+ * D-11). Drives the live before/after avg-daily-burn delta computed from the
+ * ledger — never hand-queried. New events = one-line addition here, no code
+ * change elsewhere.
+ * @type {{date: string, label: string}[]}
+ */
+export const COST_EVENTS = [
+  { date: '2026-07-03', label: 'MAX_THINKING_TOKENS=0' },
+  { date: '2026-06-25', label: 'consolSkipThreshold tuned (Phase 42)' },
+];
+
+/**
+ * Non-activity chart series ramp (tokens/models/features on the Usage tab,
+ * D-08) — a 4-step desaturated aubergine/mauve ramp, light→dark. Steps 0/1
+ * reuse HUD_CSS_TOKENS['text-body-mauve']/['text-mauve-rest'] verbatim; 2/3
+ * are new darker steps in the same family. Deliberately NOT amber and NOT the
+ * KIND_COLOR/TYPE_COLOR activity-identity pool — Usage-tab series are never
+ * activity kinds, so they never borrow that vocabulary (D-08 amber-exclusivity).
+ * @type {string[]}
+ */
+export const NEUTRAL_SERIES_RAMP = ['#a99db3', '#8b7090', '#6d5a72', '#574560'];
