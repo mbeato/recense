@@ -1482,9 +1482,26 @@ export function startVizServer(
           now - 30 * 86_400_000; // '30d' default
 
         const bucketGranularity: 'daily' | 'weekly' = window === 'all' ? 'weekly' : 'daily';
-        const buckets = (
+        let buckets = (
           bucketGranularity === 'weekly' ? stmtUsageWeeklyBuckets : stmtUsageDailyBuckets
         ).all(cutoff) as BucketRow[];
+
+        // Zero-fill missing calendar days for daily windows (skipped when the
+        // ledger is empty — the zeroed-aggregates contract returns []). Without
+        // this, days with no ledger writes vanish: the client scales x by array
+        // index (time distorts), and the cost-event before/after averages divide
+        // by ACTIVE days only — biasing the delta against exactly the levers that
+        // reduce usage to zero on most days. With the fill, averages divide by
+        // calendar days. Weekly (window=all) is unfilled: cutoff=0 has no start.
+        if (bucketGranularity === 'daily' && buckets.length > 0) {
+          const byDate = new Map(buckets.map((b) => [b.date, b]));
+          const filled: BucketRow[] = [];
+          for (let t = cutoff; t <= now; t += 86_400_000) {
+            const date = new Date(t).toISOString().slice(0, 10);
+            filled.push(byDate.get(date) ?? { date, tokens: 0, cost_usd: 0 });
+          }
+          buckets = filled;
+        }
 
         const byFeature = stmtUsage30d.all(cutoff);
         const byModel = stmtUsageByModel.all(cutoff);

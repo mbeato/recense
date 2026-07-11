@@ -194,7 +194,7 @@ describe('GET /stats/usage', () => {
     }
   });
 
-  it('returns a daily bucket for window=30d with seeded rows', async () => {
+  it('returns zero-filled daily buckets for window=30d with seeded rows', async () => {
     const now = Date.now();
     insertLedgerRow(now - 5 * 86_400_000, 'extract', 'claude-haiku-4-5', 100, 50, 0.001);
     insertLedgerRow(now - 5 * 86_400_000, 'judge', 'claude-sonnet-4-6', 200, 100, 0.005);
@@ -207,9 +207,17 @@ describe('GET /stats/usage', () => {
       buckets: Array<{ date: string; tokens: number; cost_usd: number }>;
     };
     expect(json.bucket_granularity).toBe('daily');
-    expect(json.buckets.length).toBe(1);
-    expect(json.buckets[0]!.tokens).toBe(100 + 50 + 200 + 100);
-    expect(json.buckets[0]!.cost_usd).toBeCloseTo(0.006);
+    // Every calendar day in the window is present (zero-filled), so the x-axis
+    // never distorts time and per-day averages divide by calendar days.
+    expect(json.buckets.length).toBe(31);
+    const active = json.buckets.filter((b) => b.tokens > 0);
+    expect(active.length).toBe(1);
+    expect(active[0]!.tokens).toBe(100 + 50 + 200 + 100);
+    expect(active[0]!.cost_usd).toBeCloseTo(0.006);
+    // Zero-filled days carry honest zeros, not nulls.
+    const idle = json.buckets.find((b) => b.tokens === 0);
+    expect(idle).toBeTruthy();
+    expect(idle!.cost_usd).toBe(0);
   });
 
   it('returns weekly buckets for window=all', async () => {
