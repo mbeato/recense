@@ -18,7 +18,7 @@ result: [pending]
 
 ### 2. Usage tab content
 expected: Burn chart is the focal anchor; cost-event dashed markers appear at the known dates (2026-07-03 thinking-off, Phase-42 skip-threshold) and hovering one shows a before/after avg-burn delta; per-feature and per-model splits render; retail-$ headline reads `API-retail equivalent (subscription-billed: $0 marginal)`.
-result: [pending]
+result: issue — charts stretch badly when the window is widened (fixed viewBox scaled like an image: fat strokes, blown-up text), and the tab reads as low-value: chart-first with no glanceable numbers, savings deltas buried in hover tooltips, per-feature/per-model splits are mostly static noise (see Gaps)
 
 ### 3. Range pills and refresh
 expected: 7d/30d/90d/all-time pills rescope the charts; all-time shows weekly buckets with parseable dates; clicking refresh updates the `as of {HH:MM:SS}` stamp.
@@ -48,9 +48,24 @@ result: [pending]
 
 total: 8
 passed: 0
-issues: 0
-pending: 8
+issues: 1
+pending: 7
 skipped: 0
 blocked: 0
 
 ## Gaps
+
+### GAP-1: Charts stretch instead of rendering responsively
+status: failed
+severity: major
+details: Every chart is a fixed `viewBox="0 0 760 H"` SVG at `width:100%` with no max-width on `#stats-body` — widening the window scales the whole SVG like an image (blown-up text, fat strokes). Founder decision (2026-07-11): fix with TRUE RESPONSIVE RE-RENDER — measure the chart card's real pixel width, render charts at that width, and re-render on window resize (debounced). Applies to both tabs. Text/strokes must stay at their designed sizes at any window width.
+
+### GAP-2: Usage tab redesign — glanceable and decision-oriented, not chart-first
+status: failed
+severity: major
+details: Founder verdict (2026-07-11): the Usage tab is "not really useful or informative." Four locked decisions for the redesign:
+  (a) LEAD WITH BIG NUMBERS — a stat-tile row at the top: today's tokens, this-week tokens, 30d tokens, avg tokens/day, retail-$ equivalent. Charts demoted below the tiles. (Reuse the existing `.stats-headline-tile` Display-28px treatment.)
+  (b) SUBSCRIPTION-LIMIT FRAMING — burn framed against the founder's own baseline: share vs typical day/week, trend arrows (up/down vs prior period), heaviest day this week. Answers "is this normal?" All computable from token_usage_ledger with LLM-free SQL.
+  (c) SURFACE THE SAVINGS STORY — pull the before/after cost-lever deltas OUT of hover tooltips into a visible "levers" card: one row per COST_EVENT with before-avg, after-avg, and %-saved, honest labeling. The burn-chart hover markers can stay, but the card is the primary surface.
+  (d) CUT LOW-VALUE CHARTS — collapse the per-feature and per-model bar charts into one compact stacked bar or simple table; they are near-static and don't justify two full chart cards.
+Constraints unchanged: LLM-free prepared statements on the read-only handle, textContent-only rendering, no amber, zero new deps, Phase-59 design language.
