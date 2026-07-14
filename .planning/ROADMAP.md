@@ -1232,7 +1232,7 @@ Plans:
 **Goal:** The settings surface grows two real dashboards replacing the bare usage readout. (1) Cost/usage: daily token burn, per-feature split (extract/judge/corpus_gen/schema_abstract), per-model, retail-$ equivalent, and before/after savings framing — all from token_usage_ledger (the 2026-07 thinking-off analysis, rendered live instead of hand-queried). (2) Brain-health: node growth over time, kind mix (facts/schemas/entities/docs), reconsolidations + tombstones per day, judge activity (fires, escalation rate), episodes pending vs consolidated, last sleep-pass time/duration/status. LLM-free queries only (online-path constraint); charts in the scene's design language per Phase 59 conventions. No research gate — ledger + graph schema already carry everything.
 **Requirements**: TBD
 **Depends on:** Phase 59 (HARD — dashboards render in 59's Liquid-Glass HUD language and are reached via its ⌘K palette; D-01); Phase 57 identity hues
-**Plans:** 8/9 plans executed
+**Plans:** 9/9 plans complete
 
 Plans:
 

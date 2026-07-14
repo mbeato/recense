@@ -18,7 +18,7 @@ result: [pending]
 
 ### 2. Usage tab content
 expected: Burn chart is the focal anchor; cost-event dashed markers appear at the known dates (2026-07-03 thinking-off, Phase-42 skip-threshold) and hovering one shows a before/after avg-burn delta; per-feature and per-model splits render; retail-$ headline reads `API-retail equivalent (subscription-billed: $0 marginal)`.
-result: issue — charts stretch badly when the window is widened (fixed viewBox scaled like an image: fat strokes, blown-up text), and the tab reads as low-value: chart-first with no glanceable numbers, savings deltas buried in hover tooltips, per-feature/per-model splits are mostly static noise (see Gaps)
+result: [pending re-verify after gap closure] — original issue (stretching + low-value chart-first layout) closed by 60-07/60-08/60-09: the tab now leads with a 5-tile stat row (today/week/30d/avg-day/retail-$), a "vs your typical" framing block with trend arrow + heaviest day, a visible Cost levers table (before/after/%-saved per event), one collapsed Usage-breakdown card, and the demoted burn chart; all charts render at measured width and re-render on resize
 
 ### 3. Range pills and refresh
 expected: 7d/30d/90d/all-time pills rescope the charts; all-time shows weekly buckets with parseable dates; clicking refresh updates the `as of {HH:MM:SS}` stamp.
@@ -56,12 +56,12 @@ blocked: 0
 ## Gaps
 
 ### GAP-1: Charts stretch instead of rendering responsively
-status: failed
+status: resolved (60-07 — measured-width rendering + debounced resize re-render; awaiting founder re-walk)
 severity: major
 details: Every chart is a fixed `viewBox="0 0 760 H"` SVG at `width:100%` with no max-width on `#stats-body` — widening the window scales the whole SVG like an image (blown-up text, fat strokes). Founder decision (2026-07-11): fix with TRUE RESPONSIVE RE-RENDER — measure the chart card's real pixel width, render charts at that width, and re-render on window resize (debounced). Applies to both tabs. Text/strokes must stay at their designed sizes at any window width.
 
 ### GAP-2: Usage tab redesign — glanceable and decision-oriented, not chart-first
-status: failed
+status: resolved (60-08 data layer + 60-09 redesign — stat tiles, vs-typical framing, levers card, collapsed breakdown; awaiting founder re-walk)
 severity: major
 details: Founder verdict (2026-07-11): the Usage tab is "not really useful or informative." Four locked decisions for the redesign:
   (a) LEAD WITH BIG NUMBERS — a stat-tile row at the top: today's tokens, this-week tokens, 30d tokens, avg tokens/day, retail-$ equivalent. Charts demoted below the tiles. (Reuse the existing `.stats-headline-tile` Display-28px treatment.)
