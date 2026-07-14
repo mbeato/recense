@@ -54,13 +54,29 @@ const KIND_MIX_SERIES = [
   { key: 'insight', label: 'insight', color: hex(KIND_COLOR.spontaneous) },
 ];
 
-// Chart geometry: a fixed internal coordinate system, stretched to the container's
-// actual width via a viewBox + width:100% SVG (no DOM measurement needed at render
-// time — the same technique used for any responsive inline SVG).
-const CHART_W = 760;
+// Chart geometry: heights stay fixed, but width is measured at render time
+// (GAP-1 — true responsive re-render, not a viewBox stretched to fit via
+// preserveAspectRatio). See measureChartWidth() below.
 const BURN_H = 220;
 const BAR_H = 170;
 const MARGIN = { top: 12, right: 16, bottom: 28, left: 52 };
+
+// .chart-card's own box model (styles.css) — subtracted from the tab
+// container's clientWidth to get the usable inner width for a chart's SVG,
+// which is appended as a direct child of the card (inside its padding box).
+const CHART_CARD_PADDING = 16; // px, each side
+const CHART_CARD_BORDER = 1; // px, each side
+const CHART_W_MIN = 320; // floor so a narrow window never yields a degenerate width
+
+// Measures the real pixel width available to a chart's SVG inside its card,
+// from the tab container's clientWidth (GAP-1: charts render at their true
+// rendered width, so viewBox width == rendered pixel width and
+// preserveAspectRatio="none" no longer stretches text/strokes).
+function measureChartWidth(container) {
+  if (!container) return CHART_W_MIN;
+  const raw = container.clientWidth - (CHART_CARD_PADDING * 2) - (CHART_CARD_BORDER * 2);
+  return Math.max(CHART_W_MIN, raw);
+}
 
 export function initStatsDashboard(ctx) {
   const view = document.getElementById('stats-view');
@@ -193,20 +209,50 @@ export function initStatsDashboard(ctx) {
 
   let loadToken = 0;
 
+  // Per-tab cache of the last successfully-fetched payload (GAP-1 Task 2) — read
+  // by the resize handler below so a resize re-render never re-fetches and never
+  // moves the "as of" stamp (resize is a pure re-layout, not a data refresh).
+  let lastUsageData = null;
+  let lastHealthData = null;
+
   async function load() {
     const token = ++loadToken;
     if (currentTab === 'health') {
       const data = await fetchBrainHealth();
       if (token !== loadToken) return; // superseded by a later tab switch/refresh
+      lastHealthData = data;
       stampAsOf();
       renderHealthTab(healthTabEl, data);
     } else {
       const data = await fetchUsage(currentRange);
       if (token !== loadToken) return; // superseded by a later range switch/refresh
+      lastUsageData = data;
       stampAsOf();
       renderUsageTab(usageTabEl, data);
     }
   }
+
+  // ── Debounced resize re-render (GAP-1 Task 2) — re-renders the CURRENT tab from
+  //    its cached data at the freshly-measured width; no re-fetch, no "as of" stamp
+  //    change. No-op while closed or before the active tab has cached data. ──────
+
+  let resizeTimer = null;
+
+  function handleResize() {
+    if (!isOpen) return;
+    if (currentTab === 'health') {
+      if (lastHealthData == null) return;
+      renderHealthTab(healthTabEl, lastHealthData);
+    } else {
+      if (lastUsageData == null) return;
+      renderUsageTab(usageTabEl, lastUsageData);
+    }
+  }
+
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(handleResize, 200);
+  });
 
   // ── Usage tab render (empty/error state contract — Task 3 fills in the chart suite) ──
 
@@ -232,10 +278,11 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
+    const chartW = measureChartWidth(container);
     renderHeadline(container, data, totalTokens);
-    renderBurnChart(container, buckets, data.bucket_granularity, data.cost_event_deltas || []);
-    renderFeatureSplit(container, data.by_feature || []);
-    renderModelSplit(container, data.by_model || []);
+    renderBurnChart(container, buckets, data.bucket_granularity, data.cost_event_deltas || [], chartW);
+    renderFeatureSplit(container, data.by_feature || [], chartW);
+    renderModelSplit(container, data.by_model || [], chartW);
   }
 
   // Headline retail-$ + total-tokens readout tile (D-09).
@@ -262,8 +309,11 @@ export function initStatsDashboard(ctx) {
 
   function createChartSvg(width, height) {
     const svg = document.createElementNS(SVG_NS, 'svg');
+    // viewBox width == the width attribute (measured chart width, GAP-1) so
+    // 1 internal unit == 1 rendered pixel and preserveAspectRatio="none"
+    // never stretches text/strokes, at any window width.
     svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
-    svg.setAttribute('width', '100%');
+    svg.setAttribute('width', String(width));
     svg.setAttribute('height', String(height));
     svg.setAttribute('preserveAspectRatio', 'none');
     return svg;
@@ -379,16 +429,16 @@ export function initStatsDashboard(ctx) {
 
   // Primary focal chart (D-06 — largest card, top of the tab): daily/weekly token
   // burn line, cost-event markers, D-07 nearest-point hover.
-  function renderBurnChart(container, buckets, granularity, costEventDeltas) {
+  function renderBurnChart(container, buckets, granularity, costEventDeltas, chartW) {
     const card = makeCard(granularity === 'weekly' ? 'Weekly token burn' : 'Daily token burn');
     card.classList.add('chart-card-primary');
 
-    const svg = createChartSvg(CHART_W, BURN_H);
+    const svg = createChartSvg(chartW, BURN_H);
     const maxTokens = buckets.reduce((m, b) => Math.max(m, b.tokens || 0), 0);
     const ticks = niceTicks(0, maxTokens);
     const niceMax = ticks[ticks.length - 1] || 1;
     const yScale = linearScale([0, niceMax], [BURN_H - MARGIN.bottom, MARGIN.top]);
-    const xScale = linearScale([0, Math.max(buckets.length - 1, 1)], [MARGIN.left, CHART_W - MARGIN.right]);
+    const xScale = linearScale([0, Math.max(buckets.length - 1, 1)], [MARGIN.left, chartW - MARGIN.right]);
 
     const points = buckets.map((b, i) => ({
       x: xScale(i), y: yScale(b.tokens || 0), date: b.date, value: b.tokens || 0, formatValue: fmtTokens,
@@ -396,14 +446,14 @@ export function initStatsDashboard(ctx) {
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: fmtTokens,
+      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: fmtTokens,
     }));
     svg.appendChild(axis({
       orientation: 'x', xTicks: pickXTicks(buckets, xScale), chartBottom: BURN_H - MARGIN.bottom,
     }));
     svg.appendChild(line(points, { color: NEUTRAL_SERIES_RAMP[0] }));
     appendMarkers(svg, buildMarkers(buckets, granularity), xScale, costEventDeltas);
-    svg.appendChild(legend([{ label: 'burn', color: NEUTRAL_SERIES_RAMP[0] }], { x: CHART_W - 90, y: MARGIN.top - 4 }));
+    svg.appendChild(legend([{ label: 'burn', color: NEUTRAL_SERIES_RAMP[0] }], { x: chartW - 90, y: MARGIN.top - 4 }));
 
     card.appendChild(svg);
     attachHover(svg, points, { chartTop: MARGIN.top, chartBottom: BURN_H - MARGIN.bottom, color: NEUTRAL_SERIES_RAMP[0] });
@@ -411,7 +461,7 @@ export function initStatsDashboard(ctx) {
   }
 
   // Shared bar-chart builder for the per-feature / per-model splits (D-08).
-  function renderSplitBarChart(container, titleText, entries) {
+  function renderSplitBarChart(container, titleText, entries, chartW) {
     const card = makeCard(titleText);
     if (entries.length === 0) {
       const empty = document.createElement('div');
@@ -422,13 +472,13 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    const svg = createChartSvg(CHART_W, BAR_H);
+    const svg = createChartSvg(chartW, BAR_H);
     const maxTokens = entries.reduce((m, e) => Math.max(m, e.tokens), 0);
     const ticks = niceTicks(0, maxTokens);
     const niceMax = ticks[ticks.length - 1] || 1;
     const yScale = linearScale([0, niceMax], [BAR_H - MARGIN.bottom, MARGIN.top]);
 
-    const innerW = CHART_W - MARGIN.left - MARGIN.right;
+    const innerW = chartW - MARGIN.left - MARGIN.right;
     const slot = innerW / entries.length;
     const barWidth = Math.min(48, slot * 0.5);
 
@@ -441,7 +491,7 @@ export function initStatsDashboard(ctx) {
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: fmtTokens,
+      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: fmtTokens,
     }));
     svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
 
@@ -454,7 +504,7 @@ export function initStatsDashboard(ctx) {
     return svg; // caller appends its own top-right legend (D-06 — one legend per chart card)
   }
 
-  function renderFeatureSplit(container, byFeature) {
+  function renderFeatureSplit(container, byFeature, chartW) {
     const entries = [];
     FEATURE_ORDER.forEach((tag, i) => {
       const row = byFeature.find((r) => r.feature_tag === tag);
@@ -462,7 +512,7 @@ export function initStatsDashboard(ctx) {
       const tokens = (row.input_tokens || 0) + (row.output_tokens || 0);
       entries.push({ label: tag, tokens, color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length] });
     });
-    const svg = renderSplitBarChart(container, 'Per-feature split', entries);
+    const svg = renderSplitBarChart(container, 'Per-feature split', entries, chartW);
     if (svg) {
       svg.appendChild(legend(
         entries.map((e) => ({ label: e.label, color: e.color })),
@@ -471,13 +521,13 @@ export function initStatsDashboard(ctx) {
     }
   }
 
-  function renderModelSplit(container, byModel) {
+  function renderModelSplit(container, byModel, chartW) {
     const entries = byModel.map((row, i) => ({
       label: row.model,
       tokens: (row.input_tokens || 0) + (row.output_tokens || 0),
       color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length],
     }));
-    const svg = renderSplitBarChart(container, 'Per-model split', entries);
+    const svg = renderSplitBarChart(container, 'Per-model split', entries, chartW);
     if (svg) {
       svg.appendChild(legend(
         entries.map((e) => ({ label: e.label, color: e.color })),
@@ -511,13 +561,13 @@ export function initStatsDashboard(ctx) {
   // (each chart calls those itself, at its own source line, mirroring the Usage tab's
   // renderFeatureSplit/renderModelSplit precedent so every chart's axis/legend stays
   // independently grep-verifiable rather than hidden inside a shared closure).
-  function buildLineChartSvg(points, height) {
-    const svg = createChartSvg(CHART_W, height);
+  function buildLineChartSvg(points, height, chartW) {
+    const svg = createChartSvg(chartW, height);
     const maxVal = points.reduce((m, p) => Math.max(m, p.count || 0), 0);
     const ticks = niceTicks(0, maxVal);
     const niceMax = ticks[ticks.length - 1] || 1;
     const yScale = linearScale([0, niceMax], [height - MARGIN.bottom, MARGIN.top]);
-    const xScale = linearScale([0, Math.max(points.length - 1, 1)], [MARGIN.left, CHART_W - MARGIN.right]);
+    const xScale = linearScale([0, Math.max(points.length - 1, 1)], [MARGIN.left, chartW - MARGIN.right]);
     const pxPoints = points.map((p, i) => ({
       x: xScale(i), y: yScale(p.count || 0), date: p.date, value: p.count || 0,
       formatValue: (v) => String(v),
@@ -527,13 +577,13 @@ export function initStatsDashboard(ctx) {
 
   // Pure geometry for a small labeled-category bar chart (kind-mix / judge-activity /
   // episodes) — same axis/legend-at-call-site discipline as buildLineChartSvg above.
-  function buildBarChartSvg(entries, height) {
-    const svg = createChartSvg(CHART_W, height);
+  function buildBarChartSvg(entries, height, chartW) {
+    const svg = createChartSvg(chartW, height);
     const maxVal = entries.reduce((m, e) => Math.max(m, e.tokens), 0);
     const ticks = niceTicks(0, maxVal);
     const niceMax = ticks[ticks.length - 1] || 1;
     const yScale = linearScale([0, niceMax], [height - MARGIN.bottom, MARGIN.top]);
-    const innerW = CHART_W - MARGIN.left - MARGIN.right;
+    const innerW = chartW - MARGIN.left - MARGIN.right;
     const slot = innerW / entries.length;
     const barWidth = Math.min(56, slot * 0.5);
     const bars = entries.map((e, i) => {
@@ -555,7 +605,7 @@ export function initStatsDashboard(ctx) {
 
   // Focal chart (D-06 — largest card, top of the tab): cumulative node growth,
   // KIND_COLOR.new_node, D-13 approximation caption, D-07 nearest-point hover.
-  function renderNodeGrowthChart(container, nodeGrowth) {
+  function renderNodeGrowthChart(container, nodeGrowth, chartW) {
     const card = makeCard('Node growth');
     card.classList.add('chart-card-primary');
     const points = (nodeGrowth && nodeGrowth.points) || [];
@@ -565,18 +615,18 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(points, BURN_H);
+    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(points, BURN_H, chartW);
     const color = hex(KIND_COLOR.new_node);
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
     svg.appendChild(axis({
       orientation: 'x', xTicks: pickXTicks(points, xScale), chartBottom: BURN_H - MARGIN.bottom,
     }));
     svg.appendChild(line(pxPoints, { color }));
-    svg.appendChild(legend([{ label: 'nodes', color }], { x: CHART_W - 90, y: MARGIN.top - 4 }));
+    svg.appendChild(legend([{ label: 'nodes', color }], { x: chartW - 90, y: MARGIN.top - 4 }));
 
     card.appendChild(svg);
     attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BURN_H - MARGIN.bottom, color });
@@ -595,7 +645,7 @@ export function initStatsDashboard(ctx) {
 
   // Kind-mix grouped bar (fact/entity/schema/doc/insight) — always all five series
   // (fixed taxonomy, not a variable feature/model list) so the legend never drops one.
-  function renderKindMixChart(container, kindMix) {
+  function renderKindMixChart(container, kindMix, chartW) {
     const card = makeCard('Kind mix');
     const entries = KIND_MIX_SERIES.map((s) => ({
       label: s.label, tokens: (kindMix && kindMix[s.key]) || 0, color: s.color,
@@ -607,11 +657,11 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H);
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H, chartW);
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
     svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
     entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
@@ -625,7 +675,7 @@ export function initStatsDashboard(ctx) {
   }
 
   // Reconsolidations/day line — KIND_COLOR.reconsolidation (rose-mauve), D-07 hover.
-  function renderReconChart(container, points) {
+  function renderReconChart(container, points, chartW) {
     const card = makeCard('Reconsolidations / day');
     const list = points || [];
 
@@ -634,18 +684,18 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, BAR_H);
+    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, BAR_H, chartW);
     const color = hex(KIND_COLOR.reconsolidation);
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
     svg.appendChild(axis({
       orientation: 'x', xTicks: pickXTicks(list, xScale), chartBottom: BAR_H - MARGIN.bottom,
     }));
     svg.appendChild(line(pxPoints, { color }));
-    svg.appendChild(legend([{ label: 'reconsolidations', color }], { x: CHART_W - 140, y: MARGIN.top - 4 }));
+    svg.appendChild(legend([{ label: 'reconsolidations', color }], { x: chartW - 140, y: MARGIN.top - 4 }));
 
     card.appendChild(svg);
     attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BAR_H - MARGIN.bottom, color });
@@ -661,7 +711,7 @@ export function initStatsDashboard(ctx) {
   }
 
   // Tombstones/day line — KIND_COLOR.oscillation (coral), D-07 hover.
-  function renderTombstoneChart(container, points) {
+  function renderTombstoneChart(container, points, chartW) {
     const card = makeCard('Tombstones / day');
     const list = points || [];
 
@@ -670,18 +720,18 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, BAR_H);
+    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, BAR_H, chartW);
     const color = hex(KIND_COLOR.oscillation);
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
     svg.appendChild(axis({
       orientation: 'x', xTicks: pickXTicks(list, xScale), chartBottom: BAR_H - MARGIN.bottom,
     }));
     svg.appendChild(line(pxPoints, { color }));
-    svg.appendChild(legend([{ label: 'tombstones', color }], { x: CHART_W - 110, y: MARGIN.top - 4 }));
+    svg.appendChild(legend([{ label: 'tombstones', color }], { x: chartW - 110, y: MARGIN.top - 4 }));
 
     card.appendChild(svg);
     attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BAR_H - MARGIN.bottom, color });
@@ -703,7 +753,7 @@ export function initStatsDashboard(ctx) {
   // fabricate a metric. If the server ever ships a real numeric rate, the second
   // "escalated" bar (KIND_COLOR.neutral, slate) renders again with its honest
   // percentage in the legend label.
-  function renderJudgeActivityChart(container, judgeActivity) {
+  function renderJudgeActivityChart(container, judgeActivity, chartW) {
     const card = makeCard('Judge activity');
     const fires = (judgeActivity && judgeActivity.fires) || 0;
     const escalationRate = judgeActivity ? judgeActivity.escalation_rate : null;
@@ -722,11 +772,11 @@ export function initStatsDashboard(ctx) {
       entries.push({ label: 'escalated (' + pct + '%)', tokens: escalated, color: hex(KIND_COLOR.neutral) });
     }
 
-    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H);
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H, chartW);
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
     svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
     entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
@@ -741,7 +791,7 @@ export function initStatsDashboard(ctx) {
 
   // Episodes pending-vs-consolidated paired bar — pending KIND_COLOR.neutral,
   // consolidated KIND_COLOR.new_node.
-  function renderEpisodesChart(container, episodes) {
+  function renderEpisodesChart(container, episodes, chartW) {
     const card = makeCard('Episodes pending vs. consolidated');
     const pending = (episodes && episodes.pending) || 0;
     const consolidated = (episodes && episodes.consolidated) || 0;
@@ -756,11 +806,11 @@ export function initStatsDashboard(ctx) {
       { label: 'consolidated', tokens: consolidated, color: hex(KIND_COLOR.new_node) },
     ];
 
-    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H);
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H, chartW);
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: CHART_W - MARGIN.right, formatValue: (v) => String(v),
+      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
     svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
     entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
@@ -860,12 +910,13 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    renderNodeGrowthChart(container, data.node_growth);
-    renderKindMixChart(container, data.kind_mix);
-    renderReconChart(container, data.reconsolidations_per_day);
-    renderTombstoneChart(container, data.tombstones_per_day);
-    renderJudgeActivityChart(container, data.judge_activity);
-    renderEpisodesChart(container, data.episodes);
+    const chartW = measureChartWidth(container);
+    renderNodeGrowthChart(container, data.node_growth, chartW);
+    renderKindMixChart(container, data.kind_mix, chartW);
+    renderReconChart(container, data.reconsolidations_per_day, chartW);
+    renderTombstoneChart(container, data.tombstones_per_day, chartW);
+    renderJudgeActivityChart(container, data.judge_activity, chartW);
+    renderEpisodesChart(container, data.episodes, chartW);
     renderLastSleepPassTile(container, data.last_sleep_pass);
   }
 }
