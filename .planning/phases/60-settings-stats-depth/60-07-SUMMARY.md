@@ -93,3 +93,11 @@ None - no external service configuration required.
 ---
 *Phase: 60-settings-stats-depth*
 *Completed: 2026-07-13*
+
+## Self-Check: PASSED
+
+- FOUND: `src/viz/modules/stats-dashboard.js`
+- FOUND: `.planning/phases/60-settings-stats-depth/60-07-SUMMARY.md`
+- FOUND commit: `8d25cd7` (Task 1)
+- FOUND commit: `ddc69c4` (Task 2)
+- FOUND commit: `cd14357` (this summary)
