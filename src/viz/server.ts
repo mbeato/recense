@@ -341,6 +341,45 @@ export function startVizServer(
     " AND dst IN (SELECT id FROM node WHERE type='doc' AND tombstoned=0)"
   );
 
+  // GAP-4 (61-08, read-only schema→project resolution): for each schema, the project scopes
+  // its D-37-gated 'abstracts' members carry, grouped with member counts. Mirrors
+  // corpus-promoter.ts stmtGetSchemasInScope (lines 244-254), but reversed (schema → scopes,
+  // not scope → schemas) and grouped so the caller can pick the DOMINANT scope. D-37 firewall
+  // predicates kept verbatim: type IN ('fact','entity'), tombstoned=0, origin != 'inferred'.
+  // 'global'-scoped members are excluded — they never resolve to a PROJECT.
+  const stmtSchemaProjectScopes = db.prepare(`
+    SELECT e.src AS schemaId, ns.scope AS scope, COUNT(*) AS members
+    FROM edge e
+    JOIN node m ON m.id = e.dst
+    JOIN node_scope ns ON ns.node_id = m.id
+    WHERE e.kind = 'abstracts'
+      AND m.type IN ('fact','entity') AND m.tombstoned = 0 AND m.origin != 'inferred'
+      AND ns.scope != 'global'
+      AND EXISTS (SELECT 1 FROM node s WHERE s.id = e.src AND s.type='schema' AND s.tombstoned=0)
+    GROUP BY e.src, ns.scope
+  `);
+
+  /**
+   * Resolve each schema's single dominant owning project scope (GAP-4, read-only).
+   * A schema belongs to project scope S iff at least one D-37-gated abstracts member has
+   * node_scope = S. When a schema's gated members span multiple project scopes, the scope
+   * with the MOST members wins; ties break alphabetically — a single deterministic parent.
+   * Recomputed fresh per request (cheap; no caching needed for a read-only projection).
+   */
+  function resolveSchemaToProject(): Map<string, string> {
+    const rows = stmtSchemaProjectScopes.all() as Array<{ schemaId: string; scope: string; members: number }>;
+    const best = new Map<string, { scope: string; members: number }>();
+    for (const row of rows) {
+      const cur = best.get(row.schemaId);
+      if (!cur || row.members > cur.members || (row.members === cur.members && row.scope < cur.scope)) {
+        best.set(row.schemaId, { scope: row.scope, members: row.members });
+      }
+    }
+    const out = new Map<string, string>();
+    for (const [schemaId, v] of best) out.set(schemaId, v.scope);
+    return out;
+  }
+
   // Compile /doc?slug= prepared statements once (READER-02, T-27-11 — read-only only).
   // Resolve by node_doc.slug — the canonical doc identifier the client passes. The
   // prior version keyed on node_scope.scope, which only worked for docs whose scope
@@ -873,6 +912,18 @@ export function startVizServer(
           // Corpus graph: only live doc nodes + doc_link edges (READER-04 / T-27-16).
           nodes = stmtDocNodes.all() as NodeRecord[];
           edgeRows = stmtDocLinks.all() as Array<{ src: string; dst: string; rel: string; w: number; kind: string }>;
+          // GAP-4 (61-08): attach ownerScope to each doc node — for a schema-anchored node
+          // (slug = schemaId UUID) this is its resolved project scope, or null when unresolved.
+          // Lets the client owner map (corpus.js) group a resolved schema node under its
+          // project instead of treating it as a free-floating peer. Non-schema doc nodes
+          // always carry ownerScope: null.
+          const schemaToProject = resolveSchemaToProject();
+          const graphSchemaSlugRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          nodes = (nodes as Array<NodeRecord & { slug?: string }>).map(n => {
+            const slug = n.slug;
+            const ownerScope = slug && graphSchemaSlugRe.test(slug) ? (schemaToProject.get(slug) ?? null) : null;
+            return { ...n, ownerScope };
+          }) as NodeRecord[];
         } else {
           // Full brain graph (default — no type filter).
           nodes = stmtNodes.all() as NodeRecord[];
@@ -1309,18 +1360,42 @@ export function startVizServer(
           }
           return { root: cur, depth };
         };
+        // GAP-4 (61-08): resolve each schema-rooted TREE's root to a project, read-only, so it
+        // nests under that project instead of rendering as a free-floating peer. A root's
+        // schemaId = its own doc slug (schema-anchored docs are slug=schemaId). Both the
+        // schema→scope resolution AND a matching project doc must exist for nesting to apply;
+        // otherwise the tree stays in `schemas` unchanged (fallback — no regression).
+        const schemaToProject = resolveSchemaToProject();
+        const projectDocIdBySlug = new Map<string, string>();
+        for (const row of rows) {
+          if (!UUID_RE.test(row.slug)) projectDocIdBySlug.set(row.slug, row.id);
+        }
+        const resolvedRootParent = new Map<string, string>(); // schema root doc id -> project doc id
+        for (const row of rows) {
+          if (typeById.get(row.id) !== 'schema') continue;
+          if (childToParent.has(row.id)) continue; // only tree ROOTS resolve this way
+          const scope = schemaToProject.get(row.slug);
+          if (!scope) continue;
+          const projectDocId = projectDocIdBySlug.get(scope);
+          if (!projectDocId) continue;
+          resolvedRootParent.set(row.id, projectDocId);
+        }
+
         // Partition each doc into the section of ITS TREE ROOT's type (hybrid): a schema whose
-        // root is a project lands in Projects (nested under it); schema-rooted trees stay in Schemas.
+        // root is a project lands in Projects (nested under it); schema-rooted trees stay in Schemas
+        // UNLESS resolvedRootParent nests the root under a project (GAP-4).
         type Entry = { slug: string; label: string; id: string; parentId: string | null; depth: number };
         const projects: Entry[] = [];
         const schemas: Entry[] = [];
         for (const row of rows) {
           const { root, depth } = rootAndDepth(row.id);
+          const resolvedParent = row.id === root ? resolvedRootParent.get(root) : undefined;
           const entry: Entry = {
             slug: row.slug, label: row.label, id: row.id,
-            parentId: childToParent.get(row.id) ?? null, depth,
+            parentId: resolvedParent ?? childToParent.get(row.id) ?? null, depth,
           };
-          (typeById.get(root) === 'project' ? projects : schemas).push(entry);
+          const effectiveRootType = resolvedRootParent.has(root) ? 'project' : typeById.get(root);
+          (effectiveRootType === 'project' ? projects : schemas).push(entry);
         }
         // Sort each group by label for stable ordering (index.js reorders into the tree).
         // WR-03 (39 review): null-safe comparator (matches client) — a NULL label can't 500 /index.
