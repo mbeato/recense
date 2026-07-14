@@ -163,14 +163,15 @@ function createSvgNode(tag, attrs = {}) {
 }
 
 /**
- * Line series: 1.5px stroke, no fill under the line (UI-SPEC "Chart
- * Construction Contract").
+ * Line series: 2px round-join/cap stroke, no fill under the line by default
+ * (GAP-4d mark spec). Passing `areaFill` additionally renders a ~10%-opacity
+ * filled area from the points down to `opts.baselineY`, BEHIND the stroke.
  * @param {{x: number, y: number}[]} points - pixel-space points, already scaled
- * @param {{color?: string, strokeWidth?: number, dashed?: boolean}} [opts]
- * @returns {SVGPolylineElement}
+ * @param {{color?: string, strokeWidth?: number, dashed?: boolean, areaFill?: string, baselineY?: number}} [opts]
+ * @returns {SVGPolylineElement | SVGGElement}
  */
 export function line(points, opts = {}) {
-  const { color = '#a99db3', strokeWidth = 1.5, dashed = false } = opts;
+  const { color = '#a99db3', strokeWidth = 2, dashed = false, areaFill, baselineY } = opts;
   const attrs = {
     points: points.map(p => `${p.x},${p.y}`).join(' '),
     fill: 'none',
@@ -180,11 +181,31 @@ export function line(points, opts = {}) {
     'stroke-linecap': 'round',
   };
   if (dashed) attrs['stroke-dasharray'] = '4,3';
-  return createSvgNode('polyline', attrs);
+  const stroke = createSvgNode('polyline', attrs);
+  if (!areaFill || !points.length) return stroke;
+
+  const baseline = baselineY != null ? baselineY : points[0].y;
+  const areaPoints = [
+    { x: points[0].x, y: baseline },
+    ...points,
+    { x: points[points.length - 1].x, y: baseline },
+  ];
+  const area = createSvgNode('polygon', {
+    points: areaPoints.map(p => `${p.x},${p.y}`).join(' '),
+    fill: areaFill,
+    'fill-opacity': 0.1,
+    stroke: 'none',
+  });
+  const g = createSvgNode('g', { class: 'chart-line-series' });
+  g.appendChild(area);
+  g.appendChild(stroke);
+  return g;
 }
 
 /**
- * Bar series: 0.75-alpha fill + 1px full-alpha stroke (UI-SPEC contract).
+ * Bar series: strokeless fill at 0.75 alpha, rendered as a rounded-top path
+ * (4px radius on the two data-end/top corners, square baseline corners) —
+ * GAP-4d mark spec, no stroke around the mark.
  * @param {{x: number, y: number, width: number, height: number}[]} bars - pixel-space rects
  * @param {{color?: string, fillAlpha?: number}} [opts]
  * @returns {SVGGElement}
@@ -193,19 +214,47 @@ export function bar(bars, opts = {}) {
   const { color = '#a99db3', fillAlpha = 0.75 } = opts;
   const g = createSvgNode('g', { class: 'chart-bar-series' });
   bars.forEach(b => {
-    const rect = createSvgNode('rect', {
-      x: b.x,
-      y: b.y,
-      width: b.width,
-      height: b.height,
+    const r = Math.min(4, b.width / 2, b.height);
+    const { x, y, width: w, height: h } = b;
+    const d = [
+      `M ${x} ${y + h}`,
+      `L ${x} ${y + r}`,
+      `A ${r} ${r} 0 0 1 ${x + r} ${y}`,
+      `L ${x + w - r} ${y}`,
+      `A ${r} ${r} 0 0 1 ${x + w} ${y + r}`,
+      `L ${x + w} ${y + h}`,
+      'Z',
+    ].join(' ');
+    const path = createSvgNode('path', {
+      d,
       fill: color,
       'fill-opacity': fillAlpha,
-      stroke: color,
-      'stroke-width': 1,
     });
-    g.appendChild(rect);
+    g.appendChild(path);
   });
   return g;
+}
+
+/**
+ * Endpoint direct-label — a small recessive `<text>` node positioned at one
+ * point (endpoint/extreme), used for selective direct labels (GAP-4d: never
+ * a value on every point). textContent-set only (T-44-19), even numeric.
+ * @param {{x: number, y: number}} point
+ * @param {string | number} text
+ * @param {{dx?: number, dy?: number, anchor?: string, color?: string}} [opts]
+ * @returns {SVGTextElement}
+ */
+export function directLabel(point, text, opts = {}) {
+  const { dx = 0, dy = -6, anchor = 'middle', color = '#9a90a4' } = opts;
+  const label = createSvgNode('text', {
+    x: point.x + dx,
+    y: point.y + dy,
+    'text-anchor': anchor,
+    fill: color,
+    'font-size': 10,
+  });
+  label.textContent = String(text);
+  return label;
 }
 
 /**
