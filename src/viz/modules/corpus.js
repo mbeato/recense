@@ -268,6 +268,17 @@ export function initCorpus(ctx) {
       const rootNode = byNodeId.get(cur);
       nodeProjectScope.set(node.id, rootScope(rootNode ? rootNode.scope : node.scope));
     }
+    // GAP-4 (61-08) preference pass: the server now resolves a schema-anchored doc's owning
+    // project read-only (node.ownerScope) when at least one of its D-37-gated abstracts members
+    // is scoped to that project — even with no doc_containment edge to walk up. Prefer it over
+    // the containment-derived owner (which for a free-floating schema resolves to the schema's
+    // own UUID, not a project) so resolved schema nodes group under, dim, and reveal WITH their
+    // project. Nodes without a recognized ownerScope keep their containment-derived owner.
+    for (const node of (data.nodes || [])) {
+      if (node.ownerScope && projectScopes.has(node.ownerScope)) {
+        nodeProjectScope.set(node.id, node.ownerScope);
+      }
+    }
 
     // Empty state: no docs in corpus yet (fetch succeeded but returned zero nodes).
     if ((data.nodes || []).length === 0) {
