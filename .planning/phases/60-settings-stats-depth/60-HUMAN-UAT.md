@@ -1,14 +1,14 @@
 ---
-status: partial
+status: passed
 phase: 60-settings-stats-depth
 source: [60-VERIFICATION.md]
 started: 2026-07-11T21:40:00Z
-updated: 2026-07-11T21:40:00Z
+updated: 2026-07-14T23:50:00Z
 ---
 
 ## Current Test
 
-[awaiting human testing]
+complete — founder sign-off 2026-07-14 ("not bad" after round-3 tab/section-head fix)
 
 ## Tests
 
@@ -47,8 +47,8 @@ result: [pending]
 ## Summary
 
 total: 8
-passed: 6
-issues: 2
+passed: 8
+issues: 0
 pending: 0
 skipped: 0
 blocked: 0

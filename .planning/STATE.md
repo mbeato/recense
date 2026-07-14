@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v9.0
 milestone_name: Memory Quality
-status: executing
-stopped_at: Phase 60 executed; verification human_needed — founder walkthrough pending (60-HUMAN-UAT.md)
-last_updated: "2026-07-11T21:40:19.723Z"
+status: ready_to_plan
+stopped_at: Phase 60 complete (11/11) — ready to discuss Phase 61
+last_updated: 2026-07-14T17:28:45.710Z
 last_activity: 2026-07-11 -- Phase 60 execution started
 progress:
   total_phases: 37
   completed_phases: 33
   total_plans: 135
-  completed_plans: 136
+  completed_plans: 161
   percent: 89
 ---
 
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v9.0 Memory Quality opened)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Phase 60 — settings-stats-depth
+**Current focus:** Phase 61 — corpus chrome — index column + project browsing
 
 **v9.0 Key research grounding (June-2026 deep-research pass):**
 
@@ -33,10 +33,10 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v9.0 Memory Quality opened)
 
 ## Current Position
 
-Phase: 60 (settings-stats-depth) — EXECUTING
-Plan: 1 of 6
-Status: Executing Phase 60
-Last activity: 2026-07-14 -- Completed quick task 260714-g0s: stats entry point moved to HUD rail
+Phase: 61
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-14
 
 ```
 v9.0 Progress ░░░░░░░░░░ 0%
