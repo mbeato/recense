@@ -1639,3 +1639,95 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   padding: 24px 0;
   text-align: center;
 }
+
+/* Stat-tile row (GAP-2a, Phase 60-09) — five .stats-headline-tile tiles in a
+   flat flex row, wrapping on narrow windows. No backdrop-filter (D-14). */
+.stats-tile-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.stats-tile-row .stats-headline-tile {
+  flex: 1 1 160px;
+  margin-bottom: 0;
+}
+
+/* Subscription-limit framing (GAP-2b, Phase 60-09) — "vs your typical"
+   baseline copy beneath the tile row. Flat, no backdrop-filter (D-14). */
+.stats-framing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 24px;
+  font-size: 13px;
+  color: var(--text-body-mauve);
+}
+
+/* Cost levers card (GAP-2c, Phase 60-09) — grid table rows, hairline row
+   dividers, flat surface inherited from .chart-card (no backdrop-filter). */
+.stats-levers-table {
+  display: flex;
+  flex-direction: column;
+}
+.stats-levers-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--divider-faint);
+  font-size: 13px;
+  color: var(--text-body-mauve);
+}
+.stats-levers-row:last-child {
+  border-bottom: none;
+}
+.stats-levers-head {
+  color: var(--text-recede);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.stats-levers-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Collapsed per-feature/per-model breakdown (GAP-2d, Phase 60-09) — one
+   compact card, two swatch-labeled tables. Flat surface, no backdrop-filter. */
+.stats-breakdown-group-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-recede);
+  margin: 12px 0 4px;
+}
+.stats-breakdown-group-title:first-child {
+  margin-top: 0;
+}
+.stats-breakdown-table {
+  display: flex;
+  flex-direction: column;
+}
+.stats-breakdown-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--text-body-mauve);
+}
+.stats-breakdown-swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.stats-breakdown-label {
+  flex: 1;
+}
+.stats-breakdown-value {
+  font-family: 'JetBrains Mono HUD', monospace;
+  color: var(--text-bright);
+}

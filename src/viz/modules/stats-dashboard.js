@@ -279,30 +279,169 @@ export function initStatsDashboard(ctx) {
     }
 
     const chartW = measureChartWidth(container);
-    renderHeadline(container, data, totalTokens);
+    renderStatTileRow(container, data.summary);
+    renderFraming(container, data.summary);
+    renderLeversCard(container, data.lever_deltas || []);
     renderBurnChart(container, buckets, data.bucket_granularity, data.cost_event_deltas || [], chartW);
-    renderFeatureSplit(container, data.by_feature || [], chartW);
-    renderModelSplit(container, data.by_model || [], chartW);
+    renderUsageBreakdown(container, data.by_feature || [], data.by_model || []);
   }
 
-  // Headline retail-$ + total-tokens readout tile (D-09).
-  function renderHeadline(container, data, totalTokens) {
-    const tile = document.createElement('div');
-    tile.className = 'chart-card stats-headline-tile';
+  // Visible "Cost levers" card (GAP-2c) — one row per COST_EVENT (label, date,
+  // before/after avg tokens-per-day, %-saved), pulling the savings story out
+  // of hover-only discovery. The burn-chart's dashed markers + appendMarkers
+  // hover tooltip (D-10/D-11) are untouched — this card supplements them.
+  function renderLeversCard(container, leverDeltas) {
+    const card = makeCard('Cost levers');
+    const list = leverDeltas || [];
 
-    const valueEl = document.createElement('div');
-    valueEl.className = 'stats-headline-value';
-    const retailUsd = data.retail_usd || 0;
-    // textContent only — T-44-19 (retailUsd/totalTokens are numbers from the server)
-    valueEl.textContent = '$' + retailUsd.toFixed(4) + '  ·  ' + fmtTokens(totalTokens) + ' tokens';
-    tile.appendChild(valueEl);
+    if (list.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'stats-empty-state';
+      empty.textContent = 'no cost levers recorded yet'; // textContent only — T-44-19
+      card.appendChild(empty);
+      container.appendChild(card);
+      return;
+    }
 
-    const labelEl = document.createElement('div');
-    labelEl.className = 'stats-headline-label';
-    labelEl.textContent = RETAIL_LABEL; // static verbatim copy — D-09
-    tile.appendChild(labelEl);
+    const table = document.createElement('div');
+    table.className = 'stats-levers-table';
 
-    container.appendChild(tile);
+    const header = document.createElement('div');
+    header.className = 'stats-levers-row stats-levers-head';
+    ['label', 'date', 'before avg/day', 'after avg/day', '% saved'].forEach((h) => {
+      const cell = document.createElement('div');
+      cell.className = 'stats-levers-cell';
+      cell.textContent = h; // textContent only — T-44-19
+      header.appendChild(cell);
+    });
+    table.appendChild(header);
+
+    list.forEach((entry) => {
+      const row = document.createElement('div');
+      row.className = 'stats-levers-row';
+
+      const labelCell = document.createElement('div');
+      labelCell.className = 'stats-levers-cell';
+      labelCell.textContent = entry.label; // textContent only — T-44-19
+      row.appendChild(labelCell);
+
+      const dateCell = document.createElement('div');
+      dateCell.className = 'stats-levers-cell';
+      dateCell.textContent = safeDateLabel(entry.date); // textContent only — T-44-19
+      row.appendChild(dateCell);
+
+      const beforeCell = document.createElement('div');
+      beforeCell.className = 'stats-levers-cell';
+      beforeCell.textContent = fmtTokens(Math.round(entry.before_avg)) + '/day'; // textContent only — T-44-19
+      row.appendChild(beforeCell);
+
+      const afterCell = document.createElement('div');
+      afterCell.className = 'stats-levers-cell';
+      afterCell.textContent = fmtTokens(Math.round(entry.after_avg)) + '/day'; // textContent only — T-44-19
+      row.appendChild(afterCell);
+
+      const pctCell = document.createElement('div');
+      pctCell.className = 'stats-levers-cell';
+      const pct = entry.pct_saved;
+      // textContent only — T-44-19; server-computed pct_saved, no client math
+      pctCell.textContent = pct == null
+        ? '—'
+        : pct >= 0
+          ? Math.round(pct) + '% saved'
+          : Math.round(Math.abs(pct)) + '% more';
+      row.appendChild(pctCell);
+
+      table.appendChild(row);
+    });
+
+    card.appendChild(table);
+    container.appendChild(card);
+  }
+
+  // Stat-tile row (GAP-2a) — five Display-28px tiles reusing the
+  // .stats-headline-tile treatment verbatim: today / this-week / 30d tokens,
+  // avg tokens/day, and the retail-$ equivalent (D-09 label kept verbatim).
+  // Guards for a missing `summary` (older cached payload / fetch failure) by
+  // rendering nothing rather than throwing.
+  function renderStatTileRow(container, summary) {
+    if (!summary) return;
+    const row = document.createElement('div');
+    row.className = 'stats-tile-row';
+
+    const tiles = [
+      { value: fmtTokens(summary.today_tokens || 0), label: 'today' },
+      { value: fmtTokens(summary.week_tokens || 0), label: 'this week' },
+      { value: fmtTokens(summary.month_tokens || 0), label: 'last 30 days' },
+      { value: fmtTokens(Math.round(summary.avg_tokens_per_day || 0)), label: 'avg tokens/day' },
+      { value: '$' + (summary.retail_usd_30d || 0).toFixed(4), label: RETAIL_LABEL }, // D-09 verbatim
+    ];
+
+    tiles.forEach((t) => {
+      const tile = document.createElement('div');
+      tile.className = 'chart-card stats-headline-tile';
+
+      const valueEl = document.createElement('div');
+      valueEl.className = 'stats-headline-value';
+      valueEl.textContent = t.value; // textContent only — T-44-19
+      tile.appendChild(valueEl);
+
+      const labelEl = document.createElement('div');
+      labelEl.className = 'stats-headline-label';
+      labelEl.textContent = t.label; // textContent only — T-44-19
+      tile.appendChild(labelEl);
+
+      row.appendChild(tile);
+    });
+
+    container.appendChild(row);
+  }
+
+  // Trend-direction glyph — neutral/green tokens only, never amber (GAP-2b,
+  // UI-SPEC Color contract). 'down' (usage shrinking) reads as the positive
+  // signal (--text-stat, green); 'up'/'flat' stay neutral mauve.
+  const TREND_ARROW = { up: '▲', down: '▼', flat: '→' };
+
+  // Subscription-limit framing (GAP-2b) — "vs your typical" baseline copy
+  // beneath the tile row: today/week share of a typical period, trend vs the
+  // prior 7d, and the heaviest day this week. Never a fabricated quota number
+  // (honesty constraint) — baseline-relative only, skips a line when its
+  // source value is null (insufficient history). Guards for a missing
+  // `summary` the same way renderStatTileRow does.
+  function renderFraming(container, summary) {
+    if (!summary) return;
+    const rows = [];
+
+    if (summary.today_vs_typical_pct != null) {
+      rows.push({ text: 'today: ' + Math.round(summary.today_vs_typical_pct) + '% of your typical day' });
+    }
+    if (summary.week_vs_typical_pct != null) {
+      rows.push({ text: 'this week: ' + Math.round(summary.week_vs_typical_pct) + '% of a typical week' });
+    }
+
+    const arrow = TREND_ARROW[summary.trend_direction] || TREND_ARROW.flat;
+    const trendColor = summary.trend_direction === 'down' ? 'var(--text-stat)' : 'var(--text-body-mauve)';
+    const trendText = summary.trend_pct != null
+      ? arrow + ' ' + Math.round(Math.abs(summary.trend_pct)) + '% vs prior 7d'
+      : arrow + ' no prior baseline';
+    rows.push({ text: trendText, color: trendColor });
+
+    if (summary.heaviest_day) {
+      rows.push({
+        text: 'heaviest day: ' + safeDateLabel(summary.heaviest_day.date) + ' (' + fmtTokens(summary.heaviest_day.tokens) + ')',
+      });
+    }
+
+    const card = document.createElement('div');
+    card.className = 'stats-framing';
+    rows.forEach((r) => {
+      const line = document.createElement('div');
+      line.className = 'stats-framing-row';
+      line.textContent = r.text; // textContent only — T-44-19
+      if (r.color) line.style.color = r.color;
+      card.appendChild(line);
+    });
+
+    container.appendChild(card);
   }
 
   // ── SVG chart helpers (burn / per-feature / per-model — D-05/D-06/D-07) ─────
@@ -460,80 +599,74 @@ export function initStatsDashboard(ctx) {
     container.appendChild(card);
   }
 
-  // Shared bar-chart builder for the per-feature / per-model splits (D-08).
-  function renderSplitBarChart(container, titleText, entries, chartW) {
-    const card = makeCard(titleText);
-    if (entries.length === 0) {
+  // Collapsed per-feature + per-model presentation (GAP-2d) — ONE compact
+  // card (two small swatch-labeled tables) replacing the former two full
+  // chart cards, which the founder called low-value near-static noise. A
+  // table is trivially responsive (no chartW-driven geometry needed) and
+  // keeps FEATURE_ORDER + NEUTRAL_SERIES_RAMP coloring (D-08, non-amber).
+  function renderUsageBreakdown(container, byFeature, byModel) {
+    const card = makeCard('Usage breakdown');
+
+    const featureEntries = [];
+    FEATURE_ORDER.forEach((tag, i) => {
+      const row = byFeature.find((r) => r.feature_tag === tag);
+      if (!row) return; // no zero-padded placeholder series — Empty/Sparse State Contract
+      const tokens = (row.input_tokens || 0) + (row.output_tokens || 0);
+      featureEntries.push({ label: tag, tokens, color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length] });
+    });
+
+    const modelEntries = (byModel || []).map((row, i) => ({
+      label: row.model,
+      tokens: (row.input_tokens || 0) + (row.output_tokens || 0),
+      color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length],
+    }));
+
+    if (featureEntries.length === 0 && modelEntries.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'stats-empty-state';
-      empty.textContent = 'no usage recorded yet';
+      empty.textContent = 'no usage recorded yet'; // textContent only — T-44-19
       card.appendChild(empty);
       container.appendChild(card);
       return;
     }
 
-    const svg = createChartSvg(chartW, BAR_H);
-    const maxTokens = entries.reduce((m, e) => Math.max(m, e.tokens), 0);
-    const ticks = niceTicks(0, maxTokens);
-    const niceMax = ticks[ticks.length - 1] || 1;
-    const yScale = linearScale([0, niceMax], [BAR_H - MARGIN.bottom, MARGIN.top]);
+    function appendGroup(titleText, entries) {
+      if (entries.length === 0) return;
+      const heading = document.createElement('div');
+      heading.className = 'stats-breakdown-group-title';
+      heading.textContent = titleText; // textContent only — T-44-19
+      card.appendChild(heading);
 
-    const innerW = chartW - MARGIN.left - MARGIN.right;
-    const slot = innerW / entries.length;
-    const barWidth = Math.min(48, slot * 0.5);
+      const table = document.createElement('div');
+      table.className = 'stats-breakdown-table';
+      entries.forEach((e) => {
+        const row = document.createElement('div');
+        row.className = 'stats-breakdown-row';
 
-    const bars = entries.map((e, i) => {
-      const cx = MARGIN.left + slot * (i + 0.5);
-      const y = yScale(e.tokens);
-      return { x: cx - barWidth / 2, y, width: barWidth, height: (BAR_H - MARGIN.bottom) - y };
-    });
-    const xTicks = entries.map((e, i) => ({ x: MARGIN.left + slot * (i + 0.5), label: e.label }));
+        const swatch = document.createElement('span');
+        swatch.className = 'stats-breakdown-swatch';
+        swatch.style.background = e.color;
+        row.appendChild(swatch);
 
-    svg.appendChild(axis({
-      orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: fmtTokens,
-    }));
-    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+        const labelEl = document.createElement('span');
+        labelEl.className = 'stats-breakdown-label';
+        labelEl.textContent = e.label; // textContent only — T-44-19
+        row.appendChild(labelEl);
 
-    entries.forEach((e, i) => {
-      svg.appendChild(bar([bars[i]], { color: e.color }));
-    });
+        const valueEl = document.createElement('span');
+        valueEl.className = 'stats-breakdown-value';
+        valueEl.textContent = fmtTokens(e.tokens); // textContent only — T-44-19
+        row.appendChild(valueEl);
 
-    card.appendChild(svg);
+        table.appendChild(row);
+      });
+      card.appendChild(table);
+    }
+
+    appendGroup('per feature', featureEntries);
+    appendGroup('per model', modelEntries);
+
     container.appendChild(card);
-    return svg; // caller appends its own top-right legend (D-06 — one legend per chart card)
-  }
-
-  function renderFeatureSplit(container, byFeature, chartW) {
-    const entries = [];
-    FEATURE_ORDER.forEach((tag, i) => {
-      const row = byFeature.find((r) => r.feature_tag === tag);
-      if (!row) return; // no zero-padded placeholder series — Empty/Sparse State Contract
-      const tokens = (row.input_tokens || 0) + (row.output_tokens || 0);
-      entries.push({ label: tag, tokens, color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length] });
-    });
-    const svg = renderSplitBarChart(container, 'Per-feature split', entries, chartW);
-    if (svg) {
-      svg.appendChild(legend(
-        entries.map((e) => ({ label: e.label, color: e.color })),
-        { x: MARGIN.left, y: MARGIN.top - 4 },
-      ));
-    }
-  }
-
-  function renderModelSplit(container, byModel, chartW) {
-    const entries = byModel.map((row, i) => ({
-      label: row.model,
-      tokens: (row.input_tokens || 0) + (row.output_tokens || 0),
-      color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length],
-    }));
-    const svg = renderSplitBarChart(container, 'Per-model split', entries, chartW);
-    if (svg) {
-      svg.appendChild(legend(
-        entries.map((e) => ({ label: e.label, color: e.color })),
-        { x: MARGIN.left, y: MARGIN.top - 4 },
-      ));
-    }
   }
 
   // ── Brain Health tab (D-13/D-14) ─────────────────────────────────────────────
@@ -558,9 +691,9 @@ export function initStatsDashboard(ctx) {
   }
 
   // Pure geometry for a {date,count}[] time series — no axis()/legend() call inside
-  // (each chart calls those itself, at its own source line, mirroring the Usage tab's
-  // renderFeatureSplit/renderModelSplit precedent so every chart's axis/legend stays
-  // independently grep-verifiable rather than hidden inside a shared closure).
+  // (each chart calls those itself, at its own source line, so every chart's
+  // axis/legend stays independently grep-verifiable rather than hidden inside
+  // a shared closure).
   function buildLineChartSvg(points, height, chartW) {
     const svg = createChartSvg(chartW, height);
     const maxVal = points.reduce((m, p) => Math.max(m, p.count || 0), 0);
