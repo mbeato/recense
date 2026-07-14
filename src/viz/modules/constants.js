@@ -826,6 +826,9 @@ export const HUD_CSS_TOKENS = {
   'index-search-bg': 'rgba(139, 112, 144, 0.08)',
   'index-search-focus-bg': 'rgba(139, 112, 144, 0.12)',
   'index-heading-divider': 'rgba(139, 112, 144, 0.2)',
+  // GAP-3 (Plan 07): active-project row background — stronger than index-search-focus-bg (0.12)
+  // so the active state out-reads hover; same mauve hue family, no amber.
+  'index-row-active-bg': 'rgba(139, 112, 144, 0.22)',
 
   // Phase 60 — stats dashboard chart-card flat surface (D-05, no glass — see 60-UI-SPEC "Glass Discipline")
   'chart-card': 'rgba(26, 18, 32, 0.4)',

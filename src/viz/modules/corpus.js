@@ -776,9 +776,10 @@ export function initCorpus(ctx) {
       focusedScope = null;
       reassertPaint();
       fitAndClamp();
+      if (typeof ctx.syncCorpusFocus === 'function') ctx.syncCorpusFocus(null);
       return;
     }
-    if (!projectScopes.has(scope)) return; // ignore an unrecognized scope
+    if (!projectScopes.has(scope)) return; // ignore an unrecognized scope — focus unchanged, no notify
     focusedScope = scope;
     reassertPaint();
     try {
@@ -791,6 +792,7 @@ export function initCorpus(ctx) {
         CorpusGraph.zoom(MAX_ZOOM, 0);
       }
     } catch (_) { /* ignore */ }
+    if (typeof ctx.syncCorpusFocus === 'function') ctx.syncCorpusFocus(focusedScope);
   };
 
   // setCorpusProjectExpanded(scope, expanded): reveal/hide a project's chapter docs WITHOUT
