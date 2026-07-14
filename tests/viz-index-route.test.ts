@@ -120,6 +120,19 @@ const SCHEMA_UUID_3    = '11111111-1111-1111-1111-111111111111';
 const SCHEMA_DOC_ID_3  = '22222222-2222-2222-2222-222222222222';
 const SCHEMA_LABEL_3   = 'deployment topology';
 
+// GAP-4 (61-08): a schema with a D-37-gated 'abstracts' member scoped to project 'tonos'
+// (no doc_containment edge — the relationship is derived read-only from node_scope, not
+// pre-linked). Its schema-anchored doc should nest under the 'tonos' project in /index.
+const GAP4_SCHEMA_ID        = '33333333-3333-3333-3333-333333333333';
+const GAP4_SCHEMA_DOC_ID    = '44444444-4444-4444-4444-444444444444';
+const GAP4_MEMBER_ID        = '55555555-5555-5555-5555-555555555555';
+
+// GAP-4 negative case: a schema whose only gated member is scoped 'global' has no resolvable
+// PROJECT scope, so it must stay free-floating in `schemas` (fallback, no regression).
+const GAP4_GLOBAL_SCHEMA_ID     = '66666666-6666-6666-6666-666666666666';
+const GAP4_GLOBAL_SCHEMA_DOC_ID = '77777777-7777-7777-7777-777777777777';
+const GAP4_GLOBAL_MEMBER_ID     = '88888888-8888-8888-8888-888888888888';
+
 let server: http.Server;
 let port: number;
 let tmpDbPath: string;
@@ -200,6 +213,26 @@ beforeEach(async () => {
   store.upsertNodeScope({ node_id: SCHEMA_DOC_ID_3, scope: SCHEMA_UUID_3, updated_at: T0 });
   // atlas (project) CONTAINS the schema chapter doc → chapter's tree root is a project.
   store.upsertEdge({ src: PROJECT_DOC_ID_2, dst: SCHEMA_DOC_ID_3, rel: 'contains', kind: 'doc_containment', w: 1.0, last_access: T0 });
+
+  // ── GAP-4 nesting case: schema abstracts a fact member scoped to project 'tonos' ─────────
+  // No doc_containment edge links the schema to 'tonos' — the nesting must come purely from
+  // the read-only abstracts + node_scope resolution (D-37-gated).
+  store.upsertNode({ id: GAP4_MEMBER_ID, type: 'fact', value: 'a tonos fact', origin: 'observed', s: 0.5, c: 0.8, last_access: T0 });
+  store.upsertNodeScope({ node_id: GAP4_MEMBER_ID, scope: PROJECT_DOC_SLUG, updated_at: T0 });
+  store.upsertNode({ id: GAP4_SCHEMA_ID, type: 'schema', value: 'gap4 schema', origin: 'observed', s: 0.5, c: 0.8, last_access: T0 });
+  store.upsertEdge({ src: GAP4_SCHEMA_ID, dst: GAP4_MEMBER_ID, rel: 'member', kind: 'abstracts', w: 1.0, last_access: T0 });
+  store.upsertNode({ id: GAP4_SCHEMA_DOC_ID, type: 'doc', value: '# Gap4 Schema', origin: 'inferred', s: 0, c: 1.0, last_access: T0 });
+  store.upsertNodeDoc({ node_id: GAP4_SCHEMA_DOC_ID, slug: GAP4_SCHEMA_ID, generated_at: T0, updated_at: T0 });
+  store.upsertNodeScope({ node_id: GAP4_SCHEMA_DOC_ID, scope: GAP4_SCHEMA_ID, updated_at: T0 });
+
+  // ── GAP-4 negative case: schema's only gated member is scoped 'global' (no project) ──────
+  store.upsertNode({ id: GAP4_GLOBAL_MEMBER_ID, type: 'fact', value: 'a global fact', origin: 'observed', s: 0.5, c: 0.8, last_access: T0 });
+  store.upsertNodeScope({ node_id: GAP4_GLOBAL_MEMBER_ID, scope: 'global', updated_at: T0 });
+  store.upsertNode({ id: GAP4_GLOBAL_SCHEMA_ID, type: 'schema', value: 'gap4 global schema', origin: 'observed', s: 0.5, c: 0.8, last_access: T0 });
+  store.upsertEdge({ src: GAP4_GLOBAL_SCHEMA_ID, dst: GAP4_GLOBAL_MEMBER_ID, rel: 'member', kind: 'abstracts', w: 1.0, last_access: T0 });
+  store.upsertNode({ id: GAP4_GLOBAL_SCHEMA_DOC_ID, type: 'doc', value: '# Gap4 Global Schema', origin: 'inferred', s: 0, c: 1.0, last_access: T0 });
+  store.upsertNodeDoc({ node_id: GAP4_GLOBAL_SCHEMA_DOC_ID, slug: GAP4_GLOBAL_SCHEMA_ID, generated_at: T0, updated_at: T0 });
+  store.upsertNodeScope({ node_id: GAP4_GLOBAL_SCHEMA_DOC_ID, scope: GAP4_GLOBAL_SCHEMA_ID, updated_at: T0 });
 
   writeDb.close();
 
@@ -351,6 +384,56 @@ describe('GET /index', () => {
   it('returns 403 for mismatched Host header (loopback guard inherited)', async () => {
     const r = await makeRequest(port, '/index', 'GET', 'attacker.com');
     expect(r.statusCode).toBe(403);
+  });
+});
+
+describe('GAP-4: schema→project resolution nests schemas under their project (61-08)', () => {
+  it('nests a schema-anchored doc under its resolved project (parentId = project doc id), absent from schemas', async () => {
+    const r = await makeRequest(port, '/index');
+    const json = JSON.parse(r.body) as {
+      projects: Array<{ slug: string; id: string; parentId: string | null }>;
+      schemas: Array<{ slug: string; id: string }>;
+    };
+    const entry = json.projects.find(e => e.slug === GAP4_SCHEMA_ID);
+    expect(entry).toBeDefined();
+    expect(entry!.parentId).toBe(PROJECT_DOC_ID);
+    expect(json.schemas.some(e => e.slug === GAP4_SCHEMA_ID)).toBe(false);
+  });
+
+  it('leaves a schema with only a global-scoped gated member free-floating in schemas (fallback)', async () => {
+    const r = await makeRequest(port, '/index');
+    const json = JSON.parse(r.body) as {
+      projects: Array<{ slug: string }>;
+      schemas: Array<{ slug: string; parentId: string | null }>;
+    };
+    const entry = json.schemas.find(e => e.slug === GAP4_GLOBAL_SCHEMA_ID);
+    expect(entry).toBeDefined();
+    expect(entry!.parentId).toBeNull();
+    expect(json.projects.some(e => e.slug === GAP4_GLOBAL_SCHEMA_ID)).toBe(false);
+  });
+
+  it('/graph?type=doc exposes ownerScope on the resolved schema doc node', async () => {
+    const r = await makeRequest(port, '/graph?type=doc');
+    const json = JSON.parse(r.body) as { nodes: Array<{ id: string; ownerScope?: string | null }> };
+    const node = json.nodes.find(n => n.id === GAP4_SCHEMA_DOC_ID);
+    expect(node).toBeDefined();
+    expect(node!.ownerScope).toBe(PROJECT_DOC_SLUG);
+  });
+
+  it('/graph?type=doc gives ownerScope=null for an unresolved (global-only) schema doc node', async () => {
+    const r = await makeRequest(port, '/graph?type=doc');
+    const json = JSON.parse(r.body) as { nodes: Array<{ id: string; ownerScope?: string | null }> };
+    const node = json.nodes.find(n => n.id === GAP4_GLOBAL_SCHEMA_DOC_ID);
+    expect(node).toBeDefined();
+    expect(node!.ownerScope ?? null).toBeNull();
+  });
+
+  it('/graph?type=doc gives ownerScope=null for a non-schema (project) doc node', async () => {
+    const r = await makeRequest(port, '/graph?type=doc');
+    const json = JSON.parse(r.body) as { nodes: Array<{ id: string; ownerScope?: string | null }> };
+    const node = json.nodes.find(n => n.id === PROJECT_DOC_ID);
+    expect(node).toBeDefined();
+    expect(node!.ownerScope ?? null).toBeNull();
   });
 });
 
