@@ -283,8 +283,7 @@ export function initStatsDashboard(ctx) {
     renderFraming(container, data.summary);
     renderLeversCard(container, data.lever_deltas || []);
     renderBurnChart(container, buckets, data.bucket_granularity, data.cost_event_deltas || [], chartW);
-    renderFeatureSplit(container, data.by_feature || [], chartW);
-    renderModelSplit(container, data.by_model || [], chartW);
+    renderUsageBreakdown(container, data.by_feature || [], data.by_model || []);
   }
 
   // Visible "Cost levers" card (GAP-2c) — one row per COST_EVENT (label, date,
@@ -600,80 +599,74 @@ export function initStatsDashboard(ctx) {
     container.appendChild(card);
   }
 
-  // Shared bar-chart builder for the per-feature / per-model splits (D-08).
-  function renderSplitBarChart(container, titleText, entries, chartW) {
-    const card = makeCard(titleText);
-    if (entries.length === 0) {
+  // Collapsed per-feature + per-model presentation (GAP-2d) — ONE compact
+  // card (two small swatch-labeled tables) replacing the former two full
+  // chart cards, which the founder called low-value near-static noise. A
+  // table is trivially responsive (no chartW-driven geometry needed) and
+  // keeps FEATURE_ORDER + NEUTRAL_SERIES_RAMP coloring (D-08, non-amber).
+  function renderUsageBreakdown(container, byFeature, byModel) {
+    const card = makeCard('Usage breakdown');
+
+    const featureEntries = [];
+    FEATURE_ORDER.forEach((tag, i) => {
+      const row = byFeature.find((r) => r.feature_tag === tag);
+      if (!row) return; // no zero-padded placeholder series — Empty/Sparse State Contract
+      const tokens = (row.input_tokens || 0) + (row.output_tokens || 0);
+      featureEntries.push({ label: tag, tokens, color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length] });
+    });
+
+    const modelEntries = (byModel || []).map((row, i) => ({
+      label: row.model,
+      tokens: (row.input_tokens || 0) + (row.output_tokens || 0),
+      color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length],
+    }));
+
+    if (featureEntries.length === 0 && modelEntries.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'stats-empty-state';
-      empty.textContent = 'no usage recorded yet';
+      empty.textContent = 'no usage recorded yet'; // textContent only — T-44-19
       card.appendChild(empty);
       container.appendChild(card);
       return;
     }
 
-    const svg = createChartSvg(chartW, BAR_H);
-    const maxTokens = entries.reduce((m, e) => Math.max(m, e.tokens), 0);
-    const ticks = niceTicks(0, maxTokens);
-    const niceMax = ticks[ticks.length - 1] || 1;
-    const yScale = linearScale([0, niceMax], [BAR_H - MARGIN.bottom, MARGIN.top]);
+    function appendGroup(titleText, entries) {
+      if (entries.length === 0) return;
+      const heading = document.createElement('div');
+      heading.className = 'stats-breakdown-group-title';
+      heading.textContent = titleText; // textContent only — T-44-19
+      card.appendChild(heading);
 
-    const innerW = chartW - MARGIN.left - MARGIN.right;
-    const slot = innerW / entries.length;
-    const barWidth = Math.min(48, slot * 0.5);
+      const table = document.createElement('div');
+      table.className = 'stats-breakdown-table';
+      entries.forEach((e) => {
+        const row = document.createElement('div');
+        row.className = 'stats-breakdown-row';
 
-    const bars = entries.map((e, i) => {
-      const cx = MARGIN.left + slot * (i + 0.5);
-      const y = yScale(e.tokens);
-      return { x: cx - barWidth / 2, y, width: barWidth, height: (BAR_H - MARGIN.bottom) - y };
-    });
-    const xTicks = entries.map((e, i) => ({ x: MARGIN.left + slot * (i + 0.5), label: e.label }));
+        const swatch = document.createElement('span');
+        swatch.className = 'stats-breakdown-swatch';
+        swatch.style.background = e.color;
+        row.appendChild(swatch);
 
-    svg.appendChild(axis({
-      orientation: 'y', ticks, scale: yScale,
-      chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: fmtTokens,
-    }));
-    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+        const labelEl = document.createElement('span');
+        labelEl.className = 'stats-breakdown-label';
+        labelEl.textContent = e.label; // textContent only — T-44-19
+        row.appendChild(labelEl);
 
-    entries.forEach((e, i) => {
-      svg.appendChild(bar([bars[i]], { color: e.color }));
-    });
+        const valueEl = document.createElement('span');
+        valueEl.className = 'stats-breakdown-value';
+        valueEl.textContent = fmtTokens(e.tokens); // textContent only — T-44-19
+        row.appendChild(valueEl);
 
-    card.appendChild(svg);
+        table.appendChild(row);
+      });
+      card.appendChild(table);
+    }
+
+    appendGroup('per feature', featureEntries);
+    appendGroup('per model', modelEntries);
+
     container.appendChild(card);
-    return svg; // caller appends its own top-right legend (D-06 — one legend per chart card)
-  }
-
-  function renderFeatureSplit(container, byFeature, chartW) {
-    const entries = [];
-    FEATURE_ORDER.forEach((tag, i) => {
-      const row = byFeature.find((r) => r.feature_tag === tag);
-      if (!row) return; // no zero-padded placeholder series — Empty/Sparse State Contract
-      const tokens = (row.input_tokens || 0) + (row.output_tokens || 0);
-      entries.push({ label: tag, tokens, color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length] });
-    });
-    const svg = renderSplitBarChart(container, 'Per-feature split', entries, chartW);
-    if (svg) {
-      svg.appendChild(legend(
-        entries.map((e) => ({ label: e.label, color: e.color })),
-        { x: MARGIN.left, y: MARGIN.top - 4 },
-      ));
-    }
-  }
-
-  function renderModelSplit(container, byModel, chartW) {
-    const entries = byModel.map((row, i) => ({
-      label: row.model,
-      tokens: (row.input_tokens || 0) + (row.output_tokens || 0),
-      color: NEUTRAL_SERIES_RAMP[i % NEUTRAL_SERIES_RAMP.length],
-    }));
-    const svg = renderSplitBarChart(container, 'Per-model split', entries, chartW);
-    if (svg) {
-      svg.appendChild(legend(
-        entries.map((e) => ({ label: e.label, color: e.color })),
-        { x: MARGIN.left, y: MARGIN.top - 4 },
-      ));
-    }
   }
 
   // ── Brain Health tab (D-13/D-14) ─────────────────────────────────────────────
@@ -698,9 +691,9 @@ export function initStatsDashboard(ctx) {
   }
 
   // Pure geometry for a {date,count}[] time series — no axis()/legend() call inside
-  // (each chart calls those itself, at its own source line, mirroring the Usage tab's
-  // renderFeatureSplit/renderModelSplit precedent so every chart's axis/legend stays
-  // independently grep-verifiable rather than hidden inside a shared closure).
+  // (each chart calls those itself, at its own source line, so every chart's
+  // axis/legend stays independently grep-verifiable rather than hidden inside
+  // a shared closure).
   function buildLineChartSvg(points, height, chartW) {
     const svg = createChartSvg(chartW, height);
     const maxVal = points.reduce((m, p) => Math.max(m, p.count || 0), 0);
