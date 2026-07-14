@@ -1620,6 +1620,46 @@ export function startVizServer(
           heaviest_day: heaviestRow ? { date: heaviestRow.date, tokens: heaviestRow.tokens } : null,
         };
 
+        // Phase 60-08 GAP-2c: `lever_deltas` — a STABLE, window-independent
+        // per-lever before/after for the visible "levers" card. Unlike
+        // cost_event_deltas above (windowed, feeds the burn-chart marker
+        // hover), this spans the FULL ledger calendar range so the pill
+        // can't distort it to 0/day garbage when it precedes both events.
+        const allBuckets = stmtUsageDailyBucketsAll.all() as BucketRow[];
+        let leverDeltas: Array<{
+          date: string; label: string; before_avg: number; after_avg: number; pct_saved: number | null;
+        }> = [];
+        if (allBuckets.length > 0) {
+          // Zero-fill the full calendar span (earliest ledger day → today) so
+          // before/after averages divide by CALENDAR days, not just active
+          // days — same rationale as the windowed zero-fill above.
+          const minDate = allBuckets[0]!.date;
+          const minTs = Date.UTC(
+            ...(minDate.split('-').map(Number) as [number, number, number]),
+          );
+          const byDateAll = new Map(allBuckets.map((b) => [b.date, b]));
+          const filledAll: BucketRow[] = [];
+          for (let t = minTs; t <= now; t += 86_400_000) {
+            const date = new Date(t).toISOString().slice(0, 10);
+            filledAll.push(byDateAll.get(date) ?? { date, tokens: 0, cost_usd: 0 });
+          }
+          const avgAll = (rows: BucketRow[]) =>
+            rows.length === 0 ? 0 : rows.reduce((sum, r) => sum + (r.tokens ?? 0), 0) / rows.length;
+          leverDeltas = costEvents.map((marker) => {
+            const before = filledAll.filter((b) => b.date < marker.date);
+            const after = filledAll.filter((b) => b.date >= marker.date);
+            const beforeAvg = avgAll(before);
+            const afterAvg = avgAll(after);
+            return {
+              date: marker.date,
+              label: marker.label,
+              before_avg: beforeAvg,
+              after_avg: afterAvg,
+              pct_saved: beforeAvg > 0 ? ((beforeAvg - afterAvg) / beforeAvg) * 100 : null,
+            };
+          });
+        }
+
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({
           window,
@@ -1630,6 +1670,7 @@ export function startVizServer(
           retail_usd: retailUsd,
           cost_event_deltas: costEventDeltas,
           summary,
+          lever_deltas: leverDeltas,
         }));
       } catch {
         res.writeHead(500, { 'content-type': 'text/plain' });
