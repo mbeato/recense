@@ -569,7 +569,7 @@ button:hover {
     height: 26px;
     z-index: 70;
     border-radius: var(--radius-sm);
-    background: var(--surface-btn-icon);
+    background: none;   /* bare icon — no chip box (founder, 2026-07-14) */
     color: var(--text-warm-neutral);
     opacity: 0.65;
     -webkit-app-region: no-drag;  /* clickable inside the draggable popover */
