@@ -12,8 +12,8 @@ updated: 2026-07-11T21:40:00Z
 
 ## Tests
 
-### 1. Open via settings link
-expected: Open settings, click `View usage stats →` — the brain is replaced full-window by the stats surface on the Usage tab. (A fresh `recense viz` serves at http://127.0.0.1:7810; relaunch if not running.)
+### 1. Open via rail button
+expected: Click the histogram button in the right-edge rail (between corpus and recenter) — the brain is replaced full-window by the stats surface on the Usage tab. The settings panel no longer has a usage link (moved to rail, quick task 260714-g0s). (Server at http://127.0.0.1:7810; relaunch if not running.)
 result: [pending]
 
 ### 2. Usage tab content
