@@ -74,7 +74,7 @@ details: Founder verdict (2026-07-11): the Usage tab is "not really useful or in
 Constraints unchanged: LLM-free prepared statements on the read-only handle, textContent-only rendering, no amber, zero new deps, Phase-59 design language.
 
 ### GAP-3: Styled scrollbar must be global
-status: failed
+status: resolved (60-10 — one global rule set, per-container blocks removed; awaiting founder re-walk)
 severity: minor
 details: The Usage tab (and any scrollable surface) shows the default OS scrollbar.
 The muted-mauve styled scrollbar already exists but is applied per-container
@@ -85,7 +85,7 @@ the `::-webkit-scrollbar*` set) replacing the duplicated per-container blocks.
 Amber stays activation-only (thumb is mauve).
 
 ### GAP-4: Usage/Brain-Health tabs read as AI-slop — design overhaul
-status: failed
+status: resolved (60-10 mark specs + 60-11 de-box/hero/sections; awaiting founder re-walk)
 severity: major
 details: Founder verdict (2026-07-14): "obviously ai slop style need to do a better
 design on those." Diagnosis (against the dataviz method + Phase-59 recessive-chrome
