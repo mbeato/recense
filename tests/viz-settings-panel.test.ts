@@ -19,6 +19,9 @@
  *     - All-time total rendered
  *     - Zero / null usage renders empty-state message
  *     - Usage values rendered via textContent (no innerHTML for usage data)
+ *     - The Phase 60 D-04 "View usage stats →" in-panel link was removed
+ *       (quick-260714-g0s); the stats dashboard entry point now lives in the
+ *       HUD rail (#rail-stats, hud.js) — asserted absent here
  *
  * DOM-shimmed: a minimal FakeEl tree simulates the browser DOM without
  * jsdom or happy-dom (neither is installed in this project).
@@ -510,9 +513,9 @@ describe('initSettings — Save (POST /settings)', () => {
   });
 });
 
-// ── Task 2 Tests: per-toggle usage lines + D-04 dashboard link ────────────────
+// ── Task 2 Tests: per-toggle usage lines (D-04 dashboard link removed, quick-260714-g0s) ──
 
-describe('initSettings — token-usage readout (Task 2 + Phase 60 D-04)', () => {
+describe('initSettings — token-usage readout (Task 2 + Phase 60 D-04, link removed 260714-g0s)', () => {
   it('calls fetch("/usage") on open', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(makeSettingsResponse()) });
     // A second call for /usage needs its own response, so use implementation:
@@ -536,30 +539,10 @@ describe('initSettings — token-usage readout (Task 2 + Phase 60 D-04)', () => 
     expect(allText).toContain('tokens this month');
   });
 
-  it('renders "View usage stats →" link that opens the stats takeover (D-04)', async () => {
-    const ctx: any = { openStatsDashboard: vi.fn() };
-    mockFetch.mockImplementation((url: string) => {
-      if (url === '/settings') return Promise.resolve({ ok: true, json: () => Promise.resolve(makeSettingsResponse()) });
-      if (url === '/usage')    return Promise.resolve({ ok: true, json: () => Promise.resolve(makeUsageResponse()) });
-      return Promise.resolve({ ok: false });
-    });
-    initSettings(ctx);
-    fakeBtn.trigger('click');
-    await flush();
-
-    const link = findFirst(fakeBody, '.settings-usage-link');
-    expect(link).not.toBeNull();
-    expect(link!.textContent).toBe('View usage stats →');
-
-    link!.trigger('click', { preventDefault: () => {} });
-    expect(ctx.openStatsDashboard).toHaveBeenCalled();
-  });
-
-  it('does not throw when clicking the usage link and ctx.openStatsDashboard is absent', async () => {
+  it('does not render the "View usage stats →" link (entry point moved to HUD rail, D-04 revision)', async () => {
     const body = await openAndRender(makeSettingsResponse(), makeUsageResponse());
-    const link = findFirst(body, '.settings-usage-link');
-    expect(link).not.toBeNull();
-    expect(() => link!.trigger('click', { preventDefault: () => {} })).not.toThrow();
+    expect(findFirst(body, '.settings-usage-link')).toBeNull();
+    expect(collectText(body)).not.toContain('View usage stats');
   });
 
   it('does not render the old standalone 30d/all-time readout block (D-04)', async () => {
