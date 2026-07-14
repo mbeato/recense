@@ -1543,42 +1543,46 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
 .stats-tab-panel { display: none; }
 .stats-tab-panel.active { display: block; }
 
-/* Chart card — flat surface, hairline border, NO backdrop-filter (D-14 invariant) */
-.chart-card {
-  background: var(--chart-card);
-  border: 1px solid var(--divider-faint);
-  border-radius: var(--radius-md);
-  padding: 16px;
-  margin-bottom: 24px;
+/* De-boxed section idiom (GAP-4a, Phase 60-11) — plots and tables sit
+   directly on the flat #stats-view surface; NO bordered/backgrounded card
+   chrome anywhere on these tabs. Structure comes entirely from a quiet
+   10px uppercase letter-spaced section header + hairline divider. */
+.stats-section {
+  margin-bottom: 32px;
 }
-.chart-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
+.stats-section:last-child {
+  margin-bottom: 0;
 }
-.chart-card-title {
-  font-size: 13px;
-  color: var(--text-bright);
+.stats-section-head {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-recede);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--divider-faint);
 }
 
-/* Headline readout tile (retail-$, total tokens) — same flat surface as a chart card */
-.stats-headline-tile {
+/* Last-sleep-pass readout (GAP-4f, Phase 60-11) — one muted line, NOT a
+   card: 10px uppercase label + mono value, honest status color. */
+.stats-sleep-readout {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: baseline;
+  gap: 10px;
 }
-.stats-headline-value {
-  font-family: 'JetBrains Mono HUD', monospace;
-  font-size: 28px;
-  color: var(--text-bright);
-}
-.stats-headline-label {
+.stats-sleep-readout-label {
   font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--text-recede);
 }
+.stats-sleep-readout-value {
+  font-family: 'JetBrains Mono HUD', monospace;
+  font-size: 13px;
+}
 
-/* Empty / error state copy — replaces a chart card's contents, never a broken shell */
+/* Empty / error state copy — replaces a section's contents, never a broken shell */
 .stats-empty-state,
 .stats-error-state {
   color: var(--text-muted-alt);
@@ -1588,32 +1592,74 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   text-align: center;
 }
 
-/* Stat-tile row (GAP-2a, Phase 60-09) — five .stats-headline-tile tiles in a
-   flat flex row, wrapping on narrow windows. No backdrop-filter (D-14). */
-.stats-tile-row {
+/* Hero + supporting figures (GAP-4b/c, Phase 60-11) — exactly ONE hero per
+   tab (today's tokens), its signed trend delta integrated inline; a quiet
+   hairline-separated supporting row below carries the remaining figures.
+   No boxes, no backdrop-filter (D-14). */
+.stats-hero {
+  margin-bottom: 20px;
+}
+.stats-hero-value {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-family: 'JetBrains Mono HUD', monospace;
+  font-size: 44px;
+  color: var(--text-bright);
+}
+.stats-hero-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-recede);
+  margin-top: 4px;
+}
+.stats-delta {
+  font-family: 'JetBrains Mono HUD', monospace;
+  font-size: 20px;
+}
+.stats-supporting-row .stats-delta {
+  font-size: 13px;
+}
+.stats-footnote {
+  font-size: 11px;
+  color: var(--text-recede);
+  margin-top: 4px;
+}
+.stats-supporting-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-bottom: 24px;
+  margin-bottom: 4px;
 }
-.stats-tile-row .stats-headline-tile {
-  flex: 1 1 160px;
-  margin-bottom: 0;
-}
-
-/* Subscription-limit framing (GAP-2b, Phase 60-09) — "vs your typical"
-   baseline copy beneath the tile row. Flat, no backdrop-filter (D-14). */
-.stats-framing {
+.stats-supporting-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-bottom: 24px;
-  font-size: 13px;
+  padding: 0 20px;
+  border-left: 1px solid var(--divider-faint);
+}
+.stats-supporting-item:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+.stats-supporting-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-recede);
+}
+.stats-supporting-value {
+  font-family: 'JetBrains Mono HUD', monospace;
+  font-size: 17px;
+  color: var(--text-bright);
+}
+.stats-supporting-context {
+  font-size: 11px;
   color: var(--text-body-mauve);
 }
 
-/* Cost levers card (GAP-2c, Phase 60-09) — grid table rows, hairline row
-   dividers, flat surface inherited from .chart-card (no backdrop-filter). */
+/* Quiet borderless tables (GAP-4e, Phase 60-11) — 10px uppercase muted
+   column headers, hairline row separators, no outer border/box. */
 .stats-levers-table {
   display: flex;
   flex-direction: column;
@@ -1641,9 +1687,15 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.stats-levers-pct {
+  font-family: 'JetBrains Mono HUD', monospace;
+}
+.stats-levers-pct.positive {
+  color: var(--text-stat);
+}
 
 /* Collapsed per-feature/per-model breakdown (GAP-2d, Phase 60-09) — one
-   compact card, two swatch-labeled tables. Flat surface, no backdrop-filter. */
+   quiet section, two swatch-labeled tables. Flat, no backdrop-filter. */
 .stats-breakdown-group-title {
   font-size: 10px;
   text-transform: uppercase;
