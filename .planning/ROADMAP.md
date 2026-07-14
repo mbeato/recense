@@ -1268,7 +1268,15 @@ Plans:
 
 Plans:
 
+**Wave 1**
+
 - [ ] 61-01-PLAN.md — Glass reskin of #index-panel + #index-reopen and new tree-row CSS classes (D-02, D-08)
 - [ ] 61-02-PLAN.md — Corpus graph focus/dim + hover subtree parity + tiered labels + focus-driven chapters; new focusCorpusProject/setCorpusProjectExpanded hooks (D-04..D-07)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 61-03-PLAN.md — Index collapsible tree with chevron + count badge; project-name click focuses the graph (D-01, D-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 61-04-PLAN.md — Closing founder live-install sign-off on D1-D4 + tune the four provisional feel constants
