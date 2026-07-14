@@ -13,9 +13,10 @@
  * Implements: D-02 (no IPC), D-03 (frontend settings.json consumer),
  *             D-09 (feature line maps 1:1 to its toggle),
  *             D-11 (preset + overrides + divergence label), D-12 (core always-on, no toggle)
- *             D-04 (Phase 60): the standalone 30d/all-time usage readout is replaced
- *             by a single "View usage stats →" link into the stats takeover
- *             (ctx.openStatsDashboard) — per-toggle usage lines (D-09) stay.
+ *             D-04 (Phase 60): the standalone 30d/all-time usage readout was replaced by
+ *             per-toggle usage lines (D-09). The Phase 60 in-panel "View usage stats →"
+ *             link was removed per the D-04 revision (quick-260714-g0s) — the stats
+ *             dashboard entry point now lives in the HUD rail (#rail-stats, hud.js).
  */
 
 // Preset defaults mirrored from PRESET_CONFIGS (src/lib/config.ts) — used
@@ -254,17 +255,6 @@ export function initSettings(ctx) {
     ));
 
     appendDivider(bodyEl);
-
-    // ── Stats dashboard link (D-04) ─────────────────────────────────────────────
-    const usageLink = document.createElement('a');
-    usageLink.className = 'settings-usage-link'; // new class, styled per Phase 59 tokens
-    usageLink.href = '#';
-    usageLink.textContent = 'View usage stats →'; // textContent only — T-44-19
-    usageLink.addEventListener('click', ev => {
-      ev.preventDefault();
-      if (typeof ctx.openStatsDashboard === 'function') ctx.openStatsDashboard();
-    });
-    bodyEl.appendChild(usageLink);
 
     // ── Save button ───────────────────────────────────────────────────────────
     const saveBtn = document.createElement('button');

@@ -124,6 +124,13 @@ describe('shell', () => {
     expect(html).toContain('id="hull-credit"');
   });
 
+  it('contains #rail-stats rail button wired to the stats dashboard (D-04 revision, 260714-g0s)', () => {
+    expect(html).toContain('id="rail-stats"');
+    expect(html).toMatch(/<button[^>]*id="rail-stats"[^>]*aria-label="Open usage stats"/);
+    expect(hudSrc).toContain('rail-stats');
+    expect(hudSrc).toContain('openStatsDashboard');
+  });
+
   it('contains detail panel inner ids', () => {
     expect(html).toContain('id="detail-title"');
     expect(html).toContain('id="detail-meta"');

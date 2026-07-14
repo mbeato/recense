@@ -15,6 +15,8 @@
  *     now the ONLY invocation path, called by the palette's Commands section
  *   - Toast element for visible error surfacing
  *   - Rail magnifier (#hud-rail search icon) → ctx.openPalette() (Phase 59 Plan 04)
+ *   - Rail histogram (#rail-stats) → ctx.openStatsDashboard() (D-04 revision,
+ *     quick-260714-g0s: entry point moved out of settings)
  *
  * Security: logEvent uses textContent for log lines; node data is never injected
  * into innerHTML. Toast text set via textContent.
@@ -27,6 +29,7 @@ export function initHud(ctx) {
   const ncountEl   = document.getElementById('ncount');
   const logEl      = document.getElementById('log');
   const btnSearch  = document.getElementById('btn-search');
+  const btnStats   = document.getElementById('rail-stats');
 
   // ── Toast element (created once, reused) ───────────────────────────────────
   const toastEl = document.createElement('div');
@@ -136,6 +139,13 @@ export function initHud(ctx) {
   if (btnSearch) {
     btnSearch.addEventListener('click', () => {
       if (typeof ctx.openPalette === 'function') ctx.openPalette();
+    });
+  }
+
+  // ── Rail histogram → stats dashboard (D-04 revision, quick-260714-g0s) ────
+  if (btnStats) {
+    btnStats.addEventListener('click', () => {
+      if (typeof ctx.openStatsDashboard === 'function') ctx.openStatsDashboard();
     });
   }
 
