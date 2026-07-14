@@ -281,9 +281,82 @@ export function initStatsDashboard(ctx) {
     const chartW = measureChartWidth(container);
     renderStatTileRow(container, data.summary);
     renderFraming(container, data.summary);
+    renderLeversCard(container, data.lever_deltas || []);
     renderBurnChart(container, buckets, data.bucket_granularity, data.cost_event_deltas || [], chartW);
     renderFeatureSplit(container, data.by_feature || [], chartW);
     renderModelSplit(container, data.by_model || [], chartW);
+  }
+
+  // Visible "Cost levers" card (GAP-2c) — one row per COST_EVENT (label, date,
+  // before/after avg tokens-per-day, %-saved), pulling the savings story out
+  // of hover-only discovery. The burn-chart's dashed markers + appendMarkers
+  // hover tooltip (D-10/D-11) are untouched — this card supplements them.
+  function renderLeversCard(container, leverDeltas) {
+    const card = makeCard('Cost levers');
+    const list = leverDeltas || [];
+
+    if (list.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'stats-empty-state';
+      empty.textContent = 'no cost levers recorded yet'; // textContent only — T-44-19
+      card.appendChild(empty);
+      container.appendChild(card);
+      return;
+    }
+
+    const table = document.createElement('div');
+    table.className = 'stats-levers-table';
+
+    const header = document.createElement('div');
+    header.className = 'stats-levers-row stats-levers-head';
+    ['label', 'date', 'before avg/day', 'after avg/day', '% saved'].forEach((h) => {
+      const cell = document.createElement('div');
+      cell.className = 'stats-levers-cell';
+      cell.textContent = h; // textContent only — T-44-19
+      header.appendChild(cell);
+    });
+    table.appendChild(header);
+
+    list.forEach((entry) => {
+      const row = document.createElement('div');
+      row.className = 'stats-levers-row';
+
+      const labelCell = document.createElement('div');
+      labelCell.className = 'stats-levers-cell';
+      labelCell.textContent = entry.label; // textContent only — T-44-19
+      row.appendChild(labelCell);
+
+      const dateCell = document.createElement('div');
+      dateCell.className = 'stats-levers-cell';
+      dateCell.textContent = safeDateLabel(entry.date); // textContent only — T-44-19
+      row.appendChild(dateCell);
+
+      const beforeCell = document.createElement('div');
+      beforeCell.className = 'stats-levers-cell';
+      beforeCell.textContent = fmtTokens(Math.round(entry.before_avg)) + '/day'; // textContent only — T-44-19
+      row.appendChild(beforeCell);
+
+      const afterCell = document.createElement('div');
+      afterCell.className = 'stats-levers-cell';
+      afterCell.textContent = fmtTokens(Math.round(entry.after_avg)) + '/day'; // textContent only — T-44-19
+      row.appendChild(afterCell);
+
+      const pctCell = document.createElement('div');
+      pctCell.className = 'stats-levers-cell';
+      const pct = entry.pct_saved;
+      // textContent only — T-44-19; server-computed pct_saved, no client math
+      pctCell.textContent = pct == null
+        ? '—'
+        : pct >= 0
+          ? Math.round(pct) + '% saved'
+          : Math.round(Math.abs(pct)) + '% more';
+      row.appendChild(pctCell);
+
+      table.appendChild(row);
+    });
+
+    card.appendChild(table);
+    container.appendChild(card);
   }
 
   // Stat-tile row (GAP-2a) — five Display-28px tiles reusing the
