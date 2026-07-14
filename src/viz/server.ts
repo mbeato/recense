@@ -524,6 +524,47 @@ export function startVizServer(
     GROUP BY model
   `);
 
+  // Compile GET /stats/usage `summary` prepared statements once (Phase 60-08,
+  // GAP-2a/2b, T-44-18 read-only). All cutoffs are server-derived Date.now()-based
+  // ms bound via '?' — never raw request input (T-60-08-01). These feed the
+  // stat-tile row + subscription-limit framing, independent of the `window` pill.
+  const stmtTokensSince = db.prepare(`
+    SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens,
+           COALESCE(SUM(total_cost_usd), 0)                AS cost
+    FROM token_usage_ledger
+    WHERE ts > ?
+  `);
+  const stmtTokensBetween = db.prepare(`
+    SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens,
+           COALESCE(SUM(total_cost_usd), 0)                AS cost
+    FROM token_usage_ledger
+    WHERE ts > ? AND ts <= ?
+  `);
+  const stmtHeaviestDaySince = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date,
+           SUM(input_tokens + output_tokens) AS tokens
+    FROM token_usage_ledger
+    WHERE ts > ?
+    GROUP BY date
+    ORDER BY tokens DESC
+    LIMIT 1
+  `);
+
+  // Compile GET /stats/usage `lever_deltas` prepared statement once (Phase 60-08,
+  // GAP-2c). Unwindowed daily buckets across the FULL ledger span (no lower bound)
+  // so the "did this lever work?" card stays stable regardless of the range pill —
+  // unlike the windowed cost_event_deltas above, which can be distorted to 0/day
+  // garbage when the window precedes both events.
+  const stmtUsageDailyBucketsAll = db.prepare(`
+    SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS date,
+           SUM(input_tokens + output_tokens) AS tokens,
+           SUM(total_cost_usd)               AS cost_usd
+    FROM token_usage_ledger
+    WHERE ts > 0
+    GROUP BY date
+    ORDER BY date ASC
+  `);
+
   // Compile GET /stats/brain-health prepared statements once (Phase 60, D-13/D-14,
   // T-44-18 read-only). node.created_at does not exist (D-13) — growth is
   // reconstructed from node-birth consolidation_event rows (event_type in the
@@ -1536,6 +1577,89 @@ export function startVizServer(
           };
         });
 
+        // Phase 60-08 GAP-2a/2b: `summary` stat-tile + subscription-limit framing.
+        // Fixed today/week/30d periods, computed UNCONDITIONALLY — independent of
+        // the `window` pill above. All cutoffs are server-derived Date.now() ms
+        // bound via '?' (T-60-08-01). Honest-labeling: these are ledger-derived
+        // baselines ("vs your typical"), never a fabricated provider-quota number.
+        const [todayY, todayM, todayD] = new Date().toISOString().slice(0, 10).split('-').map(Number) as [
+          number, number, number,
+        ];
+        const todayCutoff = Date.UTC(todayY, todayM - 1, todayD); // Date.UTC month is 0-indexed
+        const todayRow = stmtTokensSince.get(todayCutoff) as { tokens: number; cost: number };
+        const weekRow = stmtTokensSince.get(now - 7 * 86_400_000) as { tokens: number; cost: number };
+        const monthRow = stmtTokensSince.get(now - 30 * 86_400_000) as { tokens: number; cost: number };
+        const prevWeekRow = stmtTokensBetween.get(now - 14 * 86_400_000, now - 7 * 86_400_000) as {
+          tokens: number; cost: number;
+        };
+        const heaviestRow = stmtHeaviestDaySince.get(now - 7 * 86_400_000) as
+          | { date: string; tokens: number }
+          | undefined;
+
+        const todayTokens = todayRow.tokens;
+        const weekTokens = weekRow.tokens;
+        const monthTokens = monthRow.tokens;
+        const avgTokensPerDay = monthTokens / 30;
+        const typicalDay = avgTokensPerDay;
+        const typicalWeek = avgTokensPerDay * 7;
+        const prevWeekTokens = prevWeekRow.tokens;
+
+        const trendPct = prevWeekTokens > 0 ? ((weekTokens - prevWeekTokens) / prevWeekTokens) * 100 : null;
+        const trendDirection: 'up' | 'down' | 'flat' =
+          weekTokens > prevWeekTokens ? 'up' : weekTokens < prevWeekTokens ? 'down' : 'flat';
+
+        const summary = {
+          today_tokens: todayTokens,
+          week_tokens: weekTokens,
+          month_tokens: monthTokens,
+          avg_tokens_per_day: avgTokensPerDay,
+          retail_usd_30d: monthRow.cost,
+          today_vs_typical_pct: typicalDay > 0 ? (todayTokens / typicalDay) * 100 : null,
+          week_vs_typical_pct: typicalWeek > 0 ? (weekTokens / typicalWeek) * 100 : null,
+          trend_pct: trendPct,
+          trend_direction: trendDirection,
+          heaviest_day: heaviestRow ? { date: heaviestRow.date, tokens: heaviestRow.tokens } : null,
+        };
+
+        // Phase 60-08 GAP-2c: `lever_deltas` — a STABLE, window-independent
+        // per-lever before/after for the visible "levers" card. Unlike
+        // cost_event_deltas above (windowed, feeds the burn-chart marker
+        // hover), this spans the FULL ledger calendar range so the pill
+        // can't distort it to 0/day garbage when it precedes both events.
+        const allBuckets = stmtUsageDailyBucketsAll.all() as BucketRow[];
+        let leverDeltas: Array<{
+          date: string; label: string; before_avg: number; after_avg: number; pct_saved: number | null;
+        }> = [];
+        if (allBuckets.length > 0) {
+          // Zero-fill the full calendar span (earliest ledger day → today) so
+          // before/after averages divide by CALENDAR days, not just active
+          // days — same rationale as the windowed zero-fill above.
+          const minDate = allBuckets[0]!.date;
+          const [minY, minM, minD] = minDate.split('-').map(Number) as [number, number, number];
+          const minTs = Date.UTC(minY, minM - 1, minD); // Date.UTC month is 0-indexed
+          const byDateAll = new Map(allBuckets.map((b) => [b.date, b]));
+          const filledAll: BucketRow[] = [];
+          for (let t = minTs; t <= now; t += 86_400_000) {
+            const date = new Date(t).toISOString().slice(0, 10);
+            filledAll.push(byDateAll.get(date) ?? { date, tokens: 0, cost_usd: 0 });
+          }
+          const avgAll = (rows: BucketRow[]) =>
+            rows.length === 0 ? 0 : rows.reduce((sum, r) => sum + (r.tokens ?? 0), 0) / rows.length;
+          leverDeltas = costEvents.map((marker) => {
+            const before = filledAll.filter((b) => b.date < marker.date);
+            const after = filledAll.filter((b) => b.date >= marker.date);
+            const beforeAvg = avgAll(before);
+            const afterAvg = avgAll(after);
+            return {
+              date: marker.date,
+              label: marker.label,
+              before_avg: beforeAvg,
+              after_avg: afterAvg,
+              pct_saved: beforeAvg > 0 ? ((beforeAvg - afterAvg) / beforeAvg) * 100 : null,
+            };
+          });
+        }
+
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({
           window,
@@ -1545,6 +1669,8 @@ export function startVizServer(
           by_model: byModel,
           retail_usd: retailUsd,
           cost_event_deltas: costEventDeltas,
+          summary,
+          lever_deltas: leverDeltas,
         }));
       } catch {
         res.writeHead(500, { 'content-type': 'text/plain' });
