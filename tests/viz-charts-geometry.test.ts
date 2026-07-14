@@ -22,6 +22,23 @@ function readChartsJs(): string {
   return fs.readFileSync(path.resolve(ROOT, 'src/viz/modules/charts.js'), 'utf8');
 }
 
+/**
+ * Extract one `export function <name>(...)` body's source text (up to the
+ * next top-level `export function`, or EOF) — charts.js's SVG builders touch
+ * `document.createElementNS`, which isn't available in this suite's plain
+ * 'node' vitest environment (no jsdom dependency — net-zero-deps invariant),
+ * so mark-spec assertions are source-level, mirroring the existing
+ * innerHTML/amber-ban source guards below.
+ */
+function extractFunction(src: string, name: string): string {
+  const startMarker = `export function ${name}(`;
+  const start = src.indexOf(startMarker);
+  if (start === -1) throw new Error(`export function ${name} not found in charts.js`);
+  const rest = src.slice(start);
+  const nextExport = rest.indexOf('\nexport function ', startMarker.length);
+  return nextExport === -1 ? rest : rest.slice(0, nextExport);
+}
+
 describe('niceTicks', () => {
   it('always starts at 0 (Y min always 0)', () => {
     expect(niceTicks(0, 42)[0]).toBe(0);
@@ -79,6 +96,44 @@ describe('nearestPointIndex', () => {
 
   it('returns -1 for an empty series', () => {
     expect(nearestPointIndex([], 10)).toBe(-1);
+  });
+});
+
+describe('line() mark spec (GAP-4d)', () => {
+  it('defaults strokeWidth to 2 (2px round-join stroke)', () => {
+    const fn = extractFunction(readChartsJs(), 'line');
+    expect(/strokeWidth\s*=\s*2\b/.test(fn)).toBe(true);
+    expect(/stroke-linejoin['"]?:\s*['"]round['"]/.test(fn)).toBe(true);
+    expect(/stroke-linecap['"]?:\s*['"]round['"]/.test(fn)).toBe(true);
+  });
+
+  it('supports an optional areaFill rendering a ~10% fill-opacity wash', () => {
+    const fn = extractFunction(readChartsJs(), 'line');
+    expect(/areaFill/.test(fn)).toBe(true);
+    expect(/fill-opacity['"]?:\s*0\.1\b/.test(fn)).toBe(true);
+  });
+});
+
+describe('bar() mark spec (GAP-4d)', () => {
+  it('builds a rounded-top path with NO stroke around the mark', () => {
+    const fn = extractFunction(readChartsJs(), 'bar');
+    expect(/createSvgNode\(['"]path['"]/.test(fn)).toBe(true);
+    expect(/\bstroke\b/.test(fn)).toBe(false);
+  });
+
+  it('clamps the corner radius to min(4, width/2, height)', () => {
+    const fn = extractFunction(readChartsJs(), 'bar');
+    expect(/Math\.min\(\s*4/.test(fn)).toBe(true);
+  });
+});
+
+describe('directLabel() endpoint direct-label primitive', () => {
+  it('is exported exactly once, builds a text node, and sets textContent only', () => {
+    const src = readChartsJs();
+    expect((src.match(/export function directLabel/g) || []).length).toBe(1);
+    const fn = extractFunction(src, 'directLabel');
+    expect(/createSvgNode\(['"]text['"]/.test(fn)).toBe(true);
+    expect(/\.textContent\s*=/.test(fn)).toBe(true);
   });
 });
 
