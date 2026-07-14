@@ -279,30 +279,97 @@ export function initStatsDashboard(ctx) {
     }
 
     const chartW = measureChartWidth(container);
-    renderHeadline(container, data, totalTokens);
+    renderStatTileRow(container, data.summary);
+    renderFraming(container, data.summary);
     renderBurnChart(container, buckets, data.bucket_granularity, data.cost_event_deltas || [], chartW);
     renderFeatureSplit(container, data.by_feature || [], chartW);
     renderModelSplit(container, data.by_model || [], chartW);
   }
 
-  // Headline retail-$ + total-tokens readout tile (D-09).
-  function renderHeadline(container, data, totalTokens) {
-    const tile = document.createElement('div');
-    tile.className = 'chart-card stats-headline-tile';
+  // Stat-tile row (GAP-2a) — five Display-28px tiles reusing the
+  // .stats-headline-tile treatment verbatim: today / this-week / 30d tokens,
+  // avg tokens/day, and the retail-$ equivalent (D-09 label kept verbatim).
+  // Guards for a missing `summary` (older cached payload / fetch failure) by
+  // rendering nothing rather than throwing.
+  function renderStatTileRow(container, summary) {
+    if (!summary) return;
+    const row = document.createElement('div');
+    row.className = 'stats-tile-row';
 
-    const valueEl = document.createElement('div');
-    valueEl.className = 'stats-headline-value';
-    const retailUsd = data.retail_usd || 0;
-    // textContent only — T-44-19 (retailUsd/totalTokens are numbers from the server)
-    valueEl.textContent = '$' + retailUsd.toFixed(4) + '  ·  ' + fmtTokens(totalTokens) + ' tokens';
-    tile.appendChild(valueEl);
+    const tiles = [
+      { value: fmtTokens(summary.today_tokens || 0), label: 'today' },
+      { value: fmtTokens(summary.week_tokens || 0), label: 'this week' },
+      { value: fmtTokens(summary.month_tokens || 0), label: 'last 30 days' },
+      { value: fmtTokens(Math.round(summary.avg_tokens_per_day || 0)), label: 'avg tokens/day' },
+      { value: '$' + (summary.retail_usd_30d || 0).toFixed(4), label: RETAIL_LABEL }, // D-09 verbatim
+    ];
 
-    const labelEl = document.createElement('div');
-    labelEl.className = 'stats-headline-label';
-    labelEl.textContent = RETAIL_LABEL; // static verbatim copy — D-09
-    tile.appendChild(labelEl);
+    tiles.forEach((t) => {
+      const tile = document.createElement('div');
+      tile.className = 'chart-card stats-headline-tile';
 
-    container.appendChild(tile);
+      const valueEl = document.createElement('div');
+      valueEl.className = 'stats-headline-value';
+      valueEl.textContent = t.value; // textContent only — T-44-19
+      tile.appendChild(valueEl);
+
+      const labelEl = document.createElement('div');
+      labelEl.className = 'stats-headline-label';
+      labelEl.textContent = t.label; // textContent only — T-44-19
+      tile.appendChild(labelEl);
+
+      row.appendChild(tile);
+    });
+
+    container.appendChild(row);
+  }
+
+  // Trend-direction glyph — neutral/green tokens only, never amber (GAP-2b,
+  // UI-SPEC Color contract). 'down' (usage shrinking) reads as the positive
+  // signal (--text-stat, green); 'up'/'flat' stay neutral mauve.
+  const TREND_ARROW = { up: '▲', down: '▼', flat: '→' };
+
+  // Subscription-limit framing (GAP-2b) — "vs your typical" baseline copy
+  // beneath the tile row: today/week share of a typical period, trend vs the
+  // prior 7d, and the heaviest day this week. Never a fabricated quota number
+  // (honesty constraint) — baseline-relative only, skips a line when its
+  // source value is null (insufficient history). Guards for a missing
+  // `summary` the same way renderStatTileRow does.
+  function renderFraming(container, summary) {
+    if (!summary) return;
+    const rows = [];
+
+    if (summary.today_vs_typical_pct != null) {
+      rows.push({ text: 'today: ' + Math.round(summary.today_vs_typical_pct) + '% of your typical day' });
+    }
+    if (summary.week_vs_typical_pct != null) {
+      rows.push({ text: 'this week: ' + Math.round(summary.week_vs_typical_pct) + '% of a typical week' });
+    }
+
+    const arrow = TREND_ARROW[summary.trend_direction] || TREND_ARROW.flat;
+    const trendColor = summary.trend_direction === 'down' ? 'var(--text-stat)' : 'var(--text-body-mauve)';
+    const trendText = summary.trend_pct != null
+      ? arrow + ' ' + Math.round(Math.abs(summary.trend_pct)) + '% vs prior 7d'
+      : arrow + ' no prior baseline';
+    rows.push({ text: trendText, color: trendColor });
+
+    if (summary.heaviest_day) {
+      rows.push({
+        text: 'heaviest day: ' + safeDateLabel(summary.heaviest_day.date) + ' (' + fmtTokens(summary.heaviest_day.tokens) + ')',
+      });
+    }
+
+    const card = document.createElement('div');
+    card.className = 'stats-framing';
+    rows.forEach((r) => {
+      const line = document.createElement('div');
+      line.className = 'stats-framing-row';
+      line.textContent = r.text; // textContent only — T-44-19
+      if (r.color) line.style.color = r.color;
+      card.appendChild(line);
+    });
+
+    container.appendChild(card);
   }
 
   // ── SVG chart helpers (burn / per-feature / per-model — D-05/D-06/D-07) ─────
