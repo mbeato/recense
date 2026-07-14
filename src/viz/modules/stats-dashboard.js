@@ -59,6 +59,10 @@ const KIND_MIX_SERIES = [
 // preserveAspectRatio). See measureChartWidth() below.
 const BURN_H = 220;
 const BAR_H = 170;
+// Phase 60-11 GAP-4f: all six Brain Health charts share ONE height so the
+// tab reads as consistent-height small multiples — node-growth previously
+// used the taller BURN_H; it now matches the other five.
+const HEALTH_CHART_H = BAR_H;
 const MARGIN = { top: 12, right: 16, bottom: 28, left: 52 };
 
 const CHART_W_MIN = 320; // floor so a narrow window never yields a degenerate width
@@ -748,7 +752,7 @@ export function initStatsDashboard(ctx) {
     const yScale = linearScale([0, niceMax], [height - MARGIN.bottom, MARGIN.top]);
     const innerW = chartW - MARGIN.left - MARGIN.right;
     const slot = innerW / entries.length;
-    const barWidth = Math.min(56, slot * 0.5);
+    const barWidth = Math.min(24, slot * 0.5); // GAP-4d: bars capped at 24px thick or less
     const bars = entries.map((e, i) => {
       const cx = MARGIN.left + slot * (i + 0.5);
       const y = yScale(e.tokens);
@@ -766,11 +770,12 @@ export function initStatsDashboard(ctx) {
     container.appendChild(card);
   }
 
-  // Focal chart (D-06 — largest card, top of the tab): cumulative node growth,
-  // KIND_COLOR.new_node, D-13 approximation caption, D-07 nearest-point hover.
+  // Section (D-06 — first Brain Health chart, small-multiples height like
+  // the other five): cumulative node growth, KIND_COLOR.new_node, D-13
+  // approximation caption, D-07 nearest-point hover. GAP-4d: no legend — the
+  // section header names the single series.
   function renderNodeGrowthChart(container, nodeGrowth, chartW) {
     const card = makeSection('Node growth');
-    card.classList.add('stats-section-primary');
     const points = (nodeGrowth && nodeGrowth.points) || [];
 
     if (points.length === 0) {
@@ -778,7 +783,7 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(points, BURN_H, chartW);
+    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(points, HEALTH_CHART_H, chartW);
     const color = hex(KIND_COLOR.new_node);
 
     svg.appendChild(axis({
@@ -786,13 +791,12 @@ export function initStatsDashboard(ctx) {
       chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
     svg.appendChild(axis({
-      orientation: 'x', xTicks: pickXTicks(points, xScale), chartBottom: BURN_H - MARGIN.bottom,
+      orientation: 'x', xTicks: pickXTicks(points, xScale), chartBottom: HEALTH_CHART_H - MARGIN.bottom,
     }));
     svg.appendChild(line(pxPoints, { color }));
-    svg.appendChild(legend([{ label: 'nodes', color }], { x: chartW - 90, y: MARGIN.top - 4 }));
 
     card.appendChild(svg);
-    attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BURN_H - MARGIN.bottom, color });
+    attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: HEALTH_CHART_H - MARGIN.bottom, color });
 
     if (nodeGrowth && nodeGrowth.approximate) {
       const caption = document.createElement('div');
@@ -820,14 +824,15 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H, chartW);
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, HEALTH_CHART_H, chartW);
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
       chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
-    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: HEALTH_CHART_H - MARGIN.bottom }));
     entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
+    // True multi-series chart (5 kinds) — legend kept (GAP-4d).
     svg.appendChild(legend(
       entries.map((e) => ({ label: e.label, color: e.color })),
       { x: MARGIN.left, y: MARGIN.top - 4 },
@@ -837,7 +842,8 @@ export function initStatsDashboard(ctx) {
     container.appendChild(card);
   }
 
-  // Reconsolidations/day line — KIND_COLOR.reconsolidation (rose-mauve), D-07 hover.
+  // Reconsolidations/day line — KIND_COLOR.reconsolidation (rose-mauve), D-07
+  // hover. GAP-4d: no legend — the section header names the single series.
   function renderReconChart(container, points, chartW) {
     const card = makeSection('Reconsolidations / day');
     const list = points || [];
@@ -847,7 +853,7 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, BAR_H, chartW);
+    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, HEALTH_CHART_H, chartW);
     const color = hex(KIND_COLOR.reconsolidation);
 
     svg.appendChild(axis({
@@ -855,13 +861,12 @@ export function initStatsDashboard(ctx) {
       chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
     svg.appendChild(axis({
-      orientation: 'x', xTicks: pickXTicks(list, xScale), chartBottom: BAR_H - MARGIN.bottom,
+      orientation: 'x', xTicks: pickXTicks(list, xScale), chartBottom: HEALTH_CHART_H - MARGIN.bottom,
     }));
     svg.appendChild(line(pxPoints, { color }));
-    svg.appendChild(legend([{ label: 'reconsolidations', color }], { x: chartW - 140, y: MARGIN.top - 4 }));
 
     card.appendChild(svg);
-    attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BAR_H - MARGIN.bottom, color });
+    attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: HEALTH_CHART_H - MARGIN.bottom, color });
 
     const caption = document.createElement('div');
     caption.textContent = EVENT_COUNT_CAPTION; // textContent only — T-44-19
@@ -873,7 +878,8 @@ export function initStatsDashboard(ctx) {
     container.appendChild(card);
   }
 
-  // Tombstones/day line — KIND_COLOR.oscillation (coral), D-07 hover.
+  // Tombstones/day line — KIND_COLOR.oscillation (coral), D-07 hover. GAP-4d:
+  // no legend — the section header names the single series.
   function renderTombstoneChart(container, points, chartW) {
     const card = makeSection('Tombstones / day');
     const list = points || [];
@@ -883,7 +889,7 @@ export function initStatsDashboard(ctx) {
       return;
     }
 
-    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, BAR_H, chartW);
+    const { svg, ticks, yScale, xScale, pxPoints } = buildLineChartSvg(list, HEALTH_CHART_H, chartW);
     const color = hex(KIND_COLOR.oscillation);
 
     svg.appendChild(axis({
@@ -891,13 +897,12 @@ export function initStatsDashboard(ctx) {
       chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
     svg.appendChild(axis({
-      orientation: 'x', xTicks: pickXTicks(list, xScale), chartBottom: BAR_H - MARGIN.bottom,
+      orientation: 'x', xTicks: pickXTicks(list, xScale), chartBottom: HEALTH_CHART_H - MARGIN.bottom,
     }));
     svg.appendChild(line(pxPoints, { color }));
-    svg.appendChild(legend([{ label: 'tombstones', color }], { x: chartW - 110, y: MARGIN.top - 4 }));
 
     card.appendChild(svg);
-    attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: BAR_H - MARGIN.bottom, color });
+    attachHover(svg, pxPoints, { chartTop: MARGIN.top, chartBottom: HEALTH_CHART_H - MARGIN.bottom, color });
 
     const caption = document.createElement('div');
     caption.textContent = EVENT_COUNT_CAPTION; // textContent only — T-44-19
@@ -935,14 +940,15 @@ export function initStatsDashboard(ctx) {
       entries.push({ label: 'escalated (' + pct + '%)', tokens: escalated, color: hex(KIND_COLOR.neutral) });
     }
 
-    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H, chartW);
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, HEALTH_CHART_H, chartW);
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
       chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
-    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: HEALTH_CHART_H - MARGIN.bottom }));
     entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
+    // True multi-series chart (fires + optional escalated) — legend kept (GAP-4d).
     svg.appendChild(legend(
       entries.map((e) => ({ label: e.label, color: e.color })),
       { x: MARGIN.left, y: MARGIN.top - 4 },
@@ -969,14 +975,15 @@ export function initStatsDashboard(ctx) {
       { label: 'consolidated', tokens: consolidated, color: hex(KIND_COLOR.new_node) },
     ];
 
-    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, BAR_H, chartW);
+    const { svg, ticks, yScale, bars, xTicks } = buildBarChartSvg(entries, HEALTH_CHART_H, chartW);
 
     svg.appendChild(axis({
       orientation: 'y', ticks, scale: yScale,
       chartLeft: MARGIN.left, chartRight: chartW - MARGIN.right, formatValue: (v) => String(v),
     }));
-    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: BAR_H - MARGIN.bottom }));
+    svg.appendChild(axis({ orientation: 'x', xTicks, chartBottom: HEALTH_CHART_H - MARGIN.bottom }));
     entries.forEach((e, i) => svg.appendChild(bar([bars[i]], { color: e.color })));
+    // True multi-series chart (pending vs consolidated) — legend kept (GAP-4d).
     svg.appendChild(legend(
       entries.map((e) => ({ label: e.label, color: e.color })),
       { x: MARGIN.left, y: MARGIN.top - 4 },
@@ -1018,34 +1025,40 @@ export function initStatsDashboard(ctx) {
   // while not flagging a merely-quiet brain as broken).
   const SLEEP_PASS_STALE_MS = 24 * 60 * 60 * 1000;
 
-  // Last-sleep-pass readout tile (D-14, NOT a chart — no axis()/legend()). Reads
-  // status/ts/duration_ms from the server; the server only ever sends an honest
-  // 'unknown' (a pass happened, batch boundary approximated) or 'none' (never
-  // happened) — this tile never fabricates a healthy status word of its own.
+  // Last-sleep-pass readout (GAP-4f, D-14 — NOT a chart, no axis()/legend()):
+  // a single muted one-line row — label + mono value + honest status color —
+  // not a card, not a 28px number. Reads status/ts/duration_ms from the
+  // server; the server only ever sends an honest 'unknown' (a pass happened,
+  // batch boundary approximated) or 'none' (never happened) — this readout
+  // never fabricates a healthy status word of its own.
   function renderLastSleepPassTile(container, lastSleepPass) {
-    const tile = document.createElement('div');
-    tile.className = 'stats-headline-tile';
+    const row = document.createElement('div');
+    row.className = 'stats-sleep-readout';
 
-    const readout = document.createElement('div');
-    readout.className = 'stats-headline-label';
-    readout.style.fontSize = '13px';
+    const label = document.createElement('span');
+    label.className = 'stats-sleep-readout-label';
+    label.textContent = 'last sleep pass'; // textContent only — T-44-19
+    row.appendChild(label);
+
+    const value = document.createElement('span');
+    value.className = 'stats-sleep-readout-value';
 
     const status = lastSleepPass && lastSleepPass.status;
     const ts = lastSleepPass && lastSleepPass.ts;
     const durationMs = lastSleepPass && lastSleepPass.duration_ms;
 
     if (status === 'none' || ts == null) {
-      readout.textContent = 'no sleep pass has run yet'; // textContent only — T-44-19, verbatim
-      readout.style.color = 'var(--error-text)';
+      value.textContent = 'no sleep pass has run yet'; // textContent only — T-44-19, verbatim
+      value.style.color = 'var(--error-text)';
     } else {
       const stale = (Date.now() - ts) > SLEEP_PASS_STALE_MS;
       // textContent only — T-44-19; verbatim copy shape, relative time + duration derived locally
-      readout.textContent = 'last sleep pass: ' + relativeTimeFromMs(ts) + ' (' + formatDurationMs(durationMs) + ')';
-      readout.style.color = stale ? 'var(--error-text)' : 'var(--text-stat)';
+      value.textContent = relativeTimeFromMs(ts) + ' (' + formatDurationMs(durationMs) + ')';
+      value.style.color = stale ? 'var(--error-text)' : 'var(--text-stat)';
     }
 
-    tile.appendChild(readout);
-    container.appendChild(tile);
+    row.appendChild(value);
+    container.appendChild(row);
   }
 
   function renderHealthTab(container, data) {

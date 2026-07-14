@@ -1564,20 +1564,22 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   border-bottom: 1px solid var(--divider-faint);
 }
 
-/* Headline readout tile (last-sleep-pass, Phase 60-09) — flat, no card. */
-.stats-headline-tile {
+/* Last-sleep-pass readout (GAP-4f, Phase 60-11) — one muted line, NOT a
+   card: 10px uppercase label + mono value, honest status color. */
+.stats-sleep-readout {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: baseline;
+  gap: 10px;
 }
-.stats-headline-value {
-  font-family: 'JetBrains Mono HUD', monospace;
-  font-size: 28px;
-  color: var(--text-bright);
-}
-.stats-headline-label {
+.stats-sleep-readout-label {
   font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--text-recede);
+}
+.stats-sleep-readout-value {
+  font-family: 'JetBrains Mono HUD', monospace;
+  font-size: 13px;
 }
 
 /* Empty / error state copy — replaces a section's contents, never a broken shell */
