@@ -97,3 +97,12 @@ None - no external service configuration required.
 ---
 *Phase: 61-corpus-chrome-index-column-project-browsing*
 *Completed: 2026-07-14*
+
+## Self-Check: PASSED
+
+- FOUND: src/viz/css/styles.css
+- FOUND: src/viz/modules/corpus.js
+- FOUND: .planning/phases/61-corpus-chrome-index-column-project-browsing/61-05-SUMMARY.md
+- FOUND: 6547625 (Task 1 commit)
+- FOUND: 2f5c9aa (Task 2 commit)
+- FOUND: aecb004 (SUMMARY.md commit)
