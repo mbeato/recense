@@ -106,3 +106,9 @@ None - no external service configuration required.
 ---
 *Phase: 60-settings-stats-depth*
 *Completed: 2026-07-13*
+
+## Self-Check: PASSED
+
+All modified/created files verified present (`src/viz/server.ts`, `tests/viz-stats-routes.test.ts`,
+`.planning/phases/60-settings-stats-depth/60-08-SUMMARY.md`); all 4 task/metadata commits
+(`6f89ba1`, `d540c59`, `3abae85`, `3d9b4ef`) verified present in `git log`.
