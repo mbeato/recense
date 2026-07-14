@@ -36,7 +36,7 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v9.0 Memory Quality opened)
 Phase: 60 (settings-stats-depth) — EXECUTING
 Plan: 1 of 6
 Status: Executing Phase 60
-Last activity: 2026-07-11 -- Phase 60 execution started
+Last activity: 2026-07-14 -- Completed quick task 260714-g0s: stats entry point moved to HUD rail
 
 ```
 v9.0 Progress ░░░░░░░░░░ 0%
@@ -153,6 +153,7 @@ Carried from v7.0/v8.0 close:
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260714-g0s | Move stats entry point from settings panel to HUD rail histogram button | 2026-07-14 | d49d117, f0c1ec5, d00a5e9 | [260714-g0s-move-stats-entry-point-from-settings-pan](./quick/260714-g0s-move-stats-entry-point-from-settings-pan/) |
 | 260701-mmh | Thread startLockHeartbeat() through all six long-pass lock holders (closes 39.1 FIX-STALL-01 residual) | 2026-07-01 | 5167175, 10a6dd0 | [260701-mmh-thread-heartbeatlock-through-consolidato](./quick/260701-mmh-thread-heartbeatlock-through-consolidato/) |
 | 260701-vix | .vindex sidecar v2 (per-row embedded_hash) + construction-time freshness diff/delta merge (closes 51-05 staleness follow-up) | 2026-07-01 | e886ade, eb825f7 | [260701-vix-fix-vindex-sidecar-staleness](./quick/260701-vix-fix-vindex-sidecar-staleness/) |
 | 260701-brg | remember-bridge reconcile hop stores honest score:null (WR-02; client mid-intensity fallback keeps rendering identical) | 2026-07-01 | 5fe9533 | [260701-brg-remember-bridge-honest-null-score](./quick/260701-brg-remember-bridge-honest-null-score/) |
