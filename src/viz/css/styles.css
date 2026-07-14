@@ -1422,6 +1422,54 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   background: var(--index-search-focus-bg);
 }
 
+/* Tree row — wraps chevron + name + count-badge for a folder/project row (D-01, Plan 03 render
+   target). Same hover idiom as .index-entry above. */
+.index-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-recede);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.index-row:hover {
+  color: var(--text-bright);
+  background: var(--index-search-focus-bg);
+}
+
+/* Chevron — per-row expand/collapse toggle. One right-pointing glyph rotates 90deg between
+   collapsed (▶) and expanded (▼) states — no second SVG asset. */
+.index-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-recede);
+}
+.index-chevron:hover {
+  color: var(--text-bright-mauve);
+}
+.index-chevron svg {
+  transition: transform var(--motion-fast) var(--ease-out-soft);
+}
+.index-chevron.expanded svg {
+  transform: rotate(90deg);
+}
+
+/* Count badge — terse numeric readout, no unit word. */
+.index-count {
+  font-family: 'JetBrains Mono HUD', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-stat);
+  margin-left: auto;
+}
+
 /* ── Stats dashboard takeover (Phase 60, D-01/D-02/D-14) ──────────────────────
    Full-window surface replacing the 3D brain — same structural tier as
    #corpus-graph (fixed/inset:0/display:none→.open{block}, opacity-fade
