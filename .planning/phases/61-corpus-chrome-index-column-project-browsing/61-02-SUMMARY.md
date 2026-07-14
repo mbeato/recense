@@ -97,6 +97,15 @@ None - no external service configuration required.
 - Full suite run shows 23 pre-existing failures across `tests/adapter-capture.test.ts`, `tests/adapter-inject.test.ts`, `tests/episodic-dryrun-gate.test.ts`, `tests/eval-harness-smoke.test.ts`, `tests/locomo-harness.test.ts`, `tests/locomo-latency-curve.test.ts`, `tests/locomo-scorer.test.ts` — all unrelated to `src/viz/modules/{corpus,constants}.js` (adapter-capture/inject, eval harness, LoCoMo scorer subsystems); out of this task's scope per the deviation-rules scope boundary, not investigated or fixed
 - Manual/behavioral verification of the actual focus/hover/label feel is deferred to the Plan 04 founder checkpoint per the plan's own `<verification>` section
 
+## Self-Check: PASSED
+
+- FOUND: src/viz/modules/constants.js
+- FOUND: src/viz/modules/corpus.js
+- FOUND: .planning/phases/61-corpus-chrome-index-column-project-browsing/61-02-SUMMARY.md
+- FOUND: commit 0641c13 (Task 1)
+- FOUND: commit be4e431 (Task 2)
+- FOUND: commit 9bb813c (docs: summary)
+
 ---
 *Phase: 61-corpus-chrome-index-column-project-browsing*
 *Completed: 2026-07-14*
