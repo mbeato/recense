@@ -52,6 +52,9 @@ export function initIndex(ctx) {
   // Project (tree-root) entry ids the user has expanded — in-memory only (D-01: persists across
   // corpus close/reopen within a session, resets on hard reload; never localStorage).
   const expandedIds = new Set();
+  // Slug of the currently-focused project (GAP-3) — mirrors corpus.js's focusedScope, kept in
+  // sync via ctx.syncCorpusFocus so the index's active row always matches graph focus state.
+  let activeScope = null;
 
   // ── Static sidebar chrome: header (title + collapse) + search + scrollable content ──────
   function ensureChrome() {
@@ -182,9 +185,10 @@ export function initIndex(ctx) {
   // Build a collapsible project (tree-root-with-children) row: chevron + name + doc-count badge
   // (D-01). Chevron toggles expand/collapse only (own hit target, stopPropagation). The name
   // click both expands the row AND focuses the project in the graph in one click (D-03).
-  function makeProjectRow(entry, count, expanded, depth) {
+  function makeProjectRow(entry, count, expanded, depth, isActive) {
     const row = document.createElement('div');
-    row.className = 'index-row';
+    row.className = 'index-row' + (isActive ? ' active' : '');
+    if (isActive) row.setAttribute('aria-current', 'true');
     row.style.paddingLeft = (8 + depth * 14) + 'px'; // indent by containment depth
     row.style.paddingRight = '8px';
 
@@ -212,8 +216,17 @@ export function initIndex(ctx) {
     a.addEventListener('click', (ev) => {
       ev.preventDefault();
       const scope = entry.slug; // project-root slug — see SCOPE ARGUMENT note (not a `.scope` field)
-      if (!expandedIds.has(entry.id)) setProjectExpanded(entry, true);
-      if (typeof ctx.focusCorpusProject === 'function') ctx.focusCorpusProject(scope);
+      if (activeScope === scope) {
+        // Clicking the already-active row toggles focus OFF (GAP-3) — collapse stays
+        // chevron-owned, so the row's expanded state is left untouched here.
+        if (typeof ctx.focusCorpusProject === 'function') ctx.focusCorpusProject(null);
+        activeScope = null;
+      } else {
+        if (!expandedIds.has(entry.id)) setProjectExpanded(entry, true);
+        if (typeof ctx.focusCorpusProject === 'function') ctx.focusCorpusProject(scope);
+        activeScope = scope;
+      }
+      renderSections();
     });
     row.appendChild(a);
 
@@ -290,7 +303,7 @@ export function initIndex(ctx) {
       const count = countDescendants(entry.id, new Set([entry.id]));
       if (visible === null || visible.has(entry.id)) {
         const li = document.createElement('li');
-        li.appendChild(makeProjectRow(entry, count, expanded, depth));
+        li.appendChild(makeProjectRow(entry, count, expanded, depth, activeScope === entry.slug));
         list.appendChild(li);
       }
       if (expanded) {
@@ -411,6 +424,12 @@ export function initIndex(ctx) {
   ctx.openIndexSidebar = openSidebar;
   ctx.closeIndexSidebar = closeIndexSidebar;
   ctx.openIndex = openSidebar;
+  // corpus.js calls this (guarded) whenever focusedScope changes (focus/switch/Esc/background-
+  // click) so the index's active row stays in sync with graph focus in both directions (GAP-3).
+  ctx.syncCorpusFocus = function syncCorpusFocus(scope) {
+    activeScope = scope || null;
+    renderSections();
+  };
 
   setTimeout(() => { prepareIndex(); }, 1200);
 }
