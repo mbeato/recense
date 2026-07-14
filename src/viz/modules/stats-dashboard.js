@@ -21,7 +21,7 @@
  * createElementNS builders, never innerHTML.
  */
 
-import { line, bar, axis, legend, attachHover, SVG_NS, niceTicks, linearScale, fmtDate, fmtTokens } from './charts.js';
+import { line, bar, axis, legend, directLabel, attachHover, SVG_NS, niceTicks, linearScale, fmtDate, fmtTokens } from './charts.js';
 import { NEUTRAL_SERIES_RAMP, COST_EVENTS, KIND_COLOR, TYPE_COLOR } from './constants.js';
 
 const RETAIL_LABEL = 'API-retail equivalent (subscription-billed: $0 marginal)';
@@ -35,7 +35,7 @@ const NODE_GROWTH_CAPTION = 'Derived from event history — approximate where ol
 // and does not tombstone), so both per-day counts are honest approximations.
 const EVENT_COUNT_CAPTION = 'Derived from event history — approximate: event rows do not distinguish every variant.';
 
-// Identity-hue → CSS hex string (KIND_COLOR/TYPE_COLOR are 0xRRGGBB numbers; charts.js's
+// Identity-hue to CSS hex string (KIND_COLOR/TYPE_COLOR are 0xRRGGBB numbers; charts.js's
 // SVG builders take CSS color strings) — D-08: only these two locked palettes feed
 // Brain-Health series colors, never a hand-picked hex literal (never the forbidden
 // live-activation warm hue either — see UI-SPEC Chart Series Color Contract).
@@ -61,21 +61,17 @@ const BURN_H = 220;
 const BAR_H = 170;
 const MARGIN = { top: 12, right: 16, bottom: 28, left: 52 };
 
-// .chart-card's own box model (styles.css) — subtracted from the tab
-// container's clientWidth to get the usable inner width for a chart's SVG,
-// which is appended as a direct child of the card (inside its padding box).
-const CHART_CARD_PADDING = 16; // px, each side
-const CHART_CARD_BORDER = 1; // px, each side
 const CHART_W_MIN = 320; // floor so a narrow window never yields a degenerate width
 
-// Measures the real pixel width available to a chart's SVG inside its card,
-// from the tab container's clientWidth (GAP-1: charts render at their true
-// rendered width, so viewBox width == rendered pixel width and
-// preserveAspectRatio="none" no longer stretches text/strokes).
+// Measures the real pixel width available to a chart's SVG (GAP-1: charts
+// render at their true rendered width, so viewBox width == rendered pixel
+// width and preserveAspectRatio="none" no longer stretches text/strokes).
+// Phase 60-11 (GAP-4a de-box): the SVG now sits directly under a borderless
+// .stats-section on the flat #stats-view surface — no card padding/border to
+// subtract, so the tab container's clientWidth IS the usable width.
 function measureChartWidth(container) {
   if (!container) return CHART_W_MIN;
-  const raw = container.clientWidth - (CHART_CARD_PADDING * 2) - (CHART_CARD_BORDER * 2);
-  return Math.max(CHART_W_MIN, raw);
+  return Math.max(CHART_W_MIN, container.clientWidth);
 }
 
 export function initStatsDashboard(ctx) {
@@ -120,8 +116,8 @@ export function initStatsDashboard(ctx) {
       if (typeof ctx.markActive === 'function') ctx.markActive();
       setOtherViewsHidden(true);
       view.classList.add('open');
-      // Force a layout flush so the opacity transition (display:none→block +
-      // opacity 0→1) actually animates rather than jumping straight to 1.
+      // Force a layout flush so the opacity transition (display:none to block +
+      // opacity 0 to 1) actually animates rather than jumping straight to 1.
       void view.offsetHeight;
       view.classList.add('stats-in');
     }
@@ -279,27 +275,27 @@ export function initStatsDashboard(ctx) {
     }
 
     const chartW = measureChartWidth(container);
-    renderStatTileRow(container, data.summary);
-    renderFraming(container, data.summary);
-    renderLeversCard(container, data.lever_deltas || []);
+    renderUsageHero(container, data.summary);
+    renderLeversSection(container, data.lever_deltas || []);
     renderBurnChart(container, buckets, data.bucket_granularity, data.cost_event_deltas || [], chartW);
     renderUsageBreakdown(container, data.by_feature || [], data.by_model || []);
   }
 
-  // Visible "Cost levers" card (GAP-2c) — one row per COST_EVENT (label, date,
-  // before/after avg tokens-per-day, %-saved), pulling the savings story out
-  // of hover-only discovery. The burn-chart's dashed markers + appendMarkers
-  // hover tooltip (D-10/D-11) are untouched — this card supplements them.
-  function renderLeversCard(container, leverDeltas) {
-    const card = makeCard('Cost levers');
+  // Quiet borderless "Cost levers" table (GAP-2c/GAP-4e) — one row per
+  // COST_EVENT (label, date, before/after avg tokens-per-day, %-saved),
+  // pulling the savings story out of hover-only discovery. The burn-chart's
+  // dashed markers + appendMarkers hover tooltip (D-10/D-11) are untouched —
+  // this table supplements them.
+  function renderLeversSection(container, leverDeltas) {
+    const section = makeSection('Cost levers');
     const list = leverDeltas || [];
 
     if (list.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'stats-empty-state';
       empty.textContent = 'no cost levers recorded yet'; // textContent only — T-44-19
-      card.appendChild(empty);
-      container.appendChild(card);
+      section.appendChild(empty);
+      container.appendChild(section);
       return;
     }
 
@@ -341,107 +337,133 @@ export function initStatsDashboard(ctx) {
       row.appendChild(afterCell);
 
       const pctCell = document.createElement('div');
-      pctCell.className = 'stats-levers-cell';
+      pctCell.className = 'stats-levers-cell stats-levers-pct';
       const pct = entry.pct_saved;
       // textContent only — T-44-19; server-computed pct_saved, no client math
-      pctCell.textContent = pct == null
-        ? '—'
-        : pct >= 0
-          ? Math.round(pct) + '% saved'
-          : Math.round(Math.abs(pct)) + '% more';
+      if (pct == null) {
+        pctCell.textContent = '—';
+      } else if (pct >= 0) {
+        pctCell.textContent = Math.round(pct) + '% saved';
+        pctCell.classList.add('positive');
+      } else {
+        pctCell.textContent = Math.round(Math.abs(pct)) + '% more';
+      }
       row.appendChild(pctCell);
 
       table.appendChild(row);
     });
 
-    card.appendChild(table);
-    container.appendChild(card);
+    section.appendChild(table);
+    container.appendChild(section);
   }
 
-  // Stat-tile row (GAP-2a) — five Display-28px tiles reusing the
-  // .stats-headline-tile treatment verbatim: today / this-week / 30d tokens,
-  // avg tokens/day, and the retail-$ equivalent (D-09 label kept verbatim).
-  // Guards for a missing `summary` (older cached payload / fetch failure) by
-  // rendering nothing rather than throwing.
-  function renderStatTileRow(container, summary) {
+  // Hero + supporting row (GAP-2a/GAP-4a-c) — exactly ONE hero figure
+  // (today's tokens, ~44px JetBrains Mono) with its signed trend delta
+  // integrated directly into the figure (no separate "vs your typical" prose
+  // block, no directional trend glyphs); a quiet hairline-separated
+  // supporting row carries this-week / 30d / avg-day / retail-$. Guards for
+  // a missing `summary` (older cached payload / fetch failure) by rendering
+  // nothing.
+  function renderUsageHero(container, summary) {
     if (!summary) return;
-    const row = document.createElement('div');
-    row.className = 'stats-tile-row';
 
-    const tiles = [
-      { value: fmtTokens(summary.today_tokens || 0), label: 'today' },
-      { value: fmtTokens(summary.week_tokens || 0), label: 'this week' },
-      { value: fmtTokens(summary.month_tokens || 0), label: 'last 30 days' },
-      { value: fmtTokens(Math.round(summary.avg_tokens_per_day || 0)), label: 'avg tokens/day' },
-      { value: '$' + (summary.retail_usd_30d || 0).toFixed(4), label: RETAIL_LABEL }, // D-09 verbatim
+    const hero = document.createElement('div');
+    hero.className = 'stats-hero';
+
+    const valueRow = document.createElement('div');
+    valueRow.className = 'stats-hero-value';
+    const value = document.createElement('span');
+    value.textContent = fmtTokens(summary.today_tokens || 0); // textContent only — T-44-19
+    valueRow.appendChild(value);
+
+    const trendPct = summary.trend_pct;
+    if (trendPct != null) {
+      const delta = document.createElement('span');
+      delta.className = 'stats-delta';
+      const sign = trendPct >= 0 ? '+' : '−'; // real minus glyph, plain signed text — no directional glyphs
+      delta.textContent = sign + Math.round(Math.abs(trendPct)) + '%'; // textContent only — T-44-19
+      // down-usage is the POSITIVE signal (green); up/flat stays neutral mauve
+      delta.style.color = summary.trend_direction === 'down' ? 'var(--text-stat)' : 'var(--text-mauve-rest)';
+      valueRow.appendChild(delta);
+    }
+    hero.appendChild(valueRow);
+
+    const label = document.createElement('div');
+    label.className = 'stats-hero-label';
+    label.textContent = 'today'; // textContent only — T-44-19
+    hero.appendChild(label);
+
+    // Honest, skip-when-null context line — never a fabricated baseline.
+    const contextParts = [trendPct != null ? 'vs prior 7d' : 'no prior baseline'];
+    if (summary.today_vs_typical_pct != null) {
+      contextParts.push(Math.round(summary.today_vs_typical_pct) + '% of typical day');
+    }
+    const footnote = document.createElement('div');
+    footnote.className = 'stats-footnote';
+    footnote.textContent = contextParts.join(' · '); // textContent only — T-44-19
+    hero.appendChild(footnote);
+
+    container.appendChild(hero);
+    renderSupportingRow(container, summary);
+  }
+
+  function renderSupportingRow(container, summary) {
+    const row = document.createElement('div');
+    row.className = 'stats-supporting-row';
+
+    const items = [
+      {
+        value: fmtTokens(summary.week_tokens || 0),
+        label: 'this week',
+        context: summary.week_vs_typical_pct != null
+          ? Math.round(summary.week_vs_typical_pct) + '% of typical week'
+          : null,
+      },
+      { value: fmtTokens(summary.month_tokens || 0), label: 'last 30 days', context: null },
+      { value: fmtTokens(Math.round(summary.avg_tokens_per_day || 0)), label: 'avg tokens/day', context: null },
+      // GAP-4b: 2-decimal retail-$ supersedes the earlier UI-SPEC 4-decimal spec (founder call).
+      { value: '$' + (summary.retail_usd_30d || 0).toFixed(2), label: 'retail-$ (30d)', context: null },
     ];
 
-    tiles.forEach((t) => {
-      const tile = document.createElement('div');
-      tile.className = 'chart-card stats-headline-tile';
+    items.forEach((item) => {
+      const el = document.createElement('div');
+      el.className = 'stats-supporting-item';
 
       const valueEl = document.createElement('div');
-      valueEl.className = 'stats-headline-value';
-      valueEl.textContent = t.value; // textContent only — T-44-19
-      tile.appendChild(valueEl);
+      valueEl.className = 'stats-supporting-value';
+      valueEl.textContent = item.value; // textContent only — T-44-19
+      el.appendChild(valueEl);
 
       const labelEl = document.createElement('div');
-      labelEl.className = 'stats-headline-label';
-      labelEl.textContent = t.label; // textContent only — T-44-19
-      tile.appendChild(labelEl);
+      labelEl.className = 'stats-supporting-label';
+      labelEl.textContent = item.label; // textContent only — T-44-19
+      el.appendChild(labelEl);
 
-      row.appendChild(tile);
+      if (item.context) {
+        const contextEl = document.createElement('div');
+        contextEl.className = 'stats-supporting-context';
+        contextEl.textContent = item.context; // textContent only — T-44-19
+        el.appendChild(contextEl);
+      }
+
+      row.appendChild(el);
     });
 
     container.appendChild(row);
-  }
 
-  // Trend-direction glyph — neutral/green tokens only, never amber (GAP-2b,
-  // UI-SPEC Color contract). 'down' (usage shrinking) reads as the positive
-  // signal (--text-stat, green); 'up'/'flat' stay neutral mauve.
-  const TREND_ARROW = { up: '▲', down: '▼', flat: '→' };
-
-  // Subscription-limit framing (GAP-2b) — "vs your typical" baseline copy
-  // beneath the tile row: today/week share of a typical period, trend vs the
-  // prior 7d, and the heaviest day this week. Never a fabricated quota number
-  // (honesty constraint) — baseline-relative only, skips a line when its
-  // source value is null (insufficient history). Guards for a missing
-  // `summary` the same way renderStatTileRow does.
-  function renderFraming(container, summary) {
-    if (!summary) return;
-    const rows = [];
-
-    if (summary.today_vs_typical_pct != null) {
-      rows.push({ text: 'today: ' + Math.round(summary.today_vs_typical_pct) + '% of your typical day' });
-    }
-    if (summary.week_vs_typical_pct != null) {
-      rows.push({ text: 'this week: ' + Math.round(summary.week_vs_typical_pct) + '% of a typical week' });
-    }
-
-    const arrow = TREND_ARROW[summary.trend_direction] || TREND_ARROW.flat;
-    const trendColor = summary.trend_direction === 'down' ? 'var(--text-stat)' : 'var(--text-body-mauve)';
-    const trendText = summary.trend_pct != null
-      ? arrow + ' ' + Math.round(Math.abs(summary.trend_pct)) + '% vs prior 7d'
-      : arrow + ' no prior baseline';
-    rows.push({ text: trendText, color: trendColor });
+    // D-09 verbatim label, relocated from a tile label to a muted footnote (GAP-4b).
+    const retailFootnote = document.createElement('div');
+    retailFootnote.className = 'stats-footnote';
+    retailFootnote.textContent = RETAIL_LABEL; // textContent only — T-44-19, D-09 verbatim
+    container.appendChild(retailFootnote);
 
     if (summary.heaviest_day) {
-      rows.push({
-        text: 'heaviest day: ' + safeDateLabel(summary.heaviest_day.date) + ' (' + fmtTokens(summary.heaviest_day.tokens) + ')',
-      });
+      const heaviest = document.createElement('div');
+      heaviest.className = 'stats-footnote';
+      // textContent only — T-44-19
+      heaviest.textContent = 'heaviest day: ' + safeDateLabel(summary.heaviest_day.date) + ' (' + fmtTokens(summary.heaviest_day.tokens) + ')';
+      container.appendChild(heaviest);
     }
-
-    const card = document.createElement('div');
-    card.className = 'stats-framing';
-    rows.forEach((r) => {
-      const line = document.createElement('div');
-      line.className = 'stats-framing-row';
-      line.textContent = r.text; // textContent only — T-44-19
-      if (r.color) line.style.color = r.color;
-      card.appendChild(line);
-    });
-
-    container.appendChild(card);
   }
 
   // ── SVG chart helpers (burn / per-feature / per-model — D-05/D-06/D-07) ─────
@@ -458,17 +480,19 @@ export function initStatsDashboard(ctx) {
     return svg;
   }
 
-  function makeCard(titleText) {
-    const card = document.createElement('div');
-    card.className = 'chart-card';
+  // De-boxed section idiom (GAP-4a) — the old bordered-card helper's
+  // replacement: a plain div.stats-section whose only chrome is a 10px uppercase
+  // letter-spaced muted header with a hairline bottom divider. No border,
+  // no background, no card padding — content sits directly on the flat
+  // #stats-view surface.
+  function makeSection(titleText) {
+    const section = document.createElement('div');
+    section.className = 'stats-section';
     const head = document.createElement('div');
-    head.className = 'chart-card-head';
-    const title = document.createElement('span');
-    title.className = 'chart-card-title';
-    title.textContent = titleText; // textContent only — T-44-19
-    head.appendChild(title);
-    card.appendChild(head);
-    return card;
+    head.className = 'stats-section-head';
+    head.textContent = titleText; // textContent only — T-44-19
+    section.appendChild(head);
+    return section;
   }
 
   // Both daily and weekly (Monday-start ISO week) bucket keys are real calendar
@@ -536,7 +560,7 @@ export function initStatsDashboard(ctx) {
 
       const delta = deltas.find((d) => d.date === m.date && d.label === m.label);
       const deltaText = delta
-        ? m.label + ': ' + fmtTokens(delta.before_avg) + '/day → ' + fmtTokens(delta.after_avg) + '/day'
+        ? m.label + ': ' + fmtTokens(delta.before_avg) + '/day to ' + fmtTokens(delta.after_avg) + '/day'
         : m.label;
 
       g.addEventListener('mouseenter', () => showMarkerTooltip(deltaText));
@@ -566,11 +590,12 @@ export function initStatsDashboard(ctx) {
     if (tooltip) tooltip.style.display = 'none';
   }
 
-  // Primary focal chart (D-06 — largest card, top of the tab): daily/weekly token
-  // burn line, cost-event markers, D-07 nearest-point hover.
+  // Focal chart (top of the tab, under the hero/supporting figures):
+  // daily/weekly token burn line, cost-event markers, D-07 nearest-point
+  // hover. GAP-4d: no legend — the section header names the single series;
+  // a 10%-wash area fill + a selective endpoint direct-label replace it.
   function renderBurnChart(container, buckets, granularity, costEventDeltas, chartW) {
-    const card = makeCard(granularity === 'weekly' ? 'Weekly token burn' : 'Daily token burn');
-    card.classList.add('chart-card-primary');
+    const section = makeSection(granularity === 'weekly' ? 'Weekly token burn' : 'Daily token burn');
 
     const svg = createChartSvg(chartW, BURN_H);
     const maxTokens = buckets.reduce((m, b) => Math.max(m, b.tokens || 0), 0);
@@ -590,22 +615,27 @@ export function initStatsDashboard(ctx) {
     svg.appendChild(axis({
       orientation: 'x', xTicks: pickXTicks(buckets, xScale), chartBottom: BURN_H - MARGIN.bottom,
     }));
-    svg.appendChild(line(points, { color: NEUTRAL_SERIES_RAMP[0] }));
+    svg.appendChild(line(points, {
+      color: NEUTRAL_SERIES_RAMP[0], areaFill: NEUTRAL_SERIES_RAMP[0], baselineY: BURN_H - MARGIN.bottom,
+    }));
     appendMarkers(svg, buildMarkers(buckets, granularity), xScale, costEventDeltas);
-    svg.appendChild(legend([{ label: 'burn', color: NEUTRAL_SERIES_RAMP[0] }], { x: chartW - 90, y: MARGIN.top - 4 }));
+    if (points.length) {
+      const last = points[points.length - 1];
+      svg.appendChild(directLabel(last, fmtTokens(last.value), { color: NEUTRAL_SERIES_RAMP[0] }));
+    }
 
-    card.appendChild(svg);
+    section.appendChild(svg);
     attachHover(svg, points, { chartTop: MARGIN.top, chartBottom: BURN_H - MARGIN.bottom, color: NEUTRAL_SERIES_RAMP[0] });
-    container.appendChild(card);
+    container.appendChild(section);
   }
 
   // Collapsed per-feature + per-model presentation (GAP-2d) — ONE compact
-  // card (two small swatch-labeled tables) replacing the former two full
-  // chart cards, which the founder called low-value near-static noise. A
+  // section (two small swatch-labeled quiet tables) replacing the former two
+  // full chart cards, which the founder called low-value near-static noise. A
   // table is trivially responsive (no chartW-driven geometry needed) and
   // keeps FEATURE_ORDER + NEUTRAL_SERIES_RAMP coloring (D-08, non-amber).
   function renderUsageBreakdown(container, byFeature, byModel) {
-    const card = makeCard('Usage breakdown');
+    const section = makeSection('Usage breakdown');
 
     const featureEntries = [];
     FEATURE_ORDER.forEach((tag, i) => {
@@ -625,8 +655,8 @@ export function initStatsDashboard(ctx) {
       const empty = document.createElement('div');
       empty.className = 'stats-empty-state';
       empty.textContent = 'no usage recorded yet'; // textContent only — T-44-19
-      card.appendChild(empty);
-      container.appendChild(card);
+      section.appendChild(empty);
+      container.appendChild(section);
       return;
     }
 
@@ -635,7 +665,7 @@ export function initStatsDashboard(ctx) {
       const heading = document.createElement('div');
       heading.className = 'stats-breakdown-group-title';
       heading.textContent = titleText; // textContent only — T-44-19
-      card.appendChild(heading);
+      section.appendChild(heading);
 
       const table = document.createElement('div');
       table.className = 'stats-breakdown-table';
@@ -660,13 +690,13 @@ export function initStatsDashboard(ctx) {
 
         table.appendChild(row);
       });
-      card.appendChild(table);
+      section.appendChild(table);
     }
 
     appendGroup('per feature', featureEntries);
     appendGroup('per model', modelEntries);
 
-    container.appendChild(card);
+    container.appendChild(section);
   }
 
   // ── Brain Health tab (D-13/D-14) ─────────────────────────────────────────────
@@ -739,8 +769,8 @@ export function initStatsDashboard(ctx) {
   // Focal chart (D-06 — largest card, top of the tab): cumulative node growth,
   // KIND_COLOR.new_node, D-13 approximation caption, D-07 nearest-point hover.
   function renderNodeGrowthChart(container, nodeGrowth, chartW) {
-    const card = makeCard('Node growth');
-    card.classList.add('chart-card-primary');
+    const card = makeSection('Node growth');
+    card.classList.add('stats-section-primary');
     const points = (nodeGrowth && nodeGrowth.points) || [];
 
     if (points.length === 0) {
@@ -779,7 +809,7 @@ export function initStatsDashboard(ctx) {
   // Kind-mix grouped bar (fact/entity/schema/doc/insight) — always all five series
   // (fixed taxonomy, not a variable feature/model list) so the legend never drops one.
   function renderKindMixChart(container, kindMix, chartW) {
-    const card = makeCard('Kind mix');
+    const card = makeSection('Kind mix');
     const entries = KIND_MIX_SERIES.map((s) => ({
       label: s.label, tokens: (kindMix && kindMix[s.key]) || 0, color: s.color,
     }));
@@ -809,7 +839,7 @@ export function initStatsDashboard(ctx) {
 
   // Reconsolidations/day line — KIND_COLOR.reconsolidation (rose-mauve), D-07 hover.
   function renderReconChart(container, points, chartW) {
-    const card = makeCard('Reconsolidations / day');
+    const card = makeSection('Reconsolidations / day');
     const list = points || [];
 
     if (list.length === 0) {
@@ -845,7 +875,7 @@ export function initStatsDashboard(ctx) {
 
   // Tombstones/day line — KIND_COLOR.oscillation (coral), D-07 hover.
   function renderTombstoneChart(container, points, chartW) {
-    const card = makeCard('Tombstones / day');
+    const card = makeSection('Tombstones / day');
     const list = points || [];
 
     if (list.length === 0) {
@@ -887,7 +917,7 @@ export function initStatsDashboard(ctx) {
   // "escalated" bar (KIND_COLOR.neutral, slate) renders again with its honest
   // percentage in the legend label.
   function renderJudgeActivityChart(container, judgeActivity, chartW) {
-    const card = makeCard('Judge activity');
+    const card = makeSection('Judge activity');
     const fires = (judgeActivity && judgeActivity.fires) || 0;
     const escalationRate = judgeActivity ? judgeActivity.escalation_rate : null;
 
@@ -925,7 +955,7 @@ export function initStatsDashboard(ctx) {
   // Episodes pending-vs-consolidated paired bar — pending KIND_COLOR.neutral,
   // consolidated KIND_COLOR.new_node.
   function renderEpisodesChart(container, episodes, chartW) {
-    const card = makeCard('Episodes pending vs. consolidated');
+    const card = makeSection('Episodes pending vs. consolidated');
     const pending = (episodes && episodes.pending) || 0;
     const consolidated = (episodes && episodes.consolidated) || 0;
 
@@ -994,7 +1024,7 @@ export function initStatsDashboard(ctx) {
   // happened) — this tile never fabricates a healthy status word of its own.
   function renderLastSleepPassTile(container, lastSleepPass) {
     const tile = document.createElement('div');
-    tile.className = 'chart-card stats-headline-tile';
+    tile.className = 'stats-headline-tile';
 
     const readout = document.createElement('div');
     readout.className = 'stats-headline-label';
