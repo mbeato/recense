@@ -1232,7 +1232,7 @@ Plans:
 **Goal:** The settings surface grows two real dashboards replacing the bare usage readout. (1) Cost/usage: daily token burn, per-feature split (extract/judge/corpus_gen/schema_abstract), per-model, retail-$ equivalent, and before/after savings framing — all from token_usage_ledger (the 2026-07 thinking-off analysis, rendered live instead of hand-queried). (2) Brain-health: node growth over time, kind mix (facts/schemas/entities/docs), reconsolidations + tombstones per day, judge activity (fires, escalation rate), episodes pending vs consolidated, last sleep-pass time/duration/status. LLM-free queries only (online-path constraint); charts in the scene's design language per Phase 59 conventions. No research gate — ledger + graph schema already carry everything.
 **Requirements**: TBD
 **Depends on:** Phase 59 (HARD — dashboards render in 59's Liquid-Glass HUD language and are reached via its ⌘K palette; D-01); Phase 57 identity hues
-**Plans:** 11 plans (9 complete + 2 gap-closure round 2 pending)
+**Plans:** 11/11 plans complete
 
 Plans:
 
@@ -1256,8 +1256,8 @@ Plans:
 
 **Gap closure (round 2)** *(GAP-3 + GAP-4 from 60-HUMAN-UAT; sequential — styles.css overlap)*
 
-- [ ] 60-10-PLAN.md — GAP-3 global styled scrollbar + GAP-4(d) chart mark-spec primitives (charts.js line/bar/axis + endpoint direct-label + area wash)
-- [ ] 60-11-PLAN.md — GAP-4(a–f) de-box Usage + Brain Health tabs (hero/supporting/integrated deltas/quiet tables/section idiom/one-line sleep readout)
+- [x] 60-10-PLAN.md — GAP-3 global styled scrollbar + GAP-4(d) chart mark-spec primitives (charts.js line/bar/axis + endpoint direct-label + area wash)
+- [x] 60-11-PLAN.md — GAP-4(a–f) de-box Usage + Brain Health tabs (hero/supporting/integrated deltas/quiet tables/section idiom/one-line sleep readout)
 
 ### Phase 61: Corpus Chrome — index column + project browsing
 
