@@ -463,6 +463,8 @@ describe('D-14 CSS token discipline', () => {
       '#settings-panel',
       '#reader',
       '.toast',
+      '#index-panel',
+      '#index-reopen',
     ]);
 
     const blocks = parseCssBlocks(stylesSrc);

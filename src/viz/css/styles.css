@@ -1256,8 +1256,11 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   margin: 0;
   z-index: 70;
   border: 1px solid var(--index-hairline);
-  border-radius: 7px;
-  background: var(--surface-btn-icon);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg-ambient);
+  backdrop-filter: blur(var(--glass-blur-sm));
+  -webkit-backdrop-filter: blur(var(--glass-blur-sm));
+  box-shadow: var(--glass-specular);
   color: var(--text-bright-mauve);
   opacity: 0.75;
   cursor: pointer;
@@ -1284,8 +1287,11 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   z-index: 8;
   display: none;            /* index.js toggles to flex */
   flex-direction: column;
-  background: var(--surface-index-panel); /* near-opaque aubergine */
+  background: var(--glass-bg-focused);
   border-right: 1px solid var(--glass-border-focused);
+  backdrop-filter: blur(var(--glass-blur-md));
+  -webkit-backdrop-filter: blur(var(--glass-blur-md));
+  box-shadow: var(--glass-specular);
   box-sizing: border-box;
   color: var(--text-recede);
   font-family: system-ui, -apple-system, sans-serif;
@@ -1414,6 +1420,54 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
 .index-entry:hover {
   color: var(--text-bright);
   background: var(--index-search-focus-bg);
+}
+
+/* Tree row — wraps chevron + name + count-badge for a folder/project row (D-01, Plan 03 render
+   target). Same hover idiom as .index-entry above. */
+.index-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-recede);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.index-row:hover {
+  color: var(--text-bright);
+  background: var(--index-search-focus-bg);
+}
+
+/* Chevron — per-row expand/collapse toggle. One right-pointing glyph rotates 90deg between
+   collapsed (▶) and expanded (▼) states — no second SVG asset. */
+.index-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-recede);
+}
+.index-chevron:hover {
+  color: var(--text-bright-mauve);
+}
+.index-chevron svg {
+  transition: transform var(--motion-fast) var(--ease-out-soft);
+}
+.index-chevron.expanded svg {
+  transform: rotate(90deg);
+}
+
+/* Count badge — terse numeric readout, no unit word. */
+.index-count {
+  font-family: 'JetBrains Mono HUD', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-stat);
+  margin-left: auto;
 }
 
 /* ── Stats dashboard takeover (Phase 60, D-01/D-02/D-14) ──────────────────────
