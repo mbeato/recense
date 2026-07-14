@@ -96,6 +96,15 @@ None - no external service configuration required.
 - D-14 invariants suite (45/45) and full `viz-*` regression suite (385/385 across 23 files) both green — no newly-failing viz test.
 - `#index-panel`/`#index-reopen` now visually match the Phase-59 glass vocabulary; the "flat slab" half of founder defect D1 is closed (the "wall-of-text" half is Plan 03's scope).
 
+## Self-Check: PASSED
+
+- FOUND: src/viz/css/styles.css
+- FOUND: tests/viz-activity-palette-invariants.test.ts
+- FOUND: .planning/phases/61-corpus-chrome-index-column-project-browsing/61-01-SUMMARY.md
+- FOUND commit: e5445b3
+- FOUND commit: 560a462
+- FOUND commit: c11d822
+
 ---
 *Phase: 61-corpus-chrome-index-column-project-browsing*
 *Completed: 2026-07-14*
