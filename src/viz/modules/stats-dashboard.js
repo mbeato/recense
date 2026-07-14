@@ -209,20 +209,50 @@ export function initStatsDashboard(ctx) {
 
   let loadToken = 0;
 
+  // Per-tab cache of the last successfully-fetched payload (GAP-1 Task 2) — read
+  // by the resize handler below so a resize re-render never re-fetches and never
+  // moves the "as of" stamp (resize is a pure re-layout, not a data refresh).
+  let lastUsageData = null;
+  let lastHealthData = null;
+
   async function load() {
     const token = ++loadToken;
     if (currentTab === 'health') {
       const data = await fetchBrainHealth();
       if (token !== loadToken) return; // superseded by a later tab switch/refresh
+      lastHealthData = data;
       stampAsOf();
       renderHealthTab(healthTabEl, data);
     } else {
       const data = await fetchUsage(currentRange);
       if (token !== loadToken) return; // superseded by a later range switch/refresh
+      lastUsageData = data;
       stampAsOf();
       renderUsageTab(usageTabEl, data);
     }
   }
+
+  // ── Debounced resize re-render (GAP-1 Task 2) — re-renders the CURRENT tab from
+  //    its cached data at the freshly-measured width; no re-fetch, no "as of" stamp
+  //    change. No-op while closed or before the active tab has cached data. ──────
+
+  let resizeTimer = null;
+
+  function handleResize() {
+    if (!isOpen) return;
+    if (currentTab === 'health') {
+      if (lastHealthData == null) return;
+      renderHealthTab(healthTabEl, lastHealthData);
+    } else {
+      if (lastUsageData == null) return;
+      renderUsageTab(usageTabEl, lastUsageData);
+    }
+  }
+
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(handleResize, 200);
+  });
 
   // ── Usage tab render (empty/error state contract — Task 3 fills in the chart suite) ──
 
