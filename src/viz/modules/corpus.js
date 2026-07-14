@@ -24,6 +24,15 @@
  */
 
 import { createTransition } from './transition.js';
+// Phase 61 — corpus focus/hover dim + tiered labels (D-04/D-05/D-06). Narrow named import —
+// corpus.js deliberately does not import the 3D palette (see file header); this is its FIRST
+// import from constants.js, kept to exactly these four tunables.
+import {
+  CORPUS_FOCUS_DIM_OPACITY,
+  CORPUS_HOVER_DIM_OPACITY,
+  CORPUS_LABEL_ZOOM_THRESHOLD,
+  CORPUS_FOCUS_TRANSITION_MS,
+} from './constants.js';
 
 // ── Button icon SVGs (inline — net-zero deps, no icon lib) ──────────────────────────
 // BOOK icon: shown when brain is active (button = "go to corpus").
@@ -90,6 +99,18 @@ function scopeColor(scope) {
 // Schema-chapter slugs are the schema node id (UUIDs); hub and subject slugs are plain strings.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// D-04/D-05: multiply an 'rgba(r,g,b,a)' link-color string's alpha by a dim factor. All link
+// colors this module returns (CONTAINMENT_COLOR/CROSS_PROJECT_REF/LINK_REST) are rgba strings —
+// only the amber highlight (HOVER_NODE, a hex literal) is excluded, and that branch always
+// returns before dimRgba is reached. factor>=1 is a no-op passthrough.
+function dimRgba(colorStr, factor) {
+  if (factor >= 1) return colorStr;
+  const m = /^rgba\(([^,]+),([^,]+),([^,]+),([^)]+)\)$/.exec(colorStr);
+  if (!m) return colorStr;
+  const a = parseFloat(m[4]);
+  return `rgba(${m[1].trim()},${m[2].trim()},${m[3].trim()},${(a * factor).toFixed(3)})`;
+}
+
 // Node circle radius in graph-space units (sizing for Obsidian-style legibility,
 // NOT the brain's nodeRadius/BRAIN_SCALE). Constant size — doc corpora are small.
 const NODE_R = 5;
@@ -123,14 +144,18 @@ export function initCorpus(ctx) {
   // Separate from hoveredId so sidebar-driven multi-node highlight and direct graph hover coexist.
   let highlightSet = new Set();
 
-  // Chapter (UUID schema-chapter) docs are HIDDEN by default to keep the index readable.
-  // Founder override of D-13 (2026-06-23): the all-shown-dimmed default was too cluttered —
-  // ~160 hazed chapters drowned the hub→subject skeleton in mist. A toggle (off by default)
-  // reveals them. Chapters stay in the (pinned) force layout so their positions are stable when
-  // shown; nodeVisibility/linkVisibility just skip painting them — instant toggle, no re-settle.
-  let showChapters = false;
+  // D-07: chapter (UUID schema-chapter) docs are hidden by default and revealed only when
+  // their OWNING PROJECT is focused (D-04) or its index tree row is expanded — replacing the
+  // deleted global chapter-toggle button. "Owning project" is resolved via an up-walk of
+  // doc_containment parents (nodeProjectScope, built below), NEVER via rootScope(n.scope) — a
+  // chapter's own scope is a schema UUID (see corpus-promoter.ts), not its project.
   const isChapterNode = (n) => UUID_RE.test((n && n.slug) || '');
-  const isNodeVisible = (n) => showChapters || !isChapterNode(n);
+
+  // Focus/expanded state machine (D-04/D-07). focusedScope: the single project currently
+  // focused (zoomed + dimmed-others), or null. expandedScopes: projects whose chapters are
+  // revealed via their index tree row being expanded, independent of focus/zoom.
+  let focusedScope = null;
+  const expandedScopes = new Set();
 
   // Set of recognized PROJECT scopes — derived from subject docs (slug 'project:name'), whose
   // scope is the bare project. Only these get a generated hue tint (D-16/D-17). Chapter docs
@@ -139,41 +164,30 @@ export function initCorpus(ctx) {
   // Derived from SUBJECTS (not hubs) so a malformed colon-less doc can't register itself as a project.
   let projectScopes = new Set();
 
-  // Chapter-visibility toggle button — created once, hidden until the corpus view is open.
-  let chapterToggleBtn = document.getElementById('btn-corpus-chapters');
-  if (!chapterToggleBtn) {
-    chapterToggleBtn = document.createElement('button');
-    chapterToggleBtn.id = 'btn-corpus-chapters';
-    chapterToggleBtn.type = 'button';
-    chapterToggleBtn.style.cssText = [
-      // right:54px clears the top-right button column (collapse/corpus/recenter, right:12px ~30px
-      // wide, ends ~42px) so the toggle docks to its LEFT instead of rendering beneath it.
-      'position:fixed', 'top:12px', 'right:54px', 'z-index:40', 'display:none',
-      'padding:6px 10px', 'font:12px system-ui,-apple-system,sans-serif',
-      'color:#c8bcd0', 'background:rgba(40,28,50,0.85)',
-      'border:1px solid rgba(156,112,128,0.45)', 'border-radius:6px', 'cursor:pointer',
-    ].join(';');
-    document.body.appendChild(chapterToggleBtn);
+  // Containment up-walk owner map (D-07 crux): child-id → parent-id, built from doc_containment
+  // links, mirroring server.ts's childToParent. Lets projectScopeOf() resolve a chapter's owning
+  // PROJECT by walking up to the tree root, since a chapter's own node.scope is a schema UUID.
+  let childToParentId = new Map();
+  // node-id → owning project scope (the rootScope of the containment tree root). Rebuilt
+  // alongside childToParentId at buildCorpusGraph time.
+  let nodeProjectScope = new Map();
+
+  /** Resolve the owning project scope for a node, via the containment up-walk owner map,
+   *  falling back to rootScope(node.scope) for an isolated doc with no containment parent. */
+  function projectScopeOf(node) {
+    if (!node) return null;
+    const owner = nodeProjectScope.get(node.id);
+    if (owner !== undefined) return owner;
+    return rootScope(node.scope);
   }
-  function syncChapterToggleLabel() {
-    chapterToggleBtn.textContent = showChapters ? 'Hide chapter docs' : 'Show chapter docs';
-    chapterToggleBtn.setAttribute('aria-pressed', String(showChapters));
+
+  /** True when a node's owning project is currently focused OR its tree row is expanded. */
+  function isProjectRevealed(node) {
+    const scope = projectScopeOf(node);
+    return scope === focusedScope || expandedScopes.has(scope);
   }
-  function setChapterToggleVisible(v) { chapterToggleBtn.style.display = v ? 'block' : 'none'; }
-  syncChapterToggleLabel();
-  chapterToggleBtn.addEventListener('click', () => {
-    showChapters = !showChapters;
-    syncChapterToggleLabel();
-    if (!CorpusGraph) return;
-    try {
-      // Re-assert the visibility + paint accessors so force-graph repaints the (static, pinned)
-      // canvas with the new filter — same repaint trick used by highlightCorpusNode.
-      if (typeof CorpusGraph.nodeVisibility === 'function') CorpusGraph.nodeVisibility(CorpusGraph.nodeVisibility());
-      if (typeof CorpusGraph.linkVisibility === 'function') CorpusGraph.linkVisibility(CorpusGraph.linkVisibility());
-      if (typeof CorpusGraph.nodeCanvasObject === 'function') CorpusGraph.nodeCanvasObject(CorpusGraph.nodeCanvasObject());
-    } catch (_) { /* non-fatal */ }
-    fitAndClamp();
-  });
+
+  const isNodeVisible = (n) => !isChapterNode(n) || isProjectRevealed(n);
 
   /** Build the 2D ForceGraph instance once and fetch its data. */
   async function buildCorpusGraph() {
@@ -229,6 +243,32 @@ export function initCorpus(ctx) {
       nodeLabels[node.id] = node.label || node.slug || node.id;
     }
 
+    // D-07 owner map: build childToParentId from doc_containment links (source=parent →
+    // target=child), mirroring server.ts's childToParent, then walk each node up to its tree
+    // root (cycle-guarded, mirroring server.ts's rootAndDepth) to resolve nodeProjectScope —
+    // the owning PROJECT scope for every node, chapters included.
+    childToParentId = new Map();
+    for (const link of (data.links || [])) {
+      if (link.kind !== 'doc_containment') continue;
+      const parentId = typeof link.source === 'object' ? link.source.id : link.source;
+      const childId = typeof link.target === 'object' ? link.target.id : link.target;
+      childToParentId.set(childId, parentId);
+    }
+    const byNodeId = new Map((data.nodes || []).map((n) => [n.id, n]));
+    nodeProjectScope = new Map();
+    for (const node of (data.nodes || [])) {
+      let cur = node.id;
+      const seen = new Set([cur]);
+      while (childToParentId.has(cur)) {
+        const parent = childToParentId.get(cur);
+        if (seen.has(parent)) break;
+        seen.add(parent);
+        cur = parent;
+      }
+      const rootNode = byNodeId.get(cur);
+      nodeProjectScope.set(node.id, rootScope(rootNode ? rootNode.scope : node.scope));
+    }
+
     // Empty state: no docs in corpus yet (fetch succeeded but returned zero nodes).
     if ((data.nodes || []).length === 0) {
       statusEl.innerHTML =
@@ -250,10 +290,22 @@ export function initCorpus(ctx) {
         const r = NODE_R;
         // D-13: dim UUID schema-chapter docs (visible but faded/desaturated — NOT hidden).
         const isChapterDoc = UUID_RE.test(node.slug || '');
-        canvasCtx.globalAlpha = isChapterDoc ? 0.35 : 1.0;
+        // D-04/D-05: relatedness — hovered/highlighted, or (while a project is focused) this
+        // node's OWNING project via the containment owner map (projectScopeOf), never
+        // rootScope(node.scope) directly — a focused project's own chapters must classify as
+        // related (not dimmed).
+        const isRelated = isHover || (focusedScope && projectScopeOf(node) === focusedScope);
+        let dimFactor = 1.0;
+        if (!isRelated) {
+          if (focusedScope) dimFactor = CORPUS_FOCUS_DIM_OPACITY;
+          else if (hoveredId || highlightSet.size) dimFactor = CORPUS_HOVER_DIM_OPACITY;
+        }
+        // Compose (multiply), never replace — a dimmed chapter doc reads 0.35 * dimFactor.
+        canvasCtx.globalAlpha = (isChapterDoc ? 0.35 : 1.0) * dimFactor;
         // D-16: scope-keyed tint for recognized PROJECT scopes only; hover stays amber
         // (activation-only). Chapter / isolated / malformed-scope docs → muted rose REST_NODE
-        // (founder direction: no random per-scope colors for non-project docs).
+        // (founder direction: no random per-scope colors for non-project docs). The focused set
+        // keeps this SAME fill — focus is expressed by dim only, never an amber recolor.
         const baseColor = projectScopes.has(rootScope(node.scope)) ? scopeColor(rootScope(node.scope)) : REST_NODE;
         // Circle fill
         canvasCtx.beginPath();
@@ -264,16 +316,28 @@ export function initCorpus(ctx) {
         canvasCtx.lineWidth = 1 / globalScale;
         canvasCtx.strokeStyle = isHover ? HOVER_NODE : REST_NODE_RING;
         canvasCtx.stroke();
-        // Label: the slug/title, drawn below the node. Scale font with zoom for
-        // legibility but cap so it doesn't explode when zoomed in.
-        const label = nodeLabels[node.id] || nodeSlugs[node.id] || node.id;
-        const fontSize = Math.max(10 / globalScale, 2.2);
-        canvasCtx.font = `${fontSize}px system-ui, -apple-system, sans-serif`;
-        canvasCtx.textAlign = 'center';
-        canvasCtx.textBaseline = 'top';
-        canvasCtx.fillStyle = isHover ? LABEL_COLOR_HOVER : LABEL_COLOR;
-        canvasCtx.fillText(label, node.x, node.y + r + 1.5);
-        // Restore globalAlpha after painting this node (chapter dimming must not bleed).
+        // D-06: tiered labels (kills the at-rest pile-up, D3) — project hubs always draw;
+        // subject docs draw past the zoom threshold, on hover, or while their project is
+        // focused; chapter docs draw ONLY on hover, never at rest and never from focus alone.
+        const slug = node.slug || '';
+        const isHub = !!slug && !slug.includes(':') && !UUID_RE.test(slug);
+        const drawLabel = isHub
+          ? true
+          : isChapterDoc
+            ? isHover
+            : (globalScale >= CORPUS_LABEL_ZOOM_THRESHOLD || isHover || projectScopeOf(node) === focusedScope);
+        if (drawLabel) {
+          // Label: the slug/title, drawn below the node. Scale font with zoom for
+          // legibility but cap so it doesn't explode when zoomed in.
+          const label = nodeLabels[node.id] || nodeSlugs[node.id] || node.id;
+          const fontSize = Math.max(10 / globalScale, 2.2);
+          canvasCtx.font = `${fontSize}px system-ui, -apple-system, sans-serif`;
+          canvasCtx.textAlign = 'center';
+          canvasCtx.textBaseline = 'top';
+          canvasCtx.fillStyle = isHover ? LABEL_COLOR_HOVER : LABEL_COLOR;
+          canvasCtx.fillText(label, node.x, node.y + r + 1.5);
+        }
+        // Restore globalAlpha after painting this node (dim/chapter alpha must not bleed).
         canvasCtx.globalAlpha = 1.0;
       })
       // Pointer area covers the circle (label is decorative, not a click target).
@@ -300,17 +364,26 @@ export function initCorpus(ctx) {
       //   cross-project ref  = longer dash [4,3] in CROSS_PROJECT_REF (cool blue) — D-14.
       // doc_link             = faint mauve solid (existing treatment, no arrow, no dash).
       .linkColor(link => {
+        // D-04/D-05 dim factor (computed up front so it's near this callback's own dim
+        // constants): dims a link unless BOTH endpoints are related (hovered/highlighted, or
+        // owning-project-focused via projectScopeOf — same relatedness test as nodeCanvasObject).
+        const related = (n) => !!n && (highlightSet.has(n.id) || n.id === hoveredId || (focusedScope && projectScopeOf(n) === focusedScope));
+        const sNode = typeof link.source === 'object' ? link.source : null;
+        const tNode = typeof link.target === 'object' ? link.target : null;
+        let dim = 1.0;
+        if (!(sNode && tNode && related(sNode) && related(tNode))) {
+          if (focusedScope) dim = CORPUS_FOCUS_DIM_OPACITY;
+          else if (hoveredId || highlightSet.size) dim = CORPUS_HOVER_DIM_OPACITY;
+        }
         const isContain = link.kind === 'doc_containment';
         const isRef = link.kind === 'doc_reference';
-        // Sidebar-row highlight: amber only the CONTAINMENT links whose both endpoints are in
-        // the highlight set — i.e. the spine of the hovered node's subtree. Loose doc_link /
-        // doc_reference edges stay muted even if both ends happen to be highlighted.
+        // Amber highlight spine — never dimmed (returns before applying `dim`).
         if (highlightSet.size && isContain) {
           const s = typeof link.source === 'object' ? link.source.id : link.source;
           const t = typeof link.target === 'object' ? link.target.id : link.target;
           if (highlightSet.has(s) && highlightSet.has(t)) return HOVER_NODE;
         }
-        if (isContain) return CONTAINMENT_COLOR;
+        if (isContain) return dimRgba(CONTAINMENT_COLOR, dim);
         if (isRef) {
           // D-14: cross-project reference — src.scope !== dst.scope.
           // Guard for the pre-layout string form (force-graph mutates source/target to
@@ -318,9 +391,9 @@ export function initCorpus(ctx) {
           const srcScope = (typeof link.source === 'object' ? link.source.scope : null);
           const dstScope = (typeof link.target === 'object' ? link.target.scope : null);
           const isCrossProject = srcScope && dstScope && rootScope(srcScope) !== rootScope(dstScope);
-          return isCrossProject ? CROSS_PROJECT_REF : LINK_REST;
+          return dimRgba(isCrossProject ? CROSS_PROJECT_REF : LINK_REST, dim);
         }
-        return LINK_REST; // doc_link
+        return dimRgba(LINK_REST, dim); // doc_link
       })
       .linkWidth(link => link.kind === 'doc_containment' ? 2 : 1)
       .linkDirectionalArrowLength(link => link.kind === 'doc_containment' ? 4 : 0)
@@ -339,10 +412,17 @@ export function initCorpus(ctx) {
       .onNodeHover((node) => {
         hoveredId = node ? node.id : null;
         container.style.cursor = node ? 'pointer' : '';
+        // D-05: reuse the SAME amber BFS the index-row hover uses; also reasserts the paint.
+        ctx.highlightCorpusNode(node ? nodeSlugs[node.id] : null);
       })
       // D-08: click a doc node → open its reader IN PLACE over the corpus.
       .onNodeClick((node) => {
         if (node && node.id) openDocReader(node.id);
+      })
+      // D-04: clicking empty canvas exits project focus (one of the three focus-exit paths,
+      // alongside Esc and focusing a different project).
+      .onBackgroundClick(() => {
+        if (focusedScope) ctx.focusCorpusProject(null);
       });
 
     // C2 (34-03 fix): compact corpus clustering — light repulsion + centering + collide.
@@ -557,7 +637,6 @@ export function initCorpus(ctx) {
   function goToCorpus() {
     setCorpusButton();
     setTopicsSearchHidden(true);
-    setChapterToggleVisible(true);
     // Open the index sidebar BEFORE the reveal so the corpus offsets (left:var(--index-width))
     // and frames into the remaining width — a true split, not an overlay (founder polish, 39).
     // The dedicated #btn-index was removed; corpus IS the index entry point now.
@@ -567,7 +646,6 @@ export function initCorpus(ctx) {
   function goToBrain() {
     setBrainButton();
     setTopicsSearchHidden(false);
-    setChapterToggleVisible(false);
     // The index sidebar (if open) docks over the corpus — close it before the brain returns
     // so it doesn't linger over the 3D brain (39-02 re-verify: sidebar-over-corpus model).
     if (typeof ctx.closeIndexSidebar === 'function') ctx.closeIndexSidebar();
@@ -591,7 +669,6 @@ export function initCorpus(ctx) {
   ctx.returnToCorpus = function returnToCorpus() {
     setCorpusButton();
     setTopicsSearchHidden(true);
-    setChapterToggleVisible(true);
     transition.assertCorpus();
   };
 
@@ -658,6 +735,72 @@ export function initCorpus(ctx) {
       }
     } catch (_) { /* non-fatal — highlight just won't repaint on this lib version */ }
   };
+
+  /** Re-assert the visibility + paint accessors so force-graph repaints the (static, pinned)
+   *  canvas with the current focus/expanded/dim state — same reassert idiom as
+   *  highlightCorpusNode / the deleted chapter toggle. Non-fatal if the graph isn't built. */
+  function reassertPaint() {
+    if (!CorpusGraph) return;
+    try {
+      if (typeof CorpusGraph.nodeVisibility === 'function') CorpusGraph.nodeVisibility(CorpusGraph.nodeVisibility());
+      if (typeof CorpusGraph.linkVisibility === 'function') CorpusGraph.linkVisibility(CorpusGraph.linkVisibility());
+      if (typeof CorpusGraph.nodeCanvasObject === 'function') CorpusGraph.nodeCanvasObject(CorpusGraph.nodeCanvasObject());
+    } catch (_) { /* non-fatal */ }
+  }
+
+  // ── D-04/D-07 contract hooks consumed by Plan 03's index tree ───────────────────────
+  // scope is ALWAYS a project-ROOT slug (e.g. 'vtx') — see the INCOMING SCOPE CONTRACT note
+  // at the top of the corresponding plan; a valid focus scope is always a member of projectScopes.
+  //
+  // focusCorpusProject(scope|null): focus a project's cluster — zoom/frame it, dim every
+  // non-related node/link (D-04), and reveal its chapters (D-07, via isProjectRevealed).
+  // null clears focus and reframes to the full visible set. A scope not in projectScopes is
+  // ignored (defensive — Plan 03 should never pass one, but corpus.js doesn't trust callers).
+  ctx.focusCorpusProject = function focusCorpusProject(scope) {
+    if (!CorpusGraph) return;
+    if (scope === null) {
+      focusedScope = null;
+      reassertPaint();
+      fitAndClamp();
+      return;
+    }
+    if (!projectScopes.has(scope)) return; // ignore an unrecognized scope
+    focusedScope = scope;
+    reassertPaint();
+    try {
+      CorpusGraph.zoomToFit(
+        CORPUS_FOCUS_TRANSITION_MS,
+        40,
+        (node) => projectScopeOf(node) === scope && isNodeVisible(node)
+      );
+      if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
+        CorpusGraph.zoom(MAX_ZOOM, 0);
+      }
+    } catch (_) { /* ignore */ }
+  };
+
+  // setCorpusProjectExpanded(scope, expanded): reveal/hide a project's chapter docs WITHOUT
+  // zooming or dimming — drives the "tree row expanded → chapters visible" half of D-07.
+  // scope is already a project-root slug; do NOT re-apply rootScope to it.
+  ctx.setCorpusProjectExpanded = function setCorpusProjectExpanded(scope, expanded) {
+    if (!CorpusGraph) return;
+    if (expanded) expandedScopes.add(scope);
+    else expandedScopes.delete(scope);
+    reassertPaint();
+    fitAndClamp();
+  };
+
+  // Focus-exit Esc listener (independent guarded listener — no central dispatcher, matches the
+  // palette.js/reader.js/detail.js/settings.js idiom). Fires only while a project is focused AND
+  // the corpus view is active, and lets the reader or command palette close FIRST when either is
+  // open over a focused project (persisted focus across the D4 reader round-trip is intentional —
+  // this listener never clears focusedScope on reader open/close, only on an explicit Esc/click).
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || !focusedScope || !transition.isCorpus()) return;
+    if (typeof ctx.isReaderOpen === 'function' && ctx.isReaderOpen()) return;
+    if (document.documentElement.classList.contains('palette-open')) return;
+    ctx.focusCorpusProject(null);
+  });
 
   // Eagerly prepare the corpus shortly after init (independent of the brain load) so the
   // FIRST open is instant-ready like cached opens — no build/settle delay or empty gap after

@@ -657,6 +657,34 @@ export const FOCUS_DIM_OPACITY = 0.035;
 export const FOCUS_FOG_NEAR = BRAIN_SCALE * 1.4;
 
 // ============================================================================
+// Phase 61 — corpus focus/hover dim + tiered labels (D-04/D-05/D-06)
+// ============================================================================
+// The 2D corpus graph (corpus.js) has no per-node material to save/restore (unlike detail.js's
+// THREE-oriented FOCUS_DIM_OPACITY above) — dim is a paint-time predicate, but the SAME "named
+// constant with a doc comment" discipline applies. All four values are provisional, ratcheted
+// at the Plan 04 founder checkpoint.
+
+/** Non-related node/link alpha multiplier while a project is focused (D-04). Stronger dim than
+ *  hover (below) since focus is a deliberate zoomed-in browsing state. Provisional — tuned at
+ *  the closing founder checkpoint. */
+export const CORPUS_FOCUS_DIM_OPACITY = 0.18;
+
+/** Non-related node/link alpha multiplier on a bare hover with no project focused (D-05) —
+ *  lighter than focus-dim since hover is a lighter-weight, momentary probe. Provisional — tuned
+ *  at the closing founder checkpoint. */
+export const CORPUS_HOVER_DIM_OPACITY = 0.30;
+
+/** Zoom (globalScale) threshold above which a subject-doc label draws at rest (D-06) — below
+ *  this, subject labels only draw on hover or when their project is focused. Tuned against
+ *  corpus.js's MAX_ZOOM=2.5 post-zoomToFit ceiling. Provisional — tuned at the closing founder
+ *  checkpoint. */
+export const CORPUS_LABEL_ZOOM_THRESHOLD = 1.2;
+
+/** zoomToFit animation duration (ms) when focusCorpusProject() frames a project's cluster
+ *  (D-04). Provisional — tuned at the closing founder checkpoint. */
+export const CORPUS_FOCUS_TRANSITION_MS = 500;
+
+// ============================================================================
 // Phase 59 — HUD design tokens (D-11/D-14 single authored source)
 // ============================================================================
 // The glass/radius/motion recipe pinned in 59-UI-SPEC.md, exported as a plain
