@@ -1444,6 +1444,14 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   color: var(--text-bright);
   background: var(--index-search-focus-bg);
 }
+/* Active row (GAP-3) — the focused project's row. Stronger mauve background than hover so it
+   out-reads .index-row:hover, plus a quiet left accent bar; no amber (D-14-B). */
+.index-row.active,
+.index-row.active:hover {
+  background: var(--index-row-active-bg);
+  color: var(--text-bright);
+  box-shadow: inset 2px 0 0 var(--text-mauve-rest);
+}
 /* Project name reads as a heavier "folder" than its leaf docs — weight distinction only,
    no color change beyond the shared .index-entry token. */
 .index-row .index-entry {
