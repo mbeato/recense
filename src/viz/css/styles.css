@@ -1426,29 +1426,41 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
 }
 
 /* Tree row — wraps chevron + name + count-badge for a folder/project row (D-01, Plan 03 render
-   target). Same hover idiom as .index-entry above. */
+   target). Same hover idiom as .index-entry above. GAP-2 (Plan 06): vertical rhythm matches
+   .index-entry (5px v-padding) so project rows and leaf doc rows sit at the same height; the
+   JS-set inline padding-left/padding-right (8 + depth*14 indent formula) is left untouched. */
 .index-row {
   display: flex;
   align-items: center;
   gap: 4px;
+  padding-top: 5px;
+  padding-bottom: 5px;
   color: var(--text-recede);
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
 }
 .index-row:hover {
   color: var(--text-bright);
   background: var(--index-search-focus-bg);
 }
+/* Project name reads as a heavier "folder" than its leaf docs — weight distinction only,
+   no color change beyond the shared .index-entry token. */
+.index-row .index-entry {
+  font-weight: 500;
+}
 
 /* Chevron — per-row expand/collapse toggle. One right-pointing glyph rotates 90deg between
-   collapsed (▶) and expanded (▼) states — no second SVG asset. */
+   collapsed (▶) and expanded (▼) states — no second SVG asset. GAP-2: hit box trimmed toward
+   the UI-SPEC glyph size and vertically centered on the row baseline via the parent's
+   align-items:center. */
 .index-chevron {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
   border: none;
   background: transparent;
   padding: 0;
@@ -1465,12 +1477,14 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   transform: rotate(90deg);
 }
 
-/* Count badge — terse numeric readout, no unit word. */
+/* Count badge — terse numeric readout, no unit word. Quiet readout color (not a loud pill) with
+   small breathing room so it doesn't crowd the row's right edge. */
 .index-count {
   font-family: 'JetBrains Mono HUD', ui-monospace, monospace;
   font-size: 11px;
-  color: var(--text-stat);
+  color: var(--text-data-value);
   margin-left: auto;
+  padding: 0 var(--radius-xs);
 }
 
 /* ── Stats dashboard takeover (Phase 60, D-01/D-02/D-14) ──────────────────────
