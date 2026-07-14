@@ -378,6 +378,54 @@ describe('activation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 60 GAP-4 de-box redesign (Plan 60-11) — machine-checkable invariants
+// of the Usage/Brain-Health section-idiom overhaul, source-grepped against
+// the final stats-dashboard.js + styles.css (mirrors the D-14/amber-ban
+// source-guard style already used across the viz test suite).
+// ---------------------------------------------------------------------------
+
+describe('Phase 60 GAP-4 de-box redesign', () => {
+  const statsSrc = fs.readFileSync(path.join(MODULES_DIR, 'stats-dashboard.js'), 'utf8');
+
+  it('retires .chart-card / makeCard from stats-dashboard.js (GAP-4a — de-box)', () => {
+    expect(statsSrc).not.toContain('chart-card');
+    expect(statsSrc).not.toContain('makeCard');
+  });
+
+  it('drops TREND_ARROW and all directional trend glyphs (GAP-4c — deltas replace prose)', () => {
+    expect(statsSrc).not.toContain('TREND_ARROW');
+    expect(statsSrc).not.toMatch(/[▲▼→]/);
+  });
+
+  it('legend( count is exactly 5 post-redesign (GAP-4d — single-series legends dropped)', () => {
+    // Founder-locked dataviz rule: "a single series needs no legend box" — the
+    // burn chart, node growth, reconsolidations, and tombstones charts (all
+    // single-series) each drop their legend() call; kind mix, judge activity,
+    // and episodes (all true multi-series) keep theirs. That is 3 real
+    // legend() calls plus 2 dead "legend()" mentions in axis/legend-discipline
+    // code comments = 5. This DELIBERATELY SUPERSEDES the pre-redesign 60-10
+    // expectation of legend( >= 9 (one call per chart, including the four
+    // single-series ones) — that earlier acceptance criterion is invalidated
+    // by this plan's founder-locked design contract.
+    const count = (statsSrc.match(/legend\(/g) || []).length;
+    expect(count).toBe(5);
+  });
+
+  it('styles.css defines the section-header/hero/sleep-readout idiom, zero .chart-card rule', () => {
+    expect(css).toContain('stats-section-head');
+    expect(css).toContain('stats-hero-value');
+    expect(css).toContain('stats-sleep-readout');
+    expect(css).not.toMatch(/\.chart-card\s*\{/);
+  });
+
+  it('styles.css carries exactly one global scrollbar rule set (cross-checks 60-10 GAP-3)', () => {
+    const scrollbarWidthMatches = css.match(/scrollbar-width:\s*thin/g) || [];
+    expect(scrollbarWidthMatches.length).toBe(1);
+    expect(css).toContain('*::-webkit-scrollbar');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // detail-ux: panel a11y, Escape handler
 // ---------------------------------------------------------------------------
 
