@@ -1256,8 +1256,11 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   margin: 0;
   z-index: 70;
   border: 1px solid var(--index-hairline);
-  border-radius: 7px;
-  background: var(--surface-btn-icon);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg-ambient);
+  backdrop-filter: blur(var(--glass-blur-sm));
+  -webkit-backdrop-filter: blur(var(--glass-blur-sm));
+  box-shadow: var(--glass-specular);
   color: var(--text-bright-mauve);
   opacity: 0.75;
   cursor: pointer;
@@ -1284,8 +1287,11 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   z-index: 8;
   display: none;            /* index.js toggles to flex */
   flex-direction: column;
-  background: var(--surface-index-panel); /* near-opaque aubergine */
+  background: var(--glass-bg-focused);
   border-right: 1px solid var(--glass-border-focused);
+  backdrop-filter: blur(var(--glass-blur-md));
+  -webkit-backdrop-filter: blur(var(--glass-blur-md));
+  box-shadow: var(--glass-specular);
   box-sizing: border-box;
   color: var(--text-recede);
   font-family: system-ui, -apple-system, sans-serif;
