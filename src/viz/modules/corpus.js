@@ -537,6 +537,9 @@ export function initCorpus(ctx) {
   /** Resize the corpus graph to fill its container (force-graph needs explicit size). */
   function sizeCorpusGraph() {
     if (!CorpusGraph) return;
+    // clientWidth intentionally reflects the `.index-docked` left offset on #corpus-graph
+    // (viewport minus --index-width when the index rail is docked, full viewport width when
+    // it's collapsed) — this is what makes the canvas reflow beside the rail (61-05 GAP-1).
     const w = container.clientWidth || window.innerWidth;
     const h = container.clientHeight || window.innerHeight;
     CorpusGraph.width(w).height(h);

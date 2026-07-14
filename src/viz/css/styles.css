@@ -1270,11 +1270,14 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
 #index-reopen.shown { display: flex; }
 #index-reopen:hover { opacity: 1; color: var(--text-bright); }
 
-/* ── Index sidebar — docks LEFT over the corpus graph (39-02 re-verify, founder direction) ──
-   The index list + corpus graph are two views of the same doc set, shown side by side. The
-   sidebar overlays the left edge of #corpus-graph (it does NOT reflow the canvas — reflowing
-   would re-trigger the corpus zoomToFit framing). Fades in/out (founder: views should fade).
-   z-index 8: above #corpus-graph (5), below #reader (40) and the toolbar buttons (70). */
+/* ── Index sidebar — docked LEFT rail beside the corpus graph (61-05 GAP-1 closure) ──
+   The index list + corpus graph are two views of the same doc set, shown side by side as a
+   true docked split (Obsidian/VS-Code shape): the rail is flush to the viewport's left edge,
+   full height, with a hairline divider — not a floating drawer. #corpus-graph reflows beside
+   it via `.index-docked` below (corpus.js re-fits via ctx.refitCorpus so framing stays correct);
+   collapsing the rail removes `.index-docked` and the canvas returns to full width. Fades
+   in/out (founder: views should fade). z-index 8: above #corpus-graph (5), below #reader (40)
+   and the toolbar buttons (70). */
 /* Single source for the rail width — also drives the #corpus-graph offset below. */
 :root { --index-width: 270px; }
 #index-panel {
