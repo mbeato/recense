@@ -1264,7 +1264,7 @@ Plans:
 **Goal:** The corpus view's chrome catches up to the Phase 59 HUD language and actually works for browsing. (1) Index column: redesign the corpus index/sidebar column so it reads in the same glass/token vocabulary as the Phase 59 chrome (founder verdict at the 59 D-15 checkpoint: current index column look is off). (2) Project browsing: fix the broken project-level browsing flow in the corpus view (founder verdict: "completely off") — navigating from a project to its docs and back should be the primary path (reader opens from corpus doc clicks, not standalone chrome — the rail reader icon was removed at the 59 checkpoint). Scope and exact defects to be captured via /gsd-discuss-phase 61 with the live install open.
 **Requirements**: TBD
 **Depends on:** Phase 59 (HUD token vocabulary + glass conventions; ships first)
-**Plans:** 4/9 plans executed
+**Plans:** 6/9 plans executed
 
 Plans:
 
@@ -1287,8 +1287,8 @@ Plans:
 - [x] 61-05-PLAN.md — GAP-1: docked full-height sidebar; corpus canvas reflows beside it, collapse returns full width
 
 *GC Wave 2 (blocked on GC Wave 1)*
-- [ ] 61-06-PLAN.md — GAP-2: refine project-row typography/spacing/alignment/hover (token-only, keep chevron + count)
-- [ ] 61-08-PLAN.md — GAP-4: read-only schema→project resolution nests schemas under their project in /index + graph owner map
+- [x] 61-06-PLAN.md — GAP-2: refine project-row typography/spacing/alignment/hover (token-only, keep chevron + count)
+- [x] 61-08-PLAN.md — GAP-4: read-only schema→project resolution nests schemas under their project in /index + graph owner map
 
 *GC Wave 3 (blocked on GC Wave 2)*
 - [ ] 61-07-PLAN.md — GAP-3: focused project row active state + click-to-toggle-unfocus + Esc/canvas-click focus sync
