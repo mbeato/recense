@@ -29,6 +29,9 @@
 // ── Icon SVGs (inline — net-zero deps, no icon lib) ─────────────────────────────────
 const ICON_CHEVRON_LEFT = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`;
 const ICON_CHEVRON_RIGHT = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+// Per-row tree expand/collapse toggle (D-01) — same stroke recipe as ICON_CHEVRON_RIGHT above,
+// smaller box; rotated 90deg via CSS (.index-chevron.expanded) rather than a second SVG asset.
+const ICON_CHEVRON_TOGGLE = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
 /**
  * Initialise the browsable doc index sidebar.
@@ -46,6 +49,9 @@ export function initIndex(ctx) {
   let reopenHandle = null;
   let lastData = { projects: [], schemas: [] }; // cached /index payload for client-side filtering
   let currentFilter = '';
+  // Project (tree-root) entry ids the user has expanded — in-memory only (D-01: persists across
+  // corpus close/reopen within a session, resets on hard reload; never localStorage).
+  const expandedIds = new Set();
 
   // ── Static sidebar chrome: header (title + collapse) + search + scrollable content ──────
   function ensureChrome() {
@@ -139,6 +145,10 @@ export function initIndex(ctx) {
 
   // Compute the visible-id set for a filter: matching rows PLUS their ancestors (so a match keeps
   // its tree context). Returns null when there's no filter (everything visible).
+  // While filtering, every ancestor pulled into `visible` is also force-expanded (added to
+  // expandedIds) so its branch actually renders (D-01 filter auto-expand). expandedIds is only
+  // ever UNIONED into here, never rebuilt from the filter set — clearing the filter must not
+  // collapse rows the user separately/manually expanded.
   function computeVisible(entries, filter) {
     if (!filter) return null;
     const byId = new Map(entries.map(e => [e.id, e]));
@@ -147,15 +157,83 @@ export function initIndex(ctx) {
       if ((e.label || e.slug || '').toLowerCase().includes(filter)) {
         visible.add(e.id);
         let cur = e;
-        while (cur && cur.parentId && byId.has(cur.parentId)) { visible.add(cur.parentId); cur = byId.get(cur.parentId); }
+        while (cur && cur.parentId && byId.has(cur.parentId)) {
+          visible.add(cur.parentId);
+          expandedIds.add(cur.parentId);
+          cur = byId.get(cur.parentId);
+        }
       }
     }
     return visible;
   }
 
+  // Toggle a project (tree-root) entry's expanded state, notify corpus.js (D-07 chapter reveal),
+  // and re-render the tree so the gated child rows actually appear/disappear.
+  // scope is ALWAYS the project-root entry's slug (see SCOPE ARGUMENT note in the plan — the
+  // /index Entry payload has no `scope` field on entries; reading it would be undefined and
+  // would silently no-op the corpus hook).
+  function setProjectExpanded(entry, expand) {
+    const scope = entry.slug;
+    if (expand) expandedIds.add(entry.id); else expandedIds.delete(entry.id);
+    if (typeof ctx.setCorpusProjectExpanded === 'function') ctx.setCorpusProjectExpanded(scope, expand);
+    renderSections();
+  }
+
+  // Build a collapsible project (tree-root-with-children) row: chevron + name + doc-count badge
+  // (D-01). Chevron toggles expand/collapse only (own hit target, stopPropagation). The name
+  // click both expands the row AND focuses the project in the graph in one click (D-03).
+  function makeProjectRow(entry, count, expanded, depth) {
+    const row = document.createElement('div');
+    row.className = 'index-row';
+    row.style.paddingLeft = (8 + depth * 14) + 'px'; // indent by containment depth
+    row.style.paddingRight = '8px';
+
+    const chevron = document.createElement('button');
+    chevron.type = 'button';
+    chevron.className = 'index-chevron' + (expanded ? ' expanded' : '');
+    chevron.setAttribute('aria-label', (expanded ? 'Collapse ' : 'Expand ') + (entry.label || entry.slug));
+    chevron.innerHTML = ICON_CHEVRON_TOGGLE;
+    chevron.addEventListener('click', (ev) => {
+      ev.stopPropagation(); // never trigger the project name-click
+      setProjectExpanded(entry, !expandedIds.has(entry.id));
+    });
+    row.appendChild(chevron);
+
+    const a = document.createElement('a');
+    a.className = 'index-entry doc-ref';
+    a.setAttribute('href', '#');
+    a.textContent = entry.label || entry.slug; // textContent — T-39-08
+    a.addEventListener('mouseenter', () => {
+      if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(entry.slug);
+    });
+    a.addEventListener('mouseleave', () => {
+      if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(null);
+    });
+    a.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      const scope = entry.slug; // project-root slug — see SCOPE ARGUMENT note (not a `.scope` field)
+      if (!expandedIds.has(entry.id)) setProjectExpanded(entry, true);
+      if (typeof ctx.focusCorpusProject === 'function') ctx.focusCorpusProject(scope);
+    });
+    row.appendChild(a);
+
+    const countEl = document.createElement('span');
+    countEl.className = 'index-count';
+    countEl.textContent = String(count); // textContent — T-39-08
+    row.appendChild(countEl);
+
+    return row;
+  }
+
   // Nested tree section (Projects + Schemas) — children indented under their doc_containment
   // parent. Roots are entries whose parentId is null or points outside this section's set.
   // `visible` (or null) filters which rows render; siblings sorted by label.
+  //
+  // A root WITH children renders as a collapsible project row (chevron + name + count badge);
+  // its child rows are only emitted (recursively) while expandedIds.has(root.id) — a collapsed
+  // project renders zero child rows (not render-then-hide). A root with no children (a leaf doc)
+  // renders as a plain .index-entry row, unchanged from before. Collapsibility applies only at
+  // the root level — nested (non-root) entries under an expanded project render as plain rows.
   function renderTreeSection(title, entries, visible) {
     if (!entries || entries.length === 0) return false;
     const shown = entries.filter(e => visible === null || visible.has(e.id));
@@ -175,7 +253,21 @@ export function initIndex(ctx) {
     const byLabel = (a, b) => (a.label || a.slug).localeCompare(b.label || b.slug);
     const list = makeSection(title);
     const seen = new Set();
-    const emit = (entry, depth) => {
+
+    // Recursive descendant-doc count for a project's count badge (not counting the root itself);
+    // guards against malformed parentId cycles (T-61-08, same defensive posture as `seen` below).
+    const countDescendants = (id, seenCount) => {
+      let n = 0;
+      for (const k of (children.get(id) || [])) {
+        if (seenCount.has(k.id)) continue;
+        seenCount.add(k.id);
+        n += 1 + countDescendants(k.id, seenCount);
+      }
+      return n;
+    };
+
+    // Plain child/leaf row — existing behavior, unchanged.
+    const emitLeaf = (entry, depth) => {
       if (seen.has(entry.id)) return;          // defensive: never loop on malformed data
       seen.add(entry.id);
       if (visible === null || visible.has(entry.id)) {
@@ -185,7 +277,25 @@ export function initIndex(ctx) {
         li.appendChild(a);
         list.appendChild(li);
       }
-      for (const k of (children.get(entry.id) || []).slice().sort(byLabel)) emit(k, depth + 1);
+      for (const k of (children.get(entry.id) || []).slice().sort(byLabel)) emitLeaf(k, depth + 1);
+    };
+
+    // Root-level entry: project row (has children) or plain leaf row (no children).
+    const emit = (entry, depth) => {
+      if (seen.has(entry.id)) return;
+      const kids = children.get(entry.id) || [];
+      if (kids.length === 0) { emitLeaf(entry, depth); return; }
+      seen.add(entry.id);
+      const expanded = expandedIds.has(entry.id);
+      const count = countDescendants(entry.id, new Set([entry.id]));
+      if (visible === null || visible.has(entry.id)) {
+        const li = document.createElement('li');
+        li.appendChild(makeProjectRow(entry, count, expanded, depth));
+        list.appendChild(li);
+      }
+      if (expanded) {
+        for (const k of kids.slice().sort(byLabel)) emitLeaf(k, depth + 1);
+      }
     };
     for (const r of roots.slice().sort(byLabel)) emit(r, 0);
     return true;
