@@ -99,6 +99,18 @@ function scopeColor(scope) {
 // Schema-chapter slugs are the schema node id (UUIDs); hub and subject slugs are plain strings.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// D-04/D-05: multiply an 'rgba(r,g,b,a)' link-color string's alpha by a dim factor. All link
+// colors this module returns (CONTAINMENT_COLOR/CROSS_PROJECT_REF/LINK_REST) are rgba strings —
+// only the amber highlight (HOVER_NODE, a hex literal) is excluded, and that branch always
+// returns before dimRgba is reached. factor>=1 is a no-op passthrough.
+function dimRgba(colorStr, factor) {
+  if (factor >= 1) return colorStr;
+  const m = /^rgba\(([^,]+),([^,]+),([^,]+),([^)]+)\)$/.exec(colorStr);
+  if (!m) return colorStr;
+  const a = parseFloat(m[4]);
+  return `rgba(${m[1].trim()},${m[2].trim()},${m[3].trim()},${(a * factor).toFixed(3)})`;
+}
+
 // Node circle radius in graph-space units (sizing for Obsidian-style legibility,
 // NOT the brain's nodeRadius/BRAIN_SCALE). Constant size — doc corpora are small.
 const NODE_R = 5;
@@ -278,10 +290,22 @@ export function initCorpus(ctx) {
         const r = NODE_R;
         // D-13: dim UUID schema-chapter docs (visible but faded/desaturated — NOT hidden).
         const isChapterDoc = UUID_RE.test(node.slug || '');
-        canvasCtx.globalAlpha = isChapterDoc ? 0.35 : 1.0;
+        // D-04/D-05: relatedness — hovered/highlighted, or (while a project is focused) this
+        // node's OWNING project via the containment owner map (projectScopeOf), never
+        // rootScope(node.scope) directly — a focused project's own chapters must classify as
+        // related (not dimmed).
+        const isRelated = isHover || (focusedScope && projectScopeOf(node) === focusedScope);
+        let dimFactor = 1.0;
+        if (!isRelated) {
+          if (focusedScope) dimFactor = CORPUS_FOCUS_DIM_OPACITY;
+          else if (hoveredId || highlightSet.size) dimFactor = CORPUS_HOVER_DIM_OPACITY;
+        }
+        // Compose (multiply), never replace — a dimmed chapter doc reads 0.35 * dimFactor.
+        canvasCtx.globalAlpha = (isChapterDoc ? 0.35 : 1.0) * dimFactor;
         // D-16: scope-keyed tint for recognized PROJECT scopes only; hover stays amber
         // (activation-only). Chapter / isolated / malformed-scope docs → muted rose REST_NODE
-        // (founder direction: no random per-scope colors for non-project docs).
+        // (founder direction: no random per-scope colors for non-project docs). The focused set
+        // keeps this SAME fill — focus is expressed by dim only, never an amber recolor.
         const baseColor = projectScopes.has(rootScope(node.scope)) ? scopeColor(rootScope(node.scope)) : REST_NODE;
         // Circle fill
         canvasCtx.beginPath();
@@ -292,16 +316,28 @@ export function initCorpus(ctx) {
         canvasCtx.lineWidth = 1 / globalScale;
         canvasCtx.strokeStyle = isHover ? HOVER_NODE : REST_NODE_RING;
         canvasCtx.stroke();
-        // Label: the slug/title, drawn below the node. Scale font with zoom for
-        // legibility but cap so it doesn't explode when zoomed in.
-        const label = nodeLabels[node.id] || nodeSlugs[node.id] || node.id;
-        const fontSize = Math.max(10 / globalScale, 2.2);
-        canvasCtx.font = `${fontSize}px system-ui, -apple-system, sans-serif`;
-        canvasCtx.textAlign = 'center';
-        canvasCtx.textBaseline = 'top';
-        canvasCtx.fillStyle = isHover ? LABEL_COLOR_HOVER : LABEL_COLOR;
-        canvasCtx.fillText(label, node.x, node.y + r + 1.5);
-        // Restore globalAlpha after painting this node (chapter dimming must not bleed).
+        // D-06: tiered labels (kills the at-rest pile-up, D3) — project hubs always draw;
+        // subject docs draw past the zoom threshold, on hover, or while their project is
+        // focused; chapter docs draw ONLY on hover, never at rest and never from focus alone.
+        const slug = node.slug || '';
+        const isHub = !!slug && !slug.includes(':') && !UUID_RE.test(slug);
+        const drawLabel = isHub
+          ? true
+          : isChapterDoc
+            ? isHover
+            : (globalScale >= CORPUS_LABEL_ZOOM_THRESHOLD || isHover || projectScopeOf(node) === focusedScope);
+        if (drawLabel) {
+          // Label: the slug/title, drawn below the node. Scale font with zoom for
+          // legibility but cap so it doesn't explode when zoomed in.
+          const label = nodeLabels[node.id] || nodeSlugs[node.id] || node.id;
+          const fontSize = Math.max(10 / globalScale, 2.2);
+          canvasCtx.font = `${fontSize}px system-ui, -apple-system, sans-serif`;
+          canvasCtx.textAlign = 'center';
+          canvasCtx.textBaseline = 'top';
+          canvasCtx.fillStyle = isHover ? LABEL_COLOR_HOVER : LABEL_COLOR;
+          canvasCtx.fillText(label, node.x, node.y + r + 1.5);
+        }
+        // Restore globalAlpha after painting this node (dim/chapter alpha must not bleed).
         canvasCtx.globalAlpha = 1.0;
       })
       // Pointer area covers the circle (label is decorative, not a click target).
@@ -328,17 +364,26 @@ export function initCorpus(ctx) {
       //   cross-project ref  = longer dash [4,3] in CROSS_PROJECT_REF (cool blue) — D-14.
       // doc_link             = faint mauve solid (existing treatment, no arrow, no dash).
       .linkColor(link => {
+        // D-04/D-05 dim factor (computed up front so it's near this callback's own dim
+        // constants): dims a link unless BOTH endpoints are related (hovered/highlighted, or
+        // owning-project-focused via projectScopeOf — same relatedness test as nodeCanvasObject).
+        const related = (n) => !!n && (highlightSet.has(n.id) || n.id === hoveredId || (focusedScope && projectScopeOf(n) === focusedScope));
+        const sNode = typeof link.source === 'object' ? link.source : null;
+        const tNode = typeof link.target === 'object' ? link.target : null;
+        let dim = 1.0;
+        if (!(sNode && tNode && related(sNode) && related(tNode))) {
+          if (focusedScope) dim = CORPUS_FOCUS_DIM_OPACITY;
+          else if (hoveredId || highlightSet.size) dim = CORPUS_HOVER_DIM_OPACITY;
+        }
         const isContain = link.kind === 'doc_containment';
         const isRef = link.kind === 'doc_reference';
-        // Sidebar-row highlight: amber only the CONTAINMENT links whose both endpoints are in
-        // the highlight set — i.e. the spine of the hovered node's subtree. Loose doc_link /
-        // doc_reference edges stay muted even if both ends happen to be highlighted.
+        // Amber highlight spine — never dimmed (returns before applying `dim`).
         if (highlightSet.size && isContain) {
           const s = typeof link.source === 'object' ? link.source.id : link.source;
           const t = typeof link.target === 'object' ? link.target.id : link.target;
           if (highlightSet.has(s) && highlightSet.has(t)) return HOVER_NODE;
         }
-        if (isContain) return CONTAINMENT_COLOR;
+        if (isContain) return dimRgba(CONTAINMENT_COLOR, dim);
         if (isRef) {
           // D-14: cross-project reference — src.scope !== dst.scope.
           // Guard for the pre-layout string form (force-graph mutates source/target to
@@ -346,9 +391,9 @@ export function initCorpus(ctx) {
           const srcScope = (typeof link.source === 'object' ? link.source.scope : null);
           const dstScope = (typeof link.target === 'object' ? link.target.scope : null);
           const isCrossProject = srcScope && dstScope && rootScope(srcScope) !== rootScope(dstScope);
-          return isCrossProject ? CROSS_PROJECT_REF : LINK_REST;
+          return dimRgba(isCrossProject ? CROSS_PROJECT_REF : LINK_REST, dim);
         }
-        return LINK_REST; // doc_link
+        return dimRgba(LINK_REST, dim); // doc_link
       })
       .linkWidth(link => link.kind === 'doc_containment' ? 2 : 1)
       .linkDirectionalArrowLength(link => link.kind === 'doc_containment' ? 4 : 0)
@@ -367,6 +412,8 @@ export function initCorpus(ctx) {
       .onNodeHover((node) => {
         hoveredId = node ? node.id : null;
         container.style.cursor = node ? 'pointer' : '';
+        // D-05: reuse the SAME amber BFS the index-row hover uses; also reasserts the paint.
+        ctx.highlightCorpusNode(node ? nodeSlugs[node.id] : null);
       })
       // D-08: click a doc node → open its reader IN PLACE over the corpus.
       .onNodeClick((node) => {
