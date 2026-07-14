@@ -179,6 +179,19 @@ describe('GET /stats/usage', () => {
       by_model: unknown[];
       retail_usd: number;
       cost_event_deltas: Array<{ date: string; label: string; before_avg: number; after_avg: number }>;
+      summary: {
+        today_tokens: number;
+        week_tokens: number;
+        month_tokens: number;
+        avg_tokens_per_day: number;
+        retail_usd_30d: number;
+        today_vs_typical_pct: number | null;
+        week_vs_typical_pct: number | null;
+        trend_pct: number | null;
+        trend_direction: string;
+        heaviest_day: unknown;
+      };
+      lever_deltas: unknown[];
     };
     expect(json.window).toBe('30d');
     expect(json.bucket_granularity).toBe('daily');
@@ -192,6 +205,18 @@ describe('GET /stats/usage', () => {
       expect(d.before_avg).toBe(0);
       expect(d.after_avg).toBe(0);
     }
+    // GAP-2a/2b: empty ledger yields a fully-zeroed summary, never an error.
+    expect(json.summary.today_tokens).toBe(0);
+    expect(json.summary.week_tokens).toBe(0);
+    expect(json.summary.month_tokens).toBe(0);
+    expect(json.summary.avg_tokens_per_day).toBe(0);
+    expect(json.summary.retail_usd_30d).toBe(0);
+    expect(json.summary.today_vs_typical_pct).toBeNull();
+    expect(json.summary.week_vs_typical_pct).toBeNull();
+    expect(json.summary.trend_pct).toBeNull();
+    expect(json.summary.heaviest_day).toBeNull();
+    // GAP-2c: empty ledger yields an empty levers array, mirroring buckets []).
+    expect(json.lever_deltas).toEqual([]);
   });
 
   it('returns zero-filled daily buckets for window=30d with seeded rows', async () => {
@@ -277,6 +302,45 @@ describe('GET /stats/usage', () => {
     const withLabel = json.cost_event_deltas.find((d) => d.label && d.label.length > 0);
     expect(withLabel).toBeTruthy();
     expect(withLabel!.label).toBe('MAX_THINKING_TOKENS=0');
+  });
+
+  it('summary reflects seeded ledger sums and lever_deltas carry one entry per COST_EVENT (GAP-2a/2b/2c)', async () => {
+    const now = Date.now();
+    // Well before both COST_EVENTS markers (2026-07-03, 2026-06-25).
+    insertLedgerRow(now - 40 * 86_400_000, 'extract', 'claude-haiku-4-5', 500, 0, 0.001);
+    // After both markers, inside the trailing 7d/30d windows.
+    insertLedgerRow(now - 3 * 86_400_000, 'extract', 'claude-haiku-4-5', 200, 0, 0.0005);
+    insertLedgerRow(now, 'judge', 'claude-sonnet-4-6', 100, 50, 0.002);
+    await restartServer();
+
+    const r = await makeRequest(port, '/stats/usage?window=30d');
+    expect(r.statusCode).toBe(200);
+    const json = JSON.parse(r.body) as {
+      summary: {
+        today_tokens: number;
+        week_tokens: number;
+        month_tokens: number;
+        avg_tokens_per_day: number;
+        trend_direction: string;
+      };
+      lever_deltas: Array<{
+        date: string; label: string; before_avg: number; after_avg: number; pct_saved: number | null;
+      }>;
+    };
+
+    // Today's row (100+50=150 tokens) lands in today/week/month sums.
+    expect(json.summary.today_tokens).toBe(150);
+    expect(json.summary.week_tokens).toBeGreaterThanOrEqual(150 + 200);
+    expect(json.summary.month_tokens).toBeGreaterThanOrEqual(150 + 200);
+    expect(json.summary.avg_tokens_per_day).toBeCloseTo(json.summary.month_tokens / 30);
+    expect(['up', 'down', 'flat']).toContain(json.summary.trend_direction);
+
+    expect(json.lever_deltas.length).toBe(2);
+    for (const lever of json.lever_deltas) {
+      expect(typeof lever.before_avg).toBe('number');
+      expect(typeof lever.after_avg).toBe('number');
+      expect(lever.pct_saved === null || typeof lever.pct_saved === 'number').toBe(true);
+    }
   });
 
   it('returns 405 for non-GET methods', async () => {

@@ -1582,9 +1582,10 @@ export function startVizServer(
         // the `window` pill above. All cutoffs are server-derived Date.now() ms
         // bound via '?' (T-60-08-01). Honest-labeling: these are ledger-derived
         // baselines ("vs your typical"), never a fabricated provider-quota number.
-        const todayCutoff = Date.UTC(
-          ...(new Date().toISOString().slice(0, 10).split('-').map(Number) as [number, number, number]),
-        );
+        const [todayY, todayM, todayD] = new Date().toISOString().slice(0, 10).split('-').map(Number) as [
+          number, number, number,
+        ];
+        const todayCutoff = Date.UTC(todayY, todayM - 1, todayD); // Date.UTC month is 0-indexed
         const todayRow = stmtTokensSince.get(todayCutoff) as { tokens: number; cost: number };
         const weekRow = stmtTokensSince.get(now - 7 * 86_400_000) as { tokens: number; cost: number };
         const monthRow = stmtTokensSince.get(now - 30 * 86_400_000) as { tokens: number; cost: number };
@@ -1634,9 +1635,8 @@ export function startVizServer(
           // before/after averages divide by CALENDAR days, not just active
           // days — same rationale as the windowed zero-fill above.
           const minDate = allBuckets[0]!.date;
-          const minTs = Date.UTC(
-            ...(minDate.split('-').map(Number) as [number, number, number]),
-          );
+          const [minY, minM, minD] = minDate.split('-').map(Number) as [number, number, number];
+          const minTs = Date.UTC(minY, minM - 1, minD); // Date.UTC month is 0-indexed
           const byDateAll = new Map(allBuckets.map((b) => [b.date, b]));
           const filledAll: BucketRow[] = [];
           for (let t = minTs; t <= now; t += 86_400_000) {
