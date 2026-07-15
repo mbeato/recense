@@ -229,11 +229,21 @@ export function initCorpus(ctx) {
     // via the node_doc JOIN, so D-08 click→reader resolution works client-side).
     nodeSlugs = {};
     nodeLabels = {};
-    // Recognized project scopes = scopes of subject docs (slug contains ':'). Used to decide
-    // which nodes get a project tint vs the muted rose fallback (chapters / isolated / malformed).
-    projectScopes = new Set();
-    for (const node of (data.nodes || [])) {
-      if ((node.slug || '').includes(':') && node.scope) projectScopes.add(rootScope(node.scope));
+    // Recognized project scopes: used to decide which nodes get a project tint vs the muted
+    // rose fallback (chapters / isolated / malformed), and which scopes focusCorpusProject will
+    // accept. WR-03 (61-15): the server now ships this set (mirroring the /index recognized-
+    // project rule — a doc is a project when its slug is NOT a UUID), so it PRIMARILY consumes
+    // data.projectScopes rather than hand-deriving from subject docs only (which silently
+    // excluded hub-only projects with no colon-slug subject doc). Gate on field PRESENCE via
+    // Array.isArray, never `.size`, so an empty-but-present set is honored (not overridden).
+    if (Array.isArray(data.projectScopes)) {
+      projectScopes = new Set(data.projectScopes);
+    } else {
+      // Fallback for an older payload lacking the field (defensive — should not occur live).
+      projectScopes = new Set();
+      for (const node of (data.nodes || [])) {
+        if ((node.slug || '').includes(':') && node.scope) projectScopes.add(rootScope(node.scope));
+      }
     }
     for (const node of (data.nodes || [])) {
       if (node.slug) nodeSlugs[node.id] = node.slug;

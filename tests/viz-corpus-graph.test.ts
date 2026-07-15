@@ -733,3 +733,83 @@ describe('GET /graph?type=doc resolves human schema label (CORPUS-04 BUG-1)', ()
   });
 });
 
+// ---------------------------------------------------------------------------
+// WR-03 (61-15): server-shipped recognized-project root-scope set on /graph?type=doc
+// ---------------------------------------------------------------------------
+//
+// Plan 61-15 Task 1: the server becomes the single source of the recognized-project set —
+// a doc is a "project" when its slug is NOT a UUID (mirrors the /index rule). This admits
+// hub-only projects (no colon-slug subject doc) that the old client-side derivation
+// (subject-doc-only) silently excluded.
+
+describe('GET /graph?type=doc projectScopes (WR-03, 61-15)', () => {
+  let dbPath: string;
+  let db: Database.Database;
+  let store: SemanticStore;
+  let server: http.Server;
+  let port: number;
+
+  const CHAPTER_UUID_1 = '11111111-1111-4111-8111-111111111111';
+  const CHAPTER_UUID_2 = '22222222-2222-4222-8222-222222222222';
+
+  beforeEach(async () => {
+    dbPath = makeTempDbPath();
+    db = new Database(dbPath);
+    db.pragma('foreign_keys = ON');
+    initSchema(db);
+    store = makeStore(db);
+
+    // Hub-only project: ONLY a hub doc (slug 'tonos', no colon) + a UUID-slug chapter contained
+    // under it. NO colon-slug subject doc exists for this project.
+    writeDoc(store, db, { docId: 'doc-tonos-hub', slug: 'tonos', markdown: '# Tonos', citedFactIds: [], linkedDocRefs: [], now: 1000 });
+    writeDoc(store, db, { docId: 'doc-tonos-chapter', slug: CHAPTER_UUID_1, markdown: '# Chapter', citedFactIds: [], linkedDocRefs: [], now: 1100 });
+    store.upsertEdge({ src: 'doc-tonos-hub', dst: 'doc-tonos-chapter', rel: 'doc_containment', kind: 'doc_containment', w: 1.0, last_access: 1200 });
+
+    // Regression: an existing multi-doc project WITH a subject doc — still recognized.
+    writeDoc(store, db, { docId: 'doc-acme-hub', slug: 'acme', markdown: '# Acme', citedFactIds: [], linkedDocRefs: [], now: 2000 });
+    writeDoc(store, db, { docId: 'doc-acme-sub', slug: 'acme:overview', markdown: '# Overview', citedFactIds: [], linkedDocRefs: [], now: 2100 });
+    writeDoc(store, db, { docId: 'doc-acme-chapter', slug: CHAPTER_UUID_2, markdown: '# Acme Chapter', citedFactIds: [], linkedDocRefs: [], now: 2200 });
+    store.upsertEdge({ src: 'doc-acme-hub', dst: 'doc-acme-sub', rel: 'doc_containment', kind: 'doc_containment', w: 1.0, last_access: 2300 });
+    store.upsertEdge({ src: 'doc-acme-hub', dst: 'doc-acme-chapter', rel: 'doc_containment', kind: 'doc_containment', w: 1.0, last_access: 2400 });
+
+    db.close();
+    port = await getFreePort();
+    server = startVizServer(dbPath, port);
+    await new Promise<void>(r => server.once('listening', r));
+  });
+
+  afterEach(async () => {
+    await new Promise<void>(r => server.close(() => r()));
+    try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-shm'); } catch { /* ignore */ }
+  });
+
+  it('includes a hub-only project (hub doc + UUID chapter, NO colon-slug subject doc)', async () => {
+    const res = await makeRequest(port, '/graph?type=doc');
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body) as { projectScopes: string[] };
+    expect(Array.isArray(data.projectScopes)).toBe(true);
+    expect(data.projectScopes).toContain('tonos');
+  });
+
+  it('includes an existing multi-doc project (with subject docs); UUID chapter scopes are NOT their own project', async () => {
+    const res = await makeRequest(port, '/graph?type=doc');
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body) as { projectScopes: string[] };
+    expect(data.projectScopes).toContain('acme');
+    expect(data.projectScopes).not.toContain(CHAPTER_UUID_1);
+    expect(data.projectScopes).not.toContain(CHAPTER_UUID_2);
+  });
+
+  it('source: server.ts builds and attaches projectScopes in the type=doc branch', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/server.ts'), 'utf8');
+    expect(src).toMatch(/projectScopes/);
+  });
+
+  it('source: corpus.js consumes data.projectScopes via an Array.isArray presence check', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/corpus.js'), 'utf8');
+    expect(src).toMatch(/Array\.isArray\(data\.projectScopes\)/);
+  });
+});
+
