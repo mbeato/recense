@@ -1,9 +1,9 @@
 ---
 status: diagnosed
 phase: 61-corpus-chrome-index-column-project-browsing
-source: [61-04-PLAN.md checkpoint:human-verify, 61-09-PLAN.md checkpoint:human-verify]
+source: [61-04-PLAN.md checkpoint:human-verify, 61-09-PLAN.md checkpoint:human-verify, 61-14-PLAN.md checkpoint:human-verify]
 started: 2026-07-14T19:20:00Z
-updated: 2026-07-14T21:30:00Z
+updated: 2026-07-14T22:15:00Z
 ---
 
 ## Current Test
@@ -90,8 +90,15 @@ truth: "A schema row under a project is immediately legible: a human-readable ti
 founder_direction: Nesting is right, but it's not obvious what schemas are at first glance and some render raw UUID titles. Consider renaming the section/label away from "Schemas" toward something that reads as one-off docs — founder is not sure of the final label; planner should propose options (checkpoint the label choice if needed).
 scope_hint: src/viz/server.ts (/index schema titles — derive human-readable titles, no UUIDs), src/viz/modules/index.js (schema row presentation/label), possibly styles.css
 
+### GAP-9: Closed-rail corpus view feels bare; docked/on-top index drawer still feels wrong — detach as a floating panel
+status: failed
+truth: "The corpus index reads as a free-floating panel (own chrome/header, draggable, visually separate from the graph — akin to the collapsed tray-app node view), not a rail docked into the layout or a drawer overlaid flush on the canvas; the closed corpus view no longer feels bare."
+founder_direction: (round-2 61-14 re-run, new item — not a GAP-1..8 regression) Verbatim: "maybe it would be good similar to the collapsed tray app node view as like a separate window kinda cause it also feels bare without the index drawer but having on top of the corpus graph still feels wrong." Clarified: the index should become a detached floating panel — still inside the viz page, but a free-floating window-like panel (own chrome/header, draggable) visually separate from the graph, similar in spirit to the collapsed tray-app node view. Not docked into the layout (current 61-05/61-13 behavior), not overlaid flush on the canvas either. Problem statement: the corpus feels bare with the rail closed (GAP-6), but the docked/on-top drawer on the corpus graph feels wrong.
+scope_hint: src/viz/modules/index.js (panel mount/positioning — currently docks/reflows the canvas; needs a detached floating-panel treatment), src/viz/css/styles.css (panel chrome — header/border/drag affordance, floating vs. docked layout), possibly apps/tray (reference for the "collapsed tray-app node view" panel pattern the founder is pointing at). This is a STRUCTURAL/architectural change (new panel paradigm, not a feel-value tune) — Rule 4, needs its own plan, not hand-patched at a checkpoint.
+emerged_at: 61-14-PLAN.md round-2 closing sign-off (2026-07-14) — GAP-5..8 all confirmed resolved on the live install; this is a new item the founder raised while re-verifying GAP-6, not a regression of GAP-1..8.
+
 ## Notes
 
 - Round 1: Checkpoint plan 61-04 remained incomplete (scope allowed only the four CORPUS_* tunables; feedback was structural). The four provisional constants were not tuned and remain at shipped values: CORPUS_FOCUS_DIM_OPACITY=0.18, CORPUS_HOVER_DIM_OPACITY=0.30, CORPUS_LABEL_ZOOM_THRESHOLD=1.2, CORPUS_FOCUS_TRANSITION_MS=500.
-- Round 2 (this update): 61-09 checkpoint ran on the live install after gap plans 61-05..61-08 merged. GAP-1..4 core truths hold; four new structural gaps (GAP-5..GAP-8) captured per the checkpoint's no-hand-patching rule. No feel constants were tuned in round 2 either (feedback again structural).
-- 61-09 (and the 61-04 sign-off it supersedes) remains open — re-run the live-install sign-off after GAP-5..GAP-8 close.
+- Round 2 (61-09 checkpoint): ran on the live install after gap plans 61-05..61-08 merged. GAP-1..4 core truths hold; four new structural gaps (GAP-5..GAP-8) captured per the checkpoint's no-hand-patching rule. No feel constants were tuned in round 2 either (feedback again structural).
+- Round 2 re-run (61-14 checkpoint, 2026-07-14): after gap plans 61-10..61-13 merged, GAP-5, GAP-6, GAP-7, GAP-8 all founder-confirmed RESOLVED on the live install; GAP-1..4 and D1-D4 confirmed NO REGRESSION. No feel tuning requested — the four CORPUS_* constants are ratcheted at their current shipped values (CORPUS_FOCUS_DIM_OPACITY=0.18, CORPUS_HOVER_DIM_OPACITY=0.30, CORPUS_LABEL_ZOOM_THRESHOLD=1.2, CORPUS_FOCUS_TRANSITION_MS=500) as founder-approved. 61-09 (and the 61-04 sign-off it supersedes) is now CLOSED — 61-14-SUMMARY.md is the closing record. One new structural item, GAP-9, was raised by the founder during this re-run (detached floating index panel) — captured above, requires its own plan (round-3 closure), not a regression of GAP-1..8.
