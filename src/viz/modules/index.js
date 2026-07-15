@@ -11,7 +11,8 @@
  *
  * Sections (both rendered as nested trees, server partitions docs by tree-root type):
  *   - Projects: human-scoped docs (e.g. 'tonos') + any schema chapters nested under a project
- *   - Schemas: schema-anchored docs (UUID-scoped, human label), nested by doc_containment depth
+ *   - Notes: schema-anchored one-off docs (each derived from an induced concept), nested under
+ *     their related project when resolvable (GAP-4/GAP-8); the payload key stays `schemas`
  *
  * A search/filter box filters the list by label substring (WIKI-01 re-verify — deep-research
  * verdict: at ~22 docs, search + the existing hierarchy beats auto-clustering, which is unstable
@@ -321,7 +322,7 @@ export function initIndex(ctx) {
     const vP = computeVisible(lastData.projects || [], currentFilter);
     const vS = computeVisible(lastData.schemas || [], currentFilter);
     const anyP = renderTreeSection('Projects', lastData.projects || [], vP);
-    const anyS = renderTreeSection('Schemas', lastData.schemas || [], vS);
+    const anyS = renderTreeSection('Notes', lastData.schemas || [], vS);
     if (!anyP && !anyS) {
       const empty = document.createElement('div');
       empty.className = 'index-status';
