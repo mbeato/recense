@@ -1416,7 +1416,6 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   color: var(--text-recede);
   text-decoration: none;
   padding: 5px 8px;
-  border-radius: 6px;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
@@ -1428,7 +1427,10 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
 /* Tree row — wraps chevron + name + count-badge for a folder/project row (D-01, Plan 03 render
    target). Same hover idiom as .index-entry above. GAP-2 (Plan 06): vertical rhythm matches
    .index-entry (5px v-padding) so project rows and leaf doc rows sit at the same height; the
-   JS-set inline padding-left/padding-right (8 + depth*14 indent formula) is left untouched. */
+   JS-set inline padding-left/padding-right (8 + depth*14 indent formula) is left untouched.
+   DESIGN RULE (GAP-5, founder-locked "NEVER DO IT AGAIN"): index-rail row surfaces are NEVER
+   rounded — hover/active backgrounds are square-edged (full-bleed within the rail); border-radius
+   on .index-row/.index-entry is banned. */
 .index-row {
   display: flex;
   align-items: center;
@@ -1436,7 +1438,6 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   padding-top: 5px;
   padding-bottom: 5px;
   color: var(--text-recede);
-  border-radius: 6px;
   cursor: pointer;
   transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
 }
