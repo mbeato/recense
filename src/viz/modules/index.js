@@ -2,14 +2,16 @@
  * @module index
  * recense viz — browsable text index of the live doc corpus (WIKI-01, 39-02).
  *
- * The index is a LEFT SIDEBAR docked over the flat 2D corpus graph — the index list and the
- * corpus graph are two views of the same doc set, shown side by side (founder direction). There
- * is NO dedicated toolbar button. The rail starts CLOSED (GAP-6, founder direction): entering the
- * corpus shows only the left-edge reopen handle (corpus.js calls ctx.showIndexHandle), and the
- * graph gets the full canvas. The user opens the rail explicitly via the handle (ctx.openIndexSidebar
- * / openSidebar), after which it docks/reflows over the corpus. Returning to the brain hides the
- * rail and the handle (ctx.closeIndexSidebar). A ◀ collapse control hides an open rail for more
- * graph room; the slim reopen handle on the left edge brings it back.
+ * The index is a DETACHED FLOATING PANEL over the flat 2D corpus graph (GAP-9 closure — supersedes
+ * the old docked-rail paradigm): its own chrome/header, draggable by that header, visually
+ * separate from the graph. The corpus graph ALWAYS keeps the full canvas — opening, closing, or
+ * dragging the panel never reflows #corpus-graph. There is NO dedicated toolbar button. The panel
+ * starts CLOSED (GAP-6, founder direction): entering the corpus shows only the left-edge reopen
+ * handle (corpus.js calls ctx.showIndexHandle). The user opens it explicitly via the handle
+ * (ctx.openIndexSidebar / openSidebar), after which it fades in at its floating position (default,
+ * or the last dragged position this session). Returning to the brain hides the panel and the
+ * handle (ctx.closeIndexSidebar). A ◀ collapse control hides an open panel for more graph room;
+ * the slim reopen handle on the left edge brings it back.
  *
  * Sections (both rendered as nested trees, server partitions docs by tree-root type):
  *   - Projects: human-scoped docs (e.g. 'tonos') + any schema chapters nested under a project
@@ -58,6 +60,10 @@ export function initIndex(ctx) {
   // Slug of the currently-focused project (GAP-3) — mirrors corpus.js's focusedScope, kept in
   // sync via ctx.syncCorpusFocus so the index's active row always matches graph focus state.
   let activeScope = null;
+  // Dragged panel position (GAP-9) — module-scoped, IN-MEMORY ONLY (never localStorage, matches
+  // the D-01 expand-state rule): survives a corpus close/reopen within the session, resets on
+  // hard reload. Applied to #index-panel's inline style before showing in openSidebar().
+  let panelPos = null; // { left: number, top: number } in px, or null (use the CSS default)
 
   // ── Static sidebar chrome: header (title + collapse) + search + scrollable content ──────
   function ensureChrome() {
@@ -78,6 +84,46 @@ export function initIndex(ctx) {
     collapse.innerHTML = ICON_CHEVRON_LEFT;
     collapse.addEventListener('click', collapseSidebar);
     header.appendChild(collapse);
+
+    // Header drag grip (GAP-9): pointerdown/pointermove/pointerup + setPointerCapture idiom
+    // (net-zero deps, mirrors graph.js's pointer-drag conventions). Bails on the collapse
+    // button so its click still fires. Position is clamped to the viewport so the panel can
+    // never be dragged fully off-screen (T-61-16-02) and persisted only in `panelPos` above.
+    let dragStart = null; // { pointerId, startX, startY, panelLeft, panelTop }
+    header.addEventListener('pointerdown', (ev) => {
+      if (ev.target.closest('.index-collapse')) return;
+      const rect = container.getBoundingClientRect();
+      dragStart = {
+        pointerId: ev.pointerId,
+        startX: ev.clientX,
+        startY: ev.clientY,
+        panelLeft: rect.left,
+        panelTop: rect.top,
+      };
+      header.setPointerCapture(ev.pointerId);
+      container.classList.add('dragging');
+    });
+    header.addEventListener('pointermove', (ev) => {
+      if (!dragStart || ev.pointerId !== dragStart.pointerId) return;
+      const rect = container.getBoundingClientRect();
+      let left = dragStart.panelLeft + (ev.clientX - dragStart.startX);
+      let top = dragStart.panelTop + (ev.clientY - dragStart.startY);
+      // Clamp so the header stays on-screen (keep at least the panel's own size visible from
+      // the top-left, and never let it slide fully past the right/bottom edge).
+      left = Math.max(-(rect.width - 40), Math.min(left, window.innerWidth - 40));
+      top = Math.max(0, Math.min(top, window.innerHeight - 40));
+      container.style.left = left + 'px';
+      container.style.top = top + 'px';
+      panelPos = { left, top };
+    });
+    const endDrag = (ev) => {
+      if (!dragStart || ev.pointerId !== dragStart.pointerId) return;
+      header.releasePointerCapture(ev.pointerId);
+      dragStart = null;
+      container.classList.remove('dragging');
+    };
+    header.addEventListener('pointerup', endDrag);
+    header.addEventListener('pointercancel', endDrag);
 
     const searchWrap = document.createElement('div');
     searchWrap.className = 'index-search';
@@ -402,14 +448,15 @@ export function initIndex(ctx) {
     isSidebarOpen = true;
     showReopenHandle(false);
     container.style.display = 'flex';
-    // Dock as a true split: body.index-docked offsets #corpus-graph by --index-width so the graph
-    // reflows beside the rail instead of being overlaid (founder polish). Re-fit after the layout
-    // change applies so the corpus frames into the narrower width.
-    document.body.classList.add('index-docked');
+    // Floating panel (GAP-9): no docking, no canvas reflow — apply any dragged position from
+    // this session before the fade-in, otherwise the panel opens at its CSS default offset.
+    if (panelPos) {
+      container.style.left = panelPos.left + 'px';
+      container.style.top = panelPos.top + 'px';
+    }
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         container.classList.add('shown');
-        if (typeof ctx.refitCorpus === 'function') ctx.refitCorpus();
       });
     });
     prepareIndex();
@@ -419,11 +466,6 @@ export function initIndex(ctx) {
     isSidebarOpen = false;
     if (typeof ctx.highlightCorpusNode === 'function') ctx.highlightCorpusNode(null);
     container.classList.remove('shown');
-    // Undock: corpus reclaims the full width; re-fit so it re-frames to the wider canvas.
-    document.body.classList.remove('index-docked');
-    if (typeof ctx.refitCorpus === 'function') {
-      requestAnimationFrame(() => { if (typeof ctx.refitCorpus === 'function') ctx.refitCorpus(); });
-    }
     const onEnd = (ev) => {
       if (ev && ev.target !== container) return;
       if (!isSidebarOpen) container.style.display = 'none';
