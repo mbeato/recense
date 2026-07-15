@@ -201,6 +201,8 @@ interface LinkRecord {
 interface GraphPayload {
   nodes: NodeRecord[];
   links: LinkRecord[];
+  /** type=doc branch only: root scopes of recognized projects (61-15, WR-03). */
+  projectScopes?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -908,6 +910,7 @@ export function startVizServer(
         const qType = new URLSearchParams(req.url?.split('?')[1] ?? '').get('type');
         let nodes: NodeRecord[];
         let edgeRows: Array<{ src: string; dst: string; rel: string; w: number; kind: string }>;
+        let projectScopes: string[] | undefined;
         if (qType === 'doc') {
           // Corpus graph: only live doc nodes + doc_link edges (READER-04 / T-27-16).
           nodes = stmtDocNodes.all() as NodeRecord[];
@@ -924,6 +927,18 @@ export function startVizServer(
             const ownerScope = slug && graphSchemaSlugRe.test(slug) ? (schemaToProject.get(slug) ?? null) : null;
             return { ...n, ownerScope };
           }) as NodeRecord[];
+          // WR-03 (61-15): ship the single recognized-project root-scope set, mirroring the
+          // /index recognized-project rule (a doc is a project when its slug is NOT a UUID) —
+          // this admits BOTH hub docs and colon-slug subject docs, excludes UUID chapter docs.
+          // The client (corpus.js) consumes this instead of hand-deriving a divergent set.
+          const projectScopeSet = new Set<string>();
+          for (const n of nodes as Array<NodeRecord & { slug?: string; scope?: string | null }>) {
+            const slug = n.slug;
+            if (slug && !graphSchemaSlugRe.test(slug) && n.scope) {
+              projectScopeSet.add(n.scope.split(':')[0]!);
+            }
+          }
+          projectScopes = [...projectScopeSet];
         } else {
           // Full brain graph (default — no type filter).
           nodes = stmtNodes.all() as NodeRecord[];
@@ -937,7 +952,9 @@ export function startVizServer(
           w: e.w,
           kind: e.kind,
         }));
-        const payload: GraphPayload = { nodes, links };
+        const payload: GraphPayload = projectScopes !== undefined
+          ? { nodes, links, projectScopes }
+          : { nodes, links };
         const body = JSON.stringify(payload);
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(body);

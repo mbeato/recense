@@ -181,10 +181,14 @@ export function initCorpus(ctx) {
     return rootScope(node.scope);
   }
 
-  /** True when a node's owning project is currently focused OR its tree row is expanded. */
+  /** True when a node's owning project is currently focused OR its tree row is expanded.
+   *  WR-01 (61-15): a scope-less doc (scope resolves to null) is HIDDEN at rest — the null
+   *  guard runs BEFORE the equality check so it can never match `null === null` when nothing
+   *  is focused. Mirrors the already-correct `isRelated` guard in nodeCanvasObject below. */
   function isProjectRevealed(node) {
     const scope = projectScopeOf(node);
-    return scope === focusedScope || expandedScopes.has(scope);
+    if (scope == null) return false;
+    return (focusedScope !== null && scope === focusedScope) || expandedScopes.has(scope);
   }
 
   const isNodeVisible = (n) => !isChapterNode(n) || isProjectRevealed(n);
@@ -229,11 +233,21 @@ export function initCorpus(ctx) {
     // via the node_doc JOIN, so D-08 click→reader resolution works client-side).
     nodeSlugs = {};
     nodeLabels = {};
-    // Recognized project scopes = scopes of subject docs (slug contains ':'). Used to decide
-    // which nodes get a project tint vs the muted rose fallback (chapters / isolated / malformed).
-    projectScopes = new Set();
-    for (const node of (data.nodes || [])) {
-      if ((node.slug || '').includes(':') && node.scope) projectScopes.add(rootScope(node.scope));
+    // Recognized project scopes: used to decide which nodes get a project tint vs the muted
+    // rose fallback (chapters / isolated / malformed), and which scopes focusCorpusProject will
+    // accept. WR-03 (61-15): the server now ships this set (mirroring the /index recognized-
+    // project rule — a doc is a project when its slug is NOT a UUID), so it PRIMARILY consumes
+    // data.projectScopes rather than hand-deriving from subject docs only (which silently
+    // excluded hub-only projects with no colon-slug subject doc). Gate on field PRESENCE via
+    // Array.isArray, never `.size`, so an empty-but-present set is honored (not overridden).
+    if (Array.isArray(data.projectScopes)) {
+      projectScopes = new Set(data.projectScopes);
+    } else {
+      // Fallback for an older payload lacking the field (defensive — should not occur live).
+      projectScopes = new Set();
+      for (const node of (data.nodes || [])) {
+        if ((node.slug || '').includes(':') && node.scope) projectScopes.add(rootScope(node.scope));
+      }
     }
     for (const node of (data.nodes || [])) {
       if (node.slug) nodeSlugs[node.id] = node.slug;
@@ -336,7 +350,7 @@ export function initCorpus(ctx) {
           ? true
           : isChapterDoc
             ? isHover
-            : (globalScale >= CORPUS_LABEL_ZOOM_THRESHOLD || isHover || projectScopeOf(node) === focusedScope);
+            : (globalScale >= CORPUS_LABEL_ZOOM_THRESHOLD || isHover || (focusedScope !== null && projectScopeOf(node) === focusedScope));
         if (drawLabel) {
           // Label: the slug/title, drawn below the node. Scale font with zoom for
           // legibility but cap so it doesn't explode when zoomed in.
@@ -810,7 +824,6 @@ export function initCorpus(ctx) {
     if (expanded) expandedScopes.add(scope);
     else expandedScopes.delete(scope);
     reassertPaint();
-    fitAndClamp();
   };
 
   // Focus-exit Esc listener (independent guarded listener — no central dispatcher, matches the

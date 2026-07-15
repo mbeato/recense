@@ -733,3 +733,162 @@ describe('GET /graph?type=doc resolves human schema label (CORPUS-04 BUG-1)', ()
   });
 });
 
+// ---------------------------------------------------------------------------
+// WR-03 (61-15): server-shipped recognized-project root-scope set on /graph?type=doc
+// ---------------------------------------------------------------------------
+//
+// Plan 61-15 Task 1: the server becomes the single source of the recognized-project set —
+// a doc is a "project" when its slug is NOT a UUID (mirrors the /index rule). This admits
+// hub-only projects (no colon-slug subject doc) that the old client-side derivation
+// (subject-doc-only) silently excluded.
+
+describe('GET /graph?type=doc projectScopes (WR-03, 61-15)', () => {
+  let dbPath: string;
+  let db: Database.Database;
+  let store: SemanticStore;
+  let server: http.Server;
+  let port: number;
+
+  const CHAPTER_UUID_1 = '11111111-1111-4111-8111-111111111111';
+  const CHAPTER_UUID_2 = '22222222-2222-4222-8222-222222222222';
+
+  beforeEach(async () => {
+    dbPath = makeTempDbPath();
+    db = new Database(dbPath);
+    db.pragma('foreign_keys = ON');
+    initSchema(db);
+    store = makeStore(db);
+
+    // Hub-only project: ONLY a hub doc (slug 'tonos', no colon) + a UUID-slug chapter contained
+    // under it. NO colon-slug subject doc exists for this project.
+    writeDoc(store, db, { docId: 'doc-tonos-hub', slug: 'tonos', markdown: '# Tonos', citedFactIds: [], linkedDocRefs: [], now: 1000 });
+    writeDoc(store, db, { docId: 'doc-tonos-chapter', slug: CHAPTER_UUID_1, markdown: '# Chapter', citedFactIds: [], linkedDocRefs: [], now: 1100 });
+    store.upsertEdge({ src: 'doc-tonos-hub', dst: 'doc-tonos-chapter', rel: 'doc_containment', kind: 'doc_containment', w: 1.0, last_access: 1200 });
+
+    // Regression: an existing multi-doc project WITH a subject doc — still recognized.
+    writeDoc(store, db, { docId: 'doc-acme-hub', slug: 'acme', markdown: '# Acme', citedFactIds: [], linkedDocRefs: [], now: 2000 });
+    writeDoc(store, db, { docId: 'doc-acme-sub', slug: 'acme:overview', markdown: '# Overview', citedFactIds: [], linkedDocRefs: [], now: 2100 });
+    writeDoc(store, db, { docId: 'doc-acme-chapter', slug: CHAPTER_UUID_2, markdown: '# Acme Chapter', citedFactIds: [], linkedDocRefs: [], now: 2200 });
+    store.upsertEdge({ src: 'doc-acme-hub', dst: 'doc-acme-sub', rel: 'doc_containment', kind: 'doc_containment', w: 1.0, last_access: 2300 });
+    store.upsertEdge({ src: 'doc-acme-hub', dst: 'doc-acme-chapter', rel: 'doc_containment', kind: 'doc_containment', w: 1.0, last_access: 2400 });
+
+    db.close();
+    port = await getFreePort();
+    server = startVizServer(dbPath, port);
+    await new Promise<void>(r => server.once('listening', r));
+  });
+
+  afterEach(async () => {
+    await new Promise<void>(r => server.close(() => r()));
+    try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
+    try { fs.unlinkSync(dbPath + '-shm'); } catch { /* ignore */ }
+  });
+
+  it('includes a hub-only project (hub doc + UUID chapter, NO colon-slug subject doc)', async () => {
+    const res = await makeRequest(port, '/graph?type=doc');
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body) as { projectScopes: string[] };
+    expect(Array.isArray(data.projectScopes)).toBe(true);
+    expect(data.projectScopes).toContain('tonos');
+  });
+
+  it('includes an existing multi-doc project (with subject docs); UUID chapter scopes are NOT their own project', async () => {
+    const res = await makeRequest(port, '/graph?type=doc');
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body) as { projectScopes: string[] };
+    expect(data.projectScopes).toContain('acme');
+    expect(data.projectScopes).not.toContain(CHAPTER_UUID_1);
+    expect(data.projectScopes).not.toContain(CHAPTER_UUID_2);
+  });
+
+  it('source: server.ts builds and attaches projectScopes in the type=doc branch', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/server.ts'), 'utf8');
+    expect(src).toMatch(/projectScopes/);
+  });
+
+  it('source: corpus.js consumes data.projectScopes via an Array.isArray presence check', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/corpus.js'), 'utf8');
+    expect(src).toMatch(/Array\.isArray\(data\.projectScopes\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-01/WR-05 (61-15): null-guarded chapter visibility + label tiering; no reveal-time
+// camera snap on setCorpusProjectExpanded.
+// ---------------------------------------------------------------------------
+
+describe('corpus.js source assertions: null guards + no reveal-time camera snap (61-15 Task 2)', () => {
+  it('isProjectRevealed guards a null scope BEFORE the equality/focus check (WR-01)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/corpus.js'), 'utf8');
+    expect(src).toMatch(/scope == null/);
+    // The guard must appear inside isProjectRevealed, before the equality check.
+    const fnMatch = src.match(/function isProjectRevealed\(node\) \{[\s\S]*?\n  \}/);
+    expect(fnMatch).toBeTruthy();
+    const fnBody = fnMatch![0];
+    const guardIdx = fnBody.indexOf('scope == null');
+    const eqIdx = fnBody.indexOf('scope === focusedScope');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(eqIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(eqIdx);
+  });
+
+  it('the label predicate focus branch is gated with focusedScope !== null (WR-01)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/corpus.js'), 'utf8');
+    // At least two hits: isProjectRevealed's focus branch + the label predicate's focus branch.
+    const hits = src.match(/focusedScope !== null/g) || [];
+    expect(hits.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('setCorpusProjectExpanded contains no fitAndClamp( call (WR-05 — no reveal-time camera snap)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/corpus.js'), 'utf8');
+    const fnMatch = src.match(/function setCorpusProjectExpanded\([^)]*\) \{[\s\S]*?\n  \};/);
+    expect(fnMatch).toBeTruthy();
+    expect(fnMatch![0]).not.toContain('fitAndClamp(');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-04/WR-06 (61-15): syncCorpusFocus is the single writer of activeScope; filter
+// auto-expand notifies corpus.js for root ancestors.
+// ---------------------------------------------------------------------------
+
+describe('index.js source assertions: single-writer activeScope + filter auto-expand notify (61-15 Task 3)', () => {
+  it('makeProjectRow click handler contains no activeScope assignment (WR-04)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/index.js'), 'utf8');
+    const fnMatch = src.match(/function makeProjectRow\([^)]*\) \{[\s\S]*?\n  \}/);
+    expect(fnMatch).toBeTruthy();
+    // Only comparisons (`activeScope === ...`) may remain inside — no assignment (`activeScope =`
+    // NOT followed by another `=`).
+    expect(fnMatch![0]).not.toMatch(/activeScope = [^=]/);
+  });
+
+  it('activeScope is assigned in exactly two places: its declaration and inside ctx.syncCorpusFocus (WR-04)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/index.js'), 'utf8');
+    const assignments = src.match(/activeScope = [^=]/g) || [];
+    expect(assignments.length).toBe(2);
+    expect(src).toContain('let activeScope = null');
+    const syncFnMatch = src.match(/function syncCorpusFocus\(scope\) \{[\s\S]*?\n  \}/);
+    expect(syncFnMatch).toBeTruthy();
+    expect(syncFnMatch![0]).toContain('activeScope = scope || null');
+  });
+
+  it('computeVisible calls ctx.setCorpusProjectExpanded when force-expanding a filter match\'s newly-expanded root ancestor (WR-06)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/index.js'), 'utf8');
+    const fnMatch = src.match(/function computeVisible\([^)]*\) \{[\s\S]*?\n  \}/);
+    expect(fnMatch).toBeTruthy();
+    const fnBody = fnMatch![0];
+    expect(fnBody).toContain('ctx.setCorpusProjectExpanded');
+    // Guarded with a typeof check, matching the existing notifier idiom.
+    expect(fnBody).toMatch(/typeof ctx\.setCorpusProjectExpanded === 'function'/);
+  });
+
+  it('clearing the filter does not collapse rows — expandedIds is only unioned into, never rebuilt (WR-06 regression)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/index.js'), 'utf8');
+    const fnMatch = src.match(/function computeVisible\([^)]*\) \{[\s\S]*?\n  \}/);
+    expect(fnMatch).toBeTruthy();
+    // No `expandedIds =` reassignment anywhere in the function — only `.add(`/`.has(` calls.
+    expect(fnMatch![0]).not.toMatch(/expandedIds\s*=\s*new Set/);
+  });
+});
+
