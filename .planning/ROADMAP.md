@@ -1264,7 +1264,7 @@ Plans:
 **Goal:** The corpus view's chrome catches up to the Phase 59 HUD language and actually works for browsing. (1) Index column: redesign the corpus index/sidebar column so it reads in the same glass/token vocabulary as the Phase 59 chrome (founder verdict at the 59 D-15 checkpoint: current index column look is off). (2) Project browsing: fix the broken project-level browsing flow in the corpus view (founder verdict: "completely off") — navigating from a project to its docs and back should be the primary path (reader opens from corpus doc clicks, not standalone chrome — the rail reader icon was removed at the 59 checkpoint). Scope and exact defects to be captured via /gsd-discuss-phase 61 with the live install open.
 **Requirements**: TBD
 **Depends on:** Phase 59 (HUD token vocabulary + glass conventions; ships first)
-**Plans:** 7/14 plans executed (round-2 gap closure GAP-5..8 adds 61-10..61-14)
+**Plans:** 10/14 plans executed
 
 Plans:
 
@@ -1299,9 +1299,9 @@ Plans:
 **Round-2 Gap Closure (61-UAT founder-checkpoint gaps GAP-5..GAP-8, from the 61-09 re-run)**
 
 *R2 Wave 1*
-- [ ] 61-10-PLAN.md — GAP-5: remove rounded corners on .index-row/.index-entry (square-edged rows) + durable no-rounded-rows rule
-- [ ] 61-11-PLAN.md — GAP-7: unfocus animates the inverse of focus (animated zoomToFit over the full visible set at CORPUS_FOCUS_TRANSITION_MS)
-- [ ] 61-12-PLAN.md — GAP-8: server-side human-readable schema titles (never a UUID) + relabel the schema section (founder picks the label at a checkpoint)
+- [x] 61-10-PLAN.md — GAP-5: remove rounded corners on .index-row/.index-entry (square-edged rows) + durable no-rounded-rows rule
+- [x] 61-11-PLAN.md — GAP-7: unfocus animates the inverse of focus (animated zoomToFit over the full visible set at CORPUS_FOCUS_TRANSITION_MS)
+- [x] 61-12-PLAN.md — GAP-8: server-side human-readable schema titles (never a UUID) + relabel the schema section (founder picks the label at a checkpoint)
 
 *R2 Wave 2 (blocked on R2 Wave 1 — file overlap with 61-11 corpus.js / 61-12 index.js)*
 - [ ] 61-13-PLAN.md — GAP-6: index rail default-closed; corpus opens full-canvas + reopen handle, rail docks/reflows only on explicit open
