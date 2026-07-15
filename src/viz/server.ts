@@ -1329,6 +1329,16 @@ export function startVizServer(
           type: string; value: string; s: number; c: number;
           origin: string; tombstoned: number;
         }>;
+        // GAP-8 (61-12): a schema-anchored doc whose backing schema node has no value falls back
+        // to nd.slug in the COALESCE label — but for those docs nd.slug IS the schema UUID, leaking
+        // it as a visible label (T-61-22). Derive a human title instead: keep already-human labels
+        // as-is, else pull the doc's first markdown H1, else a human generic. Never a UUID.
+        const humanTitle = (row: { label: string; value: string }): string => {
+          if (row.label && !UUID_RE.test(row.label)) return row.label;
+          const h1 = row.value.match(/^\s*#\s+(.+?)\s*$/m);
+          if (h1) return h1[1]!.trim();
+          return 'Untitled note';
+        };
         // Containment hierarchy (WIKI-01, 39-02 re-verify): reuse stmtDocLinks (already compiled,
         // no new statement / no new Database — T-39-07) and keep only doc_containment edges.
         // doc_containment is directed source=parent → dst=child.
@@ -1391,7 +1401,7 @@ export function startVizServer(
           const { root, depth } = rootAndDepth(row.id);
           const resolvedParent = row.id === root ? resolvedRootParent.get(root) : undefined;
           const entry: Entry = {
-            slug: row.slug, label: row.label, id: row.id,
+            slug: row.slug, label: humanTitle(row), id: row.id,
             parentId: resolvedParent ?? childToParent.get(row.id) ?? null, depth,
           };
           const effectiveRootType = resolvedRootParent.has(root) ? 'project' : typeById.get(root);
