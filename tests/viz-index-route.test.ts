@@ -5,7 +5,8 @@
  *   - Returns 200 with { projects: [...], schemas: [...] }
  *   - A project-scoped doc (slug 'tonos') appears under projects, not schemas
  *   - UUID-slug schema-anchored docs appear under schemas with human label (D-04)
- *   - A schema doc whose backing schema node is missing still appears (label falls back to slug)
+ *   - A schema doc whose backing schema node is missing still appears (label derives from the doc's
+ *     H1 title, never leaking the backing UUID slug — GAP-8, 61-12)
  *   - Each entry includes { slug, label, id }
  *   - Route takes no params (returns all docs)
  *   - No new Database opened (read-only invariant, T-39-07)
@@ -107,7 +108,7 @@ const SCHEMA_UUID_1    = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const SCHEMA_DOC_ID_1  = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
 const SCHEMA_LABEL_1   = 'performance goals';
 
-// Schema-anchored doc 2: slug is a UUID, no backing schema node → label falls back to slug
+// Schema-anchored doc 2: slug is a UUID, no backing schema node → label derives from the doc's H1
 const SCHEMA_UUID_2    = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
 const SCHEMA_DOC_ID_2  = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
 // (no schema node created for SCHEMA_UUID_2)
@@ -185,7 +186,7 @@ beforeEach(async () => {
   store.upsertNodeDoc({ node_id: SCHEMA_DOC_ID_1, slug: SCHEMA_UUID_1, generated_at: T0, updated_at: T0 });
   store.upsertNodeScope({ node_id: SCHEMA_DOC_ID_1, scope: SCHEMA_UUID_1, updated_at: T0 });
 
-  // ── Schema-anchored doc 2: slug = UUID, NO schema node → label = slug ─────
+  // ── Schema-anchored doc 2: slug = UUID, NO schema node → label = doc's H1 title ─────
   store.upsertNode({
     id: SCHEMA_DOC_ID_2,
     type: 'doc',
@@ -301,15 +302,16 @@ describe('GET /index', () => {
     expect(entry!.label).not.toBe(SCHEMA_UUID_1);
   });
 
-  it('falls back to slug as label when backing schema node is missing', async () => {
+  it('derives a human-readable title (doc H1) when the backing schema node is missing — never leaks a UUID', async () => {
     const r = await makeRequest(port, '/index');
     const json = JSON.parse(r.body) as {
       schemas: Array<{ slug: string; label: string; id: string }>;
     };
     const entry = json.schemas.find(e => e.slug === SCHEMA_UUID_2);
     expect(entry).toBeDefined();
-    // No schema node → COALESCE falls back to slug
-    expect(entry!.label).toBe(SCHEMA_UUID_2);
+    // No schema node → COALESCE falls back to slug (the UUID) → humanTitle derives the doc's H1
+    expect(entry!.label).toBe('Orphan Schema Doc');
+    expect(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry!.label)).toBe(false);
   });
 
   it('each entry includes slug, label, and id fields', async () => {
