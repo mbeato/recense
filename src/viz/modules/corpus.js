@@ -651,10 +651,11 @@ export function initCorpus(ctx) {
   function goToCorpus() {
     setCorpusButton();
     setTopicsSearchHidden(true);
-    // Open the index sidebar BEFORE the reveal so the corpus offsets (left:var(--index-width))
-    // and frames into the remaining width — a true split, not an overlay (founder polish, 39).
-    // The dedicated #btn-index was removed; corpus IS the index entry point now.
-    if (typeof ctx.openIndexSidebar === 'function') ctx.openIndexSidebar();
+    // The rail starts CLOSED (GAP-6, founder direction) — corpus opens with the graph on the full
+    // canvas and only the slim left-edge reopen handle; the user opens the rail explicitly, then
+    // it docks/reflows as built. The dedicated #btn-index was removed; corpus IS the index entry
+    // point now.
+    if (typeof ctx.showIndexHandle === 'function') ctx.showIndexHandle();
     transition.toCorpus(prepareCorpus());
   }
   function goToBrain() {
