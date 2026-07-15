@@ -84,3 +84,10 @@ None - no external service configuration required.
 ---
 *Phase: 61-corpus-chrome-index-column-project-browsing*
 *Completed: 2026-07-14*
+
+## Self-Check: PASSED
+
+- FOUND: src/viz/css/styles.css
+- FOUND: 385b695 (task commit)
+- FOUND: d80d9e1 (summary commit)
+- FOUND: .planning/phases/61-corpus-chrome-index-column-project-browsing/61-10-SUMMARY.md
