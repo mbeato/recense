@@ -164,9 +164,22 @@ export function initIndex(ctx) {
         visible.add(e.id);
         let cur = e;
         while (cur && cur.parentId && byId.has(cur.parentId)) {
-          visible.add(cur.parentId);
-          expandedIds.add(cur.parentId);
-          cur = byId.get(cur.parentId);
+          const ancestorId = cur.parentId;
+          const wasAlreadyExpanded = expandedIds.has(ancestorId);
+          visible.add(ancestorId);
+          expandedIds.add(ancestorId);
+          // WR-06 (61-15): a filter-driven expansion must also reveal the chapters in the
+          // GRAPH, not just the tree (D-07 tree↔graph parity) — but only for a NEWLY expanded
+          // tree ROOT (its own parentId is null or not present in this section's byId map).
+          // Non-root ancestors don't gate corpus reveal (only project roots do).
+          if (!wasAlreadyExpanded) {
+            const ancestorEntry = byId.get(ancestorId);
+            const isRoot = !ancestorEntry.parentId || !byId.has(ancestorEntry.parentId);
+            if (isRoot && typeof ctx.setCorpusProjectExpanded === 'function') {
+              ctx.setCorpusProjectExpanded(ancestorEntry.slug, true);
+            }
+          }
+          cur = byId.get(ancestorId);
         }
       }
     }
@@ -219,15 +232,18 @@ export function initIndex(ctx) {
     a.addEventListener('click', (ev) => {
       ev.preventDefault();
       const scope = entry.slug; // project-root slug — see SCOPE ARGUMENT note (not a `.scope` field)
+      // WR-04 (61-15): activeScope is no longer written here — ctx.syncCorpusFocus is the
+      // single writer (set at its declaration + inside syncCorpusFocus only). corpus.js's
+      // focusCorpusProject calls syncCorpusFocus ONLY when the focus actually takes (a
+      // recognized scope), so a click on a row whose scope isn't focusable leaves activeScope
+      // untouched and the row never paints .active/aria-current (GAP-3 phantom-active fix).
       if (activeScope === scope) {
         // Clicking the already-active row toggles focus OFF (GAP-3) — collapse stays
         // chevron-owned, so the row's expanded state is left untouched here.
         if (typeof ctx.focusCorpusProject === 'function') ctx.focusCorpusProject(null);
-        activeScope = null;
       } else {
         if (!expandedIds.has(entry.id)) setProjectExpanded(entry, true);
         if (typeof ctx.focusCorpusProject === 'function') ctx.focusCorpusProject(scope);
-        activeScope = scope;
       }
       renderSections();
     });

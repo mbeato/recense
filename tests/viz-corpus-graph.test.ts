@@ -848,3 +848,47 @@ describe('corpus.js source assertions: null guards + no reveal-time camera snap 
   });
 });
 
+// ---------------------------------------------------------------------------
+// WR-04/WR-06 (61-15): syncCorpusFocus is the single writer of activeScope; filter
+// auto-expand notifies corpus.js for root ancestors.
+// ---------------------------------------------------------------------------
+
+describe('index.js source assertions: single-writer activeScope + filter auto-expand notify (61-15 Task 3)', () => {
+  it('makeProjectRow click handler contains no activeScope assignment (WR-04)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/index.js'), 'utf8');
+    const fnMatch = src.match(/function makeProjectRow\([^)]*\) \{[\s\S]*?\n  \}/);
+    expect(fnMatch).toBeTruthy();
+    // Only comparisons (`activeScope === ...`) may remain inside — no assignment (`activeScope =`
+    // NOT followed by another `=`).
+    expect(fnMatch![0]).not.toMatch(/activeScope = [^=]/);
+  });
+
+  it('activeScope is assigned in exactly two places: its declaration and inside ctx.syncCorpusFocus (WR-04)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/index.js'), 'utf8');
+    const assignments = src.match(/activeScope = [^=]/g) || [];
+    expect(assignments.length).toBe(2);
+    expect(src).toContain('let activeScope = null');
+    const syncFnMatch = src.match(/function syncCorpusFocus\(scope\) \{[\s\S]*?\n  \}/);
+    expect(syncFnMatch).toBeTruthy();
+    expect(syncFnMatch![0]).toContain('activeScope = scope || null');
+  });
+
+  it('computeVisible calls ctx.setCorpusProjectExpanded when force-expanding a filter match\'s newly-expanded root ancestor (WR-06)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/index.js'), 'utf8');
+    const fnMatch = src.match(/function computeVisible\([^)]*\) \{[\s\S]*?\n  \}/);
+    expect(fnMatch).toBeTruthy();
+    const fnBody = fnMatch![0];
+    expect(fnBody).toContain('ctx.setCorpusProjectExpanded');
+    // Guarded with a typeof check, matching the existing notifier idiom.
+    expect(fnBody).toMatch(/typeof ctx\.setCorpusProjectExpanded === 'function'/);
+  });
+
+  it('clearing the filter does not collapse rows — expandedIds is only unioned into, never rebuilt (WR-06 regression)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/index.js'), 'utf8');
+    const fnMatch = src.match(/function computeVisible\([^)]*\) \{[\s\S]*?\n  \}/);
+    expect(fnMatch).toBeTruthy();
+    // No `expandedIds =` reassignment anywhere in the function — only `.add(`/`.has(` calls.
+    expect(fnMatch![0]).not.toMatch(/expandedIds\s*=\s*new Set/);
+  });
+});
+
