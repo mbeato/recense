@@ -4,10 +4,12 @@
  *
  * The index is a LEFT SIDEBAR docked over the flat 2D corpus graph — the index list and the
  * corpus graph are two views of the same doc set, shown side by side (founder direction). There
- * is NO dedicated toolbar button: the sidebar opens by default when the corpus view opens
- * (corpus.js calls ctx.openIndexSidebar), and closes when the corpus returns to the brain
- * (ctx.closeIndexSidebar). A ◀ collapse control hides it for more graph room; a slim reopen
- * handle on the left edge brings it back.
+ * is NO dedicated toolbar button. The rail starts CLOSED (GAP-6, founder direction): entering the
+ * corpus shows only the left-edge reopen handle (corpus.js calls ctx.showIndexHandle), and the
+ * graph gets the full canvas. The user opens the rail explicitly via the handle (ctx.openIndexSidebar
+ * / openSidebar), after which it docks/reflows over the corpus. Returning to the brain hides the
+ * rail and the handle (ctx.closeIndexSidebar). A ◀ collapse control hides an open rail for more
+ * graph room; the slim reopen handle on the left edge brings it back.
  *
  * Sections (both rendered as nested trees, server partitions docs by tree-root type):
  *   - Projects: human-scoped docs (e.g. 'tonos') + any schema chapters nested under a project
@@ -425,6 +427,14 @@ export function initIndex(ctx) {
   ctx.openIndexSidebar = openSidebar;
   ctx.closeIndexSidebar = closeIndexSidebar;
   ctx.openIndex = openSidebar;
+  // GAP-6: reveal the left-edge reopen handle WITHOUT docking — the rail stays closed and the
+  // graph keeps the full canvas until the user explicitly clicks the handle (→ openSidebar).
+  // Preloads /index so that first open is instant.
+  ctx.showIndexHandle = function showIndexHandle() {
+    isSidebarOpen = false;
+    showReopenHandle(true);
+    prepareIndex();
+  };
   // corpus.js calls this (guarded) whenever focusedScope changes (focus/switch/Esc/background-
   // click) so the index's active row stays in sync with graph focus in both directions (GAP-3).
   ctx.syncCorpusFocus = function syncCorpusFocus(scope) {
