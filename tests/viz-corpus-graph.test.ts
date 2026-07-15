@@ -813,3 +813,38 @@ describe('GET /graph?type=doc projectScopes (WR-03, 61-15)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// WR-01/WR-05 (61-15): null-guarded chapter visibility + label tiering; no reveal-time
+// camera snap on setCorpusProjectExpanded.
+// ---------------------------------------------------------------------------
+
+describe('corpus.js source assertions: null guards + no reveal-time camera snap (61-15 Task 2)', () => {
+  it('isProjectRevealed guards a null scope BEFORE the equality/focus check (WR-01)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/corpus.js'), 'utf8');
+    expect(src).toMatch(/scope == null/);
+    // The guard must appear inside isProjectRevealed, before the equality check.
+    const fnMatch = src.match(/function isProjectRevealed\(node\) \{[\s\S]*?\n  \}/);
+    expect(fnMatch).toBeTruthy();
+    const fnBody = fnMatch![0];
+    const guardIdx = fnBody.indexOf('scope == null');
+    const eqIdx = fnBody.indexOf('scope === focusedScope');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(eqIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(eqIdx);
+  });
+
+  it('the label predicate focus branch is gated with focusedScope !== null (WR-01)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/corpus.js'), 'utf8');
+    // At least two hits: isProjectRevealed's focus branch + the label predicate's focus branch.
+    const hits = src.match(/focusedScope !== null/g) || [];
+    expect(hits.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('setCorpusProjectExpanded contains no fitAndClamp( call (WR-05 — no reveal-time camera snap)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/viz/modules/corpus.js'), 'utf8');
+    const fnMatch = src.match(/function setCorpusProjectExpanded\([^)]*\) \{[\s\S]*?\n  \};/);
+    expect(fnMatch).toBeTruthy();
+    expect(fnMatch![0]).not.toContain('fitAndClamp(');
+  });
+});
+

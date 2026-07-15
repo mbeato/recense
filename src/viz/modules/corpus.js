@@ -181,10 +181,14 @@ export function initCorpus(ctx) {
     return rootScope(node.scope);
   }
 
-  /** True when a node's owning project is currently focused OR its tree row is expanded. */
+  /** True when a node's owning project is currently focused OR its tree row is expanded.
+   *  WR-01 (61-15): a scope-less doc (scope resolves to null) is HIDDEN at rest — the null
+   *  guard runs BEFORE the equality check so it can never match `null === null` when nothing
+   *  is focused. Mirrors the already-correct `isRelated` guard in nodeCanvasObject below. */
   function isProjectRevealed(node) {
     const scope = projectScopeOf(node);
-    return scope === focusedScope || expandedScopes.has(scope);
+    if (scope == null) return false;
+    return (focusedScope !== null && scope === focusedScope) || expandedScopes.has(scope);
   }
 
   const isNodeVisible = (n) => !isChapterNode(n) || isProjectRevealed(n);
@@ -346,7 +350,7 @@ export function initCorpus(ctx) {
           ? true
           : isChapterDoc
             ? isHover
-            : (globalScale >= CORPUS_LABEL_ZOOM_THRESHOLD || isHover || projectScopeOf(node) === focusedScope);
+            : (globalScale >= CORPUS_LABEL_ZOOM_THRESHOLD || isHover || (focusedScope !== null && projectScopeOf(node) === focusedScope));
         if (drawLabel) {
           // Label: the slug/title, drawn below the node. Scale font with zoom for
           // legibility but cap so it doesn't explode when zoomed in.
@@ -820,7 +824,6 @@ export function initCorpus(ctx) {
     if (expanded) expandedScopes.add(scope);
     else expandedScopes.delete(scope);
     reassertPaint();
-    fitAndClamp();
   };
 
   // Focus-exit Esc listener (independent guarded listener — no central dispatcher, matches the
