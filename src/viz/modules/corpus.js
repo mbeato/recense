@@ -768,14 +768,20 @@ export function initCorpus(ctx) {
   //
   // focusCorpusProject(scope|null): focus a project's cluster — zoom/frame it, dim every
   // non-related node/link (D-04), and reveal its chapters (D-07, via isProjectRevealed).
-  // null clears focus and reframes to the full visible set. A scope not in projectScopes is
+  // null clears focus and ANIMATES a zoom-out to the full visible set (inverse of focus, same
+  // CORPUS_FOCUS_TRANSITION_MS), not an instant snap (GAP-7). A scope not in projectScopes is
   // ignored (defensive — Plan 03 should never pass one, but corpus.js doesn't trust callers).
   ctx.focusCorpusProject = function focusCorpusProject(scope) {
     if (!CorpusGraph) return;
     if (scope === null) {
       focusedScope = null;
       reassertPaint();
-      fitAndClamp();
+      try {
+        CorpusGraph.zoomToFit(CORPUS_FOCUS_TRANSITION_MS, 40, (node) => isNodeVisible(node));
+        if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
+          CorpusGraph.zoom(MAX_ZOOM, 0);
+        }
+      } catch (_) { /* ignore */ }
       if (typeof ctx.syncCorpusFocus === 'function') ctx.syncCorpusFocus(null);
       return;
     }
