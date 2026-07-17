@@ -786,6 +786,11 @@ export function initCorpus(ctx) {
   // null clears focus and ANIMATES a zoom-out to the full visible set (inverse of focus, same
   // CORPUS_FOCUS_TRANSITION_MS), not an instant snap (GAP-7). A scope not in projectScopes is
   // ignored (defensive — Plan 03 should never pass one, but corpus.js doesn't trust callers).
+  // GAP-7 regression fix: the MAX_ZOOM clamp is deferred via setTimeout(..., CORPUS_FOCUS_TRANSITION_MS)
+  // so it reads the POST-animation zoom — reading CorpusGraph.zoom() on the same tick as the
+  // zoomToFit(...) call samples the stale PRE-animation zoom, which could both let a small cluster
+  // overshoot MAX_ZOOM unclamped and fire an instant zoom(MAX_ZOOM, 0) mid-transition that snapped
+  // the 500ms focus/unfocus animation instead of letting it finish smoothly.
   ctx.focusCorpusProject = function focusCorpusProject(scope) {
     if (!CorpusGraph) return;
     if (scope === null) {
@@ -793,9 +798,13 @@ export function initCorpus(ctx) {
       reassertPaint();
       try {
         CorpusGraph.zoomToFit(CORPUS_FOCUS_TRANSITION_MS, 40, (node) => isNodeVisible(node));
-        if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
-          CorpusGraph.zoom(MAX_ZOOM, 0);
-        }
+        setTimeout(() => {
+          try {
+            if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
+              CorpusGraph.zoom(MAX_ZOOM, 0);
+            }
+          } catch (_) { /* ignore */ }
+        }, CORPUS_FOCUS_TRANSITION_MS);
       } catch (_) { /* ignore */ }
       if (typeof ctx.syncCorpusFocus === 'function') ctx.syncCorpusFocus(null);
       return;
@@ -809,9 +818,13 @@ export function initCorpus(ctx) {
         40,
         (node) => projectScopeOf(node) === scope && isNodeVisible(node)
       );
-      if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
-        CorpusGraph.zoom(MAX_ZOOM, 0);
-      }
+      setTimeout(() => {
+        try {
+          if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
+            CorpusGraph.zoom(MAX_ZOOM, 0);
+          }
+        } catch (_) { /* ignore */ }
+      }, CORPUS_FOCUS_TRANSITION_MS);
     } catch (_) { /* ignore */ }
     if (typeof ctx.syncCorpusFocus === 'function') ctx.syncCorpusFocus(focusedScope);
   };

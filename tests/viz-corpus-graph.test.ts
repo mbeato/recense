@@ -343,6 +343,40 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).toContain('zoomToFit');
   });
 
+  // GAP-7 (61-17, WR-01): focusCorpusProject must defer its MAX_ZOOM clamp check until AFTER
+  // the CORPUS_FOCUS_TRANSITION_MS animated zoomToFit completes, in BOTH branches (focus + null
+  // -clear) — a same-tick clamp reads the stale pre-animation zoom, letting a small cluster
+  // overshoot MAX_ZOOM unclamped and/or snapping the animated unfocus with an instant zoom(...).
+  it('source: focusCorpusProject defers the MAX_ZOOM clamp inside a setTimeout(CORPUS_FOCUS_TRANSITION_MS) in both branches (GAP-7)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+      'utf8',
+    );
+    const fnMatch = src.match(/ctx\.focusCorpusProject = function focusCorpusProject\(scope\) \{[\s\S]*?\n  \};/);
+    expect(fnMatch).toBeTruthy();
+    const fnBody = fnMatch![0];
+    // At least two deferred-clamp setTimeout wrappers (one per branch), each delayed by
+    // CORPUS_FOCUS_TRANSITION_MS.
+    const setTimeoutHits = fnBody.match(/setTimeout\(/g) || [];
+    expect(setTimeoutHits.length).toBeGreaterThanOrEqual(2);
+    const delayHits = fnBody.match(/\},\s*CORPUS_FOCUS_TRANSITION_MS\)/g) || [];
+    expect(delayHits.length).toBeGreaterThanOrEqual(2);
+    // No bare same-tick clamp remains: every zoomToFit( call must be followed (before any
+    // subsequent zoomToFit() or the end of the function) by a setTimeout( before the next
+    // occurrence of the synchronous clamp check outside a setTimeout body.
+    const segments = fnBody.split('zoomToFit(').slice(1);
+    for (const seg of segments) {
+      const nextSetTimeoutIdx = seg.indexOf('setTimeout(');
+      const nextZoomToFitIdx = seg.indexOf('zoomToFit(');
+      const boundedSeg = nextZoomToFitIdx === -1 ? seg : seg.slice(0, nextZoomToFitIdx);
+      expect(nextSetTimeoutIdx).toBeGreaterThan(-1);
+      // The clamp check text must not appear in boundedSeg BEFORE the setTimeout( token —
+      // i.e. no same-tick clamp between this zoomToFit( and its setTimeout( wrapper.
+      const preSetTimeout = boundedSeg.slice(0, boundedSeg.indexOf('setTimeout('));
+      expect(preSetTimeout).not.toMatch(/CorpusGraph\.zoom\(\)\s*>\s*MAX_ZOOM/);
+    }
+  });
+
   // Fix B — corpus doc-node click opens the reader IN PLACE (no page navigation)
   it('source: corpus.js onNodeClick calls ctx.openReader (NOT window.location)', () => {
     const src = fs.readFileSync(
@@ -701,6 +735,16 @@ describe('GET /graph?type=doc resolves human schema label (CORPUS-04 BUG-1)', ()
     writeDoc(store, db, { docId: 'doc-bm', slug: 'schema-bm', markdown: '# stub', citedFactIds: [], linkedDocRefs: [], now: 1000 });
     // Project-scope doc: slug 'tonos' matches no schema → label falls back to slug.
     writeDoc(store, db, { docId: 'doc-tonos', slug: 'tonos', markdown: '# Tonos', citedFactIds: [], linkedDocRefs: [], now: 1100 });
+    // GAP-8 (61-17): schema-anchored doc with NO backing schema node — slug = UUID, COALESCE
+    // falls back to the raw UUID slug; humanTitle() must derive the H1 instead.
+    writeDoc(store, db, {
+      docId: 'doc-orphan-schema',
+      slug: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+      markdown: '# Orphan Corpus Doc\n\nNo backing schema.',
+      citedFactIds: [],
+      linkedDocRefs: [],
+      now: 1200,
+    });
 
     db.close();
     port = await getFreePort();
@@ -730,6 +774,20 @@ describe('GET /graph?type=doc resolves human schema label (CORPUS-04 BUG-1)', ()
     const tonos = nodes.find(n => n.id === 'doc-tonos');
     expect(tonos).toBeDefined();
     expect(tonos!.label).toBe('tonos');
+  });
+
+  // GAP-8 (61-17): a schema-anchored doc whose backing schema node is MISSING (or has no
+  // value) falls back to nd.slug in the stmtDocNodes COALESCE label — but for those docs
+  // nd.slug IS the schema UUID. Prior to this fix, /graph?type=doc shipped that raw UUID as
+  // the node label (unlike /index, which already ran it through humanTitle()). Mirrors the
+  // /index 'Orphan Schema Doc' fixture at tests/viz-index-route.test.ts:305-315.
+  it('schema-anchored doc with NO backing schema node derives its H1 title, never ships the raw UUID (GAP-8)', async () => {
+    const res = await makeRequest(port, '/graph?type=doc');
+    const nodes = JSON.parse(res.body).nodes as Array<{ id: string; slug: string; label: string }>;
+    const orphan = nodes.find(n => n.id === 'doc-orphan-schema');
+    expect(orphan).toBeDefined();
+    expect(orphan!.label).toBe('Orphan Corpus Doc');
+    expect(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orphan!.label)).toBe(false);
   });
 });
 
