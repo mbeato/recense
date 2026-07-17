@@ -735,6 +735,16 @@ describe('GET /graph?type=doc resolves human schema label (CORPUS-04 BUG-1)', ()
     writeDoc(store, db, { docId: 'doc-bm', slug: 'schema-bm', markdown: '# stub', citedFactIds: [], linkedDocRefs: [], now: 1000 });
     // Project-scope doc: slug 'tonos' matches no schema → label falls back to slug.
     writeDoc(store, db, { docId: 'doc-tonos', slug: 'tonos', markdown: '# Tonos', citedFactIds: [], linkedDocRefs: [], now: 1100 });
+    // GAP-8 (61-17): schema-anchored doc with NO backing schema node — slug = UUID, COALESCE
+    // falls back to the raw UUID slug; humanTitle() must derive the H1 instead.
+    writeDoc(store, db, {
+      docId: 'doc-orphan-schema',
+      slug: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+      markdown: '# Orphan Corpus Doc\n\nNo backing schema.',
+      citedFactIds: [],
+      linkedDocRefs: [],
+      now: 1200,
+    });
 
     db.close();
     port = await getFreePort();
@@ -764,6 +774,20 @@ describe('GET /graph?type=doc resolves human schema label (CORPUS-04 BUG-1)', ()
     const tonos = nodes.find(n => n.id === 'doc-tonos');
     expect(tonos).toBeDefined();
     expect(tonos!.label).toBe('tonos');
+  });
+
+  // GAP-8 (61-17): a schema-anchored doc whose backing schema node is MISSING (or has no
+  // value) falls back to nd.slug in the stmtDocNodes COALESCE label — but for those docs
+  // nd.slug IS the schema UUID. Prior to this fix, /graph?type=doc shipped that raw UUID as
+  // the node label (unlike /index, which already ran it through humanTitle()). Mirrors the
+  // /index 'Orphan Schema Doc' fixture at tests/viz-index-route.test.ts:305-315.
+  it('schema-anchored doc with NO backing schema node derives its H1 title, never ships the raw UUID (GAP-8)', async () => {
+    const res = await makeRequest(port, '/graph?type=doc');
+    const nodes = JSON.parse(res.body).nodes as Array<{ id: string; slug: string; label: string }>;
+    const orphan = nodes.find(n => n.id === 'doc-orphan-schema');
+    expect(orphan).toBeDefined();
+    expect(orphan!.label).toBe('Orphan Corpus Doc');
+    expect(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orphan!.label)).toBe(false);
   });
 });
 

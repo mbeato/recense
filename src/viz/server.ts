@@ -333,6 +333,22 @@ export function startVizServer(
     LEFT JOIN node_scope ns ON ns.node_id = n.id
     WHERE n.type='doc' AND n.tombstoned=0
   `);
+
+  // GAP-8 (61-17, WR-04/IN-06): shared UUID guard + humanTitle() derivation, hoisted here so
+  // BOTH the /graph?type=doc doc-node mapping and the /index handler read stmtDocNodes rows
+  // through the SAME guard — a doc-node label can never drift between the two surfaces.
+  // A schema-anchored doc whose backing schema node has no value falls back to nd.slug in the
+  // stmtDocNodes COALESCE label above — but for those docs nd.slug IS the schema UUID, leaking
+  // it as a visible label. humanTitle() derives a human title instead: keep already-human labels
+  // as-is, else pull the doc's first markdown H1, else a human generic. Never a UUID.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const humanTitle = (row: { label: string; value: string }): string => {
+    if (row.label && !UUID_RE.test(row.label)) return row.label;
+    const h1 = row.value.match(/^\s*#\s+(.+?)\s*$/m);
+    if (h1) return h1[1]!.trim();
+    return 'Untitled note';
+  };
+
   // CORPUS-04: Return doc_link + doc_containment + doc_reference edges, but only between
   // live (tombstoned=0) doc nodes on both ends. Dangling edges whose src or dst has been
   // tombstoned or is not a doc node are excluded (T-28-DANGLE guard).
@@ -922,10 +938,13 @@ export function startVizServer(
           // always carry ownerScope: null.
           const schemaToProject = resolveSchemaToProject();
           const graphSchemaSlugRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-          nodes = (nodes as Array<NodeRecord & { slug?: string }>).map(n => {
+          nodes = (nodes as Array<NodeRecord & { slug?: string; label: string; value: string }>).map(n => {
             const slug = n.slug;
             const ownerScope = slug && graphSchemaSlugRe.test(slug) ? (schemaToProject.get(slug) ?? null) : null;
-            return { ...n, ownerScope };
+            // GAP-8 (61-17): pass the doc-node label through the same humanTitle() UUID guard
+            // as /index, so hovering a schema-anchored doc with an empty backing schema value
+            // never shows the raw UUID slug.
+            return { ...n, ownerScope, label: humanTitle(n) };
           }) as NodeRecord[];
           // WR-03 (61-15): ship the single recognized-project root-scope set, mirroring the
           // /index recognized-project rule (a doc is a project when its slug is NOT a UUID) —
@@ -1340,22 +1359,13 @@ export function startVizServer(
         return;
       }
       try {
-        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        // UUID_RE + humanTitle() are hoisted above (near stmtDocNodes) and shared with
+        // /graph?type=doc (GAP-8, 61-17) — this handler's behavior is unchanged.
         const rows = stmtDocNodes.all() as Array<{
           id: string; slug: string; label: string;
           type: string; value: string; s: number; c: number;
           origin: string; tombstoned: number;
         }>;
-        // GAP-8 (61-12): a schema-anchored doc whose backing schema node has no value falls back
-        // to nd.slug in the COALESCE label — but for those docs nd.slug IS the schema UUID, leaking
-        // it as a visible label (T-61-22). Derive a human title instead: keep already-human labels
-        // as-is, else pull the doc's first markdown H1, else a human generic. Never a UUID.
-        const humanTitle = (row: { label: string; value: string }): string => {
-          if (row.label && !UUID_RE.test(row.label)) return row.label;
-          const h1 = row.value.match(/^\s*#\s+(.+?)\s*$/m);
-          if (h1) return h1[1]!.trim();
-          return 'Untitled note';
-        };
         // Containment hierarchy (WIKI-01, 39-02 re-verify): reuse stmtDocLinks (already compiled,
         // no new statement / no new Database — T-39-07) and keep only doc_containment edges.
         // doc_containment is directed source=parent → dst=child.
