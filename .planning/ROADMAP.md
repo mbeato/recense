@@ -1264,7 +1264,7 @@ Plans:
 **Goal:** The corpus view's chrome catches up to the Phase 59 HUD language and actually works for browsing. (1) Index column: redesign the corpus index/sidebar column so it reads in the same glass/token vocabulary as the Phase 59 chrome (founder verdict at the 59 D-15 checkpoint: current index column look is off). (2) Project browsing: fix the broken project-level browsing flow in the corpus view (founder verdict: "completely off") — navigating from a project to its docs and back should be the primary path (reader opens from corpus doc clicks, not standalone chrome — the rail reader icon was removed at the 59 checkpoint). Scope and exact defects to be captured via /gsd-discuss-phase 61 with the live install open.
 **Requirements**: TBD
 **Depends on:** Phase 59 (HUD token vocabulary + glass conventions; ships first)
-**Plans:** 16/16 plans complete
+**Plans:** 18 plans (16 complete + 2 round-4 gap closure planned)
 
 Plans:
 
@@ -1316,3 +1316,11 @@ Plans:
 
 *R3 Wave 2 (blocked on R3 Wave 1 — file overlap on index.js)*
 - [x] 61-16-PLAN.md — GAP-9: detach the index into a free-floating, draggable, own-chrome panel (graph keeps full canvas, no reflow); closing founder live-install sign-off
+
+**Round-4 Gap Closure (61-VERIFICATION regressions GAP-7/GAP-8 + 61-UAT founder rejection GAP-10)**
+
+*R4 Wave 1*
+- [ ] 61-17-PLAN.md — GAP-7: defer the MAX_ZOOM clamp until the focus/unfocus animation completes (no overshoot, no mid-transition snap); GAP-8: apply a shared humanTitle() UUID guard to the /graph?type=doc node label (never a raw UUID on hover)
+
+*R4 Wave 2 (blocked on R4 Wave 1 — sequenced so the founder verifies a fully-fixed build)*
+- [ ] 61-18-PLAN.md — GAP-10: rework the index from a floating overlay into a docked LEFT column outside the graph (reinstated `.index-docked #corpus-graph` reflow, drag machinery removed); closing founder live-install sign-off
