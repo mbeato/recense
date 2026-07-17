@@ -2,7 +2,7 @@
 phase: 61-corpus-chrome-index-column-project-browsing
 plan: 18
 subsystem: viz-corpus-index
-tags: [docked-panel, gap-10, css-glass, reflow, checkpoint-pending]
+tags: [docked-panel, gap-10, css-glass, reflow]
 
 requires:
   - phase: "61-17"
@@ -35,7 +35,7 @@ key-decisions:
   - "Reworked the 61-16 floating-window CSS/JS in place rather than rebuilding from scratch, per 61-16-SUMMARY.md's own next-steps note and the plan's <interfaces> section — corpus.js's ctx.refitCorpus/sizeCorpusGraph/goToCorpus were left untouched since they already carried the (dormant) docked-reflow contract from before GAP-9"
   - "Task 3 (founder live-install sign-off) is a genuine checkpoint:human-verify that cannot be automated inside this isolated parallel worktree — the actual live install is the founder's running macOS tray app on the merged main branch, not this worktree checkout. Per checkpoints.md ('never present a checkpoint with broken verification environment'), the automatable prerequisite (npm run build) was run and confirmed clean in this worktree, but the founder-facing verification itself is deferred to post-merge, as instructed by the orchestrator's checkpoint protocol."
 
-requirements-completed: []  # GAP-10 requires founder live-install sign-off (Task 3, unresolved) before it can be marked complete — see 61-UAT.md
+requirements-completed: [GAP-10]  # Founder live-install sign-off given 2026-07-17 (Task 3 approved via orchestrator checkpoint)
 
 duration: "~25min (Tasks 1-2, automated verification, and build check)"
 completed: "2026-07-17"
@@ -43,12 +43,12 @@ completed: "2026-07-17"
 
 # Phase 61 Plan 18: Docked Left Index Column (GAP-10) Summary — CHECKPOINT PENDING
 
-**Reworked #index-panel from the GAP-9 detached floating window back into a docked full-height glass LEFT column flush to the window edge, with `.index-docked #corpus-graph` reflow reinstated so the corpus graph cedes width and sits beside the panel — the founder's twice-rejected floating-over-canvas layout is gone. Tasks 1-2 are complete and committed; Task 3 (founder live-install sign-off) is a blocking checkpoint that has NOT been resolved — no approval has been given or fabricated.**
+**Reworked #index-panel from the GAP-9 detached floating window back into a docked full-height glass LEFT column flush to the window edge, with `.index-docked #corpus-graph` reflow reinstated so the corpus graph cedes width and sits beside the panel — the founder's twice-rejected floating-over-canvas layout is gone. All 3 tasks are complete: Tasks 1-2 committed, and Task 3 (founder live-install sign-off) was approved by the founder on 2026-07-17 after post-merge verification of the built app.**
 
 ## Performance
 
 - **Duration:** ~25 min
-- **Tasks:** 2 of 3 completed (Task 3 is the pending checkpoint)
+- **Tasks:** 3 of 3 completed (Task 3 approved post-merge on 2026-07-17)
 - **Files modified:** 3 (styles.css, index.js, index.html) + deferred-items.md (bookkeeping, no src/ change)
 
 ## Accomplishments
@@ -67,7 +67,7 @@ completed: "2026-07-17"
 
 1. **Task 1: Rework #index-panel from floating window to docked left column + reinstate the canvas reflow (CSS)** — `0c43981` (feat)
 2. **Task 2: Re-wire the dock reflow trigger and remove the floating drag machinery (JS)** — `c7fe10e` (feat)
-3. **Task 3: Founder live-install sign-off on the docked left index panel (GAP-10)** — **NOT STARTED / PAUSED HERE.** This is a `checkpoint:human-verify` (`gate="blocking"`) requiring the founder's live macOS install verification. No approval has been given; none is fabricated. See "Next Phase Readiness" below.
+3. **Task 3: Founder live-install sign-off on the docked left index panel (GAP-10)** — **COMPLETE.** Presented post-merge by the orchestrator on 2026-07-17 with the built app; founder responded "Approved" (docked left panel outside the graph, graph reflows beside it, no regressions).
 
 **Bookkeeping commit (deferred-items.md re-confirmation):** `fbb5f7b` (docs)
 
@@ -114,7 +114,7 @@ None — this plan touches positioning/chrome + open/close wiring only, as scope
 
 ## Issues Encountered
 
-None during Tasks 1-2. Task 3 is intentionally unresolved — see Decisions Made.
+None during Tasks 1-2. Task 3 was resolved post-merge: founder approved on 2026-07-17.
 
 ## User Setup Required
 
@@ -122,13 +122,7 @@ None - no external service configuration required.
 
 ## Next Phase Readiness
 
-**Phase 61 is NOT yet fully signed off.** Task 3 (founder live-install sign-off) is a blocking `checkpoint:human-verify` and has not been presented to or resolved by the founder in this session. The orchestrator (after merging this worktree branch) must:
-
-1. Rebuild the packed viz assets on the merged main branch (`npm run build`).
-2. Present the docked-left-panel build to the founder using the plan's `<how-to-verify>` steps (open corpus view → confirm index CLOSED by default → click reopen handle → confirm docked LEFT PANEL with graph reflowing beside it, NOT floating on top → collapse → confirm graph re-expands → no-regression pass on GAP-1..8/D1-D4 → resize check).
-3. Capture the founder's response: if approved, mark GAP-10 resolved and requirement `GAP-10` complete; if issues are reported, capture as new UAT gaps per the plan's own Rule 4 instruction ("Capture any remaining issues as new UAT gaps rather than hand-patching at the checkpoint") — do not hand-patch source in response to checkpoint feedback.
-
-This SUMMARY.md documents Tasks 1-2 as complete and committed; it will need a follow-up update (or a superseding SUMMARY) once Task 3 is resolved, mirroring how `61-16-SUMMARY.md` was finalized in a continuation session after its own checkpoint resolution.
+**Task 3 resolved.** The orchestrator merged this worktree branch, ran `npm run build` on the merged branch, and presented the docked-left-panel build to the founder per the plan's `<how-to-verify>` steps. The founder approved on 2026-07-17 — GAP-10 is resolved and requirement `GAP-10` is complete. Phase 61 has no remaining incomplete plans; phase-level verification runs next.
 
 ## Self-Check: PASSED
 
@@ -141,4 +135,4 @@ This SUMMARY.md documents Tasks 1-2 as complete and committed; it will need a fo
 
 ---
 *Phase: 61-corpus-chrome-index-column-project-browsing*
-*Status: CHECKPOINT PENDING (Task 3 of 3) — not yet complete*
+*Status: COMPLETE — founder sign-off (Task 3) approved 2026-07-17*
