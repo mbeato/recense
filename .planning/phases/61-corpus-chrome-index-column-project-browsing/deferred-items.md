@@ -33,3 +33,15 @@ missing `dist/cli.js` build artifact in this worktree, not to any GAP-7/GAP-8 ch
 plan's own verification targets all pass clean: `npx tsc --noEmit` clean,
 `tests/viz-corpus-graph.test.ts` 40/40, `tests/viz-index-route.test.ts` 20/20. Out of scope for
 61-17; not investigated or fixed.
+
+## 61-18
+
+**Same pre-existing full-suite failures re-confirmed.** `npx vitest run` (full suite) after
+61-18's changes shows the identical 23 failures across the identical 7 test files listed above.
+None of these files reference `src/viz/css/styles.css`, `src/viz/modules/index.js`, or
+`src/viz/index.html` (the only files this plan touched) — same missing `dist/cli.js` build
+artifact root cause, unrelated to the GAP-10 docked-left-panel rework. The plan's own
+verification targets all pass clean: `npx tsc --noEmit` clean,
+`tests/viz-activity-palette-invariants.test.ts` 45/45,
+`tests/viz-frontend-static.test.ts` 52/52, `tests/viz-index-route.test.ts` 20/20,
+`tests/viz-corpus-graph.test.ts` 40/40. Out of scope for 61-18; not investigated or fixed.
