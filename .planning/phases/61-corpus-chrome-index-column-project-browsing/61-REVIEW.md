@@ -1,72 +1,84 @@
 ---
 phase: 61-corpus-chrome-index-column-project-browsing
-reviewed: 2026-07-16T00:00:00Z
+reviewed: 2026-07-17T00:00:00Z
 depth: standard
-files_reviewed: 9
+files_reviewed: 6
 files_reviewed_list:
-  - src/viz/css/styles.css
-  - src/viz/index.html
-  - src/viz/modules/constants.js
   - src/viz/modules/corpus.js
-  - src/viz/modules/index.js
   - src/viz/server.ts
-  - tests/viz-activity-palette-invariants.test.ts
   - tests/viz-corpus-graph.test.ts
-  - tests/viz-index-route.test.ts
+  - src/viz/css/styles.css
+  - src/viz/modules/index.js
+  - src/viz/index.html
 findings:
   critical: 0
-  warning: 4
+  warning: 3
   info: 10
-  total: 14
-status: issues_found
+  total: 13
+status: issues
 ---
 
-# Phase 61: Code Review Report (round 4)
+# Phase 61: Code Review Report (round 4 — supersedes the round-3 report)
 
-**Reviewed:** 2026-07-16
+**Reviewed:** 2026-07-17
 **Depth:** standard
-**Files Reviewed:** 9
-**Status:** issues_found
+**Files Reviewed:** 6
+**Status:** issues
 
 ## Summary
 
-Round-4 review after plan 61-15 (predicate unification: server-shipped `projectScopes`, single-writer `activeScope`) and plan 61-16 (GAP-9 floating draggable `#index-panel`). The floating-panel paradigm itself is NOT flagged (GAP-10 docked-left rework is an acknowledged follow-up).
+Round-4 re-review of the gap-closure diff since `5848d73`: plan 61-17 (GAP-7 deferred MAX_ZOOM clamp; GAP-8 shared `humanTitle` UUID guard) and plan 61-18 (GAP-10 docked-left `#index-panel`, drag machinery removed). This report REPLACES the previous 61-REVIEW.md (round 3+, reviewed 2026-07-16).
 
-**Round-3 fixes verified as landed:**
+**Previously-reported findings verified as resolved:**
 
-- **WR-01 (null-scope inversion)** — FIXED. `isProjectRevealed` (`corpus.js:189-192`) guards `scope == null` BEFORE the equality check; the label predicate (`corpus.js:353`) gates its focus branch with `focusedScope !== null`. Locked by `viz-corpus-graph.test.ts:821-841` (guard-ordering source assertion).
-- **WR-03 (project-scope predicate drift)** — FIXED. Server ships `projectScopes` on `/graph?type=doc` (`server.ts:930-941`); `corpus.js:243-251` consumes it via an `Array.isArray` presence gate (empty-but-present honored), keeping the old subject-doc derivation only as a defensive fallback. Locked by `viz-corpus-graph.test.ts:745-814`, including the hub-only-project case.
-- **WR-04 (activeScope desync)** — FIXED. `activeScope` is assigned in exactly two places — its declaration (`index.js:62`) and inside `ctx.syncCorpusFocus` (`index.js:498-501`); the row click handler only reads it, and corpus.js notifies `syncCorpusFocus` only when a focus actually takes or clears. Locked by `viz-corpus-graph.test.ts:856-874`.
-- **WR-05 (reveal-time camera snap)** — FIXED. `setCorpusProjectExpanded` (`corpus.js:822-827`) contains no `fitAndClamp` call. Locked by `viz-corpus-graph.test.ts:843-848`.
-- **WR-06 (filter auto-expand parity)** — FIXED. `computeVisible` (`index.js:204-233`) notifies `ctx.setCorpusProjectExpanded` for newly-expanded root ancestors; `expandedIds` is only unioned into. Locked by `viz-corpus-graph.test.ts:876-892`.
+- **Round-3 WR-01 (MAX_ZOOM clamp race)** — FIXED. Both branches of `focusCorpusProject` now defer the clamp inside `setTimeout(…, CORPUS_FOCUS_TRANSITION_MS)` (`corpus.js:801-807, 821-827`), matching the suggested fix verbatim. Locked by the new source-assertion test (`viz-corpus-graph.test.ts:346-378`), whose segment logic I traced and confirmed sound (no same-tick clamp can slip past it). A residual stale-timer race remains — see WR-02 below.
+- **Round-3 WR-04 (GAP-8 UUID label on `/graph?type=doc`)** — FIXED. `UUID_RE` + `humanTitle()` are hoisted to server scope beside `stmtDocNodes` (`server.ts:344-350`) and applied in BOTH the `/graph?type=doc` node mapping (`server.ts:947`) and the `/index` handler (`server.ts:1431`) — guard-set now equals ship-set for doc labels. I verified `stmtDocNodes` selects `n.value` (`server.ts:327`), so `humanTitle(n)` cannot dereference undefined in the `/graph` mapping. Locked by the new orphan-schema fixture + `/graph` label assertion (`viz-corpus-graph.test.ts:738-748, 779-791`). Both test suites pass (60/60).
+- **Round-3 WR-03 (stale dragged position on reopen)** and **IN-09 (drag ergonomics)** — OBSOLETE. The entire drag machinery (`panelPos`, pointer handlers, `.dragging` cursor rules) was removed by the GAP-10 docked-column rework; nothing references `panelPos` anymore.
+- **GAP-10 reflow mechanics verified sound:** `#corpus-graph` is `position:fixed; inset:0` with an **opacity-only** transition (`styles.css:1200-1212`), so `.index-docked #corpus-graph { left: var(--index-width) }` (`styles.css:1309`) shrinks it against its `right:0` anchor, and the synchronous `container.clientWidth` read in `sizeCorpusGraph` (`corpus.js:568`) sees the final post-toggle width — no transition race. `openSidebar`/`hidePanel` toggle `body.index-docked` before calling `ctx.refitCorpus` (`index.js:406-413, 421-422`), and the round-3 "stale docked comments" in corpus.js (`sizeCorpusGraph`'s `.index-docked` note, `goToCorpus`'s dock/reflow note, `refitCorpus`'s caller note) are accurate again now that docking is restored.
 
-**Round-3 WR-02 (MAX_ZOOM clamp race) was NOT fixed** and is re-reported below as WR-01. Three new findings target the 61-15/61-16 additions: the client-side GAP-4 `ownerScope` preference over-applies vs the server's root-only rule; the dragged panel position is restored without viewport re-clamping; and the GAP-8 UUID-label scrub covers `/index` but not the `/graph?type=doc` label the corpus canvas actually draws. Eight round-3 Info items remain open and are carried forward.
+**Still open / new:** the round-3 `ownerScope` over-application warning was not touched by 61-17/61-18 and is carried (WR-03). Two new warnings target the 61-18/61-17 interactions: `refitCorpus` (newly re-wired by GAP-10) ignores an active project focus, and the GAP-7 deferred clamp timers are never cancelled, so rapid focus toggling reintroduces the mid-animation snap. Info items carry the surviving round-3 nits plus two new GAP-10 observations.
 
-Security posture re-verified: no new endpoints; `projectScopes`/`ownerScope` are derived server-side from prepared read-only statements with no request input in SQL text; `index.js` keeps the `.textContent`-only discipline (innerHTML receives only static SVG constants); the drag handler touches only inline `left/top` styles. No Critical findings.
+Security posture: no new endpoints; `humanTitle` operates on DB-sourced strings server-side with no request input; `index.js` keeps the `.textContent`-only discipline (innerHTML receives only static SVG constants); the removed drag code eliminates the only inline-style position writer. No Critical findings.
 
 ## Warnings
 
-### WR-01: MAX_ZOOM clamp races the animated `zoomToFit` in `focusCorpusProject` — ceiling not enforced (round-3 WR-02, still open)
+### WR-01: `ctx.refitCorpus` ignores `focusedScope` — docking/undocking the rail while a project is focused snaps the camera to the full graph while the dim state still shows focus
 
-**File:** `src/viz/modules/corpus.js:794-799, 806-814`
-**Issue:** `fitAndClamp()` is correct because both the fit and the clamp are instant (0 ms). `focusCorpusProject` copies the same clamp idiom after an **animated** `zoomToFit(CORPUS_FOCUS_TRANSITION_MS, …)`, but `CorpusGraph.zoom()` is read synchronously, returning the **pre-animation** zoom, not the animation target. Consequences: (a) focusing a small cluster (e.g. a 2-doc project) animates the zoom **past MAX_ZOOM** with no clamp ever applied — exactly the blown-up-circles defect MAX_ZOOM exists to prevent; (b) once (a) has happened, the unfocus branch reads the now-over-limit zoom and fires an instant `zoom(MAX_ZOOM, 0)` WHILE the 500 ms zoom-out transition is running, interrupting it — so the GAP-7 "animated zoom-out, not an instant snap" degrades to a snap. Both the focus branch and the `null` branch are affected.
-**Fix:** Clamp after the transition completes:
+**File:** `src/viz/modules/corpus.js:723-726` (callers: `src/viz/modules/index.js:413, 422`)
+**Issue:** GAP-10 re-wired `ctx.refitCorpus` into `openSidebar`/`hidePanel` (it was dead code under the GAP-9 floating paradigm, so this path is newly reachable). `refitCorpus` calls `fitAndClamp()`, which does an **instant** `zoomToFit(0, 40, isNodeVisible)` over ALL visible nodes. Sequence: user opens the rail, clicks a project row → graph animates into the focused cluster with everything else dimmed → user collapses the rail (◀) for more room (or reopens it) → the camera instantly snaps out to the whole graph, while `focusedScope` is still set: the dim overlay, the revealed chapters, and the index's `.active` row all still say "focused on X", but the framing says "everything". This is both a state inconsistency (camera contradicts focus state) and an instant snap of exactly the kind GAP-7 was just fixed to remove.
+**Fix:** Make the refit focus-aware:
 ```js
-CorpusGraph.zoomToFit(CORPUS_FOCUS_TRANSITION_MS, 40, pred);
-setTimeout(() => {
-  try {
-    if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) {
-      CorpusGraph.zoom(MAX_ZOOM, 0);
-    }
-  } catch (_) { /* ignore */ }
-}, CORPUS_FOCUS_TRANSITION_MS);
+ctx.refitCorpus = function refitCorpus() {
+  sizeCorpusGraph();
+  if (focusedScope) {
+    try {
+      CorpusGraph.zoomToFit(0, 40, (n) => projectScopeOf(n) === focusedScope && isNodeVisible(n));
+      if (typeof CorpusGraph.zoom === 'function' && CorpusGraph.zoom() > MAX_ZOOM) CorpusGraph.zoom(MAX_ZOOM, 0);
+    } catch (_) { /* ignore */ }
+  } else {
+    fitAndClamp();
+  }
+};
 ```
-(or compute the target zoom from the cluster bbox and issue a single pre-clamped `zoom()` call instead of `zoomToFit`).
 
-### WR-02: Client GAP-4 `ownerScope` preference applies to ALL nodes; server's `/index` resolution is tree-ROOT-only — graph reveal/dim grouping can contradict the index tree
+### WR-02: GAP-7 deferred clamp timers are never cancelled — rapid focus/unfocus within 500 ms fires a stale `zoom(MAX_ZOOM, 0)` mid-animation, reintroducing the snap
 
-**File:** `src/viz/modules/corpus.js:286-295` (vs `src/viz/server.ts:1401-1409, 922-929`)
-**Issue:** Server-side, GAP-4 nesting in `/index` deliberately resolves schema→project **only for containment tree roots** (`if (childToParent.has(row.id)) continue; // only tree ROOTS resolve this way`, `server.ts:1403`). But the `/graph?type=doc` payload attaches `ownerScope` to **every** UUID-slug node (`server.ts:925-929`), and corpus.js's preference pass overrides `nodeProjectScope` **unconditionally** for any node with a recognized `ownerScope` — including chapters that HAVE a containment parent. When a chapter's dominant `abstracts`-member scope differs from the project tree it is containment-nested in (cross-project schema, or scope drift), the graph groups it under `ownerScope` while the index tree nests it by containment: expanding/focusing the tree's project neither reveals nor un-dims that chapter (`isProjectRevealed` keys off `projectScopeOf`, which now returns the other project), and focusing the *other* project reveals a node sitting visually inside the wrong cluster. This breaks the D-07 tree↔graph parity invariant that WR-06 was just fixed to protect.
+**File:** `src/viz/modules/corpus.js:801-807, 821-827`
+**Issue:** Each `focusCorpusProject` call schedules an independent anonymous `setTimeout(…, CORPUS_FOCUS_TRANSITION_MS)` with no handle and no cancellation. Sequence: focus a small cluster (whose `zoomToFit` target exceeds `MAX_ZOOM`), then within 500 ms press Esc (or click another project) — the second call starts a NEW 500 ms animated transition, but the FIRST call's timer fires mid-flight, reads the in-transit zoom (still above `MAX_ZOOM` on the way down), and issues an instant `zoom(MAX_ZOOM, 0)` that interrupts the running animation. That is precisely the "instant snap mid-transition" defect the GAP-7 fix exists to eliminate, resurfacing in the rapid-toggle path. The same stale timer also mis-clamps after a `refitCorpus` (rail dock/undock) lands inside the 500 ms window. The new source-assertion test only checks that the clamp is deferred, not that stale deferrals are cancelled.
+**Fix:** One shared timer handle, cleared on every entry:
+```js
+let clampTimer = null;
+ctx.focusCorpusProject = function focusCorpusProject(scope) {
+  if (!CorpusGraph) return;
+  if (clampTimer !== null) { clearTimeout(clampTimer); clampTimer = null; }
+  // ... both branches assign: clampTimer = setTimeout(() => { clampTimer = null; ...clamp... }, CORPUS_FOCUS_TRANSITION_MS);
+};
+```
+
+### WR-03: Client GAP-4 `ownerScope` preference applies to ALL nodes; server's `/index` resolution is tree-ROOT-only — graph reveal/dim grouping can contradict the index tree (carried from round 3, unchanged)
+
+**File:** `src/viz/modules/corpus.js:291-295` (vs `src/viz/server.ts:1411-1419`)
+**Issue:** Unchanged by 61-17/61-18. Server-side, GAP-4 nesting in `/index` resolves schema→project **only for containment tree roots** (`if (childToParent.has(row.id)) continue;`, `server.ts:1413`), but corpus.js's preference pass overrides `nodeProjectScope` for **any** node with a recognized `ownerScope` — including chapters that HAVE a containment parent. When a chapter's dominant `abstracts`-member scope differs from the project tree it is containment-nested in, the graph groups it under `ownerScope` while the index tree nests it by containment: expanding/focusing the tree's project neither reveals nor un-dims that chapter, breaking the D-07 tree↔graph parity invariant.
 **Fix:** Mirror the server's root-only rule in the client preference pass:
 ```js
 for (const node of (data.nodes || [])) {
@@ -78,91 +90,70 @@ for (const node of (data.nodes || [])) {
 ```
 (Alternatively, have the server attach `ownerScope` only to containment roots — one rule, one place.)
 
-### WR-03: `openSidebar` restores a stale dragged position without re-clamping — panel can reopen fully off-screen and become unrecoverable
-
-**File:** `src/viz/modules/index.js:453-456` (clamp exists only in `pointermove`, `index.js:112-114`)
-**Issue:** The drag handler clamps `left/top` to the viewport at drag time (T-61-16-02), but `panelPos` is applied verbatim in `openSidebar()`. If the window shrinks between the drag and the next open (user resize; the `recense viz` window is freely resizable), `panelPos.left` (legitimately up to old `innerWidth - 40`) can exceed the new viewport entirely — the panel fades in fully off-screen with its drag grip unreachable, and since `panelPos` is the only position source this session, the index is effectively lost until a hard reload. The header comment's "the panel can never be dragged fully off-screen" invariant is enforced only during `pointermove`, not at restore.
-**Fix:** Re-clamp with the same formula before applying:
-```js
-if (panelPos) {
-  const w = container.getBoundingClientRect().width || 270;
-  const left = Math.max(-(w - 40), Math.min(panelPos.left, window.innerWidth - 40));
-  const top = Math.max(0, Math.min(panelPos.top, window.innerHeight - 40));
-  container.style.left = left + 'px';
-  container.style.top = top + 'px';
-}
-```
-
-### WR-04: GAP-8 UUID-label scrub covers `/index` only — `/graph?type=doc` still ships the raw UUID as `label`, and the corpus canvas draws it
-
-**File:** `src/viz/server.ts:328` (label COALESCE), `src/viz/modules/corpus.js:357, 363` (draw site); the scrub exists only at `server.ts:1349-1358`
-**Issue:** Guard-set ≠ ship-set. The GAP-8 fix (T-61-22: "never leak a UUID as a visible label") added `humanTitle()` (H1-derivation fallback) in the `/index` handler only. The `/graph?type=doc` branch still resolves `label` as `COALESCE(NULLIF(sch.value,''), nd.slug)` — for a schema-anchored doc whose backing schema node is missing or empty-valued, `label` **is the UUID slug**. corpus.js renders `nodeLabels[node.id] = node.label || node.slug || node.id` below the node; chapter docs draw their label on hover (`corpus.js:349-353`), so hovering such a node in the corpus graph displays the raw UUID — the exact leak T-61-22 flagged, on a second surface. `tests/viz-index-route.test.ts:305-315` locks the `/index` surface; nothing locks `/graph`.
-**Fix:** Apply the same derivation in the `/graph?type=doc` node mapping (the doc `value` is already selected by `stmtDocNodes`) — e.g. share a `humanTitle(row)` helper: `label: UUID_RE.test(n.label) ? humanTitle(n) : n.label`. Add a `/graph?type=doc` label assertion mirroring the `/index` GAP-8 test.
-
 ## Info
 
 ### IN-01: Corpus Esc listener doesn't exempt the index filter input (carried from round 3)
 
-**File:** `src/viz/modules/corpus.js:834-839`
-**Issue:** Pressing Esc while typing in `.index-search-input` (a `type="search"` input, which natively clears on Esc) also clears project focus and fires the animated zoom-out — two unrelated actions on one keypress. The listener exempts the reader and palette but not a focused input.
+**File:** `src/viz/modules/corpus.js:847-852`
+**Issue:** Pressing Esc while typing in `.index-search-input` (a `type="search"` input, which natively clears on Esc) also clears project focus and fires the animated zoom-out — two unrelated actions on one keypress. The listener exempts the reader and palette but not a focused input. More reachable now that the docked rail and the graph are visible side by side.
 **Fix:** Early-return when `ev.target` is an input/textarea: `if (ev.target && /^(INPUT|TEXTAREA)$/.test(ev.target.tagName)) return;`
 
-### IN-02: Dead ctx hooks and stale "docked rail" documentation after GAP-9 (extends round-3 IN-03)
+### IN-02: `ctx.openIndexSidebar` still has zero callers; two "docks over the corpus" comments now contradict the beside-not-over GAP-10 model
 
-**File:** `src/viz/modules/index.js:485-487`; `src/viz/modules/corpus.js:565-568, 668-671, 710-726`; `src/viz/index.html:153-156`
-**Issue:** (a) `ctx.openIndex` and `ctx.openIndexSidebar` still have zero callers (grep-verified; the reopen handle calls `openSidebar` directly, corpus.js uses only `showIndexHandle`/`closeIndexSidebar`). (b) `ctx.refitCorpus` (`corpus.js:723-726`) is now also dead: its only documented caller ("index.js after the sidebar docks/undocks") was removed by the GAP-9 floating rework. (c) Several comments still describe the deleted docking paradigm: `sizeCorpusGraph`'s `.index-docked` left-offset note (`corpus.js:565-568` — that class no longer exists anywhere in CSS), `goToCorpus`'s "then it docks/reflows as built" (`corpus.js:670`), the "docks as a left sidebar OVER this corpus graph" hook header (`corpus.js:711`), and index.html's "left sidebar docked over the corpus graph" host comment. A future reader could reasonably "restore" the docking behavior these comments describe — the exact regression `styles.css:1279-1281` explicitly warns against.
-**Fix:** Delete the three dead hooks (or wire `openIndexSidebar` into a palette command if intended); update the stale comments to the floating-panel model.
+**File:** `src/viz/modules/index.js:439`; `src/viz/modules/corpus.js:679, 711`
+**Issue:** (a) `ctx.openIndexSidebar` is assigned but never called (grep-verified — the reopen handle calls `openSidebar` directly; corpus.js uses only `showIndexHandle`/`closeIndexSidebar`; the two remaining mentions are comments). Round-3's other dead hook `ctx.openIndex` was removed; this one survived. (b) `corpus.js:679` ("The index sidebar (if open) docks **over** the corpus") and `corpus.js:711` ("docks as a left sidebar **OVER** this corpus graph") still describe the pre-GAP-10 overlay model; the panel now docks BESIDE the graph, which reflows.
+**Fix:** Delete the dead hook (or wire it to a palette command); reword both comments to the side-by-side reflow model.
 
-### IN-03: `.index-count` uses a radius token as horizontal padding (carried from round 3)
+### IN-03: `hidePanel` leaks a `transitionend` listener per call when no transition will fire
 
-**File:** `src/viz/css/styles.css:1497`
+**File:** `src/viz/modules/index.js:423-429` (caller: `src/viz/modules/corpus.js:680`)
+**Issue:** `goToBrain` calls `closeIndexSidebar` unconditionally on every brain toggle, even when the panel was never opened. In that case `classList.remove('shown')` changes nothing, no `transitionend` ever fires, and the `onEnd` listener stays attached — one accumulates per toggle. Self-limiting (a later real transition flushes them all, each removing itself) and each is tiny, but it's an unbounded-until-flushed listener pile on a hot toggle path.
+**Fix:** Guard the whole body: `if (!isSidebarOpen && container.style.display === 'none') return;` at the top of `hidePanel` (or only attach `onEnd` when the panel was actually shown).
+
+### IN-04: Docked panel spans `top: 0` without `-webkit-app-region: no-drag` — header top edge shadowed by the tray shells' 26px drag strip
+
+**File:** `src/viz/css/styles.css:1284-1289` (vs `apps/tray/src/popover.ts:259`, `apps/tray/src/detail-window.ts:44`)
+**Issue:** The panel moved from `top: 56px` to `top: 0`. The main exploration window is a framed BrowserWindow (native title bar — unaffected), but the tray popover and detail shells inject a full-width 26 px `-webkit-app-region:drag` strip at `z-index: 60`, above the panel's `z-index: 8`. In those shells the panel header's top ~10 px (title, upper half of the ◀ button hit area) is captured by the drag band instead of the panel. `#index-reopen` explicitly guards against exactly this (`-webkit-app-region: no-drag`, z:70 — `styles.css:1257, 1267`); the panel doesn't.
+**Fix:** Add `-webkit-app-region: no-drag;` to `#index-panel` (harmless in the framed window), or pad the header below the 26 px band in shell contexts.
+
+### IN-05: `.index-count` uses a radius token as horizontal padding (carried from round 3)
+
+**File:** `src/viz/css/styles.css:1496`
 **Issue:** `padding: 0 var(--radius-xs);` — a border-radius token repurposed as spacing. Works (4px) but couples badge padding to any future radius retune.
 **Fix:** Use a literal `4px` (spacing values aren't under the D-14 color-token ban) or introduce a spacing token.
 
-### IN-04: `/index` `depth` field inconsistent after GAP-4 re-parenting (carried from round 3)
+### IN-06: `/index` `depth` field inconsistent after GAP-4 re-parenting (carried from round 3)
 
-**File:** `src/viz/server.ts:1417-1426`
-**Issue:** A GAP-4-nested schema root ships `parentId = <project doc id>` but `depth: 0` (depth comes from the pre-resolution `rootAndDepth` walk), and its children's depths are likewise off by one. Harmless today only because index.js ignores the field and recomputes depth during render — the payload field is dead weight that will mislead a future consumer.
-**Fix:** Bump depth by 1 for resolved trees (`depth + (resolvedRootParent.has(root) ? 1 : 0)`) or drop `depth` from the payload.
+**File:** `src/viz/server.ts:1424-1435`
+**Issue:** A GAP-4-nested schema root ships `parentId = <project doc id>` but `depth: 0` (depth comes from the pre-resolution `rootAndDepth` walk), and its children's depths are likewise off by one. Harmless today only because index.js ignores the field and recomputes depth during render — dead payload weight that will mislead a future consumer.
+**Fix:** Bump depth by 1 for resolved trees or drop `depth` from the payload.
 
-### IN-05: Vacuous conditional assertion in the `/index` source-assertion test (carried from round 3)
+### IN-07: UUID regex duplication only partially resolved by the GAP-8 hoist — `/graph` handler still declares its own copy
 
-**File:** `tests/viz-index-route.test.ts:463-476`
-**Issue:** The "handler reuses stmtDocNodes" test wraps its only meaningful assertion in `if (indexHandlerMatch) { … }`. The regex requires a `/* … */` block comment immediately before `if (url === '/index')`, but the server code uses `// ──` line comments — the match is null and the test passes without asserting anything about the handler body.
-**Fix:** Match the real comment style (or slice the source from `url === '/index'` to the next route guard) and assert unconditionally; fail the test when the handler block can't be located.
+**File:** `src/viz/server.ts:344` (hoisted `UUID_RE`), `src/viz/server.ts:940` (`graphSchemaSlugRe`); `src/viz/modules/corpus.js:100`
+**Issue:** Round-3 IN-06 asked for one server-side schema-slug regex. The 61-17 hoist gave `/index` and `humanTitle` a shared `UUID_RE`, but the `/graph?type=doc` branch still declares an identical local `graphSchemaSlugRe` three lines above code that could use the hoisted constant — two server copies of a load-bearing predicate (`ownerScope` attachment + `projectScopes` derivation both key off it) remain. The corpus.js client copy is inherent to the boundary.
+**Fix:** Delete `graphSchemaSlugRe` and use the hoisted `UUID_RE` in the `/graph` branch.
 
-### IN-06: UUID regex duplicated three times across the boundary (carried from round 3)
+### IN-08: `/index` payload memoized for the whole session — stale after doc generation; module doc claims lazy fetch (carried from round 3)
 
-**File:** `src/viz/server.ts:924, 1343`; `src/viz/modules/corpus.js:100`
-**Issue:** The identical schema-slug UUID regex is declared as `graphSchemaSlugRe` (inside the `/graph` handler), a local `UUID_RE` (inside the `/index` handler), and `UUID_RE` (corpus.js). The "is this slug a schema chapter?" rule is now load-bearing for `projectScopes`, section partitioning, AND chapter hiding — three copies invite drift in exactly the predicate family 61-15 just unified. The two server-side copies at minimum should be one module-level constant.
-**Fix:** Hoist a single `const SCHEMA_SLUG_RE` at server module scope and use it in both handlers.
+**File:** `src/viz/modules/index.js:382-395, 414, 456` (doc comment at `index.js:43`)
+**Issue:** `prepareIndex` memoizes `'ready'` permanently — `openSidebar`'s `prepareIndex()` call no-ops after the first success, so docs generated mid-session (reader regenerate, corpus promoter) never appear in the rail until a hard reload. Separately, the header comment still says "Lazy: /index is only fetched on the first open," while line 456 eagerly prefetches 1.2 s after init.
+**Fix:** Refetch on `openSidebar` (one cheap read-only request) or invalidate `preparePromise` when a generation completes; fix the comment.
 
-### IN-07: `/index` payload memoized for the whole session — stale after doc generation; module doc claims lazy fetch (carried from round 3)
+### IN-09: `projectScopes` construction is only an approximate mirror of the `/index` recognized-project rule (carried from round 3)
 
-**File:** `src/viz/modules/index.js:426-439, 503`
-**Issue:** `prepareIndex` memoizes `'ready'` permanently — reopening the panel never refetches, so docs generated mid-session (reader regenerate, corpus promoter) never appear until a hard reload. Separately, the doc comment at `index.js:43` still says "Lazy: /index is only fetched on the first open," while line 503 eagerly prefetches 1.2 s after init — doc drift.
-**Fix:** Refetch on `openSidebar` (one cheap read-only request), or invalidate `preparePromise` when a generation completes; fix the header comment.
+**File:** `src/viz/server.ts:949-960`
+**Issue:** The comment claims the set "mirrors the /index recognized-project rule (a doc is a project when its slug is NOT a UUID)", but the implementation additionally requires `n.scope` non-null and keys by `rootScope(n.scope)` rather than the slug — a scope-less non-UUID doc counts as a project in `/index` but is excluded here; a hub whose slug ≠ its scope-root would render as an index project row that `focusCorpusProject` rejects. Theoretical today (CorpusPromoter appears to always stamp `node_scope`), but the comment overstates the parity in exactly the predicate family where the phase-61 drift bugs lived.
+**Fix:** Align the derivation to the slug rule, or amend the comment to state the extra scope-derived conditions.
 
-### IN-08: D-14-C allow-list comment no longer matches its contents (carried from round 3)
+### IN-10: Round-3 items in files outside this round's scope, re-verified still open
 
-**File:** `tests/viz-activity-palette-invariants.test.ts:452-468`
-**Issue:** The JSDoc describes "D-12's exact glass-surface list," but `ALLOWED_SELECTORS` also contains `#index-panel` and `#index-reopen` (correct for this phase's glass chrome, but undocumented). A future reader auditing D-12 compliance against the comment would flag false violations.
-**Fix:** Extend the comment: "…plus the Phase-61 index chrome surfaces (#index-panel, #index-reopen)."
-
-### IN-09: Drag ergonomics — no button filter, no selection suppression, fixed max-height ignores dragged top (new, 61-16)
-
-**File:** `src/viz/modules/index.js:93-105`; `src/viz/css/styles.css:1285-1320`
-**Issue:** (a) `pointerdown` doesn't check `ev.button === 0`, so right/middle-button presses initiate a drag. (b) Neither `ev.preventDefault()` nor `user-select: none` on `.index-sidebar-header` — dragging can select the "Index" title text mid-drag. (c) `#index-panel`'s `max-height: calc(100vh - 56px - 16px)` assumes the CSS-default `top: 56px`; once dragged lower, the panel bottom (part of the scrollable list) extends past the viewport bottom.
-**Fix:** `if (ev.button !== 0) return;` in pointerdown; add `user-select: none` to the header rule; recompute max-height from the dragged top (`container.style.maxHeight = (window.innerHeight - top - 16) + 'px'`) or accept the clip deliberately with a comment.
-
-### IN-10: `projectScopes` construction is only an approximate mirror of the `/index` recognized-project rule (new, 61-15)
-
-**File:** `src/viz/server.ts:934-941`
-**Issue:** The WR-03 comment claims the set "mirrors the /index recognized-project rule (a doc is a project when its slug is NOT a UUID)", but the implementation adds two extra conditions: it requires `n.scope` non-null (a scope-less non-UUID doc counts as a project in `/index` but is excluded here — the LEFT JOIN on `node_scope` makes null scope representable) and it keys by `rootScope(n.scope)` rather than the slug (a hub whose slug ≠ its scope-root would render as an index project row that `focusCorpusProject` rejects). CorpusPromoter appears to always stamp `node_scope`, so this is theoretical today — but the comment overstates the parity, and this predicate family is exactly where the phase-61 drift bugs lived.
-**Fix:** Either align the derivation to the slug rule (add the non-UUID slug's root; scope only as fallback) or amend the comment to state the additional scope-derived conditions explicitly.
+**File:** `tests/viz-index-route.test.ts:471-474`; `tests/viz-activity-palette-invariants.test.ts:452-468`
+**Issue:** Grep-verified but not re-reviewed in depth (files not in this round's scope): (a) the "handler reuses stmtDocNodes" test still wraps its only assertion in `if (indexHandlerMatch) { … }` — the block-comment regex does not match the server's `// ──` line-comment style, so the test can pass vacuously (round-3 IN-05); (b) the D-14-C allow-list JSDoc still describes "D-12's exact glass-surface list" without mentioning the `#index-panel`/`#index-reopen` additions (round-3 IN-08).
+**Fix:** As previously reported: assert unconditionally / fail when the handler block can't be located; extend the allow-list comment.
 
 ---
 
-_Reviewed: 2026-07-16_
+_Reviewed: 2026-07-17_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
