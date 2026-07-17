@@ -150,8 +150,9 @@
      topics.js (VIZ-08 schema browser), selection routes through ctx.selectNode. -->
 <div id="topics-rail"></div>
 
-<!-- Index sidebar host (WIKI-01): left sidebar docked over the corpus graph. Hidden by default;
-     the rail starts CLOSED (GAP-6) — corpus shows only the reopen handle (corpus.js →
+<!-- Index sidebar host (WIKI-01): docked left column outside the corpus graph, attached to the
+     main app window (GAP-10) — #corpus-graph reflows beside it via body.index-docked. Hidden by
+     default; the rail starts CLOSED (GAP-6) — corpus shows only the reopen handle (corpus.js →
      ctx.showIndexHandle); the user opens the rail explicitly (→ ctx.openIndexSidebar). No toolbar
      button. The reopen handle (#index-reopen) is created by index.js and appended to the body. -->
 <div id="index-panel"></div>
