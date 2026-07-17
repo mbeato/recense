@@ -1270,30 +1270,28 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
 #index-reopen.shown { display: flex; }
 #index-reopen:hover { opacity: 1; color: var(--text-bright); }
 
-/* ── Index panel — DETACHED FLOATING WINDOW over the corpus graph (GAP-9 closure, supersedes
-   the 61-05/61-13 docked-rail paradigm) ──
-   Founder direction (61-UAT.md GAP-9): "similar in spirit to the collapsed tray-app node view
-   ... as a separate window" — own chrome/header, draggable, visually separated from the graph;
-   NOT docked into the layout and NOT a flush canvas overlay. The corpus graph keeps the full
-   canvas at all times — opening/closing/dragging the panel never reflows #corpus-graph.
-   DO NOT re-dock this panel to the viewport edge; a future reader should not "fix" this by
-   restoring the old index-docked canvas-offset reflow rule — it was deliberately removed.
+/* ── Index panel — DOCKED LEFT COLUMN outside the corpus graph (GAP-10 closure, supersedes
+   the GAP-9 detached-floating-window paradigm from 61-16) ──
+   Founder direction (61-UAT.md GAP-10, verbatim at the 61-16 Task 3 sign-off): "index on top
+   of graph is still out of place needs to be outside the window as a left panel but still
+   attached to the main window." The panel is a full-height glass column flush to the window's
+   left edge, attached to the app window (not floating over the canvas, not a rounded detached
+   window) — and #corpus-graph REFLOWS beside it via the `.index-docked` body class (see the
+   reflow rule below). Opening/closing docks/undocks the column and refits the graph to the
+   remaining width. Do NOT re-float this panel — that was tried (GAP-9) and rejected.
    z-index 8: above #corpus-graph (5), below #reader (40) and the toolbar buttons (70). */
-/* Panel width — no longer drives a canvas offset (the graph never reflows). */
 :root { --index-width: 270px; }
 #index-panel {
   position: fixed;
-  top: 56px;
-  left: 16px;
+  top: 0;
+  left: 0;
+  bottom: 0;
   width: var(--index-width);
-  max-width: 60vw;
-  max-height: calc(100vh - 56px - 16px);
   z-index: 8;
   display: none;            /* index.js toggles to flex */
   flex-direction: column;
   background: var(--glass-bg-focused);
-  border: 1px solid var(--glass-border-focused);
-  border-radius: var(--radius-lg);
+  border-right: 1px solid var(--glass-border-focused);
   backdrop-filter: blur(var(--glass-blur-md));
   -webkit-backdrop-filter: blur(var(--glass-blur-md));
   box-shadow: var(--glass-specular);
@@ -1305,9 +1303,12 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
 }
 #index-panel.shown { opacity: 1; }
 
-/* Header doubles as the drag grip (title-bar idiom) — grab cursor at rest, grabbing while a
-   drag is in progress (index.js toggles the `dragging` class on #index-panel, not the header,
-   so a single selector covers both the header and any descendant during the drag). */
+/* Docked reflow (GAP-10): index.js toggles body.index-docked on open/close and calls
+   ctx.refitCorpus() — the corpus graph cedes width to the docked column so it sits BESIDE it
+   (side-by-side), never underneath. */
+.index-docked #corpus-graph { left: var(--index-width); }
+
+/* Static title bar — no longer a drag grip (the docked column has a fixed CSS position). */
 .index-sidebar-header {
   flex: 0 0 auto;
   display: flex;
@@ -1315,9 +1316,7 @@ html.settings-panel-open #graph { filter: saturate(0.7) brightness(0.82); }
   justify-content: space-between;
   padding: 16px 16px 12px;
   border-bottom: 1px solid var(--index-sidebar-divider);
-  cursor: grab;
 }
-#index-panel.dragging .index-sidebar-header { cursor: grabbing; }
 .index-sidebar-title {
   font-size: 12px;
   font-weight: 600;
