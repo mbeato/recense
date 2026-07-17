@@ -103,6 +103,16 @@ None - no external service configuration required.
 
 Both round-4 regressions (WR-01/GAP-7, WR-04/GAP-8) from `61-REVIEW.md` / `61-VERIFICATION.md` are closed and locked by new assertions. `tests/viz-corpus-graph.test.ts` (40/40) and `tests/viz-index-route.test.ts` (20/20) pass clean; `npx tsc --noEmit` clean. Ready for plan 61-18's founder sign-off on the live install — the corpus surface these fixes touch (focus/unfocus zoom animation, node hover labels) should now verify fully fixed alongside the GAP-10 docked left panel rework.
 
+## Self-Check: PASSED
+
+- FOUND: src/viz/modules/corpus.js
+- FOUND: src/viz/server.ts
+- FOUND: tests/viz-corpus-graph.test.ts
+- FOUND: .planning/phases/61-corpus-chrome-index-column-project-browsing/61-17-SUMMARY.md
+- FOUND commit: fc92576 (Task 1)
+- FOUND commit: e58ffbd (Task 2)
+- FOUND commit: 2d464a1 (docs: SUMMARY)
+
 ---
 *Phase: 61-corpus-chrome-index-column-project-browsing*
 *Completed: 2026-07-17*
