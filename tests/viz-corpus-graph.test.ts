@@ -343,6 +343,40 @@ describe('GET /graph?type=doc corpus endpoint (READER-04)', () => {
     expect(src).toContain('zoomToFit');
   });
 
+  // GAP-7 (61-17, WR-01): focusCorpusProject must defer its MAX_ZOOM clamp check until AFTER
+  // the CORPUS_FOCUS_TRANSITION_MS animated zoomToFit completes, in BOTH branches (focus + null
+  // -clear) — a same-tick clamp reads the stale pre-animation zoom, letting a small cluster
+  // overshoot MAX_ZOOM unclamped and/or snapping the animated unfocus with an instant zoom(...).
+  it('source: focusCorpusProject defers the MAX_ZOOM clamp inside a setTimeout(CORPUS_FOCUS_TRANSITION_MS) in both branches (GAP-7)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../src/viz/modules/corpus.js'),
+      'utf8',
+    );
+    const fnMatch = src.match(/ctx\.focusCorpusProject = function focusCorpusProject\(scope\) \{[\s\S]*?\n  \};/);
+    expect(fnMatch).toBeTruthy();
+    const fnBody = fnMatch![0];
+    // At least two deferred-clamp setTimeout wrappers (one per branch), each delayed by
+    // CORPUS_FOCUS_TRANSITION_MS.
+    const setTimeoutHits = fnBody.match(/setTimeout\(/g) || [];
+    expect(setTimeoutHits.length).toBeGreaterThanOrEqual(2);
+    const delayHits = fnBody.match(/\},\s*CORPUS_FOCUS_TRANSITION_MS\)/g) || [];
+    expect(delayHits.length).toBeGreaterThanOrEqual(2);
+    // No bare same-tick clamp remains: every zoomToFit( call must be followed (before any
+    // subsequent zoomToFit() or the end of the function) by a setTimeout( before the next
+    // occurrence of the synchronous clamp check outside a setTimeout body.
+    const segments = fnBody.split('zoomToFit(').slice(1);
+    for (const seg of segments) {
+      const nextSetTimeoutIdx = seg.indexOf('setTimeout(');
+      const nextZoomToFitIdx = seg.indexOf('zoomToFit(');
+      const boundedSeg = nextZoomToFitIdx === -1 ? seg : seg.slice(0, nextZoomToFitIdx);
+      expect(nextSetTimeoutIdx).toBeGreaterThan(-1);
+      // The clamp check text must not appear in boundedSeg BEFORE the setTimeout( token —
+      // i.e. no same-tick clamp between this zoomToFit( and its setTimeout( wrapper.
+      const preSetTimeout = boundedSeg.slice(0, boundedSeg.indexOf('setTimeout('));
+      expect(preSetTimeout).not.toMatch(/CorpusGraph\.zoom\(\)\s*>\s*MAX_ZOOM/);
+    }
+  });
+
   // Fix B — corpus doc-node click opens the reader IN PLACE (no page navigation)
   it('source: corpus.js onNodeClick calls ctx.openReader (NOT window.location)', () => {
     const src = fs.readFileSync(
