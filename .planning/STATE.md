@@ -2,27 +2,27 @@
 gsd_state_version: 1.0
 milestone: v9.0
 milestone_name: Memory Quality
-status: milestone_complete
-stopped_at: Milestone complete (Phase 61 was final phase)
-last_updated: 2026-07-17T14:29:56.080Z
-last_activity: 2026-07-20 -- Completed quick task 260720-nup: GATE-01 CI wiring (branch-protection apply pending maintainer)
+status: Awaiting next milestone
+stopped_at: Phase 61 UI-SPEC approved
+last_updated: "2026-07-20T21:24:11.397Z"
+last_activity: 2026-07-20 — Milestone v9.0 completed and archived
 progress:
   total_phases: 37
-  completed_phases: 33
+  completed_phases: 34
   total_plans: 158
-  completed_plans: 179
-  percent: 89
+  completed_plans: 159
+  percent: 92
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-27 — v9.0 Memory Quality opened)
+See: .planning/PROJECT.md (updated 2026-07-20 — v9.0 Memory Quality shipped + archived)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Milestone complete
+**Current focus:** Planning next milestone (`/gsd:new-milestone`)
 
 **v9.0 Key research grounding (June-2026 deep-research pass):**
 
@@ -33,14 +33,10 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v9.0 Memory Quality opened)
 
 ## Current Position
 
-Phase: 61
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-07-17
-
-```
-v9.0 Progress ░░░░░░░░░░ 0%
-```
+Phase: Milestone v9.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-20 — Milestone v9.0 completed and archived
 
 ## Performance Metrics
 
@@ -62,7 +58,7 @@ v9.0 Progress ░░░░░░░░░░ 0%
 | v6.0 | 29–34 | 16 | 2026-06-22 |
 | v7.0 | 35–39.1 | ~26 | 2026-06-23 |
 | v8.0 | 40–45 | 24 | 2026-06-26 |
-| v9.0 | 46–50 | TBD | — |
+| v9.0 | 46–61 | 92 | 2026-07-20 |
 | Phase 56 P01 | 20min | 2 tasks | 3 files |
 | Phase 56 P03 | 15min | 3 tasks | 3 files |
 | Phase 56 P02 | 15min | 2 tasks | 1 files |
@@ -136,6 +132,22 @@ v9.0 Progress ░░░░░░░░░░ 0%
 
 ## Deferred Items
 
+Acknowledged and deferred at v9.0 milestone close on 2026-07-20:
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat_gap | Phase 57 — founder re-observation of corrected CR-01/CR-02 viz behavior (code-verified + regression-tested) | partial |
+| uat_gap | Phase 58 — fps overlay number + D-14 visual artifact never captured (founder approved live at both checkpoints) | partial |
+| requirement | RETR-03 — fusion ships dark (w*=0 honest null); re-tune when future data supports a positive weight | accepted-null |
+| todo | cache-constant judge/extraction prompt prefix via system prompt | pending |
+| todo | content-hardening-deferred | pending |
+| todo | corpus-brain-3d-transition | pending |
+| todo | viz-search-and-hull-quality | pending |
+| seed | 003-multi-tenant-namespaces | dormant |
+| seed | 004-telegram-responder-as-reference-client | dormant |
+| verification | Pre-v9.0 human_needed VERIFICATIONs (28, 34, 39.3, 41, 44) — shipped milestones, carried context | open |
+| metadata | 46 historical quick tasks flagged "missing" metadata in audit-open scan (all completed work; bookkeeping noise) | noise |
+
 Carried from v7.0/v8.0 close:
 
 | Category | Item | Status | Deferred At |
@@ -169,8 +181,4 @@ Next: Phase 47 (Hybrid Retrieval Recall) — now unblocked (Phase 46 landed). EV
 
 ## Operator Next Steps
 
-1. Phase 46 COMPLETE (2026-06-28): RECON-03 proven — KU judge-fire counter = 368 contradicts (14 clean cases) vs pre-46 zero. RECON-04 clean-case no-regression deferred to Phase 50 (founder sign-off). See 46-02-SUMMARY.md / 46-02-RESUME.md.
-2. Phase 47 (Hybrid Retrieval Recall) — now unblocked; start with `/gsd:plan-phase 47`
-3. Phase 48 (Correctness Hardening) — independent, can run in parallel
-4. Phase 50 (Verification + Regression Gates) — after 46–48 land; absorbs the deferred EVAL-02 clean-case check + CI gate lock
-5. Phase 49 executed — SCALE-01 NO-GO/DEFER, SCALE-02 DEFER (tombstone-always)
+- Start the next milestone with /gsd-new-milestone
