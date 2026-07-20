@@ -5,7 +5,7 @@ milestone_name: Memory Quality
 status: milestone_complete
 stopped_at: Milestone complete (Phase 61 was final phase)
 last_updated: 2026-07-17T14:29:56.080Z
-last_activity: 2026-07-17 -- Phase 61 execution started
+last_activity: 2026-07-20 -- Completed quick task 260720-nup: GATE-01 CI wiring (branch-protection apply pending maintainer)
 progress:
   total_phases: 37
   completed_phases: 33
@@ -153,6 +153,7 @@ Carried from v7.0/v8.0 close:
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260720-nup | Wire regression gate into CI merge-blocking (gate:ci offline tier + gate job + required-check context) — closes v9.0 audit GATE-01; branch-protection apply pending maintainer | 2026-07-20 | c114b5b, 6812ecd | [260720-nup-wire-regression-gate-into-ci-merge-block](./quick/260720-nup-wire-regression-gate-into-ci-merge-block/) |
 | 260714-g0s | Move stats entry point from settings panel to HUD rail histogram button | 2026-07-14 | d49d117, f0c1ec5, d00a5e9 | [260714-g0s-move-stats-entry-point-from-settings-pan](./quick/260714-g0s-move-stats-entry-point-from-settings-pan/) |
 | 260701-mmh | Thread startLockHeartbeat() through all six long-pass lock holders (closes 39.1 FIX-STALL-01 residual) | 2026-07-01 | 5167175, 10a6dd0 | [260701-mmh-thread-heartbeatlock-through-consolidato](./quick/260701-mmh-thread-heartbeatlock-through-consolidato/) |
 | 260701-vix | .vindex sidecar v2 (per-row embedded_hash) + construction-time freshness diff/delta merge (closes 51-05 staleness follow-up) | 2026-07-01 | e886ade, eb825f7 | [260701-vix-fix-vindex-sidecar-staleness](./quick/260701-vix-fix-vindex-sidecar-staleness/) |
