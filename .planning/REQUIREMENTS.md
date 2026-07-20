@@ -41,7 +41,7 @@
 
 ### GATE — Verification + regression gates (discharges deferred Phase 43)
 
-- [ ] **GATE-01**: An automated regression gate (CI / pre-merge) runs the eval harness and blocks merges that regress below baseline.
+- [x] **GATE-01**: An automated regression gate (CI / pre-merge) runs the eval harness and blocks merges that regress below baseline.
 - [ ] **GATE-02**: Thresholds cover accuracy + latency + token axes AND belief-correction (EVAL-02) + retrieval recall (R@K).
 - [ ] **GATE-03**: Baseline = v9.0-final figures (intentional re-baseline); the full suite is re-run with documented before/after deltas, the Phase-1 judge-fires claim is proven, and `docs/evals.md` is updated with the new numbers + judge-validation evidence.
 
@@ -78,6 +78,6 @@
 | HARD-04 | Phase 48 | Complete |
 | SCALE-01 | Phase 49 | Pending |
 | SCALE-02 | Phase 49 | Pending |
-| GATE-01 | Phase 50 | Pending |
+| GATE-01 | Phase 50 | Done |
 | GATE-02 | Phase 50 | Pending |
 | GATE-03 | Phase 50 | Pending |
