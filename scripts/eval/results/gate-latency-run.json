@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "eval": "41-latency-after",
+    "date": "2026-06-30T16:30:30.085Z",
+    "commit": "d0b53e6",
+    "db_path": "/Users/vtx/.config/recense/recense.db",
+    "sidecar": "/Users/vtx/.config/recense/recense.db.vindex",
+    "embedded_live_nodes": 15289,
+    "k": 10,
+    "repeats": 5,
+    "embed": "mock-seeded-unit-vector",
+    "phase40_baseline_warm": {
+      "p50_ms": 45,
+      "p95_ms": 46,
+      "source": "live-latency.cjs, 40-BASELINE.md §2"
+    }
+  },
+  "warm": {
+    "indexed": {
+      "p50_ms": 19,
+      "p95_ms": 20,
+      "samples": 100
+    },
+    "baseline_same_run": {
+      "p50_ms": 68,
+      "p95_ms": 70,
+      "samples": 100
+    }
+  },
+  "cold": {
+    "indexed": {
+      "wall_p50_ms": 89,
+      "wall_p95_ms": 100,
+      "inner_p50_ms": 25,
+      "inner_p95_ms": 31,
+      "samples": 100
+    },
+    "baseline_same_run": {
+      "wall_p50_ms": 125,
+      "wall_p95_ms": 133,
+      "inner_p50_ms": 82,
+      "inner_p95_ms": 89,
+      "samples": 100
+    }
+  }
+}

@@ -25,7 +25,7 @@ read -r -d '' BODY <<JSON || true
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["test (ubuntu-22.04, 22)", "test (macos-15, 22)"]
+    "contexts": ["test (ubuntu-22.04, 22)", "test (macos-15, 22)", "gate"]
   },
   "enforce_admins": ${ENFORCE_ADMINS},
   "required_pull_request_reviews": { "required_approving_review_count": 0 },
@@ -41,6 +41,6 @@ printf '%s' "$BODY" | gh api -X PUT "repos/${REPO}/branches/${BRANCH}/protection
 echo ""
 echo "✓ Branch protection applied to ${BRANCH} on ${REPO}:"
 echo "  - PRs required (0 approvals) — every change flows through a PR where CI runs."
-echo "  - 'test (ubuntu-22.04, 22)' + 'test (macos-15, 22)' must pass and the branch"
+echo "  - 'test (ubuntu-22.04, 22)' + 'test (macos-15, 22)' + 'gate' must pass and the branch"
 echo "    must be up to date with main before merge."
 echo "  - enforce_admins=${ENFORCE_ADMINS} (set ENFORCE_ADMINS=true in this script for a hard gate)."
