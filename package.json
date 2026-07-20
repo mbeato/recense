@@ -53,6 +53,7 @@
     "gate": "npm run build && node scripts/eval/gate-runner.cjs --run --locomo scripts/eval/results/locomo-d41d5c8.json",
     "gate:baseline": "npm run build && node scripts/eval/gate-runner.cjs --update-baseline --locomo scripts/eval/results/locomo-d41d5c8.json",
     "gate:accuracy": "npm run build && node scripts/eval/gate-accuracy-runner.cjs --run",
+    "gate:ci": "node scripts/eval/gate-runner.cjs --run --locomo scripts/eval/results/locomo-d41d5c8.json --latency scripts/eval/results/gate-latency-run.json --injection scripts/eval/results/gate-injection-run.json --contradicts scripts/eval/results/46-recon03-ku-bm25on.json",
     "build:client": "tsc -p clients/telegram/tsconfig.json",
     "gen:simd-kernel": "node scripts/gen-simd-kernel.cjs"
   },

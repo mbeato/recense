@@ -1,0 +1,58 @@
+{
+  "meta": {
+    "eval": "injection-efficiency",
+    "date": "2026-06-30T16:30:30.148Z",
+    "commit": "d0b53e6",
+    "engine_version": "0.1.0",
+    "db_path": "/Users/vtx/.config/recense/recense.db",
+    "cwd": "/Users/vtx/brain-memory",
+    "flat_path": "/Users/vtx/.claude/projects/-Users-you-recense/memory/MEMORY.md"
+  },
+  "point_estimate": {
+    "injected_chars": 1880,
+    "injected_tokens": 470,
+    "injected_nodes": 9,
+    "flat_chars": null,
+    "flat_tokens": null,
+    "flat_entries": null,
+    "token_reduction_pct": null,
+    "flat_missing": true
+  },
+  "scaling_projection": {
+    "n_live_nodes": 15358,
+    "avg_chars": 96.5,
+    "injection_budget_tokens": 500,
+    "crossover_nodes": 21,
+    "crossover_table": [
+      {
+        "n_nodes": 15358,
+        "mult": 1,
+        "projected_flat_tokens": 370512,
+        "recense_budget_tokens": 500
+      },
+      {
+        "n_nodes": 30716,
+        "mult": 2,
+        "projected_flat_tokens": 741024,
+        "recense_budget_tokens": 500
+      },
+      {
+        "n_nodes": 76790,
+        "mult": 5,
+        "projected_flat_tokens": 1852559,
+        "recense_budget_tokens": 500
+      },
+      {
+        "n_nodes": 153580,
+        "mult": 10,
+        "projected_flat_tokens": 3705118,
+        "recense_budget_tokens": 500
+      }
+    ]
+  },
+  "belief_correction": {
+    "tombstoned": 1818,
+    "prev_value_corrections": 959,
+    "episodes": 4851
+  }
+}

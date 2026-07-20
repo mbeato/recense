@@ -35,6 +35,10 @@ scripts/eval/results/*
 !scripts/eval/results/gate-baseline.json
 # Exception: dated v9.0-final RECON-04 evidence (committed result of record, not a PENDING intermediate).
 !scripts/eval/results/correctness-v90final.json
+!scripts/eval/results/locomo-d41d5c8.json
+!scripts/eval/results/gate-latency-run.json
+!scripts/eval/results/gate-injection-run.json
+!scripts/eval/results/46-recon03-ku-bm25on.json
 scripts/eval/*-results.json
 scripts/eval/*-results-*.json
 scripts/eval/judge-eval-set.json
