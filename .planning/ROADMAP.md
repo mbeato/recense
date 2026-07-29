@@ -791,4 +791,19 @@ Plans:
 
 ## Backlog
 
-_(empty — no backlog items)_
+### B-01: Email ingest → domain-neutral action proposals (cross-product seam)
+
+**Goal:** recense ingests email as an event source, resolves + classifies it, and **emits domain-neutral action proposals** to a separate system of record (first consumer: jobfill's application tracker — mark submitted / interviewing / rejected / offer). Proves the context-layer-proposes / system-of-record-confirms pattern across a real product boundary.
+
+**Boundary (decided in brainstorm 2026-07-29):**
+- Email ingest + entity resolution ("which application/entity is this about") + intent classification + the belief (status, confidence, supersede) live in **recense** — its existing competency. Do NOT duplicate ingest into the consumer.
+- recense **must not write into the consumer's DB directly.** It emits a generic intent `{entity, proposed_change, evidence_episode, confidence}` and stops. A thin **consumer-side adapter** maps the intent onto that tool's rows. recense stays the pure producer — zero knowledge of jobfill's schema — so any downstream tool can consume it (isomorphic to the Embedder/retrieval seam).
+- **Human-in-the-loop on the write:** revive the Telegram bot as the approval surface ("Rejection from Ventura — mark rejected? [yes / edit / no]"). Reuses the criterion-in-the-cell approval pattern.
+- Belief layer earns its keep here: status drift (applied → interviewing → rejected) is `supersedes`; one ambiguous email shouldn't flip status until evidence confirms (`pending_contradictions` / hold).
+
+**Open questions (resolve at discuss-phase before planning):**
+- Email connector: IMAP poll vs Gmail API vs forwarding address. SSRF/secret-handling for inbox credentials.
+- Where the "suggested action" contract physically lives (queue table in recense read by the consumer, vs a CLI/HTTP emit seam). Keep it dead simple — no message bus for a personal tool.
+- Entity resolution against companies/roles the consumer knows vs recense's own entity graph — who owns the canonical entity list.
+
+**Why parked, not built:** productization/interop track, orthogonal to the engine. Captured from an interview-prep session where the recense↔jobfill seam turned out to be the exact system-of-record/context-layer split worth demonstrating. Promote when there's appetite to build the cross-product interop layer.
