@@ -48,9 +48,31 @@ The memory **learns and stays correct over time** — it forms generalizations t
 
 **v2.0 Open-Source Release shipped 2026-06-10** (phases 9–10): anyone can `brain init` a working install (BYO keys, live-validated, chmod-600 env), audit it with `brain doctor`, schedule the sleep pass cross-platform (launchd/croner), and watch spreading-activation pathways live in the `brain viz` 3D UI. CI matrix green on macOS + Linux. Schema at v5 after the post-ship ARCH-REVIEW hardening pass.
 
+## Current Milestone: v10.0 Action Proposals
+
+**Goal:** recense ingests real events across both inboxes, decides *what changed* about a tracked entity as a belief, and emits domain-neutral action proposals that a separate system of record confirms — proving the context-layer-proposes / system-of-record-confirms split across a real product boundary.
+
+**Target features:**
+- **Multi-inbox email ingest completed** — a guided path to add account N (mint + store `GOOGLE_<ID>_REFRESH_TOKEN`), and `gmail.query` moved from global to **per-account** scoping so work and personal inboxes filter independently. Reuses the shipped per-account fan-out, cursors, and `· Acct:` provenance; no re-plumbing.
+- **Offline intent classification on event episodes** — the sleep pass decides whether an episode implies a change to a tracked entity. Hot path stays LLM-free.
+- **Entity resolution against a canonical entity list** — "which application/company/role is this about." Ownership of the canonical list is an open question for discuss-phase.
+- **Belief-gated status drift** — transitions (applied → interviewing → rejected → offer) route through PE-gated reconsolidation with `supersedes`; one ambiguous email must not flip status (hold / pending-contradiction). **The differentiating requirement — the reason this belongs in recense and not in a script.**
+- **Domain-neutral proposal emit seam** — `{entity, proposed_change, evidence_episode, confidence}`. recense has zero knowledge of any consumer's schema and never writes a consumer's DB.
+- **Reference consumer adapter (in-repo)** — thin adapter proving the contract end-to-end, isomorphic to `docs/reference-client.md`. Real jobfill wiring happens in jobfill's repo later.
+- **Human-in-the-loop approval for belief-shaped proposals** — extend the existing v4.0 Telegram HITL machinery to a second proposal *kind*; `source:'hitl'` audit stays excluded from consolidation.
+
+**Key context:**
+- Promoted from ROADMAP backlog **B-01**, captured 2026-07-29 from an interview-prep session where the recense↔jobfill seam turned out to be the exact system-of-record / context-layer split worth demonstrating.
+- v4.0 already shipped the **tool-shaped** half of this pattern (`/v1/surface` → client LLM mapper → approve/edit/reject/snooze → MCP execute → `source:'hitl'` audit) **and** multi-account Gmail fan-out (TEMP-04, D-08/D-09/D-10: per-account `GmailAdapter` instances, `cursor:gmail:<accountId>`, `· Acct:` provenance header). The honest new work is intent classification → entity resolution → belief-gated status drift → the domain-neutral emit seam; email onboarding, the reference adapter, and the approval surface are extensions of shipped machinery. **Do not re-plan solved problems.**
+- Architecture fork resolved at kickoff (2026-07-29): the proposal intelligence lives **engine-side**, not in the Telegram client's LLM mapper. The cheaper re-target (jobfill exposes an MCP tool; the existing client mapper aims at it) was rejected because it would make B-01's "the belief layer earns its keep" claim false.
+- Scope edge: **producer + in-repo reference adapter.** recense ships the emit seam and a thin reference consumer proving the contract; the live jobfill integration is jobfill's own repo, later.
+- **Calendar deliberately out of scope** — belongs as its own separate thing, the same way jobfill lives separately. `CalendarAdapter` exists and is already multi-account but stays behind `calendar.enabled: false`.
+- Engine invariants hold: online paths LLM-free, graph is source of truth, single-tenant, agents outside the engine, D-43 (inference never strengthens a fact), net-zero new runtime deps, all LLM cost in the offline pass.
+- Open for discuss-phase (carried from B-01): where the proposal contract physically lives (queue table read over HTTP/CLI vs an emit seam — keep it dead simple, **no message bus for a personal tool**); who owns the canonical entity list (recense's entity graph vs the consumer's); confidence thresholds for hold-vs-propose.
+
 ## Last Milestone: v9.0 Memory Quality — SHIPPED 2026-07-20
 
-> Shipped (phases 46–61, no git-tag branch merge needed; audit `passed` after GATE-01 closure via quick 260720-nup). Full detail: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md); audit: [milestones/v9.0-MILESTONE-AUDIT.md](milestones/v9.0-MILESTONE-AUDIT.md). No active milestone — run `/gsd:new-milestone` to open v10.0. The original goal/target-features below are retained as history.
+> Shipped (phases 46–61, no git-tag branch merge needed; audit `passed` after GATE-01 closure via quick 260720-nup). Full detail: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md); audit: [milestones/v9.0-MILESTONE-AUDIT.md](milestones/v9.0-MILESTONE-AUDIT.md). Superseded by the v10.0 Action Proposals milestone above (opened 2026-07-29). The original goal/target-features below are retained as history.
 
 **Goal:** Make recense's belief-correction and retrieval work on messy real-world data — not just clean cases — and lock the gains behind regression gates, validated on LoCoMo / LongMemEval-KU / EVAL-02.
 
@@ -201,10 +223,21 @@ Built + verified in **Phase 12: HTTP Serving Mode** (2026-06-11, 815 tests passi
 - [x] **GATE-01..03** (discharged deferred Phase 43) — offline deterministic `gate:ci` merge-blocking in CI (quick 260720-nup); floors cover accuracy/latency/token + EVAL-02 + R@K; `docs/evals.md` re-baselined to v9.0-final — (Phase 50)
 - [x] **Viz overhaul arc 52–61** — honest traces, layout at 15.4k nodes, three-layer ambient liveliness + spontaneous idle activation, identity palette, node/motion overhaul, HUD integration, settings/stats depth, corpus index-column browsing — all founder-signed-off
 
-### Active (next milestone — opens via `/gsd:new-milestone`)
+### Active (v10.0 Action Proposals — REQ-IDs in `REQUIREMENTS.md`)
+
+- [ ] **Multi-inbox email ingest** — guided account-N onboarding + per-account `gmail.query` scoping (completes v4.0's shipped fan-out).
+- [ ] **Offline intent classification** on event episodes in the sleep pass; hot path stays LLM-free.
+- [ ] **Entity resolution** against a canonical entity list (ownership TBD at discuss-phase).
+- [ ] **Belief-gated status drift** — `supersedes` + hold-on-ambiguity via PE-gated reconsolidation. *The differentiator.*
+- [ ] **Domain-neutral proposal emit seam** — `{entity, proposed_change, evidence_episode, confidence}`; never writes a consumer's DB.
+- [ ] **In-repo reference consumer adapter** proving the contract end-to-end.
+- [ ] **HITL approval for belief-shaped proposals** — second proposal kind on the v4.0 Telegram machinery.
+
+### Deferred (not in v10.0 — tracked in STATE.md)
 
 - [ ] **Carried from v7.0:** Phase 39.1-05 Task 2 — live hub/subject doc generation + verification (async, checklist in `39.1-05-SUMMARY.md`).
 - [ ] **Carried from v9.0 close:** Phase 57/58 human-verification residuals (one founder viz session covers both: re-observe corrected replay/leak behavior + capture an fps number); RETR-03 re-tune when future data supports a positive fusion weight; 4 pending todos (see STATE.md Deferred Items).
+- [ ] **Calendar ingest visibility** — `CalendarAdapter` exists and is multi-account, gated behind `calendar.enabled: false`. Founder decision 2026-07-29: belongs as its own separate thing, like jobfill.
 
 ### Out of Scope
 
@@ -258,6 +291,8 @@ Built + verified in **Phase 12: HTTP Serving Mode** (2026-06-11, 815 tests passi
 | ANN NO-GO at current scale; adopt WASM SIMD exact scan instead (v9.0/Phases 49→51) | Exact scan p95 19.5ms @14k is under budget (crossover ~33k); HNSW adds a native dep + index lifecycle for recall risk; WASM f32x4 kernel is byte-exact, portable, ~4–5× | ✓ Good — recall@10=1.000 at dim=1536; ANN deferred to a six-figure-node trigger |
 | Bi-temporal/supersedes DEFER — tombstone-always stands (v9.0/Phase 49) | No current forcing function; backfill/constraints force full node_v* recreation; additive supersedes-chain columns are the cheap path if ever needed | — Pending trigger |
 | CI gate = offline deterministic tier only; paid accuracy tier stays on-demand (v9.0/Phase 50 + quick 260720-nup) | `gate:ci` reads committed recorded-metric fixtures (sub-second, no API/DB/keys) so it can block every merge; `gate:accuracy` is key-guarded and multi-hour — belongs on-demand | ✓ Good — `gate` is a required status check on main; negative test proven (tampered floor → GATE FAIL exit 1) |
+| Proposal intelligence lives engine-side, not in the client's LLM mapper (v10.0, 2026-07-29) | The cheap alternative — jobfill exposes an MCP tool and v4.0's existing client-side mapper aims at it — needs almost no engine work, but puts the classify/resolve/confidence judgment in the Telegram client. That would make B-01's "the belief layer earns its keep here" claim false. Classification, entity resolution, and the status belief go in the sleep pass so `supersedes` / hold-on-ambiguity do real work | — Pending |
+| recense emits domain-neutral intents; a consumer-side adapter maps them (v10.0, 2026-07-29) | recense must not know any consumer's schema or write its DB. It emits `{entity, proposed_change, evidence_episode, confidence}` and stops; a thin consumer-owned adapter maps that onto rows. Isomorphic to the Embedder/retrieval seams — makes any downstream tool a possible consumer instead of hardcoding one. Human approves the write (revived Telegram surface), so a wrong belief can't silently mutate a system of record | — Pending |
 
 ## Evolution
 
@@ -277,7 +312,9 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-20 after v9.0 Memory Quality milestone (phases 46–61 shipped + archived; audit passed after GATE-01 closure; requirements moved to Validated; 6 Key Decisions logged; Active reset to carried items). Next: `/gsd:new-milestone`.*
+*Last updated: 2026-07-29 — v10.0 Action Proposals opened (promoted from ROADMAP backlog B-01; phases continue from 62). Architecture fork resolved engine-side; scope edge set at producer + in-repo reference adapter; calendar ingest deliberately deferred as its own thing. Multi-inbox email onboarding + per-account query scoping folded in after live-source check confirmed v4.0 already shipped the per-account fan-out. 2 Key Decisions logged; Active rewritten to v10.0 features. Next: `/gsd:plan-phase 62` (or `/gsd:discuss-phase 62`).*
+
+*Prior: 2026-07-20 after v9.0 Memory Quality milestone (phases 46–61 shipped + archived; audit passed after GATE-01 closure; requirements moved to Validated; 6 Key Decisions logged; Active reset to carried items).*
 
 *Prior: 2026-07-17 — Phase 61 (corpus chrome — index column + project browsing) complete. Previous: Phase 59 (HUD integration — visible-but-belong overlay) complete 2026-07-08. Previous: Phase 58 (viz node presentation & motion overhaul) complete 2026-07-06. Previous: Phase 57 (viz activity-palette redesign) complete 2026-07-04. Previous: v9.0 Memory Quality opened (phases 46–50: reconsolidation candidate broadening [resolves 999.2], hybrid retrieval, correctness hardening, scale/data-model spike, verification + regression gates [discharges Phase 43]). Grounded in a June-2026 deep-research pass; external magnitudes are preprints to validate on own data.*
 
