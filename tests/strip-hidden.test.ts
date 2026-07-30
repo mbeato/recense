@@ -15,6 +15,32 @@ import { stripHiddenContent, stripInvisibleCodepoints } from '../src/source/stri
 const ZWSP = '​';
 const TAGS_BLOCK_CHAR = '\u{E0041}'; // an arbitrary codepoint inside the Tags block
 
+// BL-03 (62-REVIEW.md): carriers sourced from the threat-class table, NOT from
+// INVISIBLE_CODEPOINTS_RE's implementation — asserting the implementation against
+// itself (WR-05) says nothing about whether the guard covers the threat class.
+const BL03_THREAT_CLASS_CARRIERS: Array<[string, string]> = [
+  ['Variation Selectors Supplement (first)', '\u{E0100}'],
+  ['Variation Selectors Supplement (last)', '\u{E01EF}'],
+  ['Variation Selector-1 (VS1)', '\u{FE00}'],
+  ['Variation Selector-16 (VS16)', '\u{FE0F}'],
+  ['Left-to-Right Embedding (LRE)', '\u{202A}'],
+  ['Right-to-Left Override (RLO)', '\u{202E}'],
+  ['Left-to-Right Isolate (LRI)', '\u{2066}'],
+  ['Pop Directional Isolate (PDI)', '\u{2069}'],
+  ['Left-to-Right Mark (LRM)', '\u{200E}'],
+  ['Right-to-Left Mark (RLM)', '\u{200F}'],
+  ['Arabic Letter Mark (ALM)', '\u{061C}'],
+  ['Combining Grapheme Joiner (CGJ)', '\u{034F}'],
+  ['deprecated format char (first)', '\u{206A}'],
+  ['deprecated format char (last)', '\u{206F}'],
+  ['Hangul Filler', '\u{115F}'],
+  ['Hangul Jungseong Filler', '\u{1160}'],
+  ['Hangul Filler (Compatibility Jamo)', '\u{3164}'],
+  ['Halfwidth Hangul Filler', '\u{FFA0}'],
+  ['Line Separator', '\u{2028}'],
+  ['Paragraph Separator', '\u{2029}'],
+];
+
 // Module-scope so the CR-02 behavior-preservation block (below) iterates the exact same
 // array reference as the idempotence describe block, not a hand-copied subset.
 const IDEMPOTENCE_FIXTURES = [
@@ -41,6 +67,12 @@ const IDEMPOTENCE_FIXTURES = [
   "<style data-x='a>b'>.h{display:none}</style>ok<span class='h'>PAYLOAD4</span>",
   '<style data-x="a>b">#sec{display:none}</style>ok<span id="sec">PAYLOAD5</span>',
   '<style data-x=a>b{display:none}</style>ok<span class="b">VISIBLE6</span>',
+  // BL-01/BL-02 (62-12): unquoted < inside a tag attribute region, and spec-legal
+  // </style> end-tag variants.
+  '<style x=a<b>.legal{display:none}</style>ok<span class="legal">PAYLOAD_A</span>',
+  '<div x=a<b style="display:none">PAYLOAD</div>Visible.',
+  '<style>.legal{display:none}</style foo>ok<span class="legal">PAYLOAD_B</span>',
+  '<style>.legal{display:none}</style/>ok<span class="legal">PAYLOAD_B2</span>',
 ];
 
 // Same three inputs as the "invisible Unicode" describe block below (:158-177 pre-edit),
@@ -49,6 +81,9 @@ const INVISIBLE_UNICODE_INPUTS = [
   `a${ZWSP}b${ZWSP}c`,
   `hello${TAGS_BLOCK_CHAR}world`,
   `<div style="dis${ZWSP}play:none">HIDDEN</div>Visible.`,
+  // BL-03 (62-12): the threat-class carriers, reused here so the stage-1
+  // behavior-preservation block below actually exercises them.
+  ...BL03_THREAT_CLASS_CARRIERS.map(([, cp]) => 'a' + cp + 'b'),
 ];
 
 describe('stripHiddenContent — hiding shapes removed', () => {
@@ -207,6 +242,70 @@ describe('stripHiddenContent — unbalanced quote fail-safe truncation (accepted
   });
 });
 
+describe('stripHiddenContent — unquoted < inside a tag attribute region (BL-01 regression of the 62-09 fix)', () => {
+  // 62-09 narrowed STYLE_BLOCK_RE's (and the other three literals') unquoted-attribute
+  // class from `[^>]` to `[^'"<>]`, excluding `<`. Per HTML §13.2.5.36 (attribute value,
+  // unquoted state) a `<` is a parse error but is APPENDED to the attribute value — the
+  // tag continues to the next unquoted `>`. So `<style x=a<b>` is a valid <style> start
+  // tag in every conforming parser, and the shipped (post-62-09) regex disagrees.
+  it('yields the hiding rule to the harvest and the raw CSS does not leak as prose', () => {
+    const out = stripHiddenContent(
+      '<style x=a<b>.legal{display:none}</style>ok<span class="legal">PAYLOAD_A</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_A');
+    expect(out).not.toContain('display:none');
+    expect(out).toContain('ok');
+  });
+
+  it('over-removal direction: does not destroy visible prose that follows the same shape', () => {
+    // Today (shipped, unfixed) this returns the empty string: the unquoted `<` is a
+    // second, previously undocumented trigger of the stage-6 stray-`<` truncation that
+    // residual (c) documents for unbalanced quotes only. This fix closes that trigger.
+    const out = stripHiddenContent(
+      '<div x=a<b style="display:none">PAYLOAD</div>Visible.'
+    );
+    expect(out).not.toContain('PAYLOAD');
+    expect(out).toContain('Visible.');
+  });
+
+  it("62-09 regression lock: an unquoted < in a <style> attribute was handled by the PRE-62-09 [^>]* regex and must never stop being handled again", () => {
+    // The shipped `[^>]*` literal (pre-62-09) harvested `.legal{display:none}` from
+    // `<style x=a<b>...`; 62-09's `[^'"<>]` narrowing broke it. Narrowing an attribute
+    // class is therefore a behavior change that requires this exact input to be
+    // re-checked on every future edit, not a pure hardening — wave C must not repeat
+    // wave A's mistake in the other direction.
+    const out = stripHiddenContent(
+      '<style x=a<b>.legal{display:none}</style>ok<span class="legal">PAYLOAD_A</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_A');
+    expect(out).not.toContain('display:none');
+    expect(out).toContain('ok');
+  });
+});
+
+describe('stripHiddenContent — spec-legal <style> end tags (BL-02)', () => {
+  // On whitespace the RAWTEXT end-tag-name state transitions to before-attribute-name
+  // and on `/` to self-closing-start-tag; both close the element per the HTML tokenizer,
+  // and ANY_TAG_TOKEN_RE already accepts both, so today stage 4 deletes the <style>
+  // block while stage 2's STYLE_BLOCK_RE (whose tail is still `<\/style\s*>`) harvests
+  // nothing — the evidence that the span is hidden is destroyed and the span's text
+  // survives.
+  it.each([
+    ['</style foo>', '<style>.legal{display:none}</style foo>ok<span class="legal">PAYLOAD_B</span>', 'PAYLOAD_B'],
+    ['</style/>', '<style>.legal{display:none}</style/>ok<span class="legal">PAYLOAD_B2</span>', 'PAYLOAD_B2'],
+  ])('harvests through a %s end tag', (_label, input, payload) => {
+    const out = stripHiddenContent(input);
+    expect(out).not.toContain(payload);
+    expect(out).toContain('ok');
+  });
+});
+
+describe('stripInvisibleCodepoints — carriers sourced from the BL-03 threat class, not from the implementation', () => {
+  it.each(BL03_THREAT_CLASS_CARRIERS)('removes %s (%s)', (_label, cp) => {
+    expect(stripInvisibleCodepoints('a' + cp + 'b')).toBe('ab');
+  });
+});
+
 describe('stripHiddenContent — no false positives', () => {
   it('keeps opacity:0.85 element content', () => {
     const out = stripHiddenContent('<span style="opacity:0.85">Keep me</span>');
@@ -356,11 +455,15 @@ describe('stripHiddenContent — totality (never throws)', () => {
 });
 
 describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surface)', () => {
-  // The new quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'"<>])*` runs on
-  // attacker-supplied email HTML (input size is attacker-controlled — see Task 3's
-  // read_first on gmail-adapter.ts). Both shapes below contain no `>` at all, forcing
+  // The quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'">])*` (the shared ATTRS fragment,
+  // 62-12) runs on attacker-supplied email HTML (input size is attacker-controlled — see
+  // Task 3's read_first on gmail-adapter.ts). Shapes A/B contain no `>` at all, forcing
   // every `<` through a full failing forward scan with unterminated quotes, and Shape B
-  // alternates double and single quotes so both quoted alternatives are exercised.
+  // alternates double and single quotes so both quoted alternatives are exercised. Shape U
+  // (62-12) is the shape the ATTRS widening specifically worsens: under the old
+  // `[^'"<>]` class every failing forward scan terminated at the next `<`; under the new
+  // `[^'">]` class (which now permits `<` per HTML §13.2.5.36, closing BL-01) it runs to
+  // end of string instead.
   const shapeA = (bytes: number) => {
     const unit = '<div a="' + 'y'.repeat(50);
     return unit.repeat(Math.ceil(bytes / unit.length));
@@ -369,21 +472,39 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     const unit = '<div ' + "a\"b'c".repeat(20);
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
+  const shapeU = (bytes: number) => {
+    const unit = '<div a=b ';
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
 
-  it('Shape A at ~64 KB completes under 500ms and does not throw', () => {
+  // Absolute ceilings raised 500ms -> 5000ms (62-12, IN-03 62-REVIEW.md): the growth-ratio
+  // assertions below are the ReDoS instrument and are UNCHANGED as the assertion of
+  // record. The absolute ceiling's only job is to catch a genuine hang, which 5s still
+  // does well within the existing 20s block timeout; a threshold with only ~1.6x headroom
+  // on the author's machine (Shape S measured 302.9ms against the old 500ms ceiling) is a
+  // CI flake source, not a security control.
+  it('Shape A at ~64 KB completes under 5000ms and does not throw', () => {
     const input = shapeA(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    expect(elapsed).toBeLessThan(5000);
   });
 
-  it('Shape B at ~64 KB completes under 500ms and does not throw', () => {
+  it('Shape B at ~64 KB completes under 5000ms and does not throw', () => {
     const input = shapeB(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    expect(elapsed).toBeLessThan(5000);
+  });
+
+  it('Shape U at ~64 KB completes under 5000ms and does not throw', () => {
+    const input = shapeU(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(5000);
   });
 
   it('Shape A growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
@@ -401,10 +522,29 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure.
     expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
   });
+
+  it('Shape U growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
+    const input32 = shapeU(32 * 1024);
+    const start32 = performance.now();
+    stripHiddenContent(input32);
+    const t32 = performance.now() - start32;
+
+    const input64 = shapeU(64 * 1024);
+    const start64 = performance.now();
+    stripHiddenContent(input64);
+    const t64 = performance.now() - start64;
+
+    // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow
+    // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure. The three
+    // ATTRS alternatives remain disjoint on their first character (", ', or neither), so
+    // there is no ambiguity for the engine to backtrack through even on this worsened
+    // shape.
+    expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
+  });
 }, 20000);
 
 describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 ReDoS surface)', () => {
-  // STYLE_BLOCK_RE's new quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'"<>])*` is driven
+  // STYLE_BLOCK_RE's quote-aware alternation (the shared ATTRS fragment, 62-12) is driven
   // by matchAll over attacker-supplied email HTML on EVERY ingest (stage 2 is
   // unconditional). Both shapes below contain no </style> anywhere, forcing every
   // `<style` start position through a full failing scan.
@@ -416,27 +556,29 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
   // Shape T: complete open tags with alternating double- and single-quoted attribute
-  // runs but no </style> anywhere, so the lazy ([\s\S]*?)<\/style\s*> tail scans to end
-  // of string from every start position — the genuinely quadratic shape.
+  // runs but no </style> anywhere, so the lazy ([\s\S]*?)<\/style\b${ATTRS}> tail scans
+  // to end of string from every start position — the genuinely quadratic shape.
   const shapeT = (bytes: number) => {
     const unit = '<style ' + 'a="b" c=\'d\' '.repeat(4) + '>';
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
 
-  it('Shape S at ~64 KB completes under 500ms and does not throw', () => {
+  // See the ceiling-raise rationale above (62-12, IN-03): growth-ratio assertions are the
+  // assertion of record, absolute ceilings only catch a hang.
+  it('Shape S at ~64 KB completes under 5000ms and does not throw', () => {
     const input = shapeS(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    expect(elapsed).toBeLessThan(5000);
   });
 
-  it('Shape T at ~64 KB completes under 500ms and does not throw', () => {
+  it('Shape T at ~64 KB completes under 5000ms and does not throw', () => {
     const input = shapeT(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    expect(elapsed).toBeLessThan(5000);
   });
 
   it('Shape T growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
@@ -456,11 +598,16 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
   });
 }, 20000);
 
-describe('strip-hidden.ts — no attribute-scanning regex uses a bare attribute class (CR-01 bug-class guard)', () => {
-  // CR-01 was filed against a bare `[^` + `>]*` attribute class, fixed for three of the
-  // file's four attribute-scanning regexes, and survived in the fourth (STYLE_BLOCK_RE)
-  // for a full extra plan. This guard exists so a fifth regex added later — with the same
-  // bug — fails the suite instead of shipping a third instance of the bug class.
+describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL-02 bug class (62-12 decision #1)', () => {
+  // Retitled from "bug-class guard" (62-09): WR-06 (62-REVIEW.md) established that a
+  // string-matching source guard can never GUARANTEE this bug class does not recur — every
+  // one of `[^>]+`, `[^>]{0,200}`, `[^ >]*`, `[^\s>]*` etc. is the same bug and would pass
+  // a substring check. The guarantee is now STRUCTURAL, not textual: all four
+  // tag-scanning regexes are built from one shared `ATTRS` fragment (see
+  // src/source/strip-hidden.ts), so a fifth literal built the same way cannot carry a
+  // divergent attribute boundary. What follows is a residual grep that detects the
+  // specific regression shapes this file has actually shipped (CR-01's bare class,
+  // BL-01's narrowed class) — a useful canary, not a proof.
   const SOURCE = readFileSync(
     join(__dirname, '..', 'src', 'source', 'strip-hidden.ts'),
     'utf8'
@@ -472,15 +619,31 @@ describe('strip-hidden.ts — no attribute-scanning regex uses a bare attribute 
     })
     .join('\n');
 
+  // Kept UNCHANGED from 62-09: this assertion passes only because 62-12 rejected the code
+  // reviewer's `<\/style\b[^>]*>` close-tag tail (which would have reintroduced this exact
+  // banned substring) in favor of a close tail built from the shared ATTRS fragment.
   it('contains no bare unquoted-only attribute class outside comments', () => {
     expect(COMMENT_STRIPPED_SOURCE).not.toContain('[^>]*');
     expect(COMMENT_STRIPPED_SOURCE).not.toContain('[^<>]*');
   });
 
-  it('has at least 4 occurrences of the quote-aware alternation prefix, one per attribute-scanning regex', () => {
-    const prefix = '(?:"[^"]*"|\'[^\']*\'|';
-    const count = COMMENT_STRIPPED_SOURCE.split(prefix).length - 1;
-    expect(count).toBeGreaterThanOrEqual(4);
+  // REPLACES 62-09's "count of the alternation prefix >= 4" assertion, which does not
+  // hold after 62-12: the alternation now appears exactly ONCE, inside the ATTRS
+  // definition itself, not once per regex. These are the single-source-of-truth
+  // assertions that assertion should always have been.
+  it('the quote-aware alternation is defined exactly once, and used by exactly four compile-once RegExp constructions', () => {
+    const alternationPrefix = '(?:"[^"]*"|\'[^\']*\'|';
+    const alternationCount = COMMENT_STRIPPED_SOURCE.split(alternationPrefix).length - 1;
+    expect(alternationCount).toBe(1);
+
+    const attrsInterpolationLines = SOURCE.split('\n').filter(line => line.includes('${ATTRS}'));
+    expect(attrsInterpolationLines.length).toBe(4);
+
+    const newRegExpLines = SOURCE.split('\n').filter(line => line.includes('new RegExp('));
+    expect(newRegExpLines.length).toBe(4);
+    for (const line of newRegExpLines) {
+      expect(line.trimStart().startsWith('const ')).toBe(true);
+    }
   });
 });
 
