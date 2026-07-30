@@ -19,7 +19,10 @@
  *        is joined and BEFORE redactSecrets runs (see normalizeGmailMessage). This closes
  *        the raw-HTML-fallback vector in extractBodyText: markup, CSS/attribute-hidden
  *        elements, and invisible Unicode are removed at the ingest boundary so hidden
- *        instructions never reach the sleep-pass classifier's token stream.
+ *        instructions never reach the sleep-pass classifier's token stream. The
+ *        provenance header (From:/Subject:) gets the narrower stripInvisibleCodepoints
+ *        (stage 1 only, CR-02, plan 62-11) — not the full pipeline, since headers are not
+ *        markup and stages 4-6 would mangle a legitimate `Subject: Re: <urgent> pricing`.
  *  D-65: Ingest scope is config.gmail.query (native Gmail search query). Conservative
  *        default in EngineConfig; narrow without code changes.
  *  D-67: cursor:gmail historyId is advanced each pull (speed layer). UNIQUE(source,
@@ -48,7 +51,7 @@ import type { gmail_v1 } from 'googleapis';
 import type { EngineConfig } from '../lib/config';
 import type { NormalizedRecord, SourceAdapter } from './source-adapter';
 import { redactSecrets } from './redact';
-import { stripHiddenContent } from './strip-hidden';
+import { stripHiddenContent, stripInvisibleCodepoints } from './strip-hidden';
 
 // ---------------------------------------------------------------------------
 // Raw message type — the API-agnostic representation used by GmailFetcher
@@ -345,15 +348,23 @@ export function normalizeGmailMessage(
   _config: Pick<EngineConfig, 'gmail'>,
   nowMs: number
 ): NormalizedRecord {
-  // EMAIL-03: stripHiddenContent runs on the BODY ONLY, before it is joined with the
-  // provenance header, and BEFORE redactSecrets (ordering is load-bearing, see below).
-  // Not applied to the header: the header is assembled from trusted config (accountId,
-  // T-20-06) plus the From/Subject headers, and redactSecrets already covers it —
-  // stripping it would risk mangling a legitimate subject containing angle brackets.
+  // EMAIL-03/CR-02 (62-REVIEW.md): the BODY gets the full 8-stage stripHiddenContent,
+  // before it is joined with the provenance header and BEFORE redactSecrets (ordering is
+  // load-bearing, see below). The HEADER gets stage 1 ONLY (stripInvisibleCodepoints):
+  // From:/Subject: are 100% sender-controlled (RFC 2047 encoded-words decode to arbitrary
+  // UTF-8), and redactSecrets covers secret patterns only, not invisible codepoints — so
+  // without this, a Subject/From carrying the Unicode Tags block or zero-width characters
+  // reached record.content verbatim (CR-02, closed by plan 62-11). The full pipeline is
+  // deliberately NOT applied to headers: stages 4-6 would delete a legitimate
+  // `Subject: Re: <urgent> pricing` down to `Re:`, destroying provenance the extractor
+  // depends on. accountId still comes from trusted config (T-20-06) and is NOT passed
+  // through the primitive.
   const strippedBody = stripHiddenContent(raw.bodyText);
+  const strippedFrom = stripInvisibleCodepoints(raw.headers.from);
+  const strippedSubject = stripInvisibleCodepoints(raw.headers.subject);
 
   // D-59/D-09: provenance header with account id so the LLM extractor sees sender + subject + account
-  const provenanceHeader = `From: ${raw.headers.from} · Re: ${raw.headers.subject} · Acct: ${accountId}`;
+  const provenanceHeader = `From: ${strippedFrom} · Re: ${strippedSubject} · Acct: ${accountId}`;
   const combined = `${provenanceHeader}\n${strippedBody}`;
 
   // D-63: redactSecrets runs over the full combined string (header + stripped body).
