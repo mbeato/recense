@@ -126,6 +126,49 @@ export function resolveEnabledSources(env: NodeJS.ProcessEnv = process.env): str
 }
 
 /**
+ * Resolve the list of configured Google accounts + their per-account Gmail query
+ * from RECENSE_GOOGLE_ACCOUNTS / RECENSE_GMAIL_QUERY_<UPPER_ID> (EMAIL-02).
+ *
+ * Fail-safe posture mirrors resolveEnabledSources: never throws, absent/empty/
+ * wholly-invalid input falls back to today's single-account default — hardcoded
+ * here as `[{ id: 'default' }]` rather than importing DEFAULT_CONFIG (this module
+ * sits on the hook load path and must keep importing only Node builtins). See
+ * `DEFAULT_CONFIG.googleAccounts` in src/lib/config.ts, which must match this
+ * fallback; tests/google-accounts-config.test.ts asserts they stay in sync.
+ *
+ * Id charset `/^[a-z][a-z0-9_]{0,31}$/` (shared with the onboarding flow, T-62-01):
+ * lowercase-only so the uppercase env-key derivation is unambiguous, and excludes
+ * commas/`=`/newlines so a crafted id cannot inject a second entry into the
+ * comma-separated list or a bogus line into the env-file grammar. Non-conforming
+ * ids are silently dropped (T-62-02), never thrown.
+ *
+ * Per-account query is read from RECENSE_GMAIL_QUERY_<UPPER_ID> and attached only
+ * when its trimmed value is non-empty. That query bounds the account's INITIAL
+ * BACKFILL ONLY (see the googleAccounts doc comment in src/lib/config.ts) —
+ * incremental pulls via `users.history.list` accept no `q` and are unaffected.
+ */
+export function resolveGoogleAccounts(
+  env: NodeJS.ProcessEnv = process.env,
+): Array<{ id: string; query?: string }> {
+  const raw = env['RECENSE_GOOGLE_ACCOUNTS'];
+  const idPattern = /^[a-z][a-z0-9_]{0,31}$/;
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  if (raw !== undefined) {
+    for (const candidate of raw.split(',').map((s) => s.trim())) {
+      if (candidate === '' || !idPattern.test(candidate) || seen.has(candidate)) continue;
+      seen.add(candidate);
+      ids.push(candidate);
+    }
+  }
+  if (ids.length === 0) return [{ id: 'default' }];
+  return ids.map((id) => {
+    const query = env[`RECENSE_GMAIL_QUERY_${id.toUpperCase()}`]?.trim();
+    return query ? { id, query } : { id };
+  });
+}
+
+/**
  * Hydrate process.env from the configured env file (sleep.env) for any key NOT already
  * set in the ambient environment, then return the keys it applied.
  *
