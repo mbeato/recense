@@ -28,6 +28,11 @@
  *        are read from process.env ON FIRST fetchMessages CALL — never at construction
  *        (T-05-KEY/T-06-12). Credentials must live in ~/.config/recense/sleep.env
  *        (chmod 600, gitignored). NEVER log the refresh token or client secret.
+ *  EMAIL-04: parseEmailDate derives NormalizedRecord.event_ts from the Date: header inside
+ *        normalizeGmailMessage. The header is sender-controlled, so the parse doubles as a
+ *        security control (see parseEmailDate's JSDoc) — confident-or-null, with a bounded
+ *        future-skew clamp that closes the "forge a future date to sort last" ordering attack
+ *        plan 62-05 would otherwise be exposed to.
  *
  * Package legitimacy (T-06-SC): `googleapis` is the official Google-maintained client
  * library (publisher google-wombot / google, github.com/googleapis/google-api-nodejs-client).
@@ -57,7 +62,11 @@ export interface RawGmailMessage {
     from: string;
     /** Subject line, e.g. 'Re: pricing discussion' */
     subject: string;
-    /** Date header value — carried for completeness; not included in provenance string */
+    /**
+     * Date header value. Parsed by parseEmailDate into NormalizedRecord.event_ts
+     * (EMAIL-04); remains deliberately excluded from the provenance string — the
+     * D-59 provenance-header shape (From/Subject/Acct) is unchanged.
+     */
     date: string;
   };
   /** Decoded plain-text body (or empty string when body is unavailable). */
@@ -239,6 +248,52 @@ class RealGmailFetcher implements GmailFetcher {
 // Pure normalizer — exported for unit testing without credentials
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// parseEmailDate — bounded, attacker-hostile RFC 2822 Date: header parse (EMAIL-04)
+// ---------------------------------------------------------------------------
+
+/** Floor for a plausible event time: 1990-01-01T00:00:00Z. Rejects epoch-0/nonsense dates. */
+const MIN_PLAUSIBLE_EVENT_MS = 631152000000;
+
+/** Future-skew tolerance: 48 hours. Absorbs real sender clock skew / timezone mistakes. */
+const MAX_FUTURE_SKEW_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Parse an RFC 2822 `Date:` header into epoch ms, or null on any failure or implausibility.
+ *
+ * Pure: no clock read, no I/O. `nowMs` is an explicit parameter so the function stays
+ * deterministic and testable — never reads Date.now() internally.
+ *
+ * Validation order (confident-or-null at every step, D-02 discipline — no heuristic salvage):
+ *  1. Empty, whitespace-only, or absent header → null.
+ *  2. Date.parse(header) is NaN → null. Date.parse handles RFC 2822 natively; no date library.
+ *  3. Result earlier than MIN_PLAUSIBLE_EVENT_MS → null (epoch-0 / nonsense pre-email dates).
+ *  4. Result later than nowMs + MAX_FUTURE_SKEW_MS → null. SECURITY-LOAD-BEARING clamp.
+ *  5. Otherwise return the parsed value.
+ *
+ * Threat reasoning (T-62-23/T-62-24/T-62-25): the Date: header is set by the sender and is
+ * therefore attacker-controlled. A far-PAST forged date is harmless in plan 62-05's ordering —
+ * it sorts the forged evidence EARLIER, so genuine newer evidence is applied after it and wins
+ * (accepted, T-62-24). A far-FUTURE forged date is the dangerous direction: it would sort the
+ * forged evidence LAST within a batch, letting it apply over newer genuine state. Rejecting
+ * implausible future dates to null removes that lever entirely — a null event_ts excludes the
+ * episode from chronological reordering altogether and leaves it in its ordinary
+ * salience-priority slot, so "sort myself last" cannot be expressed (mitigated, T-62-23). The
+ * 48-hour tolerance absorbs real-world sender clock skew and timezone-malformed headers without
+ * admitting the attack. A null event_ts is always the safe default here, never a guessed one.
+ *
+ * @param header RFC 2822 Date: header value (may be empty, malformed, or attacker-controlled).
+ * @param nowMs  Current time in epoch ms, supplied by the caller (never read internally).
+ */
+export function parseEmailDate(header: string, nowMs: number): number | null {
+  if (!header || !header.trim()) return null;
+  const parsed = Date.parse(header);
+  if (Number.isNaN(parsed)) return null;
+  if (parsed < MIN_PLAUSIBLE_EVENT_MS) return null;
+  if (parsed > nowMs + MAX_FUTURE_SKEW_MS) return null;
+  return parsed;
+}
+
 /**
  * Normalise a single pre-fetched Gmail message into a NormalizedRecord.
  *
@@ -255,12 +310,16 @@ class RealGmailFetcher implements GmailFetcher {
  *                  as `· Acct: <accountId>` so the extractor sees it. Comes from trusted
  *                  config.googleAccounts; never sourced from external email content (T-20-06).
  * @param _config   EngineConfig (reserved for future per-source tunables; unused today).
+ * @param nowMs     Current time in epoch ms (EMAIL-04) — passed through to parseEmailDate.
+ *                  Explicit parameter, never Date.now() inside this function, so the
+ *                  normalizer stays pure as its doc block promises.
  */
 export function normalizeGmailMessage(
   raw: RawGmailMessage,
   accountId: string,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _config: Pick<EngineConfig, 'gmail'>
+  _config: Pick<EngineConfig, 'gmail'>,
+  nowMs: number
 ): NormalizedRecord {
   // EMAIL-03: stripHiddenContent runs on the BODY ONLY, before it is joined with the
   // provenance header, and BEFORE redactSecrets (ordering is load-bearing, see below).
@@ -297,6 +356,9 @@ export function normalizeGmailMessage(
     // NEVER change this to the user-assertion origin tag. External email must earn
     // confidence through consolidation; mis-tagging is the LEARN-03 correctness guard failure mode.
     origin: 'observed',
+    // EMAIL-04: source-asserted event time from the Date: header, or null on any
+    // absent/malformed/implausible header (confident-or-null — see parseEmailDate).
+    event_ts: parseEmailDate(raw.headers.date, nowMs),
     role: 'user',
   };
 }
@@ -403,7 +465,11 @@ export class GmailAdapter implements SourceAdapter {
 
     // Normalise: pure synchronous mapping (no await)
     // D-09: pass accountId so the provenance header carries '· Acct: <accountId>'
-    const records = messages.map(msg => normalizeGmailMessage(msg, this.accountId, this.config));
+    // EMAIL-04: Date.now() read once here — the single impure call site (mirrors the
+    // Date.now()-default-param pattern already used in calendar-adapter.ts's
+    // selectSyncEvents); normalizeGmailMessage itself never reads the clock.
+    const nowMs = Date.now();
+    const records = messages.map(msg => normalizeGmailMessage(msg, this.accountId, this.config, nowMs));
 
     // M-6: capture newHistoryId for the deferred cursor commit (NOT written here).
     // commitCursor is a thunk — called by the orchestrator after appendBatch succeeds.

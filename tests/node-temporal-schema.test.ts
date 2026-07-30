@@ -22,8 +22,8 @@ function makeDb(): Database.Database {
 }
 
 describe('SCHEMA_VERSION', () => {
-  it('is 15 (v15: activation_trace.kind)', () => {
-    expect(SCHEMA_VERSION).toBe(15);
+  it('is 16 (v16: episode.event_ts)', () => {
+    expect(SCHEMA_VERSION).toBe(16);
   });
 });
 

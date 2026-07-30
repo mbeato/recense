@@ -30,6 +30,7 @@ import {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const TEST_CONFIG: EngineConfig = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+const NOW = Date.UTC(2026, 5, 9);
 
 function makeRaw(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage {
   return {
@@ -79,34 +80,34 @@ function makeStore(): SemanticStore {
 describe('normalizeGmailMessage — field mapping', () => {
   it('builds provenance header From: … · Re: …', () => {
     const raw = makeRaw();
-    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
     expect(record.content).toMatch(/^From: alice@acme.com · Re: Re: pricing discussion/);
   });
 
   it('sets external_id to the message id', () => {
     const raw = makeRaw({ id: 'abc-xyz-123' });
-    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
     expect(record.external_id).toBe('abc-xyz-123');
   });
 
   it("sets origin to 'observed' (D-61 HARD-CODED)", () => {
-    const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG);
+    const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG, NOW);
     expect(record.origin).toBe('observed');
   });
 
   it("sets source to 'gmail'", () => {
-    const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG);
+    const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG, NOW);
     expect(record.source).toBe('gmail');
   });
 
   it("sets role to 'user'", () => {
-    const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG);
+    const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG, NOW);
     expect(record.role).toBe('user');
   });
 
   it('concatenates provenance header with body text separated by newline', () => {
     const raw = makeRaw({ bodyText: 'The body content here.' });
-    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
     expect(record.content).toContain('\nThe body content here.');
   });
 });
@@ -119,7 +120,7 @@ describe('normalizeGmailMessage — boundary redaction', () => {
       headers: { from: 'bob@example.com', subject: 'API credentials', date: '' },
       bodyText: 'My key is sk-ABCDEFGHIJKLMNOPQRSTU and you should use it.',
     });
-    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
 
     // Secret stripped
     expect(record.content).toContain('[REDACTED:API_KEY]');
@@ -138,7 +139,7 @@ describe('normalizeGmailMessage — boundary redaction', () => {
       },
       bodyText: 'see subject',
     });
-    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
     expect(record.content).not.toContain('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234');
   });
 });
@@ -262,7 +263,7 @@ describe('GmailAdapter.pull() — D-61 origin guard', () => {
     ];
 
     for (const raw of raws) {
-      const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
+      const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
       expect(record.origin).toBe('observed');
     }
   });

@@ -47,6 +47,13 @@ export interface RecordEventParams {
    * email/ingest adapters leave it empty so their episodes are always globally visible.
    */
   cwd?: string;
+  /**
+   * Source-asserted event time in epoch ms (EMAIL-04) — see EpisodeRow.event_ts.
+   * Null/omitted means the source asserts no event time. `ts` is when recense LEARNED
+   * the episode (clock-driven, D-12); `eventTs` is when the SOURCE says it happened.
+   * Never a substitute for `ts`.
+   */
+  eventTs?: number | null;
 }
 
 export class IngestionPipeline {
@@ -85,6 +92,7 @@ export class IngestionPipeline {
       source,
       external_id: e.externalId ?? null,
       cwd: e.cwd ?? '',
+      event_ts: e.eventTs ?? null,
     });
   }
 }

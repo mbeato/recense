@@ -13,15 +13,15 @@ import { describe, it, expect } from 'vitest';
 import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
 
 describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
-  it('stamps SCHEMA_VERSION = 15 on a fresh in-memory DB (v15: activation_trace.kind)', () => {
+  it('stamps SCHEMA_VERSION = 16 on a fresh in-memory DB (v16: episode.event_ts)', () => {
     const db = new Database(':memory:');
     try {
       initSchema(db);
       const row = db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as
         { value: string } | undefined;
       expect(row).toBeDefined();
-      expect(Number(row!.value)).toBe(15);
-      expect(SCHEMA_VERSION).toBe(15);
+      expect(Number(row!.value)).toBe(16);
+      expect(SCHEMA_VERSION).toBe(16);
     } finally {
       db.close();
     }

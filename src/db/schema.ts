@@ -8,7 +8,8 @@
  */
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 15;
+// v16: episode.event_ts (EMAIL-04: source-asserted event time)
+export const SCHEMA_VERSION = 16;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -33,7 +34,10 @@ export const DDL = `
     session_id          TEXT    NOT NULL,
     source              TEXT    NOT NULL DEFAULT 'claude-code',
     external_id         TEXT,
-    cwd                 TEXT    NOT NULL DEFAULT ''
+    cwd                 TEXT    NOT NULL DEFAULT '',
+    -- v16: ts is ingest time (clock-driven, NOT NULL); event_ts is source-asserted
+    -- event time (nullable, EMAIL-04). NULL means the source asserts no event time.
+    event_ts            INTEGER
   );
 
   CREATE TABLE IF NOT EXISTS node (
@@ -262,6 +266,25 @@ export function initSchema(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_episode_cwd
       ON episode(cwd, consolidated);
+  `);
+
+  // v16 migration: add nullable event_ts to existing DBs (EMAIL-04).
+  // Same PRAGMA table_info guard as the v2/v3 migrations above — idempotent re-run.
+  // Fresh DBs already have event_ts from the DDL above → guard skips the ALTER.
+  // Nullable with no default — no backfill, no data loss, no table rebuild (respects the
+  // v9.0 bi-temporal DEFER: this is a single additive column, not a validity-interval model).
+  if (!cols.has('event_ts')) {
+    db.exec('ALTER TABLE episode ADD COLUMN event_ts INTEGER');
+  }
+
+  // idx_episode_event_ts: plan 62-05 orders unconsolidated episodes by event_ts, leading
+  // with consolidated to match the existing idx_episode_unconsolidated/idx_episode_cwd hot-path
+  // index shape. SPECULATIVE: if 62-05's ordering ends up done in memory instead of in SQL,
+  // this index should be dropped rather than left dead (the file already documents two dead
+  // indexes it later had to remove — see the v5 migration comment — do not repeat that silently).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_episode_event_ts
+      ON episode(consolidated, event_ts);
   `);
 
   // v4 migration: activation_trace ring-buffered table (VIZ-02).

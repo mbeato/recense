@@ -29,6 +29,7 @@ import {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const TEST_CONFIG: EngineConfig = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+const NOW = Date.UTC(2026, 5, 15);
 
 function makeRaw(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage {
   return {
@@ -76,30 +77,30 @@ function makeStore(): SemanticStore {
 describe('normalizeGmailMessage — account id in provenance header (D-09)', () => {
   it("'work' account id appears as '· Acct: work' in content", () => {
     const raw = makeRaw();
-    const record = normalizeGmailMessage(raw, 'work', TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'work', TEST_CONFIG, NOW);
     expect(record.content).toContain('· Acct: work');
   });
 
   it("'default' account id appears as '· Acct: default' in content", () => {
     const raw = makeRaw();
-    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
     expect(record.content).toContain('· Acct: default');
   });
 
   it('source stays gmail regardless of account id (D-09 — weighting unchanged)', () => {
     const raw = makeRaw();
-    expect(normalizeGmailMessage(raw, 'work', TEST_CONFIG).source).toBe('gmail');
-    expect(normalizeGmailMessage(raw, 'personal', TEST_CONFIG).source).toBe('gmail');
+    expect(normalizeGmailMessage(raw, 'work', TEST_CONFIG, NOW).source).toBe('gmail');
+    expect(normalizeGmailMessage(raw, 'personal', TEST_CONFIG, NOW).source).toBe('gmail');
   });
 
   it('origin stays observed regardless of account id (D-61 correctness guard)', () => {
     const raw = makeRaw();
-    expect(normalizeGmailMessage(raw, 'work', TEST_CONFIG).origin).toBe('observed');
+    expect(normalizeGmailMessage(raw, 'work', TEST_CONFIG, NOW).origin).toBe('observed');
   });
 
   it('account id is embedded between subject and body — full header shape', () => {
     const raw = makeRaw({ headers: { from: 'bob@co.com', subject: 'Hello', date: '' } });
-    const record = normalizeGmailMessage(raw, 'work', TEST_CONFIG);
+    const record = normalizeGmailMessage(raw, 'work', TEST_CONFIG, NOW);
     // Full provenance: "From: bob@co.com · Re: Hello · Acct: work"
     expect(record.content).toMatch(/^From: bob@co\.com · Re: Hello · Acct: work/);
   });

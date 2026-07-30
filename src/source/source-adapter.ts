@@ -74,6 +74,9 @@ export function contentExternalId(relPath: string, content: string): string {
  *     so the existing LLM extractor sees provenance with zero new extract plumbing.
  *  4. source matches the adapter's `source` identifier string.
  *  5. external_id is stable across re-runs; combined with source as the dedup key (D-59).
+ *  6. An adapter that sets event_ts must have derived it from source-asserted data
+ *     (e.g. a parsed Date: header) and must set null rather than guess when that data
+ *     is absent or implausible — never a heuristic salvage (EMAIL-04).
  *
  * Salience is NOT included (D-60): AllocationGate.score(content, role, source)
  * applies the per-source weight at append time. Adapters carry no salience hint.
@@ -118,6 +121,14 @@ export interface NormalizedRecord {
    *   lets external claims masquerade as the founder's assertions (LEARN-03 guard).
    */
   origin: Origin;
+
+  /**
+   * Optional source-asserted event time in epoch ms (EMAIL-04). Omit or set null when the
+   * source asserts no event time. NOT a salience hint (D-60 still forbids adapters from
+   * carrying salience) and NOT an alternative dedup key (D-59 still owns dedup via
+   * (source, external_id)) — see invariant 6 above.
+   */
+  event_ts?: number | null;
 
   /**
    * Conversation role (D-10). For communication sources use 'user'; for tool output 'tool'.
@@ -205,7 +216,10 @@ export class MockSourceAdapter implements SourceAdapter {
     this.script = [...script];
   }
 
-  /** Returns the scripted records plus a commitCursor thunk; always resolves, never throws. */
+  /**
+   * Returns the scripted records plus a commitCursor thunk; always resolves, never throws.
+   * Records (including any event_ts set on them) pass through unchanged — no code needed here.
+   */
   async pull(): Promise<{ records: NormalizedRecord[]; commitCursor: () => void }> {
     return {
       records: this.script,
