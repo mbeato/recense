@@ -43,7 +43,7 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 Phase: Roadmapped, not yet planned — Phase 62 (Multi-Inbox Email Ingest Hardening) is next
 Plan: —
 Status: Roadmap complete; awaiting `/gsd:plan-phase 62`
-Last activity: 2026-07-29 — v10.0 ROADMAP.md + REQUIREMENTS.md traceability written (7 phases, 62–68, 30/30 requirements mapped)
+Last activity: 2026-07-30 — Completed quick task 260729-s8a: recense write-lock contention (remember retry budget + graph-hygiene interval gate)
 
 ## Performance Metrics
 
@@ -227,6 +227,7 @@ Carried from v7.0/v8.0 close:
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260729-s8a | Fix two causes of recense write-lock contention: remember-cli now retries the lock (600s budget) instead of fast-failing in 0.11s, and graph hygiene (VACUUM+dedup, measured 486s) is gated to once per 20h via meta instead of running on every per-turn sleep pass | 2026-07-30 | b817e69, e85c8a1 | [260729-s8a-retry-remember-lock-gate-graph-hygiene](./quick/260729-s8a-retry-remember-lock-gate-graph-hygiene/) |
 | 260720-nup | Wire regression gate into CI merge-blocking (gate:ci offline tier + gate job + required-check context) — closes v9.0 audit GATE-01; branch-protection apply pending maintainer | 2026-07-20 | c114b5b, 6812ecd | [260720-nup-wire-regression-gate-into-ci-merge-block](./quick/260720-nup-wire-regression-gate-into-ci-merge-block/) |
 | 260714-g0s | Move stats entry point from settings panel to HUD rail histogram button | 2026-07-14 | d49d117, f0c1ec5, d00a5e9 | [260714-g0s-move-stats-entry-point-from-settings-pan](./quick/260714-g0s-move-stats-entry-point-from-settings-pan/) |
 | 260701-mmh | Thread startLockHeartbeat() through all six long-pass lock holders (closes 39.1 FIX-STALL-01 residual) | 2026-07-01 | 5167175, 10a6dd0 | [260701-mmh-thread-heartbeatlock-through-consolidato](./quick/260701-mmh-thread-heartbeatlock-through-consolidato/) |
