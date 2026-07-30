@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * recense doctor — 8-dimension install health audit (INSTALL-04; dimensions 7-8 added in Phase 45).
+ * recense doctor — 9-dimension install health audit (INSTALL-04; dimensions 7-8 added
+ * in Phase 45; dimension 9 added in Phase 62).
  *
- * Checks eight fixed dimensions and prints a human-readable pass/fail per
+ * Checks nine fixed dimensions and prints a human-readable pass/fail per
  * dimension. Exits non-zero if any dimension fails. `--json` is deferred
  * to INSTALL-07.
  *
- * Dimensions (INSTALL-04; 8 from Phase 45):
+ * Dimensions (INSTALL-04; 8 from Phase 45; 9 from Phase 62):
  *   1. DB reachability + schema version
  *   2. API key validity via live calls (Anthropic + OpenAI)
  *   3. Scheduler registered + running
@@ -15,6 +16,7 @@
  *   6. Serve token presence + env file mode (RECENSE_SERVE_TOKEN in chmod-600 sleep.env)
  *   7. Billing posture (subscription + ANTHROPIC_API_KEY in settings.json = footgun; D-12)
  *   8. claude CLI present + logged in via non-billed auth probe (D-13)
+ *   9. Gmail accounts — per-account refresh-token presence + backfill-only query scoping (EMAIL-02)
  *
  * Design invariants:
  *  - DB opened readonly only — never writes the graph (T-09-10).
@@ -31,6 +33,7 @@
  *  - T-45-01: checkBillingPosture reports key presence only; never emits key value.
  *  - T-45-05: checkBillingPosture never writes settings.json (detect + warn only).
  *  - T-45-06: checkClaudeCli uses `claude auth status --json` (non-billed); never the inference flag.
+ *  - T-62-04: checkGmailAccounts reports token/query PRESENCE only; never emits a token value or a query string.
  */
 
 import Database from 'better-sqlite3';
@@ -41,7 +44,7 @@ import { join } from 'path';
 import { SCHEMA_VERSION } from '../db/schema';
 import { DEFAULT_CONFIG } from '../lib/config';
 import { resolveExistingEnv } from './recense-init';
-import { loadConfiguredEnv, resolveDbPath, sleepEnvPath } from './runtime-config';
+import { loadConfiguredEnv, resolveDbPath, resolveEnabledSources, resolveGoogleAccounts, sleepEnvPath } from './runtime-config';
 import { settingsHasAnthropicKey } from './claude-settings-detector';
 
 // ── Check result type ─────────────────────────────────────────────────────────
@@ -334,6 +337,67 @@ export function checkServeToken(envPath: string = sleepEnvPath()): CheckResult {
   return pass('RECENSE_SERVE_TOKEN set, env file mode 0600');
 }
 
+// ── Dimension 9: Gmail accounts — per-account token presence + backfill-only limitation (EMAIL-02) ──
+
+/**
+ * Report per-account Gmail refresh-token presence and the backfill-only query
+ * scoping limitation (EMAIL-02, closes Pitfall 16's silent-per-account-credential-death).
+ *
+ * Offline only — no network, no live token probe. This deliberately defers an active
+ * `getProfile` liveness probe per account (Pitfall 16's suggestion): this check reports
+ * configuration PRESENCE only, so nobody later assumes liveness was verified.
+ *
+ * Outcomes:
+ *  - gmail not in RECENSE_ENABLED_SOURCES → pass (a fresh install must not fail this
+ *    dimension) with a "not enabled" detail.
+ *  - gmail enabled → fail when any account lacks its refresh token (derived with the
+ *    SAME precedence as RealGmailFetcher.getClient: GOOGLE_<UPPER_ID>_REFRESH_TOKEN,
+ *    plus the GMAIL_REFRESH_TOKEN fallback for 'default' only) or when the shared
+ *    client id/secret (GOOGLE_CLIENT_ID/GMAIL_CLIENT_ID, GOOGLE_CLIENT_SECRET/
+ *    GMAIL_CLIENT_SECRET) is missing; otherwise pass.
+ *
+ * T-62-04: the detail reports token/query PRESENCE and PROVENANCE only — never a
+ * token value, client secret, or query string. The backfill-only limitation sentence
+ * (containing the literal substring "backfill only") is appended on every path —
+ * pass or fail — so the limitation is never hidden by a green check.
+ *
+ * @param envPath — override sleep.env path for testing (mirrors checkServeToken convention).
+ * @exported — used by tests with temp env files; never point at the real sleep.env.
+ */
+export function checkGmailAccounts(envPath: string = sleepEnvPath()): CheckResult {
+  const env = loadConfiguredEnv(envPath);
+  const limitation =
+    'a per-account query bounds that account\'s initial backfill only — users.history.list ' +
+    'accepts no q, so incremental pulls are unfiltered';
+
+  if (!resolveEnabledSources(env).includes('gmail')) {
+    return pass(`gmail ingest not enabled (RECENSE_ENABLED_SOURCES) — ${limitation}`);
+  }
+
+  const clientId = env['GOOGLE_CLIENT_ID'] ?? env['GMAIL_CLIENT_ID'];
+  const clientSecret = env['GOOGLE_CLIENT_SECRET'] ?? env['GMAIL_CLIENT_SECRET'];
+  let anyFail = !clientId || !clientSecret;
+  const fragments: string[] = [];
+  if (!clientId || !clientSecret) {
+    fragments.push('shared client id/secret MISSING');
+  }
+
+  for (const account of resolveGoogleAccounts(env)) {
+    // Same derivation as RealGmailFetcher.getClient (src/source/gmail-adapter.ts) —
+    // must reproduce it exactly or this reports false failures.
+    const tokenEnvKey = `GOOGLE_${account.id.toUpperCase()}_REFRESH_TOKEN`;
+    const hasToken = Boolean(
+      env[tokenEnvKey] ?? (account.id === 'default' ? env['GMAIL_REFRESH_TOKEN'] : undefined),
+    );
+    if (!hasToken) anyFail = true;
+    const querySource = account.query ? 'per-account' : 'global default';
+    fragments.push(`${account.id}: token ${hasToken ? 'present' : 'MISSING'}, query: ${querySource}`);
+  }
+
+  const detail = `${fragments.join('; ')} — ${limitation}`;
+  return anyFail ? fail(detail) : pass(detail);
+}
+
 // ── Dimension 7: Billing posture (D-12) ──────────────────────────────────────
 
 /**
@@ -475,6 +539,7 @@ async function runDoctor(): Promise<void> {
     { name: 'Hooks',       result: checkHooks()               },
     { name: 'Node ABI',    result: checkNodeAbi()             },
     { name: 'Serve token', result: checkServeToken()          },
+    { name: 'Gmail accounts', result: checkGmailAccounts()    },
     { name: 'Billing',     result: checkBillingPosture()      },
     { name: 'claude CLI',  result: checkClaudeCli()           },
   ];

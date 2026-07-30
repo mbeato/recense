@@ -633,14 +633,28 @@ export interface EngineConfig {
   };
 
   /**
-   * Multi-account Google config (TEMP-04, D-08/D-10).
+   * Multi-account Google config (TEMP-04, D-08/D-10; per-account query EMAIL-02).
    * Each entry is one Google account id. 'default' maps to backward-compat env keys
    * (GMAIL_* with GOOGLE_DEFAULT_* override). Named accounts (e.g. 'work') require
    * GOOGLE_WORK_REFRESH_TOKEN in sleep.env.
    * Accounts listed here are instantiated as separate adapter instances per source
    * in buildAdapters. Example: [{ id: 'default' }, { id: 'work' }]
+   *
+   * Env-driven resolution: this array is populated at runtime by
+   * `resolveGoogleAccounts()` in `src/adapter/runtime-config.ts`, reading
+   * `RECENSE_GOOGLE_ACCOUNTS` (comma-separated ids) and, per id,
+   * `RECENSE_GMAIL_QUERY_<UPPER_ID>` for that account's optional `query`.
+   *
+   * `query` overrides `gmail.query` for that account, but the override is
+   * backfill only — it bounds that account's INITIAL BACKFILL ONLY: Gmail's
+   * `users.history.list` accepts no `q` parameter, so once an account's
+   * `cursor:gmail:<id>` historyId exists, every incremental pull returns all
+   * new mail regardless of the configured query. Ongoing noise is dampened only
+   * by `sourceWeights.gmail` (0.35) and `salience.consolSkipThresholdBySource.gmail`
+   * (0.4) — not by this query. A genuine re-scope requires deliberately clearing
+   * that account's cursor.
    */
-  googleAccounts: Array<{ id: string }>;
+  googleAccounts: Array<{ id: string; query?: string }>;
 
   /**
    * Watched export folder for meeting transcripts (D-69).
