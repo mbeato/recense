@@ -52,7 +52,7 @@ describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
     }
   });
 
-  it('does NOT create dead indexes idx_node_eviction or idx_activation_trace_ts (L-7)', () => {
+  it('does NOT create dead indexes idx_node_eviction, idx_activation_trace_ts (L-7), or idx_episode_event_ts (WR-01)', () => {
     const db = new Database(':memory:');
     try {
       initSchema(db);
@@ -66,6 +66,31 @@ describe('initSchema — version and indexes (M-9, M-10, L-7)', () => {
         db.pragma('index_list(activation_trace)') as Array<{ name: string }>
       ).map(r => r.name);
       expect(traceIndexes).not.toContain('idx_activation_trace_ts');
+
+      // WR-01: event_ts is ordered in application code by orderEpisodesForConsolidation,
+      // never in SQL — the index is pure write overhead with no read benefit.
+      const episodeIndexes = (
+        db.pragma('index_list(episode)') as Array<{ name: string }>
+      ).map(r => r.name);
+      expect(episodeIndexes).not.toContain('idx_episode_event_ts');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('removes idx_episode_event_ts from an already-migrated v16 DB on the next initSchema call, without a version bump (WR-01)', () => {
+    const db = new Database(':memory:');
+    try {
+      initSchema(db);
+      // Simulate a DB that was migrated by the previous build, which still created this index.
+      db.exec('CREATE INDEX IF NOT EXISTS idx_episode_event_ts ON episode(consolidated, event_ts)');
+
+      initSchema(db);
+
+      const episodeIndexes = (
+        db.pragma('index_list(episode)') as Array<{ name: string }>
+      ).map(r => r.name);
+      expect(episodeIndexes).not.toContain('idx_episode_event_ts');
     } finally {
       db.close();
     }
