@@ -196,3 +196,14 @@ None — no external service configuration required.
 ---
 *Phase: 62-multi-inbox-email-ingest-hardening*
 *Completed: 2026-07-30*
+
+## Self-Check: PASSED
+
+- FOUND: tests/gmail-future-date-ordering.test.ts
+- FOUND: src/source/gmail-adapter.ts
+- FOUND: tests/gmail-event-ts.test.ts
+- FOUND: .planning/phases/62-multi-inbox-email-ingest-hardening/62-10-SUMMARY.md
+- FOUND commit: 3bcb96d (Task 1 RED)
+- FOUND commit: a2b1c39 (Task 2 GREEN)
+- FOUND commit: ff51cb6 (Task 3 residual lock)
+- FOUND commit: 4724d77 (SUMMARY)
