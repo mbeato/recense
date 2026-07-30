@@ -23,7 +23,7 @@ import { SQLiteConsolidationSink } from '../src/consolidation/sink';
 import { StrengthDecayManager } from '../src/strength/decay';
 import { routeContradiction } from '../src/consolidation/update-decision';
 import { newId } from '../src/lib/hash';
-import { runRemember, parseRememberArgs } from '../src/adapter/remember-cli';
+import { runRemember, parseRememberArgs, REMEMBER_LOCK_ATTEMPTS, REMEMBER_LOCK_DELAY_MS } from '../src/adapter/remember-cli';
 
 // ---------------------------------------------------------------------------
 // Config and harness
@@ -441,5 +441,17 @@ describe('Test 6: parseRememberArgs — verbatim fact with a leading dash', () =
 
   it('returns null when no fact is supplied', () => {
     expect(parseRememberArgs(['node', 'remember-cli.js', '--scope', 's'])).toBeNull();
+  });
+});
+
+describe('quick-260729-s8a: REMEMBER_LOCK_ATTEMPTS / REMEMBER_LOCK_DELAY_MS budget', () => {
+  it('covers the measured 486s hygiene hold (>= 8 minutes)', () => {
+    expect(REMEMBER_LOCK_ATTEMPTS * REMEMBER_LOCK_DELAY_MS).toBeGreaterThanOrEqual(8 * 60 * 1000);
+  });
+
+  it('is bounded — finite and never waits more than 15 minutes', () => {
+    const budget = REMEMBER_LOCK_ATTEMPTS * REMEMBER_LOCK_DELAY_MS;
+    expect(Number.isFinite(budget)).toBe(true);
+    expect(budget).toBeLessThanOrEqual(15 * 60 * 1000);
   });
 });

@@ -41,7 +41,7 @@ import { realClock } from '../lib/clock';
 import { SemanticStore } from '../db/semantic-store';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
-import { acquireLock, releaseLock } from './lockfile';
+import { acquireLockWithRetry, releaseLock } from './lockfile';
 import { resolveDbPath as resolveSharedDbPath } from './runtime-config';
 import { cwdToScope } from '../lib/scope';
 import { DefaultModelProvider } from '../model/provider';
@@ -57,6 +57,27 @@ const LOG_PATH = '/tmp/recense-remember.log';
 /** Append a timestamped line to the log file. */
 const fileLog = (msg: string): void =>
   appendFileSync(LOG_PATH, `[${new Date().toISOString()}] remember: ${msg}\n`);
+
+/**
+ * Retry budget for the write-lock acquire (quick task 260729-s8a, Cause A).
+ *
+ * `recall-cli.ts` already rides out short collisions via `acquireLockWithRetry()`
+ * (shared defaults: 8 attempts x 150ms ~= 1s) because a missed recall degrades
+ * gracefully to SAFE_NULL_RESULT. `remember` had none of that — it called bare
+ * `acquireLock()` and exited in ~0.11s the instant anything else held the lock,
+ * even though the graph-hygiene VACUUM+dedup pass (run-sleep-pass.ts) has been
+ * measured holding that same lock for up to 486s. A missed remember silently
+ * loses a curated fact, which is worse than a missed recall — so remember gets
+ * its OWN, much larger budget passed at the call site. The shared
+ * `acquireLockWithRetry` defaults are deliberately left untouched: recall-cli
+ * and watcher-cli want the short ~1s budget for an interactive/polling path.
+ *
+ * 300 attempts x 2000ms = 600s (10min) worst case — comfortably covers the
+ * measured 486s hygiene hold with headroom, while still terminating instead
+ * of waiting forever.
+ */
+export const REMEMBER_LOCK_ATTEMPTS = 300;
+export const REMEMBER_LOCK_DELAY_MS = 2000;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -423,12 +444,23 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ── T-33-01: Acquire write lock (fast-fail, no queue) ────────────────────────
-  if (!acquireLock()) {
+  // ── T-33-01/quick-260729-s8a: Acquire write lock, riding out a multi-minute ──
+  // graph-hygiene hold instead of fast-failing (see REMEMBER_LOCK_ATTEMPTS above).
+  const lockWaitStart = Date.now();
+  const gotLock = await acquireLockWithRetry(REMEMBER_LOCK_ATTEMPTS, REMEMBER_LOCK_DELAY_MS);
+  if (!gotLock) {
     process.stderr.write(
-      'recense remember: Lock held by another process (sleep pass running?) — try again — exiting\n',
+      `recense remember: Lock still held after ${REMEMBER_LOCK_ATTEMPTS} attempts ` +
+      `(~${Math.round((REMEMBER_LOCK_ATTEMPTS * REMEMBER_LOCK_DELAY_MS) / 1000)}s) — ` +
+      'sleep pass may be stuck; try again — exiting\n',
     );
     process.exit(0);
+  }
+  const waitedMs = Date.now() - lockWaitStart;
+  if (waitedMs > 1000) {
+    // Diagnostic only — fileLog, NOT stderr, since remember runs inside agent turns
+    // and stderr noise would surface directly in tool output.
+    fileLog(`lock acquired after ${waitedMs}ms`);
   }
 
   let db: Database.Database | undefined;

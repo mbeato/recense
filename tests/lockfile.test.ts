@@ -19,7 +19,7 @@ import { writeFileSync, utimesSync, existsSync, unlinkSync, statSync } from 'fs'
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
-import { acquireLock, releaseLock, heartbeatLock, startLockHeartbeat, LOCK_STALE_MS } from '../src/adapter/lockfile';
+import { acquireLock, releaseLock, heartbeatLock, startLockHeartbeat, acquireLockWithRetry, LOCK_STALE_MS } from '../src/adapter/lockfile';
 
 /** Per-pid hermetic lock path — never collides with the production lock or sibling forks. */
 const TEST_LOCK_PATH = join(tmpdir(), `recense-test-lock-${process.pid}.lock`);
@@ -344,5 +344,58 @@ describe('startLockHeartbeat — DEBT-02: interval heartbeat lifecycle', () => {
     await sleep(30); // let the interval fire against a missing lock
     expect(() => stop()).not.toThrow();
     expect(existsSync(SL_LOCK_PATH)).toBe(false); // heartbeat must not create the file
+  });
+});
+
+// ---------------------------------------------------------------------------
+// quick-260729-s8a: acquireLockWithRetry — call-site retry budget coverage.
+// (remember-cli.ts passes its own much larger budget at the call site; these
+// tests exercise the shared helper's mechanics, not remember's specific numbers.)
+// ---------------------------------------------------------------------------
+
+describe('acquireLockWithRetry', () => {
+  const RETRY_LOCK_PATH = join(tmpdir(), `recense-retry-lock-${process.pid}.lock`);
+
+  beforeAll(() => {
+    process.env['RECENSE_LOCK_PATH'] = RETRY_LOCK_PATH;
+  });
+
+  afterAll(() => {
+    delete process.env['RECENSE_LOCK_PATH'];
+  });
+
+  afterEach(() => {
+    try { if (existsSync(RETRY_LOCK_PATH)) unlinkSync(RETRY_LOCK_PATH); } catch { /* ignore */ }
+  });
+
+  it('rides out a transient hold — acquires after a mid-window release', async () => {
+    // Held by OUR own (live) pid so acquireLock's H-4b liveness probe treats it as
+    // genuinely held, not stale — unlike bare acquireLock(), the retry loop must
+    // still succeed once the holder releases mid-window.
+    writeFileSync(RETRY_LOCK_PATH, String(process.pid));
+    setTimeout(() => {
+      try { unlinkSync(RETRY_LOCK_PATH); } catch { /* ignore */ }
+    }, 40);
+
+    const got = await acquireLockWithRetry(10, 20);
+    expect(got).toBe(true);
+  });
+
+  it('terminates (does not hang) when the lock stays held across the whole budget', async () => {
+    writeFileSync(RETRY_LOCK_PATH, String(process.pid));
+    const got = await acquireLockWithRetry(3, 10);
+    expect(got).toBe(false);
+  });
+
+  it('default budget (unspecified args) stays small — returns false in well under 2s against a held lock', async () => {
+    // Guards against someone "fixing" remember's problem by inflating the SHARED
+    // defaults instead of passing a call-site budget (recall-cli/watcher-cli rely
+    // on the short ~1s default).
+    writeFileSync(RETRY_LOCK_PATH, String(process.pid));
+    const start = Date.now();
+    const got = await acquireLockWithRetry();
+    const elapsed = Date.now() - start;
+    expect(got).toBe(false);
+    expect(elapsed).toBeLessThan(2000);
   });
 });
