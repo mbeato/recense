@@ -829,7 +829,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
   3. Hidden or invisible content in HTML-only emails (`display:none`, zero-width characters, hidden spans) is deterministically stripped before any content reaches the extractor, verified by a regression fixture containing a hidden injected instruction that must not survive into episode content — EMAIL-03
   4. A fresh account's initial backfill batch is consolidated in chronological order (derived from the email's own `Date:` header), so an older message in the same backfill cannot silently apply over newer state — EMAIL-04
 
-**Plans**: 5 plans in 4 waves
+**Plans**: 8 plans in 5 waves (62-06..62-08 are gap-closure plans added 2026-07-30)
 
 Plans:
 **Wave 1**
@@ -848,6 +848,12 @@ Plans:
 **Wave 4** *(blocked on Wave 3 completion)*
 
 - [x] 62-05-PLAN.md — `orderEpisodesForConsolidation`: slot-preserving chronological reorder inside `consolidate()`, proven end-to-end on a reverse-chronological backfill batch (EMAIL-04, wave 4)
+
+**Wave 5** *(gap closure — from `62-VERIFICATION.md` gaps[0] and `62-REVIEW.md` CR-01/WR-01; all three run in parallel, no file overlap)*
+
+- [ ] 62-06-PLAN.md — Make the EMAIL-04 end-to-end proof wiring-discriminating: content-keyed extraction instead of a call-order script, measured RED against a reverted `consolidator.ts:532` (EMAIL-04, wave 5)
+- [ ] 62-07-PLAN.md — Quote-aware tag matching across all three `stripHiddenContent` regexes, closing the CR-01 quoted-`>` hidden-content bypass, with a measured backtracking bound (EMAIL-03, wave 5)
+- [ ] 62-08-PLAN.md — Drop the dead `idx_episode_event_ts` index in place in the v16 migration, with an already-migrated-DB regression lock (EMAIL-04, wave 5)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
