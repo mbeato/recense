@@ -47,6 +47,7 @@ import type { Origin, PendingContradiction, EpisodeRow, EpisodeRole } from '../l
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
 import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
+import { orderEpisodesForConsolidation } from './episode-order';
 import type { SchemaInducer } from './schema-induction';
 import { NoopSchemaRelationDeriver } from './schema-relations';
 import type { SchemaRelationDeriver } from './schema-relations';
@@ -528,7 +529,7 @@ export class Consolidator {
     // inside a single db.transaction. No await ever appears inside a transaction
     // (T-02-ASYNC — better-sqlite3 is synchronous). Each episode is checkpointed
     // individually so a crash between episodes never double-applies (CONSOL-02).
-    const unconsolidated = this.episodes.listUnconsolidated();
+    const unconsolidated = orderEpisodesForConsolidation(this.episodes.listUnconsolidated());
     // H-2: track which episodes were quarantined this pass (for logging/observability).
     // Quarantined episodes are NOT marked consolidated — they will be retried next pass.
     const quarantine = new Set<string>();
@@ -556,6 +557,17 @@ export class Consolidator {
     //
     // Extraction depends only on episode content/source/role — never on graph state (safe to
     // parallelize across the chunk). All writes still happen in the ordered per-episode loop (Phase B).
+    //
+    // EMAIL-04 (plan 62-05): `listUnconsolidated()` supplies D-03/D-10 replay priority
+    // (`hard_keep` desc, then salience desc). `orderEpisodesForConsolidation` then refines it
+    // so that, among episodes carrying a source-asserted `event_ts`, the older event is
+    // processed first — WITHOUT changing which index slots those episodes occupy. So the
+    // "episode N is judged against graph state written by 1..N-1" invariant above and the
+    // chunk-prefix truncation behaviour both still hold: a truncated pass still processes the
+    // same prefix and the same count, just with the right email in each slot. The SQL
+    // `ORDER BY` in `episode-store.ts` is deliberately left unchanged — a global chronological
+    // sort would let an old, low-salience backlog message displace a high-salience recent
+    // episode out of a truncated pass, degrading resilience for every source, not just email.
     const prefetchBatchSize = getPrefetchBatchSize();
     // prefetchedExtractions accumulates results from all chunks — reused across the loop below.
     // The Map is populated chunk-by-chunk; the per-episode loop below always finds a result for
