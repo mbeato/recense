@@ -9,6 +9,12 @@
  *  - initSchema on a fresh in-memory DB stamps SCHEMA_VERSION 16
  *  - a simulated legacy DB (episode table built without event_ts) gains the column via the
  *    v16 ALTER migration, with the pre-existing row's event_ts NULL and other columns intact
+ *
+ * Pipeline + CLI coverage (Task 2 of plan 62-04):
+ *  - IngestionPipeline.recordEvent threads eventTs through to EpisodicStore.append
+ *  - runPullPhase over a MockSourceAdapter carries NormalizedRecord.event_ts to the stored row
+ *  - a record with no event_ts produces a row byte-identical in every other column to the
+ *    pre-EMAIL-04 shape (zero-behaviour-change proof for non-Gmail sources)
  */
 import Database from 'better-sqlite3';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -17,6 +23,10 @@ import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
 import { EpisodicStore } from '../src/db/episode-store';
+import { AllocationGate, IngestionPipeline } from '../src/ingest/pipeline';
+import type { NormalizedRecord } from '../src/source/source-adapter';
+import { MockSourceAdapter } from '../src/source/source-adapter';
+import { runPullPhase } from '../src/adapter/ingest-cli';
 
 const testConfig: EngineConfig = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
 
@@ -158,5 +168,141 @@ describe('initSchema — event_ts migration (EMAIL-04)', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('IngestionPipeline.recordEvent — eventTs threading (EMAIL-04)', () => {
+  let db: Database.Database;
+  let store: EpisodicStore;
+  let pipeline: IngestionPipeline;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initSchema(db);
+    const clock = new FakeClock(1_700_100_000_000);
+    store = new EpisodicStore(db, clock, testConfig);
+    const gate = new AllocationGate(testConfig);
+    pipeline = new IngestionPipeline(gate, store);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('recordEvent with no eventTs stores NULL', () => {
+    const row = pipeline.recordEvent({
+      content: 'no event ts',
+      role: 'user',
+      origin: 'observed',
+      sessionId: 'ingest:test',
+      source: 'gmail',
+      externalId: 'evt-1',
+    });
+    expect(row.event_ts).toBeNull();
+  });
+
+  it('recordEvent with eventTs stores that value', () => {
+    const row = pipeline.recordEvent({
+      content: 'has event ts',
+      role: 'user',
+      origin: 'observed',
+      sessionId: 'ingest:test',
+      source: 'gmail',
+      externalId: 'evt-2',
+      eventTs: 1_650_000_000_000,
+    });
+    expect(row.event_ts).toBe(1_650_000_000_000);
+  });
+
+  it('recordEvent with eventTs: null stores NULL', () => {
+    const row = pipeline.recordEvent({
+      content: 'explicit null event ts',
+      role: 'user',
+      origin: 'observed',
+      sessionId: 'ingest:test',
+      source: 'gmail',
+      externalId: 'evt-3',
+      eventTs: null,
+    });
+    expect(row.event_ts).toBeNull();
+  });
+});
+
+describe('runPullPhase — NormalizedRecord.event_ts carries to the stored row (EMAIL-04)', () => {
+  let db: Database.Database;
+  let store: EpisodicStore;
+  let pipeline: IngestionPipeline;
+  const logs: string[] = [];
+  const capLog = (msg: string) => { logs.push(msg); };
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initSchema(db);
+    const clock = new FakeClock(1_700_100_000_000);
+    store = new EpisodicStore(db, clock, testConfig);
+    const gate = new AllocationGate(testConfig);
+    pipeline = new IngestionPipeline(gate, store);
+    logs.length = 0;
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('two records — one carrying event_ts, one omitting it — append two rows whose event_ts values are the supplied number and NULL respectively', async () => {
+    const withEventTs: NormalizedRecord = {
+      content: 'email with a date header',
+      source: 'gmail',
+      external_id: 'gmail-msg-with-date',
+      origin: 'observed',
+      role: 'user',
+      event_ts: 1_690_000_000_000,
+    };
+    const withoutEventTs: NormalizedRecord = {
+      content: 'email with no parseable date',
+      source: 'gmail',
+      external_id: 'gmail-msg-no-date',
+      origin: 'observed',
+      role: 'user',
+    };
+    const adapter = new MockSourceAdapter('gmail', [withEventTs, withoutEventTs]);
+
+    await runPullPhase([adapter], pipeline, db, capLog);
+
+    // Query the rows back with raw SQL so the assertion is against the stored column.
+    const rowWith = db.prepare('SELECT event_ts FROM episode WHERE external_id = ?')
+      .get('gmail-msg-with-date') as { event_ts: number | null };
+    const rowWithout = db.prepare('SELECT event_ts FROM episode WHERE external_id = ?')
+      .get('gmail-msg-no-date') as { event_ts: number | null };
+
+    expect(rowWith.event_ts).toBe(1_690_000_000_000);
+    expect(rowWithout.event_ts).toBeNull();
+  });
+
+  it('records with no event_ts at all produce rows byte-identical in every other column to the pre-EMAIL-04 shape', async () => {
+    const record: NormalizedRecord = {
+      content: 'plain granola turn',
+      source: 'granola',
+      external_id: 'granola-turn-zero-behavior',
+      origin: 'observed',
+      role: 'user',
+    };
+    const adapter = new MockSourceAdapter('granola', [record]);
+
+    await runPullPhase([adapter], pipeline, db, capLog);
+
+    const row = db.prepare('SELECT * FROM episode WHERE external_id = ?')
+      .get('granola-turn-zero-behavior') as Record<string, unknown>;
+
+    expect(row.content).toBe('plain granola turn');
+    expect(row.origin).toBe('observed');
+    expect(typeof row.salience).toBe('number');
+    expect(row.hard_keep === 0 || row.hard_keep === 1).toBe(true);
+    expect(row.role).toBe('user');
+    expect(row.session_id).toBe('ingest:granola');
+    expect(row.source).toBe('granola');
+    expect(row.external_id).toBe('granola-turn-zero-behavior');
+    expect(row.cwd).toBe('');
+    expect(row.event_ts).toBeNull();
   });
 });

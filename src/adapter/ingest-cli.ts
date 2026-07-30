@@ -188,6 +188,7 @@ export async function runPullPhase(
           sessionId: `ingest:${r.source}`,
           source: r.source,
           externalId: r.external_id,
+          eventTs: r.event_ts ?? null,
         });
         appended++;
       }
