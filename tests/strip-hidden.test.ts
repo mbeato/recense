@@ -96,6 +96,50 @@ describe('stripHiddenContent — quoted attribute values containing > (CR-01)', 
   });
 });
 
+describe('stripHiddenContent — quoted > inside the <style> OPEN TAG (CR-01 stage-2 harvest)', () => {
+  it('removes content behind a double-quoted style-tag attribute containing a literal >', () => {
+    const out = stripHiddenContent(
+      '<style data-x="a>b">.legal{display:none}</style>visible<span class="legal">HIDDEN VIA CLASS</span>'
+    );
+    expect(out).not.toContain('HIDDEN VIA CLASS');
+    expect(out).toContain('visible');
+  });
+
+  it('removes content behind the near-universal real-mail type="text/css" data-y="x>y" style-tag shape', () => {
+    const out = stripHiddenContent(
+      '<style type="text/css" data-y="x>y">.h{display:none}</style>ok<span class="h">PAYLOAD3</span>'
+    );
+    expect(out).not.toContain('PAYLOAD3');
+    expect(out).toContain('ok');
+  });
+
+  it('removes content behind a single-quoted style-tag attribute containing a literal >', () => {
+    const out = stripHiddenContent(
+      "<style data-x='a>b'>.h{display:none}</style>ok<span class='h'>PAYLOAD4</span>"
+    );
+    expect(out).not.toContain('PAYLOAD4');
+    expect(out).toContain('ok');
+  });
+
+  it('removes an id-hidden element whose hiding rule lives behind a quoted > in the <style> open tag', () => {
+    const out = stripHiddenContent(
+      '<style data-x="a>b">#sec{display:none}</style>ok<span id="sec">PAYLOAD5</span>'
+    );
+    expect(out).not.toContain('PAYLOAD5');
+    expect(out).toContain('ok');
+  });
+
+  it('no-over-correction control: an unquoted > genuinely closes the <style> open tag, so the rest is not a hiding rule and VISIBLE6 is real prose', () => {
+    // With no quotes, the `>` genuinely closes the <style> open tag in any real parser,
+    // so `b{display:none}` is the block content fed to RULE_RE — `b` is not a bare
+    // `.class`/`#id` selector, nothing is harvested, and VISIBLE6 is text a human can see.
+    const out = stripHiddenContent(
+      '<style data-x=a>b{display:none}</style>ok<span class="b">VISIBLE6</span>'
+    );
+    expect(out).toContain('VISIBLE6');
+  });
+});
+
 describe('stripHiddenContent — unquoted > still terminates the tag (no over-correction)', () => {
   it('keeps content when an unquoted > genuinely closes the tag before the hiding declaration', () => {
     // With no quotes, the `>` genuinely closes the tag in any real HTML parser, so
@@ -260,6 +304,11 @@ describe('stripHiddenContent — idempotence', () => {
     '<div data-x=a>b style="display:none">SECRET6</div>Visible.',
     '<div title="unclosed>Visible after.<a href="x">link</a>Tail.',
     '<div title="unclosed>mid" class="c">Visible after.',
+    '<style data-x="a>b">.legal{display:none}</style>visible<span class="legal">HIDDEN VIA CLASS</span>',
+    '<style type="text/css" data-y="x>y">.h{display:none}</style>ok<span class="h">PAYLOAD3</span>',
+    "<style data-x='a>b'>.h{display:none}</style>ok<span class='h'>PAYLOAD4</span>",
+    '<style data-x="a>b">#sec{display:none}</style>ok<span id="sec">PAYLOAD5</span>',
+    '<style data-x=a>b{display:none}</style>ok<span class="b">VISIBLE6</span>',
   ];
 
   it.each(fixtures)('stripHiddenContent(stripHiddenContent(s)) === stripHiddenContent(s) for %#', (s) => {
