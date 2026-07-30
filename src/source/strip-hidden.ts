@@ -60,13 +60,20 @@
  *    prose is cosmetic noise; a non-idempotent boundary function is a correctness bug,
  *    since `redactSecrets` alongside it is idempotent and callers rely on that property.
  *
- * Two named residual limitations this module does NOT close (accepted, not silently
- * omitted — see 62-03-SUMMARY.md T-62-22):
+ * Three named residual limitations this module does NOT close (accepted, not silently
+ * omitted — see 62-03-SUMMARY.md T-62-22, 62-07-SUMMARY.md for (c)):
  *  (a) White-text-on-white-background hiding is NOT detected. A color-only heuristic
  *      would drop legitimate dark-mode-styled prose, trading an injection risk for a
  *      classification-accuracy regression.
  *  (b) Hiding via an externally-linked stylesheet is NOT detected. recense never fetches
  *      remote resources during ingest, and not fetching is the correct posture.
+ *  (c) Unbalanced quotes inside a tag (e.g. an unclosed `title="`) cause the stage-6
+ *      fail-safe stray-`<` truncation to drop from that tag to end of string, which may
+ *      remove visible prose that followed. Accepted because the alternative is guessing
+ *      where a malformed tag ends, and guessing wrong reopens the CR-01 bypass this
+ *      module exists to close — this is the deliberate cost of the CR-01 quote-aware fix
+ *      (62-07-PLAN.md Task 2), consistent with the "monotone toward less content, never
+ *      raw passthrough" contract below.
  *
  * Contract:
  *  - Pure: no side effects, no I/O, no randomness, no clock read (LLM-free online path).
@@ -96,11 +103,21 @@ const INVISIBLE_CODEPOINTS_RE =
 // fixed regexes instead of constructing a new RegExp per matched tag name)
 // ---------------------------------------------------------------------------
 
-/** Matches one HTML open tag: `<name ...>` or self-closing `<name .../>`. */
-const START_TAG_RE = /<([a-zA-Z][a-zA-Z0-9]*)\b([^<>]*)>/g;
+/**
+ * Matches one HTML open tag: `<name ...>` or self-closing `<name .../>`. Attribute
+ * scanning is quote-aware: only an UNQUOTED `<` or `>` terminates the tag, since a
+ * literal `>` inside a quoted attribute value (or a CSS string literal inside `style`)
+ * is legal HTML and was the CR-01 bypass (a quoted `>` truncated the match before the
+ * hiding declaration was ever seen).
+ */
+const START_TAG_RE = /<([a-zA-Z][a-zA-Z0-9]*)\b((?:"[^"]*"|'[^']*'|[^'"<>])*)>/g;
 
-/** Matches any open OR close tag token, used by the forward matching-close scan. */
-const ANY_TAG_TOKEN_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^<>]*>/g;
+/**
+ * Matches any open OR close tag token, used by the forward matching-close scan. Same
+ * quote-awareness rule as `START_TAG_RE` — only an unquoted `<` or `>` ends the tag, so
+ * this stage cannot disagree with `START_TAG_RE` about where a tag ends.
+ */
+const ANY_TAG_TOKEN_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b(?:"[^"]*"|'[^']*'|[^'"<>])*>/g;
 
 /** True when a matched tag's raw text ends with a self-closing `/>`. */
 const SELF_CLOSING_SUFFIX_RE = /\/\s*>$/;
@@ -333,7 +350,13 @@ function isHiddenStartTag(
 // Stage 6 — remaining tag removal
 // ---------------------------------------------------------------------------
 
-const ANY_TAG_RE = /<[^>]*>/g;
+/**
+ * Same quote-awareness rule as `START_TAG_RE`/`ANY_TAG_TOKEN_RE` — only an unquoted `>`
+ * ends the tag — but the unquoted class here is deliberately `[^'">]` rather than
+ * `[^'"<>]`: this stage's leftover-tag sweep must preserve the pre-existing behavior
+ * that a `<` may appear inside a stage-6 match, so `<` is not excluded here.
+ */
+const ANY_TAG_RE = /<(?:"[^"]*"|'[^']*'|[^'">])*>/g;
 
 // ---------------------------------------------------------------------------
 // Stage 7 — minimal entity decoding

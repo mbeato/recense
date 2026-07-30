@@ -108,6 +108,23 @@ describe('stripHiddenContent — unquoted > still terminates the tag (no over-co
   });
 });
 
+describe('stripHiddenContent — unbalanced quote fail-safe truncation (accepted residual c)', () => {
+  it('truncates to empty when an unclosed quoted attribute leaves the rest of the tag unterminated', () => {
+    const out = stripHiddenContent(
+      '<div title="unclosed>Visible after.<a href="x">link</a>Tail.'
+    );
+    expect(out.trim()).toBe('');
+  });
+
+  it('improves on the shipped leak: an unbalanced quote followed by a balanced attribute keeps only the trailing visible prose', () => {
+    const out = stripHiddenContent(
+      '<div title="unclosed>mid" class="c">Visible after.'
+    );
+    expect(out).toContain('Visible after.');
+    expect(out).not.toContain('class="c"');
+  });
+});
+
 describe('stripHiddenContent — no false positives', () => {
   it('keeps opacity:0.85 element content', () => {
     const out = stripHiddenContent('<span style="opacity:0.85">Keep me</span>');
@@ -241,6 +258,8 @@ describe('stripHiddenContent — idempotence', () => {
     '<span title="a>b" aria-hidden="true">SECRET8</span>Keep.',
     '<style>.h{display:none}</style><div data-t="x>y" class="h">SECRET9</div>Visible.',
     '<div data-x=a>b style="display:none">SECRET6</div>Visible.',
+    '<div title="unclosed>Visible after.<a href="x">link</a>Tail.',
+    '<div title="unclosed>mid" class="c">Visible after.',
   ];
 
   it.each(fixtures)('stripHiddenContent(stripHiddenContent(s)) === stripHiddenContent(s) for %#', (s) => {
