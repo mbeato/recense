@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 6/8 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 8/8 | Complete   | 2026-07-30 |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -809,7 +809,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
 
 **Foundation-phase call (explicit deviation from the research-proposed 8-phase list):** research's `SUMMARY.md` proposed a standalone "Proposal Schema & Sink Foundation" phase ahead of classification, to freeze the `action_proposal` table shape early for two later workstreams. That phase owns no REQ-IDs of its own — its deliverables are exactly EMIT-01 (`ActionProposalSink`) and EMIT-02 (the proposal record shape). It is folded into Phase 66 here instead: neither Phase 63 (CLASSIFY) nor Phase 64 (RESOLVE) ever touches the `action_proposal` table — both only add optional fields to the in-memory `ClaimDecision` (mirroring the TEMP-02 `due_at`/`action_type` precedent) — so nothing upstream of Phase 66 is actually gated on the table shape existing early. The two workstreams the schema needs to freeze for (emission logic, HTTP read/ack routes) are both *inside* Phase 66 itself, so declaring the schema as Phase 66's first task achieves the identical freeze without a phase that has zero requirements of its own and no independently observable success criteria — which would also push this "standard" (5–8 phase) milestone to 8 phases for no coverage gain. Net-zero requirement-coverage effect: EMIT-01/EMIT-02 are still satisfied, just inside Phase 66.
 
-- [ ] **Phase 62: Multi-Inbox Email Ingest Hardening** — Guided account-N onboarding, per-account query scoping (backfill-only, honestly documented), HTML/hidden-content stripping, chronological backfill ordering. (5/5 plans executed 2026-07-30; **VERIFICATION status: gaps_found** — 2 open defects, see `62-VERIFICATION.md` + `62-REVIEW.md`. NOT complete: (1) `strip-hidden.ts` tag regexes are not quote-aware, so a literal `>` inside a quoted attribute lets `display:none` content survive into episode content — EMAIL-03 defeated by a one-character craft; (2) `tests/backfill-chronological-order.test.ts` passes with the `consolidator.ts:532` wiring removed, so EMAIL-04's e2e proof is vacuous (production mechanism is sound and unit-covered 10/10; only the e2e test is). Close via `/gsd:plan-phase 62 --gaps`.)
+- [x] **Phase 62: Multi-Inbox Email Ingest Hardening** — Guided account-N onboarding, per-account query scoping (backfill-only, honestly documented), HTML/hidden-content stripping, chronological backfill ordering. (5/5 plans executed 2026-07-30; **VERIFICATION status: gaps_found** — 2 open defects, see `62-VERIFICATION.md` + `62-REVIEW.md`. NOT complete: (1) `strip-hidden.ts` tag regexes are not quote-aware, so a literal `>` inside a quoted attribute lets `display:none` content survive into episode content — EMAIL-03 defeated by a one-character craft; (2) `tests/backfill-chronological-order.test.ts` passes with the `consolidator.ts:532` wiring removed, so EMAIL-04's e2e proof is vacuous (production mechanism is sound and unit-covered 10/10; only the e2e test is). Close via `/gsd:plan-phase 62 --gaps`.) (completed 2026-07-30)
 - [ ] **Phase 63: Offline Intent Classification** — Sleep pass classifies status-relevant gmail episodes inside the existing extraction call; zero net-new LLM calls; hitl guard inherited structurally, not re-implemented.
 - [ ] **Phase 64: Entity Resolution Hardening** — Broadened candidate generation + confident-or-null resolution against recense's own graph; descriptor-only, never a consumer ID.
 - [ ] **Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix** — Status lifecycle rides the existing PE-gate/`supersedes` machinery unmodified; redesigned provenance-distinctness key makes `countDistinctProvenance` reachable on email evidence without becoming farmable.
@@ -851,9 +851,9 @@ Plans:
 
 **Wave 5** *(gap closure — from `62-VERIFICATION.md` gaps[0] and `62-REVIEW.md` CR-01/WR-01; all three run in parallel, no file overlap)*
 
-- [ ] 62-06-PLAN.md — Make the EMAIL-04 end-to-end proof wiring-discriminating: content-keyed extraction instead of a call-order script, measured RED against a reverted `consolidator.ts:532` (EMAIL-04, wave 5)
+- [x] 62-06-PLAN.md — Make the EMAIL-04 end-to-end proof wiring-discriminating: content-keyed extraction instead of a call-order script, measured RED against a reverted `consolidator.ts:532` (EMAIL-04, wave 5)
 - [x] 62-07-PLAN.md — Quote-aware tag matching across all three `stripHiddenContent` regexes, closing the CR-01 quoted-`>` hidden-content bypass, with a measured backtracking bound (EMAIL-03, wave 5)
-- [ ] 62-08-PLAN.md — Drop the dead `idx_episode_event_ts` index in place in the v16 migration, with an already-migrated-DB regression lock (EMAIL-04, wave 5)
+- [x] 62-08-PLAN.md — Drop the dead `idx_episode_event_ts` index in place in the v16 migration, with an already-migrated-DB regression lock (EMAIL-04, wave 5)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
