@@ -252,3 +252,68 @@ describe('end-to-end ordering consequence through orderEpisodesForConsolidation 
     expect(result[0]!.id).toBe('far-future-rejected');
   });
 });
+
+// ── NAMED RESIDUAL — a clamped forged header still outranks earlier-in-window genuine ──
+// messages (CR-03 accepted residual, plan 62-10 Task 3)
+//
+// The clamp closes the net-new capability plan 62-05 introduced: parseEmailDate can never
+// return a value greater than nowMs, so a forged Date: no longer buys a position after
+// messages that arrive up to 48 hours LATER than the attacker's own message (that position
+// was genuinely unobtainable by honest sending, and is now unreachable by forgery too).
+//
+// It does NOT reduce the residual to zero. Within a single pull, a clamped forged header
+// still sorts after genuine messages dated EARLIER in that same pull window — because the
+// clamp caps the forged value at nowMs, and any genuine message sent before nowMs still has
+// a smaller event_ts. This block locks that residual as a DELIBERATE, measured, accepted
+// boundary — not an aspiration and not an undiscovered bug. 62-VERIFICATION.md gaps[1]
+// bullet 3 asked for an assertion that the forged header does NOT land in the final
+// event-time-bearing slot; that literal wording is unachievable under the prescribed clamp
+// (see this file's top doc block for the arithmetic), so asserting it here would be a test
+// that fails for the right reason today and gets "fixed" by weakening the clamp later. The
+// tests below assert the true post-fix reality instead, with its exact bound.
+//
+// The residual is bounded by the pull interval (GmailAdapter.pull() reads nowMs once per
+// pull, per this plan's <threat_model> trust-boundary table) and is equivalent to the
+// sender simply sending at the pull instant — a capability the sender already has. Driving
+// it to zero requires a server-assigned receipt time (Gmail's internalDate, not
+// sender-controlled) as the event_ts source or the clamp ceiling — a change to
+// RawGmailMessage, RealGmailFetcher.fetchMessages, and every test fake, deliberately out of
+// scope for this gap-closure wave and flagged for the backlog.
+describe('parseEmailDate clamp — NAMED RESIDUAL: a clamped forged header still outranks earlier-in-window genuine messages (CR-03 accepted residual)', () => {
+  it('DELIBERATE LOCK: the 62-VERIFICATION.md bullet-3 scenario, asserted at its true post-fix value — the forged header DOES still land in the final event-time-bearing slot', () => {
+    const forged = makeRow({ id: 'forged', event_ts: parseEmailDate(forged47h, NOW) });
+    const older = makeRow({ id: 'older', event_ts: parseEmailDate(genuineMinus1h, NOW) });
+
+    expect(forged.event_ts).toBe(NOW);
+    expect(older.event_ts).toBe(NOW - 3_600_000);
+
+    const result = orderEpisodesForConsolidation([forged, older]);
+
+    // This is the accepted residual, not a regression: forged.event_ts (NOW) is still
+    // greater than older.event_ts (NOW - 1h), so the ascending sort still places forged
+    // last. What the clamp removed is the UNBOUNDED version of this — pre-fix, forged
+    // could have outranked messages up to 48h newer than the pull instant, not just 1h
+    // older within the same pull.
+    expect(result[result.length - 1]!.id).toBe('forged');
+  });
+
+  it('the bound: a forged header buys EXACTLY ZERO milliseconds of advantage over an honest header sent at the pull instant', () => {
+    const advantage = parseEmailDate(forged47h, NOW)! - parseEmailDate(presentDated, NOW)!;
+    expect(advantage).toBe(0);
+    // The residual is therefore bounded by how far behind nowMs the genuine messages in the
+    // same pull are — i.e. by the pull interval — and is equivalent to the sender simply
+    // sending at the pull instant, a capability the sender already has without forging
+    // anything.
+  });
+
+  it('pre-fix contrast, measured: the raw header still carries the full 47-hour forgery, but the parse no longer propagates it', () => {
+    // The raw Date.parse result is untouched by the clamp — the forged header itself still
+    // claims to be 47 hours in the future.
+    expect(Date.parse(forged47h) - NOW).toBe(47 * 3_600_000);
+    // But parseEmailDate's output no longer reflects that forgery: the delta collapses to
+    // zero. Pre-fix, this second expression was ALSO 47 * 3_600_000 — identical to the raw
+    // header delta, i.e. the parse propagated the forgery unchanged. That is exactly what
+    // Task 1's RED evidence recorded and Task 2's clamp closed.
+    expect(parseEmailDate(forged47h, NOW)! - NOW).toBe(0);
+  });
+});
