@@ -829,7 +829,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
   3. Hidden or invisible content in HTML-only emails (`display:none`, zero-width characters, hidden spans) is deterministically stripped before any content reaches the extractor, verified by a regression fixture containing a hidden injected instruction that must not survive into episode content — EMAIL-03
   4. A fresh account's initial backfill batch is consolidated in chronological order (derived from the email's own `Date:` header), so an older message in the same backfill cannot silently apply over newer state — EMAIL-04
 
-**Plans**: 8 plans in 5 waves (62-06..62-08 are gap-closure plans added 2026-07-30)
+**Plans**: 11 plans in 7 waves (62-06..62-08 gap closure added 2026-07-30; 62-09..62-11 gap closure added 2026-07-30 after re-verification)
 
 Plans:
 **Wave 1**
@@ -854,6 +854,15 @@ Plans:
 - [x] 62-06-PLAN.md — Make the EMAIL-04 end-to-end proof wiring-discriminating: content-keyed extraction instead of a call-order script, measured RED against a reverted `consolidator.ts:532` (EMAIL-04, wave 5)
 - [x] 62-07-PLAN.md — Quote-aware tag matching across all three `stripHiddenContent` regexes, closing the CR-01 quoted-`>` hidden-content bypass, with a measured backtracking bound (EMAIL-03, wave 5)
 - [x] 62-08-PLAN.md — Drop the dead `idx_episode_event_ts` index in place in the v16 migration, with an already-migrated-DB regression lock (EMAIL-04, wave 5)
+
+**Wave 6** *(gap closure — from `62-VERIFICATION.md` re-verification gaps[0]/gaps[1] and `62-REVIEW.md` CR-01/CR-02/CR-03; both run in parallel, no file overlap: 62-09 owns `strip-hidden.ts`, 62-10 owns `gmail-adapter.ts`)*
+
+- [ ] 62-09-PLAN.md — Make `STYLE_BLOCK_RE` quote-aware (the FOURTH attribute-scanning regex 62-07 missed), give the named fixture a `<style>` tag with a quoted `>`, and add a source guard so a fifth bare-attribute-class regex fails the suite (EMAIL-03, wave 6)
+- [ ] 62-10-PLAN.md — Clamp `parseEmailDate`'s accepted future-skew branch to `nowMs` and correct the JSDoc overclaim, removing the net-new "forge a Date to sort last" capability plan 62-05 introduced (EMAIL-04, wave 6)
+
+**Wave 7** *(blocked on Wave 6 — writes BOTH files owned by the wave-6 plans)*
+
+- [ ] 62-11-PLAN.md — Export a narrow `stripInvisibleCodepoints` stage-1 primitive and apply it to the sender-controlled `From:`/`Subject:` headers before the provenance header is built, closing the header-borne Unicode-Tags-block injection path (EMAIL-03, wave 7)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
