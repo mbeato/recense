@@ -89,3 +89,12 @@ None — plan executed exactly as written. Both tasks' acceptance criteria were 
 ## Threat Flags
 
 None — this plan closes a warning-severity finding (WR-01) with schema/test edits only, no new network endpoints, auth paths, file access patterns, or trust-boundary schema changes.
+
+## Self-Check: PASSED
+
+- FOUND: src/db/schema.ts
+- FOUND: tests/schema.test.ts
+- FOUND: .planning/phases/62-multi-inbox-email-ingest-hardening/62-08-SUMMARY.md
+- FOUND commit: 0cebf73 (fix(62-08): drop dead idx_episode_event_ts in v16 migration block)
+- FOUND commit: d3e73e2 (test(62-08): lock absence of idx_episode_event_ts on fresh + already-migrated DBs)
+- FOUND commit: 9d62517 (docs(62-08): record 62-08 plan summary)
