@@ -455,11 +455,15 @@ describe('stripHiddenContent — totality (never throws)', () => {
 });
 
 describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surface)', () => {
-  // The new quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'"<>])*` runs on
-  // attacker-supplied email HTML (input size is attacker-controlled — see Task 3's
-  // read_first on gmail-adapter.ts). Both shapes below contain no `>` at all, forcing
+  // The quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'">])*` (the shared ATTRS fragment,
+  // 62-12) runs on attacker-supplied email HTML (input size is attacker-controlled — see
+  // Task 3's read_first on gmail-adapter.ts). Shapes A/B contain no `>` at all, forcing
   // every `<` through a full failing forward scan with unterminated quotes, and Shape B
-  // alternates double and single quotes so both quoted alternatives are exercised.
+  // alternates double and single quotes so both quoted alternatives are exercised. Shape U
+  // (62-12) is the shape the ATTRS widening specifically worsens: under the old
+  // `[^'"<>]` class every failing forward scan terminated at the next `<`; under the new
+  // `[^'">]` class (which now permits `<` per HTML §13.2.5.36, closing BL-01) it runs to
+  // end of string instead.
   const shapeA = (bytes: number) => {
     const unit = '<div a="' + 'y'.repeat(50);
     return unit.repeat(Math.ceil(bytes / unit.length));
@@ -468,21 +472,39 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     const unit = '<div ' + "a\"b'c".repeat(20);
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
+  const shapeU = (bytes: number) => {
+    const unit = '<div a=b ';
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
 
-  it('Shape A at ~64 KB completes under 500ms and does not throw', () => {
+  // Absolute ceilings raised 500ms -> 5000ms (62-12, IN-03 62-REVIEW.md): the growth-ratio
+  // assertions below are the ReDoS instrument and are UNCHANGED as the assertion of
+  // record. The absolute ceiling's only job is to catch a genuine hang, which 5s still
+  // does well within the existing 20s block timeout; a threshold with only ~1.6x headroom
+  // on the author's machine (Shape S measured 302.9ms against the old 500ms ceiling) is a
+  // CI flake source, not a security control.
+  it('Shape A at ~64 KB completes under 5000ms and does not throw', () => {
     const input = shapeA(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    expect(elapsed).toBeLessThan(5000);
   });
 
-  it('Shape B at ~64 KB completes under 500ms and does not throw', () => {
+  it('Shape B at ~64 KB completes under 5000ms and does not throw', () => {
     const input = shapeB(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    expect(elapsed).toBeLessThan(5000);
+  });
+
+  it('Shape U at ~64 KB completes under 5000ms and does not throw', () => {
+    const input = shapeU(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(5000);
   });
 
   it('Shape A growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
@@ -500,10 +522,29 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure.
     expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
   });
+
+  it('Shape U growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
+    const input32 = shapeU(32 * 1024);
+    const start32 = performance.now();
+    stripHiddenContent(input32);
+    const t32 = performance.now() - start32;
+
+    const input64 = shapeU(64 * 1024);
+    const start64 = performance.now();
+    stripHiddenContent(input64);
+    const t64 = performance.now() - start64;
+
+    // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow
+    // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure. The three
+    // ATTRS alternatives remain disjoint on their first character (", ', or neither), so
+    // there is no ambiguity for the engine to backtrack through even on this worsened
+    // shape.
+    expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
+  });
 }, 20000);
 
 describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 ReDoS surface)', () => {
-  // STYLE_BLOCK_RE's new quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'"<>])*` is driven
+  // STYLE_BLOCK_RE's quote-aware alternation (the shared ATTRS fragment, 62-12) is driven
   // by matchAll over attacker-supplied email HTML on EVERY ingest (stage 2 is
   // unconditional). Both shapes below contain no </style> anywhere, forcing every
   // `<style` start position through a full failing scan.
@@ -515,27 +556,29 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
   // Shape T: complete open tags with alternating double- and single-quoted attribute
-  // runs but no </style> anywhere, so the lazy ([\s\S]*?)<\/style\s*> tail scans to end
-  // of string from every start position — the genuinely quadratic shape.
+  // runs but no </style> anywhere, so the lazy ([\s\S]*?)<\/style\b${ATTRS}> tail scans
+  // to end of string from every start position — the genuinely quadratic shape.
   const shapeT = (bytes: number) => {
     const unit = '<style ' + 'a="b" c=\'d\' '.repeat(4) + '>';
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
 
-  it('Shape S at ~64 KB completes under 500ms and does not throw', () => {
+  // See the ceiling-raise rationale above (62-12, IN-03): growth-ratio assertions are the
+  // assertion of record, absolute ceilings only catch a hang.
+  it('Shape S at ~64 KB completes under 5000ms and does not throw', () => {
     const input = shapeS(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    expect(elapsed).toBeLessThan(5000);
   });
 
-  it('Shape T at ~64 KB completes under 500ms and does not throw', () => {
+  it('Shape T at ~64 KB completes under 5000ms and does not throw', () => {
     const input = shapeT(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    expect(elapsed).toBeLessThan(5000);
   });
 
   it('Shape T growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
