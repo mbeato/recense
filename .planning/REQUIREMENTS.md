@@ -106,46 +106,46 @@
 
 ## Traceability
 
-Populated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EMAIL-01 | — | Pending |
-| EMAIL-02 | — | Pending |
-| EMAIL-03 | — | Pending |
-| EMAIL-04 | — | Pending |
-| CLASSIFY-01 | — | Pending |
-| CLASSIFY-02 | — | Pending |
-| CLASSIFY-03 | — | Pending |
-| CLASSIFY-04 | — | Pending |
-| RESOLVE-01 | — | Pending |
-| RESOLVE-02 | — | Pending |
-| RESOLVE-03 | — | Pending |
-| DRIFT-01 | — | Pending |
-| DRIFT-02 | — | Pending |
-| DRIFT-03 | — | Pending |
-| DRIFT-04 | — | Pending |
-| DRIFT-05 | — | Pending |
-| EMIT-01 | — | Pending |
-| EMIT-02 | — | Pending |
-| EMIT-03 | — | Pending |
-| EMIT-04 | — | Pending |
-| EMIT-05 | — | Pending |
-| EMIT-06 | — | Pending |
-| EMIT-07 | — | Pending |
-| CONSUME-01 | — | Pending |
-| CONSUME-02 | — | Pending |
-| CONSUME-03 | — | Pending |
-| APPROVE-01 | — | Pending |
-| APPROVE-02 | — | Pending |
-| APPROVE-03 | — | Pending |
-| APPROVE-04 | — | Pending |
+| EMAIL-01 | 62 | Pending |
+| EMAIL-02 | 62 | Pending |
+| EMAIL-03 | 62 | Pending |
+| EMAIL-04 | 62 | Pending |
+| CLASSIFY-01 | 63 | Pending |
+| CLASSIFY-02 | 63 | Pending |
+| CLASSIFY-03 | 63 | Pending |
+| CLASSIFY-04 | 63 | Pending |
+| RESOLVE-01 | 64 | Pending |
+| RESOLVE-02 | 64 | Pending |
+| RESOLVE-03 | 64 | Pending |
+| DRIFT-01 | 65 | Pending |
+| DRIFT-02 | 65 | Pending |
+| DRIFT-03 | 65 | Pending |
+| DRIFT-04 | 65 | Pending |
+| DRIFT-05 | 65 | Pending |
+| EMIT-01 | 66 | Pending |
+| EMIT-02 | 66 | Pending |
+| EMIT-03 | 66 | Pending |
+| EMIT-04 | 66 | Pending |
+| EMIT-05 | 66 | Pending |
+| EMIT-06 | 66 | Pending |
+| EMIT-07 | 66 | Pending |
+| CONSUME-01 | 67 | Pending |
+| CONSUME-02 | 67 | Pending |
+| CONSUME-03 | 67 | Pending |
+| APPROVE-01 | 68 | Pending |
+| APPROVE-02 | 68 | Pending |
+| APPROVE-03 | 68 | Pending |
+| APPROVE-04 | 68 | Pending |
 
 **Coverage:**
 - v10.0 requirements: 30 total
-- Mapped to phases: 0 ⚠️ (roadmap pending)
-- Unmapped: 30
+- Mapped to phases: 30 ✓ (100%)
+- Unmapped: 0
+
+**Note on phase 66:** research's proposed standalone "Proposal Schema & Sink Foundation" phase (the `action_proposal` table + `ActionProposalSink`) was folded into Phase 66 rather than kept separate — it owns no REQ-IDs of its own (its deliverables are exactly EMIT-01/EMIT-02), and neither Phase 63 (CLASSIFY) nor Phase 64 (RESOLVE) touches that table. See `ROADMAP.md`'s "Phase Details — v10.0 Action Proposals" preamble for the full rationale.
 
 ---
 *Requirements defined: 2026-07-29*
-*Last updated: 2026-07-29 after v10.0 kickoff research pass*
+*Last updated: 2026-07-29 after v10.0 roadmap creation — Traceability populated (7 phases, 62–68), coverage 30/30 (100%).*

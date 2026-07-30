@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v10.0
 milestone_name: Action Proposals
-status: planning
+status: roadmapped
 last_updated: "2026-07-29T22:53:13.537Z"
 last_activity: 2026-07-29
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,25 +17,33 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-20 — v9.0 Memory Quality shipped + archived)
+See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Planning next milestone (`/gsd:new-milestone`)
+**Current focus:** Roadmap set for v10.0 Action Proposals (Phases 62–68, 30 requirements, 100% mapped). Next: `/gsd:plan-phase 62` (or `/gsd:discuss-phase 62`).
 
-**v9.0 Key research grounding (June-2026 deep-research pass):**
+**v9.0 Key research grounding (June-2026 deep-research pass — historical, still load-bearing for RESOLVE/DRIFT reuse):**
 
 - Dense cosine structurally cannot separate contradictions/negations (NevIR near-random; "Semantic Collapse") — the fix is broadening candidate generation, not swapping the embedder
 - mem0 and Zep also gate on dense top-k (sharing recense's miss on KU contradictions)
 - An off-the-shelf reranker over fused top-k HURT in the research — do NOT add without measuring
 - All external magnitudes (+11.2pp recall, judge-fires) are 2026 arXiv preprints / vendor-self-reported — validate on own data before claiming
 
+**v10.0 Key research grounding (2026-07-29 research pass, HIGH confidence — see `.planning/research/{SUMMARY,ARCHITECTURE,PITFALLS}.md`):**
+
+- Net-zero new runtime dependencies holds across all of v10.0 (verified against live source + current external docs)
+- Gmail `users.history.list` has no `q` parameter — per-account query scoping is backfill-only; incremental pulls are unfiltered (EMAIL-02, Phase 62)
+- Every Gmail episode shares the literal `session_id: 'ingest:gmail'` — `countDistinctProvenance` cannot fire on email-only evidence until the provenance-distinctness key is redesigned (DRIFT-03, Phase 65) — a hard prerequisite for the differentiator, not an optimization
+- The milestone's largest new correctness risk is a "D-43-for-proposals" self-confirmation vector on the approve/reject write path (EMIT-05, Phase 66) — this exact defect class has shipped twice before (a pre-launch critical finding, then v9.0's live C-2)
+- No competitor publishes a methodology-disclosed accuracy number for email-to-status classification — no external bar to cite (DRIFT-05)
+
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Roadmapped, not yet planned — Phase 62 (Multi-Inbox Email Ingest Hardening) is next
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-29 — Milestone v10.0 started
+Status: Roadmap complete; awaiting `/gsd:plan-phase 62`
+Last activity: 2026-07-29 — v10.0 ROADMAP.md + REQUIREMENTS.md traceability written (7 phases, 62–68, 30/30 requirements mapped)
 
 ## Performance Metrics
 
@@ -58,12 +66,77 @@ Last activity: 2026-07-29 — Milestone v10.0 started
 | v7.0 | 35–39.1 | ~26 | 2026-06-23 |
 | v8.0 | 40–45 | 24 | 2026-06-26 |
 | v9.0 | 46–61 | 92 | 2026-07-20 |
+| v10.0 | 62–68 | TBD | in progress |
 | Phase 56 P01 | 20min | 2 tasks | 3 files |
 | Phase 56 P03 | 15min | 3 tasks | 3 files |
 | Phase 56 P02 | 15min | 2 tasks | 1 files |
 | Phase 56 P04 | 20min | 2 tasks | 1 files |
 
 ## Accumulated Context
+
+### v10.0 Phase Map
+
+| Phase | Name | Requirements | Depends on | Parallel? |
+|-------|------|--------------|------------|-----------|
+| 62 | Multi-Inbox Email Ingest Hardening | EMAIL-01..04 | — | Start here |
+| 63 | Offline Intent Classification | CLASSIFY-01..04 | 62 (EMAIL-03 hard prerequisite) | After 62 |
+| 64 | Entity Resolution Hardening | RESOLVE-01..03 | 63 | After 63 |
+| 65 | Belief-Gated Status Drift + Provenance-Distinctness Fix | DRIFT-01..05 | 63, 64 | After 63, 64 |
+| 66 | Domain-Neutral Proposal Emit Seam | EMIT-01..07 | 64, 65 | After 65 |
+| 67 | Reference Consumer Adapter | CONSUME-01..03 | 66 | Parallel with 68 |
+| 68 | Telegram HITL Belief-Kind Extension | APPROVE-01..04 | 66 | Parallel with 67 |
+
+**Foundation-phase call:** research's `SUMMARY.md` proposed a standalone "Proposal Schema & Sink Foundation" phase (the `action_proposal` table + `ActionProposalSink`) ahead of classification. Folded into Phase 66 instead — it owns no REQ-IDs of its own (its deliverables are exactly EMIT-01/EMIT-02), and neither Phase 63 nor Phase 64 ever touches that table (both only add optional fields to the in-memory `ClaimDecision`), so nothing upstream of Phase 66 is gated on the table shape existing early. See ROADMAP.md's v10.0 Phase Details preamble for the full rationale.
+
+### v10.0 Coverage
+
+30 requirements / 7 phases — 100% coverage:
+
+| Requirement | Phase |
+|-------------|-------|
+| EMAIL-01 | 62 |
+| EMAIL-02 | 62 |
+| EMAIL-03 | 62 |
+| EMAIL-04 | 62 |
+| CLASSIFY-01 | 63 |
+| CLASSIFY-02 | 63 |
+| CLASSIFY-03 | 63 |
+| CLASSIFY-04 | 63 |
+| RESOLVE-01 | 64 |
+| RESOLVE-02 | 64 |
+| RESOLVE-03 | 64 |
+| DRIFT-01 | 65 |
+| DRIFT-02 | 65 |
+| DRIFT-03 | 65 |
+| DRIFT-04 | 65 |
+| DRIFT-05 | 65 |
+| EMIT-01 | 66 |
+| EMIT-02 | 66 |
+| EMIT-03 | 66 |
+| EMIT-04 | 66 |
+| EMIT-05 | 66 |
+| EMIT-06 | 66 |
+| EMIT-07 | 66 |
+| CONSUME-01 | 67 |
+| CONSUME-02 | 67 |
+| CONSUME-03 | 67 |
+| APPROVE-01 | 68 |
+| APPROVE-02 | 68 |
+| APPROVE-03 | 68 |
+| APPROVE-04 | 68 |
+
+### Engine Invariants (load-bearing, every phase)
+
+- Sleep pass is the sole graph writer
+- Single-tenant; no multi-tenant namespaces
+- Graph is source of truth; vector store is derived cache
+- Never delete an evidence-backed fact via decay
+- Surfacing/inference never strengthens a belief (D-43) — extended in Phase 66 to a "D-43-for-proposals" sentinel covering approve/reject writes
+- Online paths (SessionStart inject, retrieval, /v1/surface, /v1/proposals) stay LLM-free
+- `source:'hitl'` episodes excluded from consolidation — Phase 63 must inherit this structurally, not re-implement it
+- Agents live outside the engine (clients/, not src/) — enforced per-client via its own tsconfig + import-boundary test
+- Net-zero new runtime dependencies
+- No accuracy regression accepted for a latency/token win
 
 ### v9.0 Phase Map
 
@@ -99,19 +172,9 @@ Last activity: 2026-07-29 — Milestone v10.0 started
 | GATE-02 | 50 |
 | GATE-03 | 50 |
 
-### Engine Invariants (load-bearing, every phase)
-
-- Single-tenant; no multi-tenant namespaces
-- Graph is source of truth; vector store is derived cache
-- Never delete an evidence-backed fact via decay
-- Surfacing/inference never strengthens a belief (D-43)
-- Online paths (SessionStart inject, retrieval, /v1/surface) stay LLM-free
-- Agents live outside the engine (clients/, not src/)
-- Net-zero new runtime dependencies
-- No accuracy regression accepted for a latency/token win
-
 ### Roadmap Evolution
 
+- **v10.0 roadmapped 2026-07-29:** 7 phases (62–68), 30 requirements, 100% coverage. Promoted from ROADMAP backlog B-01. Research proposed 8 phases; "Proposal Schema & Sink Foundation" folded into Phase 66 (no REQ-IDs of its own; the table shape isn't load-bearing until Phase 66's own emission/HTTP workstreams need it — see ROADMAP.md rationale). Dependency chain: 62 → 63 (EMAIL-03 hard prereq for CLASSIFY-01) → 64 → 65 → 66 → {67, 68} parallel. Two live-code-verified constraints carried in as phase-level notes: Gmail query-scoping is backfill-only (Phase 62), and the `session_id:'ingest:gmail'` provenance collapse blocks the differentiator until redesigned (Phase 65). EMIT-05's "D-43-for-proposals" sentinel is the milestone's largest correctness risk, closed structurally in Phase 66, not just documented.
 - **Phase 57 added 2026-07-02:** viz activity-palette redesign — hue = identity, salience = motion/scale. Founder-requested at the 56-05 checkpoint after the brightness-scaling salience model required founder rescue for the third time (54 replay, 55 hops, 56 spontaneous): dimming saturated hues on the dark additive-blended bg drives every subordinate layer below the perceptual floor. Luminance-equalized pastel/bioluminescent identity palette; SC3 ordering moves to attack/halo/cadence/density constants; one bloom calibration pass; founder checkpoint. Presentation-only. Candidate requirements from 56-REVIEW.md advisories (WR-02 invariant lock, WR-06 trace-fade clobber). (Same SDK `phase.add` 999-sentinel misnumber as 52/54/56; manually corrected to 57.)
 - **Phase 56 added 2026-07-01:** Spontaneous 1-hop idle activation — honest "default-mode" brain wandering for `recense viz`. Read-only SSE-only idle emitter fires genuinely-new real semantic (PRED_SET) 1-hop spreads in a distinct color under `kind='spontaneous'` so the brain feels alive with an empty replay buffer, without fabricating edges or writing `activation_trace`. Activity ordering live > replay > spontaneous > twinkle; tray icon does not pulse on it. Deferred-from-54 layer; scoped after the Phase 55 idle-activity founder session (replay cadence tuned 4s→2.5s in the same session). SPONT-01..06 / 4 SCs. (Same SDK `phase.add` 999-sentinel misnumber as 52/54; manually corrected to 56.)
 - **Phase 54 added 2026-06-30:** Viz Ambient Liveliness + Replay Traces — presentation-layer follow-up to 53. Three-layer activity hierarchy (live recall amplification > replay echo of recent real `activation_trace` rows during idle gaps > ambient twinkle), keeping the viz server read-only/LLM-free and preserving the Phase 52 honest-traces invariant. Fresh spontaneous retrievals deferred. Approved spec: `docs/superpowers/specs/2026-06-30-viz-ambient-liveliness-replay-traces-design.md`. (Same SDK `phase.add` 999-sentinel misnumber as Phase 52; manually corrected to 54.)
@@ -174,10 +237,10 @@ Carried from v7.0/v8.0 close:
 
 ## Session Continuity
 
-Last session: 2026-07-14T18:06:37.339Z
-Stopped at: Phase 61 UI-SPEC approved
-Next: Phase 47 (Hybrid Retrieval Recall) — now unblocked (Phase 46 landed). EVAL-02 clean-case no-regression + the pristine 18/18 KU re-run deferred into Phase 50.
+Last session: 2026-07-29T22:53:13.537Z
+Stopped at: v10.0 ROADMAP.md written (Phases 62–68, 30/30 requirements mapped, 100% coverage)
+Next: `/gsd:plan-phase 62` (Multi-Inbox Email Ingest Hardening) — first phase of v10.0, no dependencies.
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 62 with `/gsd:plan-phase 62` (or run `/gsd:discuss-phase 62` first — CLASSIFY and DRIFT phases carry research flags recommending a design pass before planning, but Phase 62 itself mirrors shipped v4.0 patterns and needs none)

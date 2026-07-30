@@ -21,6 +21,7 @@
   - [x] 39.2-05-PLAN.md — Content rebuild (founder-added at human-verify): fix promoteSubjects index-mapping (empty subject-schema-ids root cause) + existing-subject scope correction + subject→chapter containment + `backfill-subjects` CLI [wave 4]
 - ✅ **v8.0 Performance, Efficiency & Competitive Parity** — Phases 40–45 (shipped 2026-06-26) — full detail: [milestones/v8.0-ROADMAP.md](milestones/v8.0-ROADMAP.md). LoCoMo competitive baseline (honest, reproducible: J=86.0% relative-only, R@5/R@10 77.3/82.2%, p50/p95 45/46ms) → zero-dep flat-buffer vector index (warm ~3.4×, byte-exact top-k, killed brute-force cosine at 7000+ nodes) → token/cost audit (marginal write ~7.1k tok/turn, per-source consolSkipThreshold lever) → productization phases folded in: bundled-app settings + cost controls (Phase 44), subscription-default install + billing-leak warning (Phase 45). **Phase 43 (Eval Regression Gates) DEFERRED — not built; GATE-01/02/03 + Phase 41 PERF-03(b) carried forward.** Hard rule held: every competitive number reproducible or cited — no inflated metrics.
 - ✅ **v9.0 Memory Quality** — Phases 46–61 (shipped 2026-07-20) — full detail: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md); audit: [milestones/v9.0-MILESTONE-AUDIT.md](milestones/v9.0-MILESTONE-AUDIT.md). Engine: reconsolidation candidate broadening (union graph+BM25+dense — judge fires 368 KU contradicts vs pre-46 ZERO; belief-correction 84.6%, no clean-case regression), hybrid BM25+dense fusion live on the LLM-free hot path (honest null w*=0, ships dark), correctness hardening (C-2/M-5/M-9/L-2), ANN NO-GO → portable WASM SIMD f32x4 exact-scan kernel (byte-exact, ~4–5×), regression gates merge-blocking in CI (offline gate:ci required check; accuracy floors armed; docs/evals.md re-baselined v9.0-final). Viz overhaul 52–61: honest traces, layout at 15.4k nodes, ambient liveliness + spontaneous idle activation, identity palette, node/motion overhaul, HUD integration, settings/stats depth, corpus index-column browsing — all founder-signed-off.
+- 🚧 **v10.0 Action Proposals** — Phases 62–68 (roadmapped 2026-07-29, not yet built) — full detail: below, "Phase Details — v10.0 Action Proposals". recense ingests real events across both inboxes, decides *what changed* about a tracked entity as a belief, and emits domain-neutral action proposals that a separate system of record confirms — proving the context-layer-proposes / system-of-record-confirms split. Promoted from ROADMAP backlog **B-01**. The differentiator is Phase 65 (belief-gated status drift riding the existing PE-gate/`supersedes` machinery unmodified); the largest new correctness risk is Phase 66's "D-43-for-proposals" self-confirmation vector.
 
 ## Phases
 
@@ -261,6 +262,13 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 0/0 | Not started | — |
+| 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
+| 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
+| 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
+| 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
+| 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
+| 68. Telegram HITL Belief-Kind Extension | v10.0 | 0/0 | Not started | — |
 
 ### Phase 28: Schema-Anchored Corpus
 
@@ -789,21 +797,127 @@ Plans:
 - [x] 45-05-init-subscription-path-PLAN.md — init provider step + subscription path + acknowledge gate (D-04..D-10)
 - [x] 45-06-doctor-billing-and-cli-PLAN.md — doctor billing-posture + claude-CLI probe + reworked api-key dimension (D-11/12/13)
 
+## Phase Details — v10.0 Action Proposals
+
+> **Active milestone** — roadmapped 2026-07-29, promoted from ROADMAP backlog B-01 (below, now emptied). Phases continue from 62 (v9.0 ended at Phase 61). Full context: `PROJECT.md` "Current Milestone" section, `REQUIREMENTS.md` (30 requirements), `research/{SUMMARY,ARCHITECTURE,PITFALLS}.md`.
+
+recense ingests real events across both inboxes, decides *what changed* about a tracked entity as a belief, and emits domain-neutral action proposals that a separate system of record confirms — proving the context-layer-proposes / system-of-record-confirms split across a real product boundary. The genuinely new work is CLASSIFY → RESOLVE → DRIFT → EMIT; EMAIL, CONSUME, and APPROVE extend already-shipped machinery (v4.0 multi-account Gmail fan-out, v9.0 RECON candidate generation, v4.0 Telegram HITL).
+
+**Engine invariants across all phases:** sleep pass is sole graph writer; online paths LLM-free; graph is source of truth; D-43 (inference never strengthens a fact) — extended in Phase 66 to a new "D-43-for-proposals" sentinel covering the approve/reject write path; `source:'hitl'` excluded from consolidation; single-tenant; agents live outside the engine (tsconfig + import-boundary test, replicated for the new client); net-zero new runtime dependencies (confirmed holding for all of v10.0 by research); no accuracy regression traded for a latency/token win.
+
+**Dependency shape:** 62 → 63 (EMAIL-03's hidden-content stripping is a hard prerequisite for enabling CLASSIFY-01 on gmail content, not an optimization — an attacker-controlled hidden instruction must not reach the classifier whose output drives a proposed change to an external system of record) → 64 (resolution runs against episodes 63 already flagged status-relevant) → 65 (needs 63's classification output and 64's resolved entity) → 66 (needs 65's validated gating semantics before wiring real emission — cheaper to fix a threshold or the provenance-distinctness key before a consumer depends on the stream than after) → {67, 68} (both depend only on 66's frozen HTTP contract; parallel-safe with each other).
+
+**Foundation-phase call (explicit deviation from the research-proposed 8-phase list):** research's `SUMMARY.md` proposed a standalone "Proposal Schema & Sink Foundation" phase ahead of classification, to freeze the `action_proposal` table shape early for two later workstreams. That phase owns no REQ-IDs of its own — its deliverables are exactly EMIT-01 (`ActionProposalSink`) and EMIT-02 (the proposal record shape). It is folded into Phase 66 here instead: neither Phase 63 (CLASSIFY) nor Phase 64 (RESOLVE) ever touches the `action_proposal` table — both only add optional fields to the in-memory `ClaimDecision` (mirroring the TEMP-02 `due_at`/`action_type` precedent) — so nothing upstream of Phase 66 is actually gated on the table shape existing early. The two workstreams the schema needs to freeze for (emission logic, HTTP read/ack routes) are both *inside* Phase 66 itself, so declaring the schema as Phase 66's first task achieves the identical freeze without a phase that has zero requirements of its own and no independently observable success criteria — which would also push this "standard" (5–8 phase) milestone to 8 phases for no coverage gain. Net-zero requirement-coverage effect: EMIT-01/EMIT-02 are still satisfied, just inside Phase 66.
+
+- [ ] **Phase 62: Multi-Inbox Email Ingest Hardening** — Guided account-N onboarding, per-account query scoping (backfill-only, honestly documented), HTML/hidden-content stripping, chronological backfill ordering.
+- [ ] **Phase 63: Offline Intent Classification** — Sleep pass classifies status-relevant gmail episodes inside the existing extraction call; zero net-new LLM calls; hitl guard inherited structurally, not re-implemented.
+- [ ] **Phase 64: Entity Resolution Hardening** — Broadened candidate generation + confident-or-null resolution against recense's own graph; descriptor-only, never a consumer ID.
+- [ ] **Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix** — Status lifecycle rides the existing PE-gate/`supersedes` machinery unmodified; redesigned provenance-distinctness key makes `countDistinctProvenance` reachable on email evidence without becoming farmable.
+- [ ] **Phase 66: Domain-Neutral Proposal Emit Seam** — `ActionProposalSink` + `action_proposal` table + `/v1/proposals` routes; a named "D-43-for-proposals" sentinel test closes the milestone's largest correctness risk structurally.
+- [ ] **Phase 67: Reference Consumer Adapter** — In-repo `clients/proposal-reference/` proves the contract end-to-end with its own import-boundary test.
+- [ ] **Phase 68: Telegram HITL Belief-Kind Extension** — Second `kind:'belief'` on the existing StoredProposal union; batching + hold-exclusion bound approval fatigue.
+
+### Phase 62: Multi-Inbox Email Ingest Hardening
+
+**Goal**: A user can onboard a second Gmail account through a guided flow and scope each inbox's initial backfill independently, and no hidden/attacker-controlled content from either inbox can reach a future classifier.
+**Depends on**: Nothing (first phase of v10.0; phases continue from Phase 61)
+**Requirements**: EMAIL-01, EMAIL-02, EMAIL-03, EMAIL-04
+**Success Criteria** (what must be TRUE):
+
+  1. A user can authorize an additional Google account through a guided CLI flow (loopback OAuth redirect, the current Desktop-client flow recense already uses) that mints and stores `GOOGLE_<ID>_REFRESH_TOKEN` without hand-rolling OAuth or hand-editing env files — EMAIL-01
+  2. A user can set a per-account Gmail query that scopes that account's initial backfill independently of other accounts; the documented limitation — incremental pulls are NOT query-filtered, because `users.history.list` accepts no `q` parameter — is stated in the config doc comment and surfaced by `recense doctor`, never implied away — EMAIL-02
+  3. Hidden or invisible content in HTML-only emails (`display:none`, zero-width characters, hidden spans) is deterministically stripped before any content reaches the extractor, verified by a regression fixture containing a hidden injected instruction that must not survive into episode content — EMAIL-03
+  4. A fresh account's initial backfill batch is consolidated in chronological order (derived from the email's own `Date:` header), so an older message in the same backfill cannot silently apply over newer state — EMAIL-04
+
+**Plans**: TBD
+
+### Phase 63: Offline Intent Classification
+
+**Goal**: The sleep pass decides, from gmail episodes only, whether an email implies a status change to a tracked entity — at zero net-new LLM-call cost — while online paths stay LLM-free and the existing `source==='hitl'` exclusion structurally extends to the new classification path instead of being re-implemented.
+**Depends on**: Phase 62 (EMAIL-03's hidden-content stripping must land before classification is enabled on gmail content — a hard prerequisite, not a nice-to-have)
+**Requirements**: CLASSIFY-01, CLASSIFY-02, CLASSIFY-03, CLASSIFY-04
+**Research flag**: Needs a research/design pass during planning — the classification prompt itself, and mapping job-status evidence onto PE magnitude, is where the genuinely deep new work in this milestone concentrates (per `research/SUMMARY.md`).
+**Success Criteria** (what must be TRUE):
+
+  1. A gmail episode implying a status change produces optional intent/entity/confidence fields as part of the SAME extraction call gmail episodes already make (mirroring the TEMP-02 `due_at`/`action_type` optional-field pattern) — a token-cost check confirms no second LLM call was added per episode — CLASSIFY-01
+  2. Classification runs as a branch inside the existing per-episode consolidator loop, after the existing `source==='hitl'` hard-stop; a sentinel test proves hitl-sourced episodes are never classified — CLASSIFY-02
+  3. SessionStart inject, retrieval, `/v1/surface`, and the new `/v1/proposals` route all remain LLM-free, confirmed by an automated regression test that fails if any online path calls the model provider — CLASSIFY-03
+  4. The classified status vocabulary stays limited to the four scoped states (applied/interviewing/rejected/offer), and no sender-domain fingerprint table exists anywhere in config or code — sender domain is at most a weak prior the model reads, never a routing table — CLASSIFY-04
+
+**Plans**: TBD
+
+### Phase 64: Entity Resolution Hardening
+
+**Goal**: A classified episode resolves to the correct tracked entity in recense's own graph, or to nothing at all — never to a wrong guess that could corrupt an external system of record recense has no write access to fix.
+**Depends on**: Phase 63 (resolution only runs against episodes Phase 63 has already flagged as status-relevant)
+**Requirements**: RESOLVE-01, RESOLVE-02, RESOLVE-03
+**Success Criteria** (what must be TRUE):
+
+  1. Entity resolution for a classified email uses broadened candidate generation — exact/entity-keyed match ∪ BM25 lexical ∪ dense cosine union, reusing v9.0's RECON machinery — never dense-cosine alone — RESOLVE-01
+  2. When no candidate clears the confidence floor, resolution abstains and no proposal is produced from that episode, rather than emitting a best-available guess — RESOLVE-02
+  3. A resolved entity is exposed as recense's own stable node reference plus a human-readable descriptor; recense never mirrors, imports, or queries a consumer's canonical ID space — the consumer's own adapter owns the match into its IDs — RESOLVE-03
+
+**Plans**: TBD
+
+### Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix
+
+**Goal**: Status transitions for a tracked entity update through the existing PE-gated belief machinery completely unmodified, and email evidence can finally satisfy (or correctly fail to satisfy) the distinct-provenance mechanism the differentiator depends on — closing the gap where every Gmail episode today shares one literal `session_id`, making `countDistinctProvenance` mathematically unreachable on email-only evidence.
+**Depends on**: Phase 63 (classification output), Phase 64 (resolved entity)
+**Requirements**: DRIFT-01, DRIFT-02, DRIFT-03, DRIFT-04, DRIFT-05
+**Research flag**: Needs a research/design pass during planning — the provenance-distinctness key redesign is a deliberate change to a load-bearing correctness mechanism; it requires its own explicit design decision and a dry-run against real multi-email status threads before being enabled live (per `research/SUMMARY.md` and `research/PITFALLS.md` Pitfall 3). This is a hard prerequisite for DRIFT-02 to work as claimed, not an optimization to layer on later.
+**Success Criteria** (what must be TRUE):
+
+  1. A status lifecycle (applied → interviewing → rejected → offer) is stored as an ordinary fact node and updated only through the existing PE-gated `routeContradiction()`/tombstone/`supersedes` machinery — no new data model, no bi-temporal or supersedes-chain columns — DRIFT-01
+  2. A single ambiguous status email holds rather than flipping the belief, and a held (non-decisive) update produces no downstream proposal — DRIFT-02
+  3. Provenance distinctness for email evidence is derived from sender identity + thread lineage with quoted/forwarded content stripped first — a test proves 3 genuinely independent status emails count as distinct provenance while 3 copies of one forwarded/quoted thread do not farm false independence — DRIFT-03
+  4. Out-of-order evidence (e.g. a rejection processed after an offer during backfill) does not silently revert a newer status — DRIFT-04
+  5. Belief-correction accuracy on real multi-inbox traffic is measured and recorded honestly against recense's own harness — with no external accuracy bar cited, since none exists for this feature class — before Phase 66 wires any consumer live — DRIFT-05
+
+**Plans**: TBD
+
+### Phase 66: Domain-Neutral Proposal Emit Seam
+
+**Goal**: A validated belief update emits a domain-neutral proposal that a consumer can read and act on over HTTP, and an approve/reject decision can never feed back into recense's own belief — closing the milestone's single largest new correctness risk structurally, not just by documentation or review discipline.
+**Depends on**: Phase 64 (resolved entity feeds the proposal's `entity` field), Phase 65 (validated gating semantics — cheaper to fix a threshold or the provenance-distinctness key before any consumer depends on the emission stream than after)
+**Requirements**: EMIT-01, EMIT-02, EMIT-03, EMIT-04, EMIT-05, EMIT-06, EMIT-07
+**Note**: This phase also owns the additive `action_proposal` table + `ActionProposalSink` foundation (research's proposed standalone "Proposal Schema & Sink Foundation" phase, folded in here — see the milestone-level "Foundation-phase call" note above).
+**Success Criteria** (what must be TRUE):
+
+  1. Proposals are emitted through a new `ActionProposalSink` (Noop default, mirroring `ConsolidationSink`) into an additive `action_proposal` table — an install with no consumer configured pays zero cost — EMIT-01
+  2. A consumer can list pending proposals and record approve/reject outcomes over the existing authenticated `recense serve` surface (`GET /v1/proposals`, `POST /v1/proposals/:id/approve|reject`), mirroring the shipped `/v1/surface` pattern; each proposal is a flat `{entity, proposed_change, evidence_episode, confidence}` record in recense's own vocabulary with no consumer-specific fields, and carries a deterministic id so a replayed or double-delivered proposal cannot be applied twice — EMIT-02, EMIT-03, EMIT-04
+  3. Approving or rejecting a proposal writes only proposal status — never `node.s` or `node.c` — proven by a named "D-43-for-proposals" sentinel test (the milestone's largest new correctness risk, closed structurally here, not merely documented) — EMIT-05
+  4. A proposal carries its raw quoted evidence verbatim alongside the structured change, so an approver never decides from model prose alone — EMIT-06
+  5. A stale or superseded proposal (its originating belief has since moved again) is detected and refused before an approval can apply it — EMIT-07
+
+**Plans**: TBD
+
+### Phase 67: Reference Consumer Adapter
+
+**Goal**: A thin in-repo consumer proves the emit-seam contract works end-to-end without recense knowing the consumer's schema, and the pattern is documented well enough for a real third-party integration (jobfill, later, in its own repo) to be built against it.
+**Depends on**: Phase 66 (needs a stable, versioned HTTP contract to consume)
+**Requirements**: CONSUME-01, CONSUME-02, CONSUME-03
+**Success Criteria** (what must be TRUE):
+
+  1. An in-repo reference consumer adapter (`clients/proposal-reference/`, a structural sibling of `clients/telegram/`) reads pending proposals and maps them onto its own local rows, proving the contract end-to-end — CONSUME-01
+  2. The reference adapter imports zero engine modules — enforced by its own `tsconfig.json` boundary (no `paths` into `src/`) and its own import-boundary test, a sibling copy of `clients/telegram/tests/import-boundary.test.ts`'s guard rather than a reuse of it (the existing test only scans `clients/telegram/`) — CONSUME-02
+  3. `docs/reference-client.md` documents the proposal contract well enough that a third-party consumer could be written against it, following the existing adopter-template pattern — CONSUME-03
+
+**Plans**: TBD
+
+### Phase 68: Telegram HITL Belief-Kind Extension
+
+**Goal**: A user approves or rejects a belief-shaped proposal from the same Telegram surface already used for tool-call approvals, without rubber-stamping becoming the path of least resistance as multi-inbox email volume grows.
+**Depends on**: Phase 66 (needs the emit seam's stable contract to poll and act on)
+**Requirements**: APPROVE-01, APPROVE-02, APPROVE-03, APPROVE-04
+**Success Criteria** (what must be TRUE):
+
+  1. A user can approve or reject a belief-shaped proposal from Telegram, with the concrete `from → to` transition visible on the decision itself — APPROVE-01
+  2. Belief-kind proposals are a `kind` discriminator on the existing `StoredProposal` union that bypasses the client-side LLM tool-mapping step while reusing the existing expiry and rate-cap machinery — zero changes to `proposal-engine.ts` or `proposal-store.ts` — APPROVE-02
+  3. Same-entity same-day proposals are batched into one prompt, and held (non-decisive) updates are never surfaced to the user — APPROVE-03
+  4. Raw numeric confidence is never shown to the user and is never a programmatic approval gate — the PE gate is the only gate — APPROVE-04
+
+**Plans**: TBD
+
 ## Backlog
 
-### B-01: Email ingest → domain-neutral action proposals (cross-product seam)
-
-**Goal:** recense ingests email as an event source, resolves + classifies it, and **emits domain-neutral action proposals** to a separate system of record (first consumer: jobfill's application tracker — mark submitted / interviewing / rejected / offer). Proves the context-layer-proposes / system-of-record-confirms pattern across a real product boundary.
-
-**Boundary (decided in brainstorm 2026-07-29):**
-- Email ingest + entity resolution ("which application/entity is this about") + intent classification + the belief (status, confidence, supersede) live in **recense** — its existing competency. Do NOT duplicate ingest into the consumer.
-- recense **must not write into the consumer's DB directly.** It emits a generic intent `{entity, proposed_change, evidence_episode, confidence}` and stops. A thin **consumer-side adapter** maps the intent onto that tool's rows. recense stays the pure producer — zero knowledge of jobfill's schema — so any downstream tool can consume it (isomorphic to the Embedder/retrieval seam).
-- **Human-in-the-loop on the write:** revive the Telegram bot as the approval surface ("Rejection from Ventura — mark rejected? [yes / edit / no]"). Reuses the criterion-in-the-cell approval pattern.
-- Belief layer earns its keep here: status drift (applied → interviewing → rejected) is `supersedes`; one ambiguous email shouldn't flip status until evidence confirms (`pending_contradictions` / hold).
-
-**Open questions (resolve at discuss-phase before planning):**
-- Email connector: IMAP poll vs Gmail API vs forwarding address. SSRF/secret-handling for inbox credentials.
-- Where the "suggested action" contract physically lives (queue table in recense read by the consumer, vs a CLI/HTTP emit seam). Keep it dead simple — no message bus for a personal tool.
-- Entity resolution against companies/roles the consumer knows vs recense's own entity graph — who owns the canonical entity list.
-
-**Why parked, not built:** productization/interop track, orthogonal to the engine. Captured from an interview-prep session where the recense↔jobfill seam turned out to be the exact system-of-record/context-layer split worth demonstrating. Promote when there's appetite to build the cross-product interop layer.
+_B-01 (Email ingest → domain-neutral action proposals) was promoted to the v10.0 Action Proposals milestone on 2026-07-29 — see "Current Milestone: v10.0 Action Proposals" in PROJECT.md and "Phase Details — v10.0 Action Proposals" above. No items currently parked._
