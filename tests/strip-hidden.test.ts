@@ -555,11 +555,16 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
   });
 }, 20000);
 
-describe('strip-hidden.ts — no attribute-scanning regex uses a bare attribute class (CR-01 bug-class guard)', () => {
-  // CR-01 was filed against a bare `[^` + `>]*` attribute class, fixed for three of the
-  // file's four attribute-scanning regexes, and survived in the fourth (STYLE_BLOCK_RE)
-  // for a full extra plan. This guard exists so a fifth regex added later — with the same
-  // bug — fails the suite instead of shipping a third instance of the bug class.
+describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL-02 bug class (62-12 decision #1)', () => {
+  // Retitled from "bug-class guard" (62-09): WR-06 (62-REVIEW.md) established that a
+  // string-matching source guard can never GUARANTEE this bug class does not recur — every
+  // one of `[^>]+`, `[^>]{0,200}`, `[^ >]*`, `[^\s>]*` etc. is the same bug and would pass
+  // a substring check. The guarantee is now STRUCTURAL, not textual: all four
+  // tag-scanning regexes are built from one shared `ATTRS` fragment (see
+  // src/source/strip-hidden.ts), so a fifth literal built the same way cannot carry a
+  // divergent attribute boundary. What follows is a residual grep that detects the
+  // specific regression shapes this file has actually shipped (CR-01's bare class,
+  // BL-01's narrowed class) — a useful canary, not a proof.
   const SOURCE = readFileSync(
     join(__dirname, '..', 'src', 'source', 'strip-hidden.ts'),
     'utf8'
@@ -571,15 +576,31 @@ describe('strip-hidden.ts — no attribute-scanning regex uses a bare attribute 
     })
     .join('\n');
 
+  // Kept UNCHANGED from 62-09: this assertion passes only because 62-12 rejected the code
+  // reviewer's `<\/style\b[^>]*>` close-tag tail (which would have reintroduced this exact
+  // banned substring) in favor of a close tail built from the shared ATTRS fragment.
   it('contains no bare unquoted-only attribute class outside comments', () => {
     expect(COMMENT_STRIPPED_SOURCE).not.toContain('[^>]*');
     expect(COMMENT_STRIPPED_SOURCE).not.toContain('[^<>]*');
   });
 
-  it('has at least 4 occurrences of the quote-aware alternation prefix, one per attribute-scanning regex', () => {
-    const prefix = '(?:"[^"]*"|\'[^\']*\'|';
-    const count = COMMENT_STRIPPED_SOURCE.split(prefix).length - 1;
-    expect(count).toBeGreaterThanOrEqual(4);
+  // REPLACES 62-09's "count of the alternation prefix >= 4" assertion, which does not
+  // hold after 62-12: the alternation now appears exactly ONCE, inside the ATTRS
+  // definition itself, not once per regex. These are the single-source-of-truth
+  // assertions that assertion should always have been.
+  it('the quote-aware alternation is defined exactly once, and used by exactly four compile-once RegExp constructions', () => {
+    const alternationPrefix = '(?:"[^"]*"|\'[^\']*\'|';
+    const alternationCount = COMMENT_STRIPPED_SOURCE.split(alternationPrefix).length - 1;
+    expect(alternationCount).toBe(1);
+
+    const attrsInterpolationLines = SOURCE.split('\n').filter(line => line.includes('${ATTRS}'));
+    expect(attrsInterpolationLines.length).toBe(4);
+
+    const newRegExpLines = SOURCE.split('\n').filter(line => line.includes('new RegExp('));
+    expect(newRegExpLines.length).toBe(4);
+    for (const line of newRegExpLines) {
+      expect(line.trimStart().startsWith('const ')).toBe(true);
+    }
   });
 });
 

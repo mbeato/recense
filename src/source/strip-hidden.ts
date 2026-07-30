@@ -14,7 +14,63 @@
  * compile-once discipline. Global regexes have their `lastIndex` reset immediately before
  * each manual `.exec()` loop for the same reason `redactSecrets` does; regexes driven
  * through `.replace()`/`.match()`/`.test()` with no manual loop need no such reset (the
- * built-in @@replace/@@match algorithms reset lastIndex themselves).
+ * built-in @@replace/@@match algorithms reset lastIndex themselves). Four of these regexes
+ * are RegExp-constructed from a shared template-literal fragment (`ATTRS`, see below)
+ * rather than written as bare literals; each is still constructed exactly once, at
+ * module load, so the compile-once invariant holds literally. This SUPERSEDES 62-07's
+ * acceptance criterion `grep -c "new RegExp" == 0`, which was a proxy for the real
+ * invariant ("compiled once, never per call") rather than the invariant itself — the thing
+ * that criterion was actually guarding against, constructing a regex per matched tag name
+ * inside `findMatchingCloseEnd`, remains forbidden and remains absent.
+ *
+ * 62-12 gap closure (BL-01/BL-02/BL-03, 62-REVIEW.md) — three decisions recorded here:
+ *  1. REVERSED 62-09's decision to exclude `<` from the unquoted-attribute class in
+ *     `STYLE_BLOCK_RE` (and, by the same reasoning, in `START_TAG_RE`/`ANY_TAG_TOKEN_RE`).
+ *     Per HTML §13.2.5.36 (attribute value, unquoted state), `<` is a parse error but is
+ *     APPENDED to the attribute value — it does NOT terminate the tag; only an unquoted
+ *     `>` does. 62-09 excluded `<` to keep stage 2 in agreement with stage 4. They did
+ *     agree — they agreed on FAILING, and the shared failure was the leak (BL-01): a
+ *     class-hidden payload and the raw `<style>` block both reached `record.content`. All
+ *     four tag-scanning literals now share ONE fragment (`ATTRS`, permitting `<`), so
+ *     agreement is structural rather than four literals happening to carry the same
+ *     character class — a fifth literal built from the shared ATTRS fragment cannot silently diverge.
+ *  2. REJECTED `\p{Cf}\p{Variation_Selector}` (the code-reviewer's proposed
+ *     `INVISIBLE_CODEPOINTS_RE`) in favor of `\p{Default_Ignorable_Code_Point}`. Verified
+ *     during planning by enumerating all of Unicode: `\p{Cf}` NARROWS current coverage by
+ *     31 codepoints (`U+E0000`, `U+E0002-U+E001F` — the unassigned part of the Tags block
+ *     the shipped literal already covers and `\p{Cf}` does not), which would have regressed
+ *     part of the very carrier BL-03 is about. `\p{Default_Ignorable_Code_Point}` misses
+ *     ZERO currently-covered codepoints, covers every BL-03 threat-class row except
+ *     `U+2028`/`U+2029` (added explicitly), and additionally reaches the unassigned
+ *     plane-14 remainder (`U+E0080-U+E00FF`, `U+E01F0-U+E0FFF`) that neither the shipped
+ *     literal nor `\p{Cf}` reaches — coverage goes from 139 to 4176 codepoints, with zero
+ *     narrowing anywhere. `\p{Cf}` would also strip the Arabic/Syriac prepended
+ *     concatenation marks (`U+0600-U+0605`, `U+06DD`, `U+070F`, `U+08E2`, `U+110BD`,
+ *     `U+110CD`) — legitimate formatting characters in Arabic/Syriac prose that
+ *     `Default_Ignorable_Code_Point` correctly excludes. `U+FFF9-U+FFFB` (interlinear
+ *     annotation anchors) are `Cf` but NOT `Default_Ignorable` — they are meant to be
+ *     rendered in fallback, are not in BL-03's table, and are deliberately not added.
+ *  3. ACCEPTED two behavior changes on legitimate (non-attacker) mail as a consequence of
+ *     widening `INVISIBLE_CODEPOINTS_RE` to a Unicode-property-derived set: (a) bidi
+ *     embedding/override/isolate controls and LRM/RLM/ALM are now stripped from
+ *     legitimate right-to-left subjects/bodies, changing how such text would render in a
+ *     client — but this module produces text for an LLM extractor, not for display, and
+ *     Trojan-Source-class visual reordering is exactly the threat this stage exists to
+ *     stop; only invisible controls are touched, letters are never touched (verified: the
+ *     property matches no ASCII codepoint and no Arabic/Hebrew LETTER codepoint), and the
+ *     precedent already exists in shipped code (`U+200C` ZWNJ — required for correct
+ *     Persian/Devanagari rendering — has been stripped since 62-03). (b) `U+FE0F`
+ *     VARIATION SELECTOR-16 is now stripped, so an emoji written with an explicit
+ *     presentation selector loses it (e.g. a heart-plus-VS16 sequence renders as a bare
+ *     heart) — the same class of accepted loss as the existing ZWJ stripping.
+ *
+ * The 62-09 source guard (tests/strip-hidden.test.ts) is UPDATED, not removed, by this
+ * change: its first assertion (no bare `[^>]*`/`[^<>]*` class survives) is kept UNCHANGED
+ * — true only because the shared `ATTRS` fragment's `STYLE_BLOCK_RE` close tail is built
+ * from the shared ATTRS fragment, NOT the reviewer-proposed `[^>]*` tail, which would have reintroduced
+ * that exact banned substring. Its second assertion (a `>= 4` count of the alternation
+ * prefix) is REPLACED with single-source-of-truth counts, since the alternation now
+ * appears exactly once (inside `ATTRS` itself) rather than once per regex.
  *
  * Stage order (load-bearing — see the block comment above each stage):
  *  1. Invisible-codepoint removal (zero-width chars, BOM, soft hyphen, invisible math
@@ -78,7 +134,11 @@
  *      where a malformed tag ends, and guessing wrong reopens the CR-01 bypass this
  *      module exists to close — this is the deliberate cost of the CR-01 quote-aware fix
  *      (62-07-PLAN.md Task 2), consistent with the "monotone toward less content, never
- *      raw passthrough" contract below.
+ *      raw passthrough" contract below. NARROWED by 62-12: an unquoted `<` inside an
+ *      attribute region was a SECOND, previously undocumented trigger of this same
+ *      truncation (BL-01's over-removal direction) — that trigger is now closed, since
+ *      `<` no longer terminates the attribute-scanning fragment, so only unbalanced
+ *      quotes remain as a trigger of residual (c).
  *
  * Contract:
  *  - Pure: no side effects, no I/O, no randomness, no clock read (LLM-free online path).
@@ -94,13 +154,25 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Zero-width / invisible Unicode codepoints, including the whole Unicode Tags block
- * (U+E0000-U+E007F) — the "hidden Unicode instruction injection" carrier named in 2026
- * indirect-prompt-injection research. Renders as nothing at all; pure payload.
- * Requires the 'u' flag for the astral-plane Tags-block range.
+ * Invisible / non-rendering codepoints, derived from the Unicode `Default_Ignorable_
+ * Code_Point` property (BL-03, 62-REVIEW.md/62-12-PLAN.md) rather than a hand-maintained
+ * enumeration, plus two explicit extras. `Default_Ignorable_Code_Point` covers zero-width
+ * chars, BOM, soft hyphen, U+180E, invisible math operators, the whole Unicode Tags block
+ * (U+E0000-U+E007F — the "hidden Unicode instruction injection" carrier named in 2026
+ * indirect-prompt-injection research), the Variation Selectors (U+FE00-U+FE0F) and
+ * Variation Selectors Supplement (U+E0100-U+E01EF — the 2025 arbitrary-byte smuggling
+ * carrier), bidi embed/override/isolate controls, LRM/RLM/ALM, the combining grapheme
+ * joiner, deprecated format chars, and Hangul fillers — see the file-level doc block's
+ * "62-12 gap closure" note for the full rationale, including why the reviewer's `\p{Cf}`
+ * proposal was rejected (31-codepoint narrowing) and the two accepted behavior changes on
+ * legitimate RTL mail and VS16-suffixed emoji. `U+2028`/`U+2029` (line/paragraph
+ * separator) are added explicitly — they are NOT Default_Ignorable but are a named
+ * BL-03 threat-class row (structure forgery in a header field). The property matches no
+ * ASCII codepoint, so `\n`/`\t`/space are preserved (stage 8 owns whitespace) and 62-11's
+ * accepted `\n`-in-header disposition is unchanged by this widening. Requires the 'u'
+ * flag for the astral-plane ranges.
  */
-const INVISIBLE_CODEPOINTS_RE =
-  /[\u200B-\u200D\u2060\uFEFF\u00AD\u180E\u2061-\u2064]|[\u{E0000}-\u{E007F}]/gu;
+const INVISIBLE_CODEPOINTS_RE = /[\p{Default_Ignorable_Code_Point}\u2028\u2029]/gu;
 
 // ---------------------------------------------------------------------------
 // Shared tag-matching primitives (module scope; tag NAME is runtime data, so the
@@ -109,20 +181,37 @@ const INVISIBLE_CODEPOINTS_RE =
 // ---------------------------------------------------------------------------
 
 /**
- * Matches one HTML open tag: `<name ...>` or self-closing `<name .../>`. Attribute
- * scanning is quote-aware: only an UNQUOTED `<` or `>` terminates the tag, since a
- * literal `>` inside a quoted attribute value (or a CSS string literal inside `style`)
- * is legal HTML and was the CR-01 bypass (a quoted `>` truncated the match before the
- * hiding declaration was ever seen).
+ * Shared unquoted-attribute fragment — single source of truth for all four tag-scanning
+ * literals below. Per HTML section 13.2.5.36 (attribute value, unquoted state), only an
+ * UNQUOTED `>` terminates a tag; an unquoted `<` inside the attribute region is a parse
+ * error that the HTML tokenizer APPENDS to the attribute value, so it does NOT terminate
+ * the tag. Building every tag-scanning regex from this ONE fragment means agreement
+ * between them is structural, not four literals happening to carry the same character
+ * class by coincidence -- a fifth literal built from the shared ATTRS fragment cannot silently diverge
+ * (T-62-43, the cross-stage boundary bug class this file exists to close).
  */
-const START_TAG_RE = /<([a-zA-Z][a-zA-Z0-9]*)\b((?:"[^"]*"|'[^']*'|[^'"<>])*)>/g;
+const ATTRS = `(?:"[^"]*"|'[^']*'|[^'">])*`;
+
+/**
+ * Matches one HTML open tag: `<name ...>` or self-closing `<name .../>`. Attribute
+ * scanning is quote-aware via the shared `ATTRS` fragment: only an UNQUOTED `<` or `>`
+ * terminates the tag, since a literal `>` inside a quoted attribute value (or a CSS
+ * string literal inside `style`) is legal HTML and was the CR-01 bypass (a quoted `>`
+ * truncated the match before the hiding declaration was ever seen), and an unquoted `<`
+ * is legal HTML per section 13.2.5.36 and was the BL-01 bypass (62-12-PLAN.md) -- 62-09
+ * excluded `<` here to keep agreement with the (then-unfixed) `STYLE_BLOCK_RE`; both are
+ * now built from `ATTRS` instead, so agreement is guaranteed by construction rather than
+ * by two literals happening to carry the same character class.
+ */
+const START_TAG_RE = new RegExp(`<([a-zA-Z][a-zA-Z0-9]*)\\b(${ATTRS})>`, 'g');
 
 /**
  * Matches any open OR close tag token, used by the forward matching-close scan. Same
- * quote-awareness rule as `START_TAG_RE` — only an unquoted `<` or `>` ends the tag, so
- * this stage cannot disagree with `START_TAG_RE` about where a tag ends.
+ * quote-awareness rule as `START_TAG_RE` (built from the same `ATTRS` fragment) -- only
+ * an unquoted `<` or `>` ends the tag, so this stage cannot disagree with `START_TAG_RE`
+ * (or, after 62-12, `STYLE_BLOCK_RE`) about where a tag ends.
  */
-const ANY_TAG_TOKEN_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b(?:"[^"]*"|'[^']*'|[^'"<>])*>/g;
+const ANY_TAG_TOKEN_RE = new RegExp(`<(\\/?)([a-zA-Z][a-zA-Z0-9]*)\\b${ATTRS}>`, 'g');
 
 /** True when a matched tag's raw text ends with a self-closing `/>`. */
 const SELF_CLOSING_SUFFIX_RE = /\/\s*>$/;
@@ -204,16 +293,33 @@ function applyRemovalRanges(html: string, ranges: Array<[number, number]>): stri
 // ---------------------------------------------------------------------------
 
 /**
- * Matches a `<style>` open tag through to its closing tag. Attribute scanning is
- * quote-aware: only an UNQUOTED `<` or `>` terminates the open tag, since a literal `>`
- * inside a quoted attribute value is legal HTML and was the CR-01 bypass — here it
- * truncated the harvested block content mid-attribute, so `RULE_RE` saw a garbage
- * selector and no hiding selector was ever recorded. The unquoted class excludes `<`
- * (matching `START_TAG_RE`/`ANY_TAG_TOKEN_RE`) rather than permitting it (as `ANY_TAG_RE`
- * does), because stage 2's opinion of where this same `<style>` open tag ends must agree
- * with stage 4's — disagreement between them is the cross-stage boundary bug class T-62-43.
+ * Matches a `<style>` open tag through to its closing tag, built from the shared `ATTRS`
+ * fragment on BOTH the open tag and the close-tag tail (62-12 gap closure, BL-01/BL-02).
+ *
+ * OPEN TAG: quote-aware -- only an unquoted `<` or `>` terminates it, since a literal `>`
+ * inside a quoted attribute value is legal HTML and was the CR-01 bypass (truncated the
+ * harvested block content mid-attribute, so `RULE_RE` saw a garbage selector and no
+ * hiding selector was ever recorded), and an unquoted `<` is legal HTML per section
+ * 13.2.5.36 and was the BL-01 bypass -- 62-09 excluded `<` here to keep this regex's
+ * open-tag boundary opinion in agreement with `START_TAG_RE`/`ANY_TAG_TOKEN_RE`, but they
+ * agreed on FAILING: a class-hidden payload and the raw stylesheet both leaked into
+ * `record.content`. All four tag-scanning literals now share `ATTRS`, so agreement is
+ * structural rather than incidental.
+ *
+ * CLOSE TAG: the tail is built from the same ATTRS fragment, closing BL-02 (62-REVIEW.md) --
+ * `</style foo>` and `</style/>` both legally end a `<style>` element (the RAWTEXT
+ * end-tag-name state transitions to before-attribute-name on whitespace and to
+ * self-closing-start-tag on `/`), and `ANY_TAG_TOKEN_RE` already accepted both; the old
+ * `<\/style\s*>` tail did not, so stage 4 could delete the block while stage 2 harvested
+ * nothing -- the evidence that the span was hidden was destroyed while the span's text
+ * survived. The tail is deliberately built from the ATTRS fragment, NOT the simpler
+ * `<\/style\b[^>]*>` a code reviewer proposed: `[^>]*` would (a) reintroduce the exact
+ * substring the 62-09 source guard bans, forcing either a self-inflicted red suite or a
+ * weakened guard, and (b) give the close tag a different boundary rule from
+ * `ANY_TAG_TOKEN_RE` -- exactly the T-62-43 cross-stage disagreement this file exists to
+ * prevent.
  */
-const STYLE_BLOCK_RE = /<style\b(?:"[^"]*"|'[^']*'|[^'"<>])*>([\s\S]*?)<\/style\s*>/gi;
+const STYLE_BLOCK_RE = new RegExp(`<style\\b${ATTRS}>([\\s\\S]*?)<\\/style\\b${ATTRS}>`, 'gi');
 /** Simple non-nested `selectorList { body }` rule matcher (plain CSS has no nesting). */
 const RULE_RE = /([^{}]+)\{([^{}]*)\}/g;
 const BARE_CLASS_SELECTOR_RE = /^\.[A-Za-z0-9_-]+$/;
@@ -366,12 +472,17 @@ function isHiddenStartTag(
 // ---------------------------------------------------------------------------
 
 /**
- * Same quote-awareness rule as `START_TAG_RE`/`ANY_TAG_TOKEN_RE` — only an unquoted `>`
- * ends the tag — but the unquoted class here is deliberately `[^'">]` rather than
- * `[^'"<>]`: this stage's leftover-tag sweep must preserve the pre-existing behavior
- * that a `<` may appear inside a stage-6 match, so `<` is not excluded here.
+ * Same quote-awareness rule as `START_TAG_RE`/`ANY_TAG_TOKEN_RE`/`STYLE_BLOCK_RE` — only
+ * an unquoted `>` ends the tag — and, after 62-12, built from the SAME shared `ATTRS`
+ * fragment as the other three. Before 62-12 this stage deliberately used a different,
+ * more-permissive `[^'">]` class than the other three's `[^'"<>]` (62-07 documented the
+ * asymmetry: this stage's leftover-tag sweep needed to preserve the pre-existing behavior
+ * that a `<` may appear inside a stage-6 match). That asymmetry no longer exists —
+ * `ATTRS` IS `[^'">]` (permitting `<`), so all four literals converge onto this stage's
+ * pre-existing, already-shipped, HTML-tokenizer-faithful form; only the construction
+ * changed here, not the semantics.
  */
-const ANY_TAG_RE = /<(?:"[^"]*"|'[^']*'|[^'">])*>/g;
+const ANY_TAG_RE = new RegExp(`<${ATTRS}>`, 'g');
 
 // ---------------------------------------------------------------------------
 // Stage 7 — minimal entity decoding
