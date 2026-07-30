@@ -277,14 +277,14 @@ export function initSchema(db: Database.Database): void {
     db.exec('ALTER TABLE episode ADD COLUMN event_ts INTEGER');
   }
 
-  // idx_episode_event_ts: plan 62-05 orders unconsolidated episodes by event_ts, leading
-  // with consolidated to match the existing idx_episode_unconsolidated/idx_episode_cwd hot-path
-  // index shape. SPECULATIVE: if 62-05's ordering ends up done in memory instead of in SQL,
-  // this index should be dropped rather than left dead (the file already documents two dead
-  // indexes it later had to remove — see the v5 migration comment — do not repeat that silently).
+  // idx_episode_event_ts: dropped (WR-01). Plan 62-05 landed the replay ordering entirely in
+  // application code (orderEpisodesForConsolidation) rather than in SQL — EpisodicStore.
+  // listUnconsolidated still orders by `hard_keep DESC, salience DESC`, so event_ts appears in
+  // no WHERE or ORDER BY. The index was therefore pure write overhead with no read benefit,
+  // dropped here following the v5 dead-index cleanup precedent below. If a future change adds
+  // a SQL-level ORDER BY/WHERE on event_ts, re-add this index at that point.
   db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_episode_event_ts
-      ON episode(consolidated, event_ts);
+    DROP INDEX IF EXISTS idx_episode_event_ts;
   `);
 
   // v4 migration: activation_trace ring-buffered table (VIZ-02).
