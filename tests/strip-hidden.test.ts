@@ -7,6 +7,8 @@
  * nested-close-tag scanning, fail-safe unterminated-markup truncation, entity handling,
  * plain-text byte-identical passthrough, idempotence, and totality (never throws).
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { stripHiddenContent } from '../src/source/strip-hidden';
 
@@ -93,6 +95,50 @@ describe('stripHiddenContent — quoted attribute values containing > (CR-01)', 
     );
     expect(out).not.toContain('SECRET9');
     expect(out).toContain('Visible.');
+  });
+});
+
+describe('stripHiddenContent — quoted > inside the <style> OPEN TAG (CR-01 stage-2 harvest)', () => {
+  it('removes content behind a double-quoted style-tag attribute containing a literal >', () => {
+    const out = stripHiddenContent(
+      '<style data-x="a>b">.legal{display:none}</style>visible<span class="legal">HIDDEN VIA CLASS</span>'
+    );
+    expect(out).not.toContain('HIDDEN VIA CLASS');
+    expect(out).toContain('visible');
+  });
+
+  it('removes content behind the near-universal real-mail type="text/css" data-y="x>y" style-tag shape', () => {
+    const out = stripHiddenContent(
+      '<style type="text/css" data-y="x>y">.h{display:none}</style>ok<span class="h">PAYLOAD3</span>'
+    );
+    expect(out).not.toContain('PAYLOAD3');
+    expect(out).toContain('ok');
+  });
+
+  it('removes content behind a single-quoted style-tag attribute containing a literal >', () => {
+    const out = stripHiddenContent(
+      "<style data-x='a>b'>.h{display:none}</style>ok<span class='h'>PAYLOAD4</span>"
+    );
+    expect(out).not.toContain('PAYLOAD4');
+    expect(out).toContain('ok');
+  });
+
+  it('removes an id-hidden element whose hiding rule lives behind a quoted > in the <style> open tag', () => {
+    const out = stripHiddenContent(
+      '<style data-x="a>b">#sec{display:none}</style>ok<span id="sec">PAYLOAD5</span>'
+    );
+    expect(out).not.toContain('PAYLOAD5');
+    expect(out).toContain('ok');
+  });
+
+  it('no-over-correction control: an unquoted > genuinely closes the <style> open tag, so the rest is not a hiding rule and VISIBLE6 is real prose', () => {
+    // With no quotes, the `>` genuinely closes the <style> open tag in any real parser,
+    // so `b{display:none}` is the block content fed to RULE_RE — `b` is not a bare
+    // `.class`/`#id` selector, nothing is harvested, and VISIBLE6 is text a human can see.
+    const out = stripHiddenContent(
+      '<style data-x=a>b{display:none}</style>ok<span class="b">VISIBLE6</span>'
+    );
+    expect(out).toContain('VISIBLE6');
   });
 });
 
@@ -260,6 +306,11 @@ describe('stripHiddenContent — idempotence', () => {
     '<div data-x=a>b style="display:none">SECRET6</div>Visible.',
     '<div title="unclosed>Visible after.<a href="x">link</a>Tail.',
     '<div title="unclosed>mid" class="c">Visible after.',
+    '<style data-x="a>b">.legal{display:none}</style>visible<span class="legal">HIDDEN VIA CLASS</span>',
+    '<style type="text/css" data-y="x>y">.h{display:none}</style>ok<span class="h">PAYLOAD3</span>',
+    "<style data-x='a>b'>.h{display:none}</style>ok<span class='h'>PAYLOAD4</span>",
+    '<style data-x="a>b">#sec{display:none}</style>ok<span id="sec">PAYLOAD5</span>',
+    '<style data-x=a>b{display:none}</style>ok<span class="b">VISIBLE6</span>',
   ];
 
   it.each(fixtures)('stripHiddenContent(stripHiddenContent(s)) === stripHiddenContent(s) for %#', (s) => {
@@ -341,6 +392,87 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
   });
 }, 20000);
+
+describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 ReDoS surface)', () => {
+  // STYLE_BLOCK_RE's new quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'"<>])*` is driven
+  // by matchAll over attacker-supplied email HTML on EVERY ingest (stage 2 is
+  // unconditional). Both shapes below contain no </style> anywhere, forcing every
+  // `<style` start position through a full failing scan.
+  //
+  // Shape S: no > and no closing quote anywhere, so every `<style` forces a failing
+  // forward scan through the alternation.
+  const shapeS = (bytes: number) => {
+    const unit = '<style a="' + 'y'.repeat(50);
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
+  // Shape T: complete open tags with alternating double- and single-quoted attribute
+  // runs but no </style> anywhere, so the lazy ([\s\S]*?)<\/style\s*> tail scans to end
+  // of string from every start position — the genuinely quadratic shape.
+  const shapeT = (bytes: number) => {
+    const unit = '<style ' + 'a="b" c=\'d\' '.repeat(4) + '>';
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
+
+  it('Shape S at ~64 KB completes under 500ms and does not throw', () => {
+    const input = shapeS(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('Shape T at ~64 KB completes under 500ms and does not throw', () => {
+    const input = shapeT(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('Shape T growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
+    const input32 = shapeT(32 * 1024);
+    const start32 = performance.now();
+    stripHiddenContent(input32);
+    const t32 = performance.now() - start32;
+
+    const input64 = shapeT(64 * 1024);
+    const start64 = performance.now();
+    stripHiddenContent(input64);
+    const t64 = performance.now() - start64;
+
+    // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow
+    // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure.
+    expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
+  });
+}, 20000);
+
+describe('strip-hidden.ts — no attribute-scanning regex uses a bare attribute class (CR-01 bug-class guard)', () => {
+  // CR-01 was filed against a bare `[^` + `>]*` attribute class, fixed for three of the
+  // file's four attribute-scanning regexes, and survived in the fourth (STYLE_BLOCK_RE)
+  // for a full extra plan. This guard exists so a fifth regex added later — with the same
+  // bug — fails the suite instead of shipping a third instance of the bug class.
+  const SOURCE = readFileSync(
+    join(__dirname, '..', 'src', 'source', 'strip-hidden.ts'),
+    'utf8'
+  );
+  const COMMENT_STRIPPED_SOURCE = SOURCE.split('\n')
+    .filter(line => {
+      const t = line.trim();
+      return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*'));
+    })
+    .join('\n');
+
+  it('contains no bare unquoted-only attribute class outside comments', () => {
+    expect(COMMENT_STRIPPED_SOURCE).not.toContain('[^>]*');
+    expect(COMMENT_STRIPPED_SOURCE).not.toContain('[^<>]*');
+  });
+
+  it('has at least 4 occurrences of the quote-aware alternation prefix, one per attribute-scanning regex', () => {
+    const prefix = '(?:"[^"]*"|\'[^\']*\'|';
+    const count = COMMENT_STRIPPED_SOURCE.split(prefix).length - 1;
+    expect(count).toBeGreaterThanOrEqual(4);
+  });
+});
 
 describe('stripHiddenContent — purity', () => {
   it('calling twice on the same input returns equal results and leaves the input unmodified', () => {
