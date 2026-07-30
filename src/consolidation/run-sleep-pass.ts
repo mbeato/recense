@@ -382,18 +382,62 @@ export async function consumePendingCorpusMarkers(
  * as the rollback point. If the snapshot fails, SKIP dedup entirely — a destructive merge must
  * never run without a restore point. A dedup error after a good snapshot is logged, not thrown,
  * so it can't abort the rest of the pass; the snapshot is retained for manual restore.
+ *
+ * quick-260729-s8a (Cause B): the Stop hook spawns a detached sleep pass EVERY turn, and this
+ * function was running on every one of those passes — a VACUUM INTO of the whole 316 MB DB
+ * plus entity+fact dedup over ~25k nodes/edges, measured at 486s, holding the write lock the
+ * entire time. Gated below to run at most once per GRAPH_HYGIENE_DEFAULT_INTERVAL_MS, persisted
+ * in the existing `meta` table so the gate survives process restarts (this function's own
+ * process is fresh every pass — there is no other place to remember "last run").
  */
-function runGraphHygiene(
+export const GRAPH_HYGIENE_META_KEY = 'graph_hygiene_last_run_ms';
+export const GRAPH_HYGIENE_DEFAULT_INTERVAL_HOURS = 20; // not 24h: a nightly-ish job that drifts
+// a little past a hard 24h boundary must never get skipped for a whole extra day.
+export const GRAPH_HYGIENE_DEFAULT_INTERVAL_MS = GRAPH_HYGIENE_DEFAULT_INTERVAL_HOURS * 60 * 60 * 1000;
+
+/**
+ * Resolve the hygiene interval from `RECENSE_HYGIENE_INTERVAL_HOURS` (rate limiter, NOT a
+ * scheduler — the pass is still spawned per turn by the Stop hook; this only decides whether
+ * hygiene does work on a given pass). Any finite value >= 0 is accepted; `0` means "no gate,
+ * run every pass" (manual/debug escape hatch). Absent, negative, or unparseable falls back to
+ * the default.
+ */
+export function resolveHygieneIntervalMs(env: NodeJS.ProcessEnv): number {
+  const parsed = parseInt(env['RECENSE_HYGIENE_INTERVAL_HOURS'] ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return GRAPH_HYGIENE_DEFAULT_INTERVAL_MS;
+  return parsed * 60 * 60 * 1000;
+}
+
+export function runGraphHygiene(
   db: Database.Database,
   store: SemanticStore,
   sink: SQLiteConsolidationSink,
   config: EngineConfig,
   clock: Clock,
   log: (msg: string) => void,
+  env: NodeJS.ProcessEnv,
 ): void {
   const SNAP_KEEP = 5;
   const DEDUP_THRESHOLD = 0.88; // Phase 25 D-01 proven default (cosine within same-value bucket)
   const base = basename(config.dbPath);
+
+  // Interval gate: at most once per `intervalMs` across many per-turn passes.
+  const intervalMs = resolveHygieneIntervalMs(env);
+  const lastRunRaw = store.getMeta(GRAPH_HYGIENE_META_KEY);
+  const lastRunMs = lastRunRaw !== null ? parseInt(lastRunRaw, 10) : NaN;
+  if (intervalMs > 0 && Number.isFinite(lastRunMs) && clock.nowMs() - lastRunMs < intervalMs) {
+    const elapsedMin = Math.round((clock.nowMs() - lastRunMs) / 60_000);
+    const intervalHr = Math.round(intervalMs / 3_600_000);
+    log(`graph-hygiene: skipped — last run ${elapsedMin}m ago, interval ${intervalHr}h`);
+    return;
+  }
+
+  // Stamp BEFORE doing any work (deliberate — this is what makes the gate a strict rate
+  // limiter): if the VACUUM or dedup fails or the process dies mid-run, a slow-failing
+  // 316 MB VACUUM (e.g. ENOSPC) would otherwise be retried on EVERY turn. Stamping first
+  // means the worst case is deferring hygiene by one interval (<= 20h default), which is
+  // the entire point of this fix.
+  store.setMeta(GRAPH_HYGIENE_META_KEY, String(clock.nowMs()));
 
   // 1. Consistent pre-dedup snapshot (WAL-safe, compacted). Skip dedup if this fails.
   try {
@@ -740,7 +784,7 @@ export async function runConsolidation(
   // Phase 25 go-nightly (opt-in): pre-dedup snapshot + same-value entity/fact dedup.
   // Dark-default OFF; flip RECENSE_SLEEP_DEDUP=1 in sleep.env after watching one pass.
   if (env['RECENSE_SLEEP_DEDUP'] === '1') {
-    runGraphHygiene(db, store, sink, config, realClock, log);
+    runGraphHygiene(db, store, sink, config, realClock, log, env);
   }
 
   // Phase 41 (PERF-01, D-05/D-06): rebuild + persist the exact vector index sidecar.
