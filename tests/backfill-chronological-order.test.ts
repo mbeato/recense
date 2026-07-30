@@ -22,6 +22,16 @@
  *       the newer episode's reconcile is the one that survives — the fix, proven
  *       end-to-end through the unmodified PE-gate machinery.
  *
+ * Extraction is content-keyed off `[EP-OLDER]`/`[EP-NEWER]` markers embedded in each
+ * episode's content, not off call order or a fixed response queue: `DynamicReconcileProvider.
+ * generate()` branches on which marker substring is present in its prompt argument and throws
+ * on an unrecognized prompt. This closes `62-VERIFICATION.md` `gaps[0]` / threat T-62-36 ("a
+ * green test that proves nothing") — a call-order-indexed script would return the correct
+ * extracted value regardless of whether `orderEpisodesForConsolidation` is actually wired into
+ * `consolidate()`, because this codebase's genuine "second-processed episode wins" semantics
+ * would make the final-value assertion pass either way. A content-keyed provider ties the
+ * extracted value to which physical episode was processed, so the assertion is wiring-dependent.
+ *
  * A dynamic-judge provider is used instead of `MockModelProvider`'s static verdict
  * queue: the second-processed episode's contradiction target is a node minted at
  * runtime by the first-processed episode (its id is not known ahead of time), so the
@@ -98,27 +108,42 @@ function makeConstantEmbedFn(dims: number): (t: string) => Float32Array {
   };
 }
 
+const OLDER_MARKER = '[EP-OLDER]';
+const NEWER_MARKER = '[EP-NEWER]';
+
 /**
- * Dynamic-judge provider: `generate()` is a simple ordered script (bare-array claim
- * extraction, matching extractClaimsWithChunking's expected format); `judge()` always
- * contradicts the live top candidate (there is only ever one untombstoned fact node
- * for this subject at any point in the pass) at a magnitude that lands the mid-band
- * `reconcile` route against a freshly-minted node's default resistance (s=0.1, c=0.5
- * -> resistance=0.05; magnitude=0.05 -> ratio=1.0, within [peReconcileBandLow=0.8,
- * peReconcileBandHigh=2.0)).
+ * Content-keyed provider: `generate()` is a pure function of its prompt argument — it
+ * branches on which episode-content marker (`[EP-OLDER]` / `[EP-NEWER]`) is present, with
+ * NO call counter and NO fixed response queue, so call order, call count, and worker
+ * interleaving (`prefetchExtractions`'s `PREFETCH_CONCURRENCY` workers) cannot affect the
+ * result. An unrecognized prompt (neither or both markers) throws — a silent default would
+ * let the test pass vacuously, which is the exact T-62-36 regression class being closed.
+ * `judge()` always contradicts the live top candidate (there is only ever one untombstoned
+ * fact node for this subject at any point in the pass) at a magnitude that lands the
+ * mid-band `reconcile` route against a freshly-minted node's default resistance (s=0.1,
+ * c=0.5 -> resistance=0.05; magnitude=0.05 -> ratio=1.0, within
+ * [peReconcileBandLow=0.8, peReconcileBandHigh=2.0)).
  */
 class DynamicReconcileProvider implements ModelProvider {
-  private generateIdx = 0;
-  constructor(
-    private readonly generateScript: string[],
-    private readonly embedFn: (t: string) => Float32Array,
-  ) {}
+  /** Marker -> number of recognized generate() calls that extracted it. */
+  public readonly seen = new Map<string, number>();
 
-  async generate(_prompt: string, _opts?: { maxTokens?: number }): Promise<string> {
-    if (this.generateIdx >= this.generateScript.length) {
-      throw new Error('DynamicReconcileProvider generate queue exhausted');
+  constructor(private readonly embedFn: (t: string) => Float32Array) {}
+
+  async generate(prompt: string, _opts?: { maxTokens?: number }): Promise<string> {
+    const hasNewer = prompt.includes(NEWER_MARKER);
+    const hasOlder = prompt.includes(OLDER_MARKER);
+    if (hasNewer && !hasOlder) {
+      this.seen.set(NEWER_MARKER, (this.seen.get(NEWER_MARKER) ?? 0) + 1);
+      return JSON.stringify([{ type: 'fact', value: NEWER_VALUE }]);
     }
-    return this.generateScript[this.generateIdx++]!;
+    if (hasOlder && !hasNewer) {
+      this.seen.set(OLDER_MARKER, (this.seen.get(OLDER_MARKER) ?? 0) + 1);
+      return JSON.stringify([{ type: 'fact', value: OLDER_VALUE }]);
+    }
+    throw new Error(
+      `DynamicReconcileProvider: unrecognized prompt (expected exactly one of ${NEWER_MARKER}/${OLDER_MARKER}): ${prompt}`,
+    );
   }
 
   async embed(texts: string[]): Promise<Float32Array[]> {
@@ -160,7 +185,7 @@ describe('EMAIL-04: backfill chronological order (Phase 62 Plan 05)', () => {
     // Both saliences clear consolSkipThresholdBySource['gmail'] (0.4) so neither is skipped.
     // Both hard_keep=0 so the hard_keep DESC term does not decide bare order.
     const newerEpisode = h.episodes.append({
-      content: 'Update: ' + NEWER_VALUE,
+      content: `Update ${NEWER_MARKER}: ${NEWER_VALUE}`,
       origin: 'observed',
       salience: 0.9,
       hard_keep: 0,
@@ -170,7 +195,7 @@ describe('EMAIL-04: backfill chronological order (Phase 62 Plan 05)', () => {
       event_ts: 2_000_000, // later send time
     });
     const olderEpisode = h.episodes.append({
-      content: 'Update: ' + OLDER_VALUE,
+      content: `Update ${OLDER_MARKER}: ${OLDER_VALUE}`,
       origin: 'observed',
       salience: 0.5,
       hard_keep: 0,
@@ -197,15 +222,7 @@ describe('EMAIL-04: backfill chronological order (Phase 62 Plan 05)', () => {
     expect(reordered.map(r => r.id)).toEqual([olderEpisode.id, newerEpisode.id]);
     expect(reordered.map(r => r.id)).not.toEqual(bareOrder.map(r => r.id));
 
-    const provider = new DynamicReconcileProvider(
-      [
-        // prefetchExtractions issues generate() calls in the array order actually fed
-        // to consolidate() (orderEpisodesForConsolidation's output): older first, newer second.
-        JSON.stringify([{ type: 'fact', value: OLDER_VALUE }]),
-        JSON.stringify([{ type: 'fact', value: NEWER_VALUE }]),
-      ],
-      makeConstantEmbedFn(h.config.embeddingDimensions),
-    );
+    const provider = new DynamicReconcileProvider(makeConstantEmbedFn(h.config.embeddingDimensions));
 
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
@@ -221,6 +238,11 @@ describe('EMAIL-04: backfill chronological order (Phase 62 Plan 05)', () => {
     for (const row of rows) {
       expect(row.consolidated).toBe(1);
     }
+
+    // Both episodes actually reached extraction exactly once — a skipped, quarantined, or
+    // double-extracted episode cannot make the final-value assertion below pass (T-62-40).
+    expect(provider.seen.get(NEWER_MARKER)).toBe(1);
+    expect(provider.seen.get(OLDER_MARKER)).toBe(1);
 
     // The final untombstoned fact node carries the NEWER state, not the older one.
     const currentNodes = h.db
@@ -242,7 +264,7 @@ describe('EMAIL-04: backfill chronological order (Phase 62 Plan 05)', () => {
     // value here would be asserting the bug (the whole point of event_ts is that
     // WITHOUT it, no ordering guarantee exists) — so only completion is checked.
     h.episodes.append({
-      content: 'Update: ' + NEWER_VALUE,
+      content: `Update ${NEWER_MARKER}: ${NEWER_VALUE}`,
       origin: 'observed',
       salience: 0.9,
       hard_keep: 0,
@@ -252,7 +274,7 @@ describe('EMAIL-04: backfill chronological order (Phase 62 Plan 05)', () => {
       event_ts: null,
     });
     h.episodes.append({
-      content: 'Update: ' + OLDER_VALUE,
+      content: `Update ${OLDER_MARKER}: ${OLDER_VALUE}`,
       origin: 'observed',
       salience: 0.5,
       hard_keep: 0,
@@ -262,13 +284,7 @@ describe('EMAIL-04: backfill chronological order (Phase 62 Plan 05)', () => {
       event_ts: null,
     });
 
-    const provider = new DynamicReconcileProvider(
-      [
-        JSON.stringify([{ type: 'fact', value: NEWER_VALUE }]),
-        JSON.stringify([{ type: 'fact', value: OLDER_VALUE }]),
-      ],
-      makeConstantEmbedFn(h.config.embeddingDimensions),
-    );
+    const provider = new DynamicReconcileProvider(makeConstantEmbedFn(h.config.embeddingDimensions));
 
     const consolidator = new Consolidator(
       h.db, h.episodes, h.store, h.strength, h.retriever, provider, makeNoOpSchemaInducer(h), h.config, h.clock,
