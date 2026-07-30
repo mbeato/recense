@@ -24,6 +24,8 @@
  *  2. CSS hiding-selector harvest from `<style>` blocks — BEFORE those blocks are
  *     discarded, so a `.legal{display:none}` rule is remembered even though the block
  *     carrying it is about to be deleted (stage 4). Bounded to 200 harvested selectors.
+ *     The `<style>` open tag is matched quote-aware, so a `type="text/css" data-y="x>y"`
+ *     style tag still yields its rules to the harvest.
  *  3. HTML comment removal.
  *  4. Non-content element removal (script/style/head/title/template/noscript/svg), with
  *     their contents.
@@ -198,7 +200,17 @@ function applyRemovalRanges(html: string, ranges: Array<[number, number]>): stri
 // Stage 2 — CSS hiding-selector harvest (before <style> blocks are discarded)
 // ---------------------------------------------------------------------------
 
-const STYLE_BLOCK_RE = /<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi;
+/**
+ * Matches a `<style>` open tag through to its closing tag. Attribute scanning is
+ * quote-aware: only an UNQUOTED `<` or `>` terminates the open tag, since a literal `>`
+ * inside a quoted attribute value is legal HTML and was the CR-01 bypass — here it
+ * truncated the harvested block content mid-attribute, so `RULE_RE` saw a garbage
+ * selector and no hiding selector was ever recorded. The unquoted class excludes `<`
+ * (matching `START_TAG_RE`/`ANY_TAG_TOKEN_RE`) rather than permitting it (as `ANY_TAG_RE`
+ * does), because stage 2's opinion of where this same `<style>` open tag ends must agree
+ * with stage 4's — disagreement between them is the cross-stage boundary bug class T-62-43.
+ */
+const STYLE_BLOCK_RE = /<style\b(?:"[^"]*"|'[^']*'|[^'"<>])*>([\s\S]*?)<\/style\s*>/gi;
 /** Simple non-nested `selectorList { body }` rule matcher (plain CSS has no nesting). */
 const RULE_RE = /([^{}]+)\{([^{}]*)\}/g;
 const BARE_CLASS_SELECTOR_RE = /^\.[A-Za-z0-9_-]+$/;

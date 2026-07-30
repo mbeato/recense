@@ -7,6 +7,8 @@
  * nested-close-tag scanning, fail-safe unterminated-markup truncation, entity handling,
  * plain-text byte-identical passthrough, idempotence, and totality (never throws).
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { stripHiddenContent } from '../src/source/strip-hidden';
 
@@ -390,6 +392,34 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
   });
 }, 20000);
+
+describe('strip-hidden.ts — no attribute-scanning regex uses a bare attribute class (CR-01 bug-class guard)', () => {
+  // CR-01 was filed against a bare `[^` + `>]*` attribute class, fixed for three of the
+  // file's four attribute-scanning regexes, and survived in the fourth (STYLE_BLOCK_RE)
+  // for a full extra plan. This guard exists so a fifth regex added later — with the same
+  // bug — fails the suite instead of shipping a third instance of the bug class.
+  const SOURCE = readFileSync(
+    join(__dirname, '..', 'src', 'source', 'strip-hidden.ts'),
+    'utf8'
+  );
+  const COMMENT_STRIPPED_SOURCE = SOURCE.split('\n')
+    .filter(line => {
+      const t = line.trim();
+      return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*'));
+    })
+    .join('\n');
+
+  it('contains no bare unquoted-only attribute class outside comments', () => {
+    expect(COMMENT_STRIPPED_SOURCE).not.toContain('[^>]*');
+    expect(COMMENT_STRIPPED_SOURCE).not.toContain('[^<>]*');
+  });
+
+  it('has at least 4 occurrences of the quote-aware alternation prefix, one per attribute-scanning regex', () => {
+    const prefix = '(?:"[^"]*"|\'[^\']*\'|';
+    const count = COMMENT_STRIPPED_SOURCE.split(prefix).length - 1;
+    expect(count).toBeGreaterThanOrEqual(4);
+  });
+});
 
 describe('stripHiddenContent — purity', () => {
   it('calling twice on the same input returns equal results and leaves the input unmodified', () => {
