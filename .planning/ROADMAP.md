@@ -809,7 +809,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
 
 **Foundation-phase call (explicit deviation from the research-proposed 8-phase list):** research's `SUMMARY.md` proposed a standalone "Proposal Schema & Sink Foundation" phase ahead of classification, to freeze the `action_proposal` table shape early for two later workstreams. That phase owns no REQ-IDs of its own — its deliverables are exactly EMIT-01 (`ActionProposalSink`) and EMIT-02 (the proposal record shape). It is folded into Phase 66 here instead: neither Phase 63 (CLASSIFY) nor Phase 64 (RESOLVE) ever touches the `action_proposal` table — both only add optional fields to the in-memory `ClaimDecision` (mirroring the TEMP-02 `due_at`/`action_type` precedent) — so nothing upstream of Phase 66 is actually gated on the table shape existing early. The two workstreams the schema needs to freeze for (emission logic, HTTP read/ack routes) are both *inside* Phase 66 itself, so declaring the schema as Phase 66's first task achieves the identical freeze without a phase that has zero requirements of its own and no independently observable success criteria — which would also push this "standard" (5–8 phase) milestone to 8 phases for no coverage gain. Net-zero requirement-coverage effect: EMIT-01/EMIT-02 are still satisfied, just inside Phase 66.
 
-- [x] **Phase 62: Multi-Inbox Email Ingest Hardening** — Guided account-N onboarding, per-account query scoping (backfill-only, honestly documented), HTML/hidden-content stripping, chronological backfill ordering. (completed 2026-07-30)
+- [ ] **Phase 62: Multi-Inbox Email Ingest Hardening** — Guided account-N onboarding, per-account query scoping (backfill-only, honestly documented), HTML/hidden-content stripping, chronological backfill ordering. (5/5 plans executed 2026-07-30; **VERIFICATION status: gaps_found** — 2 open defects, see `62-VERIFICATION.md` + `62-REVIEW.md`. NOT complete: (1) `strip-hidden.ts` tag regexes are not quote-aware, so a literal `>` inside a quoted attribute lets `display:none` content survive into episode content — EMAIL-03 defeated by a one-character craft; (2) `tests/backfill-chronological-order.test.ts` passes with the `consolidator.ts:532` wiring removed, so EMAIL-04's e2e proof is vacuous (production mechanism is sound and unit-covered 10/10; only the e2e test is). Close via `/gsd:plan-phase 62 --gaps`.)
 - [ ] **Phase 63: Offline Intent Classification** — Sleep pass classifies status-relevant gmail episodes inside the existing extraction call; zero net-new LLM calls; hitl guard inherited structurally, not re-implemented.
 - [ ] **Phase 64: Entity Resolution Hardening** — Broadened candidate generation + confident-or-null resolution against recense's own graph; descriptor-only, never a consumer ID.
 - [ ] **Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix** — Status lifecycle rides the existing PE-gate/`supersedes` machinery unmodified; redesigned provenance-distinctness key makes `countDistinctProvenance` reachable on email evidence without becoming farmable.
@@ -940,4 +940,49 @@ Plans:
 
 ## Backlog
 
-_B-01 (Email ingest → domain-neutral action proposals) was promoted to the v10.0 Action Proposals milestone on 2026-07-29 — see "Current Milestone: v10.0 Action Proposals" in PROJECT.md and "Phase Details — v10.0 Action Proposals" above. No items currently parked._
+_B-01 (Email ingest → domain-neutral action proposals) was promoted to the v10.0 Action Proposals milestone on 2026-07-29 — see "Current Milestone: v10.0 Action Proposals" in PROJECT.md and "Phase Details — v10.0 Action Proposals" above._
+
+**B-02 through B-05 captured 2026-07-30** from a competitive/literature review triggered by an inbound email from a directly overlapping project (Dense-Mem, `github.com/markhuangai/dense-mem`). Ranked by expected quality improvement to recense. Full reasoning and source links in each item.
+
+### B-02: Provenance ceiling on belief confidence, not just salience
+
+**Source:** [arXiv 2606.22030](https://arxiv.org/html/2606.22030) — "When Does Belief-Based Agent Memory Help? Reliability-Conditional Updating and Provenance-Capped Poisoning Defense". Composes trust as `r = min(provenance, content)`: content-inferred confidence can only *lower* trust within a channel's ceiling, never raise it. Measured: volumetric flood attacks held at **0% success vs 100%** for last-write-wins baselines.
+
+**Gap in recense:** provenance is applied to **salience** (`allocation-gate.ts:88-93`, `composite * sourceWeight`, gmail=0.35, post-cap — multiplicative, so actually stricter than the paper's `min()`), and `hardKeep` excludes observed channels, and `decay.ts:191` never evicts evidence-backed nodes. But there is **no provenance ceiling on the confidence of the resulting fact node**. Once a gmail episode clears `consolSkipThresholdBySource.gmail` (0.4), the fact it produces can strengthen through repetition toward the same confidence as an `asserted_by_user` fact.
+
+**Why it matters here:** combined with the deferred `session_id: 'ingest:gmail'` provenance collapse (Phase 65 / DRIFT-03), volumetric flooding via email is the soft spot — on exactly the ingest surface Phase 62 opened. Reframes Phase 65's provenance work as security hardening rather than bookkeeping.
+
+**Shape:** cap consolidated-node confidence by the originating channel's weight. Small and surgical; touches the strength/confidence path, not the graph model.
+
+### B-03: Taint propagation through `derived_from` edges
+
+**Source:** same paper. It names **taint-tracking through derivation chains** as *required* to stop laundering (poison routed via a trusted intermediary defeats naive provenance tiering) — and explicitly states the authors characterize the requirement but **do not implement it**.
+
+**Why recense is positioned for it:** the substrate already exists — `derived_from` edges (`EdgeKind` in `types.ts:38`) with citation-verification such that injection cannot fabricate targets (`insight-generator.ts:187`, T-38-05). Insight nodes are already `origin='inferred'`, confidence-capped, and non-strengthening (`types.ts:23`), and the live-fact predicate already excludes `inferred` (`types.ts:69`).
+
+**Why it's the strongest item:** a named open problem in current literature, buildable on shipped machinery, and aligned with the stored positioning decision (lead with abstraction + PE-gating; never claim OSS/local/in-place/viz as unique). This is contribution, not catch-up.
+
+**Shape:** propagate a distrust/taint scalar along `derived_from` in-edges during the sleep pass; a belief derived from tainted members inherits a capped ceiling. Needs its own design pass — do not fold into another phase.
+
+### B-04: Reliability from epistemic markers in the extraction call
+
+**Source:** same paper. Extracting per-observation reliability from linguistic hedging ("maybe" lowers, "confirmed" raises) moves contradiction/staleness accuracy from **67% → 100%** on LoCoMo. Critically, the paper also shows that *constant* reliability degenerates belief-updating into "soft recency-following" — indistinguishable from last-write-wins. Without a reliability signal, Bayesian updating **ties** naive overwrite (~36 token-F1).
+
+**Shape:** an optional confidence field on the existing per-episode extraction call — the TEMP-02 `due_at`/`action_type` threading precedent, so **zero net-new LLM calls**. Hard constraint: it may only ever *lower* confidence, never raise it, composing under B-02's ceiling. That matches the existing D-43 non-strengthening doctrine rather than fighting it.
+
+**Note:** cheap, but its value is conditional on B-02 landing — the paper's own finding is that reliability without a provenance cap is what lets confidently-phrased poison through.
+
+### B-05: Run the MnemeBrain Belief Maintenance Benchmark
+
+**Source:** [BMB](https://mnemebrain.github.io/mnemebrain-benchmark/) / [MnemeBrain architecture](https://mnemebrain.ai/blog/mnemebrain-hn-post.html). 48 tasks across 8 categories (contradiction detection, belief revision, evidence tracking, temporal decay, explainability, sandboxing, consolidation). Open source with a public leaderboard. Reported: MnemeBrain 100% / lite 93%, structured memory 36%, mem0 29%, all retrieval-based systems 0% on contradiction detection.
+
+**Honest expectation — this is the reason to run it, not a reason to skip it:** recense resolves contradictions at **write** time (tombstone-and-replace, one-deep `prev_value` breadcrumb). MnemeBrain computes TruthState at **read** time as a pure function over an append-only EvidenceLedger (polarity `SUPPORTS`/`ATTACKS` + weight + source + timestamp), which is *why* it can claim 100% — the contradiction is never destroyed. After a recense reconcile the contradiction is not a queryable belief state. recense's extreme/categorical-divergence path (`consolidator.ts:1275`) and flip-back path (`:1224`, `:1323`) do leave both values coexisting, so there is a partial BOTH state, but only at extreme magnitude. Mitigating detail: `consolidation_event` is retained and keyed by `episode_id`, and the sink emits `contradict_reconcile` / `contradict_force_destabilize` — the history exists, just not as belief state.
+
+**Why run it anyway:** it is the emerging third-party evaluation frame in this space. Better to own the number than to have an interviewer or a competitor produce it first. A poor contradiction-detection score is defensible if it is a stated design tradeoff; it is not defensible as a surprise.
+
+**Explicitly NOT recommended** (evaluated and declined 2026-07-30):
+- **Belnap four-valued rewrite** — architectural rewrite of the write path; collides with the engine-faithfulness constraint in CLAUDE.md.
+- **AGM/TMS formalization** — Kumiho's staked ground ([paper](https://kumiho.io/pdfs/kumiho_AI_cognitive_memory_paper.pdf), PDF did not parse, unread). PE-gated reconsolidation is a defensible alternative foundation, not a weaker version of AGM.
+- **Deterministic freshness signals** — already shipped. [arXiv 2606.01435](https://arxiv.org/pdf/2606.01435) argues LLMs must not judge recency (inconsistent temporal reasoning, hallucinated timestamps, context-dependent reversals) and prescribes explicit timestamps → insertion order → deterministic tiebreak. Phase 62 shipped exactly that (`event_ts` + `orderEpisodesForConsolidation`), and `JudgeVerdict` carries no freshness field — the judge decides only `relation` + `magnitude`. Keep as a talking point, no work needed.
+
+**Deferred but worth reconsidering:** bi-temporal fact validity windows (Zep/Graphiti; +15pts over mem0 on LongMemEval, 63.8% vs 49.0%). Phase 62 explicitly declined bi-temporal columns. Becoming table stakes for temporal reasoning, but a larger change than B-02–B-04.
