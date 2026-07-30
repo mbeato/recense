@@ -110,6 +110,13 @@ export interface EpisodeRow {
   external_id: string | null;
   /** Working directory of the Claude Code session that produced this episode (DEBT-06). Empty '' for global/email episodes. */
   cwd: string;
+  /**
+   * Source-asserted event time in epoch ms (EMAIL-04). NULL for every source that asserts
+   * none — every source except Gmail today, plus any Gmail message whose Date: header
+   * failed validation. Distinct from `ts`, which is when recense LEARNED the episode
+   * (clock-driven, D-12); `event_ts` is never a substitute for `ts`.
+   */
+  event_ts: number | null;
 }
 
 /**

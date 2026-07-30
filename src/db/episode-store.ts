@@ -49,6 +49,13 @@ export interface AppendEventParams {
    * Defaults to undefined (falls back to clock.nowMs()).
    */
   ts?: number;
+  /**
+   * Source-asserted event time in epoch ms (EMAIL-04). Production code MAY set this —
+   * unlike `ts` above, which is EVAL-ONLY and production paths must never set. Null/omitted
+   * means the source asserts no event time (every source except Gmail today, and any Gmail
+   * message whose Date: header failed validation). Never a substitute for `ts`.
+   */
+  event_ts?: number | null;
 }
 
 /** Truncation marker appended when content exceeds maxContentBytes (D-09). */
@@ -112,11 +119,11 @@ export class EpisodicStore {
       INSERT OR IGNORE INTO episode (
         id, ts, content, origin, salience, hard_keep,
         consolidated, source_inference_id, role, session_id,
-        source, external_id, cwd
+        source, external_id, cwd, event_ts
       ) VALUES (
         @id, @ts, @content, @origin, @salience, @hard_keep,
         0, @source_inference_id, @role, @session_id,
-        @source, @external_id, @cwd
+        @source, @external_id, @cwd, @event_ts
       )
     `);
 
@@ -196,6 +203,7 @@ export class EpisodicStore {
     const source = params.source ?? 'claude-code';
     const external_id = params.external_id ?? null;
     const cwd = params.cwd ?? '';
+    const event_ts = params.event_ts ?? null;
 
     const info = this.stmtInsert.run({
       id,
@@ -210,6 +218,7 @@ export class EpisodicStore {
       source,
       external_id,
       cwd,
+      event_ts,
     });
 
     // Dedup hit: INSERT OR IGNORE fired (0 rows changed) and external_id is non-null.
