@@ -33,8 +33,22 @@
  *   T-62-14: an existing token short-circuits without --force.
  */
 
-import { timingSafeEqual } from 'crypto';
+import { randomBytes, timingSafeEqual } from 'crypto';
+import { appendFileSync } from 'fs';
 import { createServer, type Server } from 'http';
+import { google } from 'googleapis';
+
+import { resolveExistingEnv, writeEnvFile } from './recense-init';
+import { sleepEnvPath } from './runtime-config';
+
+const LOG_PATH = '/tmp/recense-gmail-auth.log';
+
+/** Append a timestamped line to the log file (never stdout, never a secret — T-62-11). */
+const log = (msg: string): void =>
+  appendFileSync(LOG_PATH, `[${new Date().toISOString()}] gmail-auth: ${msg}\n`);
+
+/** Bounded lifetime for the loopback catcher (T-62-09): 300 seconds. */
+const CATCHER_TIMEOUT_MS = 300_000;
 
 /**
  * Frozen to exactly the readonly Gmail scope. gmail.modify and the full-mail
@@ -190,5 +204,137 @@ export function startLoopbackCatcher(
       const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
       resolveStart({ port, result, close });
     });
+  });
+}
+
+/**
+ * Decides the exact env mutation for onboarding `id` — unit-testable without
+ * OAuth. Returns exactly two keys so writeEnvFile leaves every unrelated line
+ * (comments, other tokens, API keys) untouched.
+ */
+export function planEnvUpdate(
+  existing: Map<string, string>,
+  id: string,
+  refreshToken: string,
+): Record<string, string> {
+  return {
+    [envTokenKey(id)]: refreshToken,
+    RECENSE_GOOGLE_ACCOUNTS: mergeAccountList(existing.get('RECENSE_GOOGLE_ACCOUNTS'), id),
+  };
+}
+
+// ── Interactive flow (require.main guard below) ──────────────────────────────
+
+async function main(): Promise<void> {
+  // ── Step 1: parse + validate the account id BEFORE any listener/file access (WR-02) ──
+  const positionals = process.argv.slice(2).filter((a, idx, arr) => {
+    if (a.startsWith('--')) return false; // flag
+    const prevArg = arr[idx - 1];
+    if (prevArg === '--db') return false; // value for --db
+    return true;
+  });
+  const id = positionals[0];
+  const force = process.argv.includes('--force');
+
+  if (!id || !validateAccountId(id)) {
+    process.stderr.write(
+      'Usage: recense gmail-auth <account-id> [--force]\n' +
+        '  <account-id> must match /^[a-z][a-z0-9_]{0,31}$/ (lowercase letters, digits, underscore)\n',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  // ── Step 2: shared client credentials — same fallbacks as RealGmailFetcher.getClient ──
+  const clientId = process.env['GOOGLE_CLIENT_ID'] ?? process.env['GMAIL_CLIENT_ID'];
+  const clientSecret = process.env['GOOGLE_CLIENT_SECRET'] ?? process.env['GMAIL_CLIENT_SECRET'];
+  if (!clientId || !clientSecret) {
+    process.stderr.write(
+      'Gmail OAuth client credentials missing — set GOOGLE_CLIENT_ID (or GMAIL_CLIENT_ID) and\n' +
+        'GOOGLE_CLIENT_SECRET (or GMAIL_CLIENT_SECRET) in ~/.config/recense/sleep.env\n' +
+        '(Google Cloud Console -> APIs & Services -> Credentials -> the Desktop OAuth client)\n',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const envPath = sleepEnvPath();
+  const existing = resolveExistingEnv(envPath);
+  const tokenKey = envTokenKey(id);
+
+  // ── Step 3: an existing token short-circuits without --force (T-62-14) ──
+  if (existing.has(tokenKey) && !force) {
+    process.stdout.write(
+      `Account '${id}' already has a stored token (${tokenKey}).\n` +
+        'Re-run with --force to mint a new one (this does not revoke the prior grant).\n',
+    );
+    return; // exit 0 — re-running must not silently invalidate a working grant
+  }
+
+  const state = randomBytes(32).toString('base64url');
+  let catcher: LoopbackCatcher | undefined;
+
+  // ── Steps 4-8, wrapped so the catcher is always torn down (T-62-09) ──
+  try {
+    catcher = await startLoopbackCatcher(state, CATCHER_TIMEOUT_MS);
+    log('started');
+
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, buildRedirectUri(catcher.port));
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      prompt: 'consent',
+      scope: [...GMAIL_OAUTH_SCOPES],
+      state,
+    });
+
+    process.stdout.write(
+      `\nOpen this URL in the browser where the SECOND account (not account 1) is signed in:\n\n` +
+        `  ${authUrl}\n\n` +
+        'Waiting for the OAuth consent callback (up to 5 minutes)...\n',
+    );
+    log('awaiting callback');
+
+    const outcome = await catcher.result;
+    if (!outcome.ok) {
+      log(`callback outcome: ${outcome.reason}`);
+      process.stderr.write(`\nAuthorization failed: ${outcome.reason}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    log('callback outcome: ok');
+
+    const { tokens } = await oauth2Client.getToken(outcome.code);
+    if (!tokens.refresh_token) {
+      process.stderr.write(
+        '\nNo refresh token returned. Revoke the prior grant for this account at\n' +
+          'https://myaccount.google.com/permissions and re-run this command.\n',
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    writeEnvFile(envPath, planEnvUpdate(existing, id, tokens.refresh_token));
+    log('env written');
+
+    const queryVar = `RECENSE_GMAIL_QUERY_${id.toUpperCase()}`;
+    process.stdout.write(
+      `\nAccount '${id}' onboarded.\n` +
+        `  Stored: ${tokenKey} (value not shown)\n` +
+        `  Added '${id}' to RECENSE_GOOGLE_ACCOUNTS\n` +
+        `  Optional: set ${queryVar} to scope this account's initial backfill only\n` +
+        `  (Gmail's users.history.list accepts no query, so this bounds initial backfill only —\n` +
+        `   incremental pulls are unaffected)\n` +
+        `  Ensure 'gmail' appears in RECENSE_ENABLED_SOURCES for the adapter to run.\n` +
+        `  Verify with: recense doctor\n`,
+    );
+  } finally {
+    catcher?.close();
+  }
+}
+
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] gmail-auth FATAL: ${err}\n`);
+    process.exitCode = 1;
   });
 }

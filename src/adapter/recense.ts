@@ -144,12 +144,18 @@ switch (cmd) {
   // recense-doctor exports check helpers for unit tests, so its entry is guarded by
   // `require.main === module` (WR-01) — spawn so the guard fires in the child.
   case 'doctor':     spawnScript('recense-doctor.js',   process.argv.slice(3)); break;
+  // gmail-auth-cli.ts guards execution with `require.main === module` (it exports
+  // validateAccountId/planEnvUpdate/etc for unit tests), so spawn as a subprocess so
+  // the guard fires correctly in the child. Use slice(3) NOT rest/slice(4) — slice(4)
+  // drops argv[3], which is the "<account-id>" positional (H-1 note, same invariant as
+  // other write-CLIs).
+  case 'gmail-auth': spawnScript('gmail-auth-cli.js', process.argv.slice(3)); break;
 
   // ── Default: fail closed (T-09-08) ───────────────────────────────────────────
   default:
     process.stderr.write(
       'Usage: brain <command> [args]\n' +
-      'Commands: hook, init, doctor, recall, remember, viz, sleep-pass, seed, ingest, import-memory, ingest-project, dedup-entities, dedup-facts, cleanup-corpus, generate-doc, promote-corpus, generate-corpus, derive-doc-graph, backfill-subjects, snapshot, scheduler, config, mcp, serve\n',
+      'Commands: hook, init, doctor, recall, remember, viz, sleep-pass, seed, ingest, gmail-auth, import-memory, ingest-project, dedup-entities, dedup-facts, cleanup-corpus, generate-doc, promote-corpus, generate-corpus, derive-doc-graph, backfill-subjects, snapshot, scheduler, config, mcp, serve\n',
     );
     process.exit(1);
 }
