@@ -31,8 +31,13 @@
  *  EMAIL-04: parseEmailDate derives NormalizedRecord.event_ts from the Date: header inside
  *        normalizeGmailMessage. The header is sender-controlled, so the parse doubles as a
  *        security control (see parseEmailDate's JSDoc) — confident-or-null, with a bounded
- *        future-skew clamp that closes the "forge a future date to sort last" ordering attack
- *        plan 62-05 would otherwise be exposed to.
+ *        future-skew clamp (CR-03, closed by plan 62-10) that bounds the "forge a future date
+ *        to sort last" ordering attack plan 62-05 exposed: a forged header can never return a
+ *        value greater than nowMs, so it buys no ordering advantage over an honest header dated
+ *        at the pull instant. It does NOT close the lever entirely — a clamped forged header
+ *        still outranks genuine messages dated earlier in the same pull window, bounded by the
+ *        pull interval; the real fix (Gmail's server-assigned internalDate) is out of scope
+ *        here and flagged for the backlog.
  *
  * Package legitimacy (T-06-SC): `googleapis` is the official Google-maintained client
  * library (publisher google-wombot / google, github.com/googleapis/google-api-nodejs-client).
@@ -269,18 +274,34 @@ const MAX_FUTURE_SKEW_MS = 48 * 60 * 60 * 1000;
  *  2. Date.parse(header) is NaN → null. Date.parse handles RFC 2822 natively; no date library.
  *  3. Result earlier than MIN_PLAUSIBLE_EVENT_MS → null (epoch-0 / nonsense pre-email dates).
  *  4. Result later than nowMs + MAX_FUTURE_SKEW_MS → null. SECURITY-LOAD-BEARING clamp.
- *  5. Otherwise return the parsed value.
+ *  5. Otherwise return the parsed value CLAMPED to nowMs (CR-03) — the return is therefore
+ *     always `null` or `<= nowMs`, never a value the caller could read as "in the future".
  *
- * Threat reasoning (T-62-23/T-62-24/T-62-25): the Date: header is set by the sender and is
- * therefore attacker-controlled. A far-PAST forged date is harmless in plan 62-05's ordering —
- * it sorts the forged evidence EARLIER, so genuine newer evidence is applied after it and wins
- * (accepted, T-62-24). A far-FUTURE forged date is the dangerous direction: it would sort the
- * forged evidence LAST within a batch, letting it apply over newer genuine state. Rejecting
- * implausible future dates to null removes that lever entirely — a null event_ts excludes the
- * episode from chronological reordering altogether and leaves it in its ordinary
- * salience-priority slot, so "sort myself last" cannot be expressed (mitigated, T-62-23). The
- * 48-hour tolerance absorbs real-world sender clock skew and timezone-malformed headers without
- * admitting the attack. A null event_ts is always the safe default here, never a guessed one.
+ * Threat reasoning (T-62-23/T-62-24/T-62-25, corrected for CR-03 — `62-REVIEW.md`, closed by
+ * plan `62-10`): the Date: header is set by the sender and is therefore attacker-controlled.
+ *  (i)   A far-PAST forged date is harmless in plan 62-05's ordering — it sorts the forged
+ *        evidence EARLIER, so genuine newer evidence is applied after it and wins (accepted,
+ *        T-62-24, unchanged).
+ *  (ii)  Beyond MAX_FUTURE_SKEW_MS the header still returns null, and a null event_ts excludes
+ *        the episode from chronological reordering altogether, leaving it in its ordinary
+ *        salience-priority slot (T-62-23, still true for that branch only).
+ *  (iii) INSIDE the window — this is the CR-03 fix — the value is CLAMPED to `nowMs`, so
+ *        `parseEmailDate` can never return a value greater than `nowMs`. The maximum ordering
+ *        position a forged header can buy is therefore exactly the position the sender could
+ *        obtain for free by sending at the pull instant: the forgery confers no capability the
+ *        sender did not already have. (Previously this file claimed the lever "cannot be
+ *        expressed" inside this window; that was false and is corrected here.)
+ *  (iv)  NAMED RESIDUAL (accepted, not closed): within one pull, a clamped forged header still
+ *        sorts after genuine messages dated earlier in that same pull window. The advantage is
+ *        bounded by the pull interval (`GmailAdapter.pull()` reads `nowMs` once per pull) and is
+ *        equivalent to the sender simply sending at the pull instant. Driving it to zero requires
+ *        a server-assigned receipt time — Gmail's `internalDate`, which is not sender-controlled
+ *        — as the `event_ts` source or the clamp ceiling; that is a change to `RawGmailMessage`
+ *        and `RealGmailFetcher.fetchMessages` and is deliberately out of scope here, flagged for
+ *        the backlog.
+ * The 48-hour tolerance absorbs real-world sender clock skew and timezone-malformed headers
+ * without admitting the attack. A null event_ts is always the safe default here, never a
+ * guessed one.
  *
  * @param header RFC 2822 Date: header value (may be empty, malformed, or attacker-controlled).
  * @param nowMs  Current time in epoch ms, supplied by the caller (never read internally).
@@ -291,7 +312,10 @@ export function parseEmailDate(header: string, nowMs: number): number | null {
   if (Number.isNaN(parsed)) return null;
   if (parsed < MIN_PLAUSIBLE_EVENT_MS) return null;
   if (parsed > nowMs + MAX_FUTURE_SKEW_MS) return null;
-  return parsed;
+  // CR-03: a future-dated header inside the skew window is still sender-controlled, so it is
+  // clamped to nowMs and can never exceed it — the forgery buys no ordering advantage over an
+  // honest header dated at the pull instant.
+  return Math.min(parsed, nowMs);
 }
 
 /**
