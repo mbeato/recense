@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 1/5 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 3/5 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -838,8 +838,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 62-02-PLAN.md — `recense gmail-auth <id>`: guided loopback-OAuth onboarding that mints `GOOGLE_<ID>_REFRESH_TOKEN` and registers the account, reusing `writeEnvFile` (EMAIL-01, wave 2)
-- [ ] 62-03-PLAN.md — `stripHiddenContent`: deterministic, idempotent markup + hidden-content removal at the Gmail boundary, with the named hidden-injection regression fixture (EMAIL-03, wave 2)
+- [x] 62-02-PLAN.md — `recense gmail-auth <id>`: guided loopback-OAuth onboarding that mints `GOOGLE_<ID>_REFRESH_TOKEN` and registers the account, reusing `writeEnvFile` (EMAIL-01, wave 2)
+- [x] 62-03-PLAN.md — `stripHiddenContent`: deterministic, idempotent markup + hidden-content removal at the Gmail boundary, with the named hidden-injection regression fixture (EMAIL-03, wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
