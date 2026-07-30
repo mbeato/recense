@@ -294,6 +294,54 @@ describe('stripHiddenContent — totality (never throws)', () => {
   });
 });
 
+describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surface)', () => {
+  // The new quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'"<>])*` runs on
+  // attacker-supplied email HTML (input size is attacker-controlled — see Task 3's
+  // read_first on gmail-adapter.ts). Both shapes below contain no `>` at all, forcing
+  // every `<` through a full failing forward scan with unterminated quotes, and Shape B
+  // alternates double and single quotes so both quoted alternatives are exercised.
+  const shapeA = (bytes: number) => {
+    const unit = '<div a="' + 'y'.repeat(50);
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
+  const shapeB = (bytes: number) => {
+    const unit = '<div ' + "a\"b'c".repeat(20);
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
+
+  it('Shape A at ~64 KB completes under 500ms and does not throw', () => {
+    const input = shapeA(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('Shape B at ~64 KB completes under 500ms and does not throw', () => {
+    const input = shapeB(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('Shape A growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
+    const input32 = shapeA(32 * 1024);
+    const start32 = performance.now();
+    stripHiddenContent(input32);
+    const t32 = performance.now() - start32;
+
+    const input64 = shapeA(64 * 1024);
+    const start64 = performance.now();
+    stripHiddenContent(input64);
+    const t64 = performance.now() - start64;
+
+    // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow
+    // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure.
+    expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
+  });
+}, 20000);
+
 describe('stripHiddenContent — purity', () => {
   it('calling twice on the same input returns equal results and leaves the input unmodified', () => {
     const input = '<div style="display:none">X</div>Visible.';
