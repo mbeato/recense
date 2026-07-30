@@ -829,7 +829,16 @@ recense ingests real events across both inboxes, decides *what changed* about a 
   3. Hidden or invisible content in HTML-only emails (`display:none`, zero-width characters, hidden spans) is deterministically stripped before any content reaches the extractor, verified by a regression fixture containing a hidden injected instruction that must not survive into episode content — EMAIL-03
   4. A fresh account's initial backfill batch is consolidated in chronological order (derived from the email's own `Date:` header), so an older message in the same backfill cannot silently apply over newer state — EMAIL-04
 
-**Plans**: TBD
+**Plans**: 5 plans in 4 waves
+
+Plans:
+- [ ] 62-01-PLAN.md — Per-account Gmail query scoping via a real env-file config surface, with the backfill-only limitation stated in the config doc comment and surfaced by a new `recense doctor` dimension (EMAIL-02, wave 1)
+- [ ] 62-02-PLAN.md — `recense gmail-auth <id>`: guided loopback-OAuth onboarding that mints `GOOGLE_<ID>_REFRESH_TOKEN` and registers the account, reusing `writeEnvFile` (EMAIL-01, wave 2)
+- [ ] 62-03-PLAN.md — `stripHiddenContent`: deterministic, idempotent markup + hidden-content removal at the Gmail boundary, with the named hidden-injection regression fixture (EMAIL-03, wave 2)
+- [ ] 62-04-PLAN.md — Additive `episode.event_ts` (SCHEMA_VERSION 16) threaded from the `Date:` header through the adapter contract, with a plausibility window that rejects forged far-future dates (EMAIL-04, wave 3)
+- [ ] 62-05-PLAN.md — `orderEpisodesForConsolidation`: slot-preserving chronological reorder inside `consolidate()`, proven end-to-end on a reverse-chronological backfill batch (EMAIL-04, wave 4)
+
+**Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
 ### Phase 63: Offline Intent Classification
 
