@@ -20,7 +20,10 @@
  *  1. Invisible-codepoint removal (zero-width chars, BOM, soft hyphen, invisible math
  *     operators, the Unicode Tags block) — unconditional, applied to ALL input including
  *     plain text, and run FIRST so a payload cannot use zero-width characters to
- *     fragment a later stage's pattern match (e.g. `dis<ZWSP>play:none`).
+ *     fragment a later stage's pattern match (e.g. `dis<ZWSP>play:none`). Also exported
+ *     standalone as `stripInvisibleCodepoints` (CR-02) for non-markup callers — e.g.
+ *     `normalizeGmailMessage`'s provenance header — that need invisible-codepoint removal
+ *     WITHOUT the markup semantics of stages 2-6.
  *  2. CSS hiding-selector harvest from `<style>` blocks — BEFORE those blocks are
  *     discarded, so a `.legal{display:none}` rule is remembered even though the block
  *     carrying it is about to be deleted (stage 4). Bounded to 200 harvested selectors.
@@ -403,6 +406,34 @@ function normalizeWhitespace(text: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Strip invisible Unicode codepoints from `text` — stage 1 of `stripHiddenContent`,
+ * exported standalone for callers that need invisible-codepoint removal WITHOUT markup
+ * semantics (CR-02, `62-REVIEW.md`). The intended caller is `normalizeGmailMessage`'s
+ * provenance header (`From:`/`Subject:`): both fields are 100% sender-controlled (RFC
+ * 2047 encoded-words decode to arbitrary UTF-8), but neither is markup, so running the
+ * full 8-stage `stripHiddenContent` on them would delete legitimate angle-bracketed
+ * subject text (stages 4-6) — this narrow primitive cannot.
+ *
+ * Pure, total, idempotent, deterministic: `stripInvisibleCodepoints(stripInvisibleCodepoints(x))
+ * === stripInvisibleCodepoints(x)`, never throws, no I/O, no clock read.
+ *
+ * Removes zero-width characters (U+200B-U+200D, U+2060), BOM (U+FEFF), soft hyphen
+ * (U+00AD), the deprecated Mongolian vowel separator (U+180E), invisible math operators
+ * (U+2061-U+2064), and the whole Unicode Tags block (U+E0000-U+E007F) — the "hidden
+ * Unicode instruction injection" carrier this module's file-level doc block names.
+ *
+ * Deliberately NOT the full pipeline: does not touch markup, comments, or hiding
+ * signatures — `stripInvisibleCodepoints('Re: <urgent> pricing & terms')` returns that
+ * string byte-identical.
+ *
+ * @param text - Raw text (markup or plain) to strip invisible codepoints from.
+ * @returns    `text` with every invisible codepoint removed; otherwise unchanged.
+ */
+export function stripInvisibleCodepoints(text: string): string {
+  return text.replace(INVISIBLE_CODEPOINTS_RE, '');
+}
+
+/**
  * Strip markup and hidden content from `text`, returning plain visible prose.
  *
  * Pure, deterministic, idempotent, total (never throws). No LLM, no network, no
@@ -417,7 +448,7 @@ function normalizeWhitespace(text: string): string {
 export function stripHiddenContent(text: string): string {
   // Stage 1: invisible codepoints first, so obfuscation like `dis<ZWSP>play:none`
   // cannot evade the stage-5 hiding-signature matcher.
-  let s = text.replace(INVISIBLE_CODEPOINTS_RE, '');
+  let s = stripInvisibleCodepoints(text);
 
   // Stage 2: harvest class/id hiding selectors from <style> blocks before they're
   // discarded in stage 4.
