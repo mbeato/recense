@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 5/5 | Complete   | 2026-07-30 |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 6/8 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -852,7 +852,7 @@ Plans:
 **Wave 5** *(gap closure — from `62-VERIFICATION.md` gaps[0] and `62-REVIEW.md` CR-01/WR-01; all three run in parallel, no file overlap)*
 
 - [ ] 62-06-PLAN.md — Make the EMAIL-04 end-to-end proof wiring-discriminating: content-keyed extraction instead of a call-order script, measured RED against a reverted `consolidator.ts:532` (EMAIL-04, wave 5)
-- [ ] 62-07-PLAN.md — Quote-aware tag matching across all three `stripHiddenContent` regexes, closing the CR-01 quoted-`>` hidden-content bypass, with a measured backtracking bound (EMAIL-03, wave 5)
+- [x] 62-07-PLAN.md — Quote-aware tag matching across all three `stripHiddenContent` regexes, closing the CR-01 quoted-`>` hidden-content bypass, with a measured backtracking bound (EMAIL-03, wave 5)
 - [ ] 62-08-PLAN.md — Drop the dead `idx_episode_event_ts` index in place in the v16 migration, with an already-migrated-DB regression lock (EMAIL-04, wave 5)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
