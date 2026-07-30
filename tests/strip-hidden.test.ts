@@ -393,6 +393,59 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
   });
 }, 20000);
 
+describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 ReDoS surface)', () => {
+  // STYLE_BLOCK_RE's new quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'"<>])*` is driven
+  // by matchAll over attacker-supplied email HTML on EVERY ingest (stage 2 is
+  // unconditional). Both shapes below contain no </style> anywhere, forcing every
+  // `<style` start position through a full failing scan.
+  //
+  // Shape S: no > and no closing quote anywhere, so every `<style` forces a failing
+  // forward scan through the alternation.
+  const shapeS = (bytes: number) => {
+    const unit = '<style a="' + 'y'.repeat(50);
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
+  // Shape T: complete open tags with alternating double- and single-quoted attribute
+  // runs but no </style> anywhere, so the lazy ([\s\S]*?)<\/style\s*> tail scans to end
+  // of string from every start position — the genuinely quadratic shape.
+  const shapeT = (bytes: number) => {
+    const unit = '<style ' + 'a="b" c=\'d\' '.repeat(4) + '>';
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
+
+  it('Shape S at ~64 KB completes under 500ms and does not throw', () => {
+    const input = shapeS(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('Shape T at ~64 KB completes under 500ms and does not throw', () => {
+    const input = shapeT(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('Shape T growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
+    const input32 = shapeT(32 * 1024);
+    const start32 = performance.now();
+    stripHiddenContent(input32);
+    const t32 = performance.now() - start32;
+
+    const input64 = shapeT(64 * 1024);
+    const start64 = performance.now();
+    stripHiddenContent(input64);
+    const t64 = performance.now() - start64;
+
+    // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow
+    // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure.
+    expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
+  });
+}, 20000);
+
 describe('strip-hidden.ts — no attribute-scanning regex uses a bare attribute class (CR-01 bug-class guard)', () => {
   // CR-01 was filed against a bare `[^` + `>]*` attribute class, fixed for three of the
   // file's four attribute-scanning regexes, and survived in the fourth (STYLE_BLOCK_RE)
