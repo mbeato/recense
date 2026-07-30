@@ -53,6 +53,78 @@ describe('stripHiddenContent — hiding shapes removed', () => {
   });
 });
 
+describe('stripHiddenContent — quoted attribute values containing > (CR-01)', () => {
+  it('removes content behind a double-quoted data attribute containing a literal >', () => {
+    const out = stripHiddenContent(
+      '<div data-x="a>b" style="display:none">SECRET3</div>Visible.'
+    );
+    expect(out).not.toContain('SECRET3');
+    expect(out).not.toContain('display:none');
+    expect(out).toContain('Visible.');
+  });
+
+  it('removes content when the literal > is inside a CSS string literal in the style attribute itself', () => {
+    const out = stripHiddenContent(
+      '<div style="content:\'>\';display:none">HIDDEN INSTRUCTION PAYLOAD</div>Visible.'
+    );
+    expect(out).not.toContain('HIDDEN INSTRUCTION PAYLOAD');
+    expect(out).toContain('Visible.');
+  });
+
+  it('removes content behind a single-quoted data attribute containing a literal >', () => {
+    const out = stripHiddenContent(
+      "<div data-x='a>b' style='display:none'>SECRET4</div>Visible."
+    );
+    expect(out).not.toContain('SECRET4');
+    expect(out).toContain('Visible.');
+  });
+
+  it('removes content behind a quoted title containing > that precedes aria-hidden', () => {
+    const out = stripHiddenContent(
+      '<span title="a>b" aria-hidden="true">SECRET8</span>Keep.'
+    );
+    expect(out).not.toContain('SECRET8');
+    expect(out).toContain('Keep.');
+  });
+
+  it('removes content behind a quoted data attribute containing > on a class-hidden element harvested from a <style> block', () => {
+    const out = stripHiddenContent(
+      '<style>.h{display:none}</style><div data-t="x>y" class="h">SECRET9</div>Visible.'
+    );
+    expect(out).not.toContain('SECRET9');
+    expect(out).toContain('Visible.');
+  });
+});
+
+describe('stripHiddenContent — unquoted > still terminates the tag (no over-correction)', () => {
+  it('keeps content when an unquoted > genuinely closes the tag before the hiding declaration', () => {
+    // With no quotes, the `>` genuinely closes the tag in any real HTML parser, so
+    // `b style="display:none">SECRET6` is ordinary visible text in a browser too.
+    // Stripping it would be a false positive that removes prose a human can see.
+    const out = stripHiddenContent(
+      '<div data-x=a>b style="display:none">SECRET6</div>Visible.'
+    );
+    expect(out).toContain('SECRET6');
+  });
+});
+
+describe('stripHiddenContent — unbalanced quote fail-safe truncation (accepted residual c)', () => {
+  it('truncates to empty when an unclosed quoted attribute leaves the rest of the tag unterminated', () => {
+    const out = stripHiddenContent(
+      '<div title="unclosed>Visible after.<a href="x">link</a>Tail.'
+    );
+    expect(out.trim()).toBe('');
+  });
+
+  it('improves on the shipped leak: an unbalanced quote followed by a balanced attribute keeps only the trailing visible prose', () => {
+    const out = stripHiddenContent(
+      '<div title="unclosed>mid" class="c">Visible after.'
+    );
+    expect(out).toContain('Visible after.');
+    expect(out).not.toContain('class="c"');
+  });
+});
+
 describe('stripHiddenContent — no false positives', () => {
   it('keeps opacity:0.85 element content', () => {
     const out = stripHiddenContent('<span style="opacity:0.85">Keep me</span>');
@@ -180,6 +252,14 @@ describe('stripHiddenContent — idempotence', () => {
     'Before.<script>alert(1); still going forever',
     'Plain text with no markup at all.',
     '<table><tr><td><a href="https://x.example">link</a></td></tr></table>Trailing text.',
+    '<div data-x="a>b" style="display:none">SECRET3</div>Visible.',
+    '<div style="content:\'>\';display:none">HIDDEN INSTRUCTION PAYLOAD</div>Visible.',
+    "<div data-x='a>b' style='display:none'>SECRET4</div>Visible.",
+    '<span title="a>b" aria-hidden="true">SECRET8</span>Keep.',
+    '<style>.h{display:none}</style><div data-t="x>y" class="h">SECRET9</div>Visible.',
+    '<div data-x=a>b style="display:none">SECRET6</div>Visible.',
+    '<div title="unclosed>Visible after.<a href="x">link</a>Tail.',
+    '<div title="unclosed>mid" class="c">Visible after.',
   ];
 
   it.each(fixtures)('stripHiddenContent(stripHiddenContent(s)) === stripHiddenContent(s) for %#', (s) => {
@@ -213,6 +293,54 @@ describe('stripHiddenContent — totality (never throws)', () => {
     expect(() => stripHiddenContent(input)).not.toThrow();
   });
 });
+
+describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surface)', () => {
+  // The new quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'"<>])*` runs on
+  // attacker-supplied email HTML (input size is attacker-controlled — see Task 3's
+  // read_first on gmail-adapter.ts). Both shapes below contain no `>` at all, forcing
+  // every `<` through a full failing forward scan with unterminated quotes, and Shape B
+  // alternates double and single quotes so both quoted alternatives are exercised.
+  const shapeA = (bytes: number) => {
+    const unit = '<div a="' + 'y'.repeat(50);
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
+  const shapeB = (bytes: number) => {
+    const unit = '<div ' + "a\"b'c".repeat(20);
+    return unit.repeat(Math.ceil(bytes / unit.length));
+  };
+
+  it('Shape A at ~64 KB completes under 500ms and does not throw', () => {
+    const input = shapeA(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('Shape B at ~64 KB completes under 500ms and does not throw', () => {
+    const input = shapeB(64 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('Shape A growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
+    const input32 = shapeA(32 * 1024);
+    const start32 = performance.now();
+    stripHiddenContent(input32);
+    const t32 = performance.now() - start32;
+
+    const input64 = shapeA(64 * 1024);
+    const start64 = performance.now();
+    stripHiddenContent(input64);
+    const t64 = performance.now() - start64;
+
+    // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow
+    // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure.
+    expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
+  });
+}, 20000);
 
 describe('stripHiddenContent — purity', () => {
   it('calling twice on the same input returns equal results and leaves the input unmodified', () => {
