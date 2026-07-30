@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 3/5 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 4/5 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -843,7 +843,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 62-04-PLAN.md — Additive `episode.event_ts` (SCHEMA_VERSION 16) threaded from the `Date:` header through the adapter contract, with a plausibility window that rejects forged far-future dates (EMAIL-04, wave 3)
+- [x] 62-04-PLAN.md — Additive `episode.event_ts` (SCHEMA_VERSION 16) threaded from the `Date:` header through the adapter contract, with a plausibility window that rejects forged far-future dates (EMAIL-04, wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
