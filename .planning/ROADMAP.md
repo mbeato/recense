@@ -829,7 +829,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
   3. Hidden or invisible content in HTML-only emails (`display:none`, zero-width characters, hidden spans) is deterministically stripped before any content reaches the extractor, verified by a regression fixture containing a hidden injected instruction that must not survive into episode content — EMAIL-03
   4. A fresh account's initial backfill batch is consolidated in chronological order (derived from the email's own `Date:` header), so an older message in the same backfill cannot silently apply over newer state — EMAIL-04
 
-**Plans**: 11 plans in 7 waves (62-06..62-08 gap closure added 2026-07-30; 62-09..62-11 gap closure added 2026-07-30 after re-verification)
+**Plans**: 12 plans in 8 waves (62-06..62-08 gap closure added 2026-07-30; 62-09..62-11 gap closure added 2026-07-30 after re-verification; 62-12 gap closure added 2026-07-30 from `62-REVIEW.md` BL-01/BL-02/BL-03)
 
 Plans:
 **Wave 1**
@@ -863,6 +863,10 @@ Plans:
 **Wave 7** *(blocked on Wave 6 — writes BOTH files owned by the wave-6 plans)*
 
 - [x] 62-11-PLAN.md — Export a narrow `stripInvisibleCodepoints` stage-1 primitive and apply it to the sender-controlled `From:`/`Subject:` headers before the provenance header is built, closing the header-borne Unicode-Tags-block injection path (EMAIL-03, wave 7)
+
+**Wave 8** *(gap closure — from `62-REVIEW.md` BL-01/BL-02/BL-03, all three Critical; single plan, owns `strip-hidden.ts` alone)*
+
+- [ ] 62-12-PLAN.md — Build all four tag-scanning literals from one shared `ATTRS` fragment that permits an unquoted `<` (reversing 62-09's net regression) and widens the `</style>` tail, and derive the invisible-codepoint set from `\p{Default_Ignorable_Code_Point}` instead of a hand-maintained list (EMAIL-03, wave 8)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
