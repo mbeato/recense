@@ -15,6 +15,32 @@ import { stripHiddenContent, stripInvisibleCodepoints } from '../src/source/stri
 const ZWSP = '​';
 const TAGS_BLOCK_CHAR = '\u{E0041}'; // an arbitrary codepoint inside the Tags block
 
+// BL-03 (62-REVIEW.md): carriers sourced from the threat-class table, NOT from
+// INVISIBLE_CODEPOINTS_RE's implementation — asserting the implementation against
+// itself (WR-05) says nothing about whether the guard covers the threat class.
+const BL03_THREAT_CLASS_CARRIERS: Array<[string, string]> = [
+  ['Variation Selectors Supplement (first)', '\u{E0100}'],
+  ['Variation Selectors Supplement (last)', '\u{E01EF}'],
+  ['Variation Selector-1 (VS1)', '\u{FE00}'],
+  ['Variation Selector-16 (VS16)', '\u{FE0F}'],
+  ['Left-to-Right Embedding (LRE)', '\u{202A}'],
+  ['Right-to-Left Override (RLO)', '\u{202E}'],
+  ['Left-to-Right Isolate (LRI)', '\u{2066}'],
+  ['Pop Directional Isolate (PDI)', '\u{2069}'],
+  ['Left-to-Right Mark (LRM)', '\u{200E}'],
+  ['Right-to-Left Mark (RLM)', '\u{200F}'],
+  ['Arabic Letter Mark (ALM)', '\u{061C}'],
+  ['Combining Grapheme Joiner (CGJ)', '\u{034F}'],
+  ['deprecated format char (first)', '\u{206A}'],
+  ['deprecated format char (last)', '\u{206F}'],
+  ['Hangul Filler', '\u{115F}'],
+  ['Hangul Jungseong Filler', '\u{1160}'],
+  ['Hangul Filler (Compatibility Jamo)', '\u{3164}'],
+  ['Halfwidth Hangul Filler', '\u{FFA0}'],
+  ['Line Separator', '\u{2028}'],
+  ['Paragraph Separator', '\u{2029}'],
+];
+
 // Module-scope so the CR-02 behavior-preservation block (below) iterates the exact same
 // array reference as the idempotence describe block, not a hand-copied subset.
 const IDEMPOTENCE_FIXTURES = [
@@ -41,6 +67,12 @@ const IDEMPOTENCE_FIXTURES = [
   "<style data-x='a>b'>.h{display:none}</style>ok<span class='h'>PAYLOAD4</span>",
   '<style data-x="a>b">#sec{display:none}</style>ok<span id="sec">PAYLOAD5</span>',
   '<style data-x=a>b{display:none}</style>ok<span class="b">VISIBLE6</span>',
+  // BL-01/BL-02 (62-12): unquoted < inside a tag attribute region, and spec-legal
+  // </style> end-tag variants.
+  '<style x=a<b>.legal{display:none}</style>ok<span class="legal">PAYLOAD_A</span>',
+  '<div x=a<b style="display:none">PAYLOAD</div>Visible.',
+  '<style>.legal{display:none}</style foo>ok<span class="legal">PAYLOAD_B</span>',
+  '<style>.legal{display:none}</style/>ok<span class="legal">PAYLOAD_B2</span>',
 ];
 
 // Same three inputs as the "invisible Unicode" describe block below (:158-177 pre-edit),
@@ -49,6 +81,9 @@ const INVISIBLE_UNICODE_INPUTS = [
   `a${ZWSP}b${ZWSP}c`,
   `hello${TAGS_BLOCK_CHAR}world`,
   `<div style="dis${ZWSP}play:none">HIDDEN</div>Visible.`,
+  // BL-03 (62-12): the threat-class carriers, reused here so the stage-1
+  // behavior-preservation block below actually exercises them.
+  ...BL03_THREAT_CLASS_CARRIERS.map(([, cp]) => 'a' + cp + 'b'),
 ];
 
 describe('stripHiddenContent — hiding shapes removed', () => {
@@ -204,6 +239,70 @@ describe('stripHiddenContent — unbalanced quote fail-safe truncation (accepted
     );
     expect(out).toContain('Visible after.');
     expect(out).not.toContain('class="c"');
+  });
+});
+
+describe('stripHiddenContent — unquoted < inside a tag attribute region (BL-01 regression of the 62-09 fix)', () => {
+  // 62-09 narrowed STYLE_BLOCK_RE's (and the other three literals') unquoted-attribute
+  // class from `[^>]` to `[^'"<>]`, excluding `<`. Per HTML §13.2.5.36 (attribute value,
+  // unquoted state) a `<` is a parse error but is APPENDED to the attribute value — the
+  // tag continues to the next unquoted `>`. So `<style x=a<b>` is a valid <style> start
+  // tag in every conforming parser, and the shipped (post-62-09) regex disagrees.
+  it('yields the hiding rule to the harvest and the raw CSS does not leak as prose', () => {
+    const out = stripHiddenContent(
+      '<style x=a<b>.legal{display:none}</style>ok<span class="legal">PAYLOAD_A</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_A');
+    expect(out).not.toContain('display:none');
+    expect(out).toContain('ok');
+  });
+
+  it('over-removal direction: does not destroy visible prose that follows the same shape', () => {
+    // Today (shipped, unfixed) this returns the empty string: the unquoted `<` is a
+    // second, previously undocumented trigger of the stage-6 stray-`<` truncation that
+    // residual (c) documents for unbalanced quotes only. This fix closes that trigger.
+    const out = stripHiddenContent(
+      '<div x=a<b style="display:none">PAYLOAD</div>Visible.'
+    );
+    expect(out).not.toContain('PAYLOAD');
+    expect(out).toContain('Visible.');
+  });
+
+  it("62-09 regression lock: an unquoted < in a <style> attribute was handled by the PRE-62-09 [^>]* regex and must never stop being handled again", () => {
+    // The shipped `[^>]*` literal (pre-62-09) harvested `.legal{display:none}` from
+    // `<style x=a<b>...`; 62-09's `[^'"<>]` narrowing broke it. Narrowing an attribute
+    // class is therefore a behavior change that requires this exact input to be
+    // re-checked on every future edit, not a pure hardening — wave C must not repeat
+    // wave A's mistake in the other direction.
+    const out = stripHiddenContent(
+      '<style x=a<b>.legal{display:none}</style>ok<span class="legal">PAYLOAD_A</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_A');
+    expect(out).not.toContain('display:none');
+    expect(out).toContain('ok');
+  });
+});
+
+describe('stripHiddenContent — spec-legal <style> end tags (BL-02)', () => {
+  // On whitespace the RAWTEXT end-tag-name state transitions to before-attribute-name
+  // and on `/` to self-closing-start-tag; both close the element per the HTML tokenizer,
+  // and ANY_TAG_TOKEN_RE already accepts both, so today stage 4 deletes the <style>
+  // block while stage 2's STYLE_BLOCK_RE (whose tail is still `<\/style\s*>`) harvests
+  // nothing — the evidence that the span is hidden is destroyed and the span's text
+  // survives.
+  it.each([
+    ['</style foo>', '<style>.legal{display:none}</style foo>ok<span class="legal">PAYLOAD_B</span>', 'PAYLOAD_B'],
+    ['</style/>', '<style>.legal{display:none}</style/>ok<span class="legal">PAYLOAD_B2</span>', 'PAYLOAD_B2'],
+  ])('harvests through a %s end tag', (_label, input, payload) => {
+    const out = stripHiddenContent(input);
+    expect(out).not.toContain(payload);
+    expect(out).toContain('ok');
+  });
+});
+
+describe('stripInvisibleCodepoints — carriers sourced from the BL-03 threat class, not from the implementation', () => {
+  it.each(BL03_THREAT_CLASS_CARRIERS)('removes %s (%s)', (_label, cp) => {
+    expect(stripInvisibleCodepoints('a' + cp + 'b')).toBe('ab');
   });
 });
 
