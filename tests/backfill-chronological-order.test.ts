@@ -37,6 +37,19 @@
  * runtime by the first-processed episode (its id is not known ahead of time), so the
  * judge must resolve `best_candidate_id` from the live `candidates` array rather than
  * a hardcoded literal — mirroring exactly what a real judge call does.
+ *
+ * Discrimination check (2026-07-30, Phase 62 Plan 06 Task 2): manually reverted
+ * `src/consolidation/consolidator.ts:532` from
+ * `orderEpisodesForConsolidation(this.episodes.listUnconsolidated())` to the bare
+ * `this.episodes.listUnconsolidated()` and re-ran this file. OBSERVED: the first
+ * `it()` block ("reverse-chronological Gmail backfill batch: newer status wins, not
+ * the stale older one") FAILED at `expect(currentNodes[0]!.value).toBe(NEWER_VALUE)`
+ * — actual reported value was `'application status: submitted, awaiting review'`
+ * (`OLDER_VALUE`), not `'application status: offer extended'` (`NEWER_VALUE`). The
+ * wiring line was then restored verbatim and confirmed byte-identical via
+ * `git diff --exit-code`; both tests pass and `npx tsc --noEmit` exits 0 in the
+ * restored state. This test is therefore measured, not assumed, to discriminate on
+ * the `orderEpisodesForConsolidation` wiring.
  */
 import Database from 'better-sqlite3';
 import { describe, it, expect, beforeEach } from 'vitest';
