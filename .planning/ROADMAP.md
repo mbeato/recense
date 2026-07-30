@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 8/8 | Complete   | 2026-07-30 |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 10/11 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -857,8 +857,8 @@ Plans:
 
 **Wave 6** *(gap closure — from `62-VERIFICATION.md` re-verification gaps[0]/gaps[1] and `62-REVIEW.md` CR-01/CR-02/CR-03; both run in parallel, no file overlap: 62-09 owns `strip-hidden.ts`, 62-10 owns `gmail-adapter.ts`)*
 
-- [ ] 62-09-PLAN.md — Make `STYLE_BLOCK_RE` quote-aware (the FOURTH attribute-scanning regex 62-07 missed), give the named fixture a `<style>` tag with a quoted `>`, and add a source guard so a fifth bare-attribute-class regex fails the suite (EMAIL-03, wave 6)
-- [ ] 62-10-PLAN.md — Clamp `parseEmailDate`'s accepted future-skew branch to `nowMs` and correct the JSDoc overclaim, removing the net-new "forge a Date to sort last" capability plan 62-05 introduced (EMAIL-04, wave 6)
+- [x] 62-09-PLAN.md — Make `STYLE_BLOCK_RE` quote-aware (the FOURTH attribute-scanning regex 62-07 missed), give the named fixture a `<style>` tag with a quoted `>`, and add a source guard so a fifth bare-attribute-class regex fails the suite (EMAIL-03, wave 6)
+- [x] 62-10-PLAN.md — Clamp `parseEmailDate`'s accepted future-skew branch to `nowMs` and correct the JSDoc overclaim, removing the net-new "forge a Date to sort last" capability plan 62-05 introduced (EMAIL-04, wave 6)
 
 **Wave 7** *(blocked on Wave 6 — writes BOTH files owned by the wave-6 plans)*
 
