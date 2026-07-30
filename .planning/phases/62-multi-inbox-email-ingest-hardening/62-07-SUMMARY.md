@@ -179,3 +179,13 @@ None - no external service configuration required.
 ---
 *Phase: 62-multi-inbox-email-ingest-hardening*
 *Completed: 2026-07-30*
+
+## Self-Check: PASSED
+
+- FOUND: src/source/strip-hidden.ts
+- FOUND: tests/strip-hidden.test.ts
+- FOUND: tests/gmail-hidden-content.test.ts
+- FOUND: .planning/phases/62-multi-inbox-email-ingest-hardening/deferred-items.md
+- FOUND commit: 0f89d5a (Task 1 RED)
+- FOUND commit: b3c9750 (Task 2 GREEN)
+- FOUND commit: a2a2584 (Task 3 adversarial cost bound)
