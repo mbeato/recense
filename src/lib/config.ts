@@ -645,13 +645,14 @@ export interface EngineConfig {
    * `RECENSE_GOOGLE_ACCOUNTS` (comma-separated ids) and, per id,
    * `RECENSE_GMAIL_QUERY_<UPPER_ID>` for that account's optional `query`.
    *
-   * `query` overrides `gmail.query` for that account, but the override applies
-   * to that account's INITIAL BACKFILL ONLY: Gmail's `users.history.list` accepts
-   * no `q` parameter, so once an account's `cursor:gmail:<id>` historyId exists,
-   * every incremental pull returns all new mail regardless of the configured
-   * query. Ongoing noise is dampened only by `sourceWeights.gmail` (0.35) and
-   * `salience.consolSkipThresholdBySource.gmail` (0.4) — not by this query. A
-   * genuine re-scope requires deliberately clearing that account's cursor.
+   * `query` overrides `gmail.query` for that account, but the override is
+   * backfill only — it bounds that account's INITIAL BACKFILL ONLY: Gmail's
+   * `users.history.list` accepts no `q` parameter, so once an account's
+   * `cursor:gmail:<id>` historyId exists, every incremental pull returns all
+   * new mail regardless of the configured query. Ongoing noise is dampened only
+   * by `sourceWeights.gmail` (0.35) and `salience.consolSkipThresholdBySource.gmail`
+   * (0.4) — not by this query. A genuine re-scope requires deliberately clearing
+   * that account's cursor.
    */
   googleAccounts: Array<{ id: string; query?: string }>;
 
