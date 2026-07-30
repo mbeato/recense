@@ -7,7 +7,8 @@
  * Covers:
  *  1. parseEmailDate — well-formed headers (numeric offset, named zone), empty/whitespace/
  *     malformed → null, below-plausibility-floor → null, beyond-future-skew → null,
- *     24h-future passes / 72h-future rejected, never throws, pure/deterministic.
+ *     24h-future passes and is clamped to nowMs (CR-03) / 72h-future rejected, never throws,
+ *     pure/deterministic.
  *  2. normalizeGmailMessage — event_ts from the default fixture date; null on empty/far-future
  *     date; every other field unchanged; provenance header carries no date.
  *  3. End-to-end: GmailAdapter.pull() over two messages a month apart returns two records
@@ -38,7 +39,11 @@ function makeRaw(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage {
     headers: {
       from: 'alice@acme.com',
       subject: 'Re: pricing discussion',
-      date: 'Mon, 9 Jun 2026 10:00:00 +0000',
+      // CR-03 reconciliation: this must be <= NOW (2026-06-09T00:00:00Z), not on the same
+      // day at a later time-of-day — the clamp now returns nowMs for ANY header later than
+      // nowMs, so a same-day-but-later fixture would silently be clamped and no longer
+      // exercise plain well-formed parsing. See the CR-03 reconciliation note below.
+      date: 'Mon, 8 Jun 2026 10:00:00 +0000',
     },
     bodyText: 'Hello, let me know your thoughts on the Q3 pricing.',
     ...overrides,
@@ -47,22 +52,31 @@ function makeRaw(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage {
 
 // ── 1. parseEmailDate ──────────────────────────────────────────────────────────
 
+// CR-03 reconciliation (plan 62-10): before the clamp, a header later than NOW but still
+// inside the accepted window parsed to its raw (unclamped) value, so these three fixtures
+// — originally 'Mon, 9 Jun 2026 10:00:00', ten hours AFTER NOW=2026-06-09T00:00:00Z — happened
+// to sit in that accepted-future window and asserted the unclamped value. Post-clamp, any
+// header later than nowMs now correctly returns nowMs, which would make these fixtures
+// silently start testing the clamp instead of plain well-formed parsing. Moved to the day
+// BEFORE NOW so they stay outside the clamp's reach and keep testing what they always meant
+// to test: correct RFC 2822 parsing. The clamp itself is tested by its own dedicated
+// describe block in tests/gmail-future-date-ordering.test.ts and by the 24h-future case below.
 describe('parseEmailDate — bounded, attacker-hostile Date: header parse (EMAIL-04)', () => {
   it('parses a well-formed RFC 2822 header to the correct epoch ms', () => {
-    const result = parseEmailDate('Mon, 9 Jun 2026 10:00:00 +0000', NOW);
-    expect(result).toBe(Date.UTC(2026, 5, 9, 10, 0, 0));
+    const result = parseEmailDate('Mon, 8 Jun 2026 10:00:00 +0000', NOW);
+    expect(result).toBe(Date.UTC(2026, 5, 8, 10, 0, 0));
   });
 
   it('parses a header with a numeric offset (+0530)', () => {
-    const result = parseEmailDate('Mon, 9 Jun 2026 10:00:00 +0530', NOW);
+    const result = parseEmailDate('Mon, 8 Jun 2026 10:00:00 +0530', NOW);
     expect(result).not.toBeNull();
-    expect(result).toBe(Date.parse('Mon, 9 Jun 2026 10:00:00 +0530'));
+    expect(result).toBe(Date.parse('Mon, 8 Jun 2026 10:00:00 +0530'));
   });
 
   it('parses a header with a named zone (GMT)', () => {
-    const result = parseEmailDate('Mon, 9 Jun 2026 10:00:00 GMT', NOW);
+    const result = parseEmailDate('Mon, 8 Jun 2026 10:00:00 GMT', NOW);
     expect(result).not.toBeNull();
-    expect(result).toBe(Date.parse('Mon, 9 Jun 2026 10:00:00 GMT'));
+    expect(result).toBe(Date.parse('Mon, 8 Jun 2026 10:00:00 GMT'));
   });
 
   it("empty string returns null", () => {
@@ -85,9 +99,12 @@ describe('parseEmailDate — bounded, attacker-hostile Date: header parse (EMAIL
     expect(parseEmailDate('Mon, 9 Jun 2036 10:00:00 +0000', NOW)).toBeNull();
   });
 
-  it('a header 24 hours in the future PARSES (inside the 48h tolerance)', () => {
+  it('a header 24 hours in the future PARSES (inside the 48h tolerance) and is clamped to nowMs', () => {
     const future24h = new Date(NOW + 24 * 60 * 60 * 1000).toUTCString();
     expect(parseEmailDate(future24h, NOW)).not.toBeNull();
+    // CR-03: the clamp is what makes this NOW rather than NOW + 24h — a silent revert of
+    // the clamp fails this assertion even though the non-null assertion above still holds.
+    expect(parseEmailDate(future24h, NOW)).toBe(NOW);
   });
 
   it('a header 72 hours in the future returns null (beyond the 48h tolerance)', () => {
@@ -120,7 +137,7 @@ describe('parseEmailDate — bounded, attacker-hostile Date: header parse (EMAIL
 describe('normalizeGmailMessage — event_ts from Date: header (EMAIL-04)', () => {
   it('a message with the default fixture date yields the matching non-null event_ts', () => {
     const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG, NOW);
-    expect(record.event_ts).toBe(Date.UTC(2026, 5, 9, 10, 0, 0));
+    expect(record.event_ts).toBe(Date.UTC(2026, 5, 8, 10, 0, 0));
   });
 
   it("a message with date: '' yields event_ts === null", () => {
@@ -148,8 +165,8 @@ describe('normalizeGmailMessage — event_ts from Date: header (EMAIL-04)', () =
   it('record.content still matches the provenance shape with no date interpolated into it', () => {
     const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG, NOW);
     expect(record.content).toMatch(/^From: .* · Re: .* · Acct: /);
-    expect(record.content).not.toContain('2026-06-09');
-    expect(record.content).not.toContain('Mon, 9 Jun 2026');
+    expect(record.content).not.toContain('2026-06-08');
+    expect(record.content).not.toContain('Mon, 8 Jun 2026');
   });
 });
 
