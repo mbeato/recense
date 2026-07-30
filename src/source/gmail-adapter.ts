@@ -15,6 +15,11 @@
  *        NormalizedRecord is constructed. Raw sensitive text NEVER reaches EpisodicStore.
  *        The provenance header is included in redaction scope so secrets in From/Subject
  *        are stripped too.
+ *  EMAIL-03: stripHiddenContent is applied to raw.bodyText BEFORE the provenance header
+ *        is joined and BEFORE redactSecrets runs (see normalizeGmailMessage). This closes
+ *        the raw-HTML-fallback vector in extractBodyText: markup, CSS/attribute-hidden
+ *        elements, and invisible Unicode are removed at the ingest boundary so hidden
+ *        instructions never reach the sleep-pass classifier's token stream.
  *  D-65: Ingest scope is config.gmail.query (native Gmail search query). Conservative
  *        default in EngineConfig; narrow without code changes.
  *  D-67: cursor:gmail historyId is advanced each pull (speed layer). UNIQUE(source,
@@ -33,6 +38,7 @@ import type { gmail_v1 } from 'googleapis';
 import type { EngineConfig } from '../lib/config';
 import type { NormalizedRecord, SourceAdapter } from './source-adapter';
 import { redactSecrets } from './redact';
+import { stripHiddenContent } from './strip-hidden';
 
 // ---------------------------------------------------------------------------
 // Raw message type — the API-agnostic representation used by GmailFetcher
@@ -109,7 +115,11 @@ function extractBodyText(part: gmail_v1.Schema$MessagePart | undefined): string 
       if (text) return text;
     }
   }
-  // Fallback for simple non-multipart messages with body data
+  // Fallback for simple non-multipart messages with body data: this returns the
+  // message's sole body part VERBATIM, which for an HTML-only message (no text/plain
+  // alternative) is raw HTML, tags and hidden content included. Markup and
+  // hidden-content removal is the CALLER's responsibility, via stripHiddenContent
+  // inside normalizeGmailMessage (EMAIL-03) — this function does not sanitize.
   if (part.body?.data) {
     return Buffer.from(part.body.data, 'base64url').toString('utf8');
   }
@@ -252,12 +262,31 @@ export function normalizeGmailMessage(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _config: Pick<EngineConfig, 'gmail'>
 ): NormalizedRecord {
+  // EMAIL-03: stripHiddenContent runs on the BODY ONLY, before it is joined with the
+  // provenance header, and BEFORE redactSecrets (ordering is load-bearing, see below).
+  // Not applied to the header: the header is assembled from trusted config (accountId,
+  // T-20-06) plus the From/Subject headers, and redactSecrets already covers it —
+  // stripping it would risk mangling a legitimate subject containing angle brackets.
+  const strippedBody = stripHiddenContent(raw.bodyText);
+
   // D-59/D-09: provenance header with account id so the LLM extractor sees sender + subject + account
   const provenanceHeader = `From: ${raw.headers.from} · Re: ${raw.headers.subject} · Acct: ${accountId}`;
-  const combined = `${provenanceHeader}\n${raw.bodyText}`;
+  const combined = `${provenanceHeader}\n${strippedBody}`;
 
-  // D-63: redactSecrets runs over the full combined string (header + body).
-  // Sender email in the From: field is PII — redactSecrets explicitly keeps email addresses (D-64).
+  // D-63: redactSecrets runs over the full combined string (header + stripped body).
+  // Strip-before-redact: hidden-markup content is removed outright first, so a secret
+  // reachable only inside hidden markup is simply gone, and redaction then operates on
+  // final visible text rather than tag soup where a secret could straddle a tag boundary
+  // and evade a pattern. The D-63 invariant is unchanged: content on the emitted record
+  // is still post-redactSecrets. Sender email in the From: field is PII — redactSecrets
+  // explicitly keeps email addresses (D-64).
+  //
+  // stripHiddenContent is NOT called from src/ingest/pipeline.ts's second redactSecrets
+  // pass: that pass is source-agnostic, and markup stripping is not — running it over
+  // Obsidian notes or transcript turns would destroy legitimate Markdown/formatting.
+  // Stripping is a Gmail-adapter-boundary concern (D-63's adapters-redact-at-their-own-
+  // boundary design), enforced at exactly this one call site;
+  // tests/gmail-hidden-content.test.ts's source-order assertion keeps it there.
   const content = redactSecrets(combined);
 
   return {
