@@ -167,6 +167,9 @@ class RealGmailFetcher implements GmailFetcher {
 
     if (startHistoryId !== null) {
       // History-incremental: only messages added since the stored historyId (D-67 speed layer)
+      // EMAIL-02: deliberately query-free — users.history.list accepts no `q` parameter, so
+      // per-account query scoping bounds the initial backfill only. This is a locked
+      // invariant, not an oversight; see tests/gmail-per-account-query.test.ts.
       let pageToken: string | undefined;
       do {
         const resp = await gmail.users.history.list({
@@ -269,6 +272,31 @@ export function normalizeGmailMessage(
   };
 }
 
+/**
+ * Resolve the Gmail search query to use for one account's pull (EMAIL-02).
+ *
+ * Returns the matching `googleAccounts` entry's `query` when that entry exists
+ * and its trimmed value is non-empty; otherwise falls back to `config.gmail.query`.
+ * Never throws on an unknown accountId — falls through to the global query.
+ *
+ * This bounds the account's INITIAL BACKFILL ONLY (see the `googleAccounts` doc
+ * comment in src/lib/config.ts): the incremental branch of `fetchMessages`
+ * (`gmail.users.history.list`, below) is query-independent by construction —
+ * `users.history.list` accepts no `q` parameter — so this resolved query never
+ * reaches an already-cursored account's incremental pulls.
+ *
+ * @param config    Pick of EngineConfig carrying `gmail` + `googleAccounts`.
+ * @param accountId Google account id to resolve the query for.
+ */
+export function resolveAccountQuery(
+  config: Pick<EngineConfig, 'gmail' | 'googleAccounts'>,
+  accountId: string
+): string {
+  const account = config.googleAccounts.find(a => a.id === accountId);
+  const query = account?.query?.trim();
+  return query ? query : config.gmail.query;
+}
+
 // ---------------------------------------------------------------------------
 // GmailAdapter — implements SourceAdapter, pulls incremental observed-origin records
 // ---------------------------------------------------------------------------
@@ -297,7 +325,8 @@ export class GmailAdapter implements SourceAdapter {
   private readonly accountId: string;
 
   /**
-   * @param config    EngineConfig — reads config.gmail.query for the Gmail search scope (D-65).
+   * @param config    EngineConfig — reads the per-account Gmail search query (via
+   *                  resolveAccountQuery), falling back to config.gmail.query (D-65/EMAIL-02).
    * @param meta      Meta cursor store — reads/writes cursor:gmail:<accountId> historyId (D-67/D-10).
    * @param accountId Google account id (D-08). Default 'default' preserves backward-compat:
    *                  reads GOOGLE_DEFAULT_REFRESH_TOKEN with fallback to GMAIL_REFRESH_TOKEN,
@@ -336,8 +365,10 @@ export class GmailAdapter implements SourceAdapter {
     const cursor = this.meta.getMeta(cursorKey);
 
     // T-04-ASYNC: all async I/O (network) completes into an array before sync work below
+    // EMAIL-02: per-account query with fallback to the global gmail.query; bounds the
+    // INITIAL BACKFILL ONLY — see resolveAccountQuery's doc comment.
     const { messages, newHistoryId } = await this.fetcher.fetchMessages(
-      this.config.gmail.query,
+      resolveAccountQuery(this.config, this.accountId),
       cursor
     );
 
