@@ -53,6 +53,61 @@ describe('stripHiddenContent — hiding shapes removed', () => {
   });
 });
 
+describe('stripHiddenContent — quoted attribute values containing > (CR-01)', () => {
+  it('removes content behind a double-quoted data attribute containing a literal >', () => {
+    const out = stripHiddenContent(
+      '<div data-x="a>b" style="display:none">SECRET3</div>Visible.'
+    );
+    expect(out).not.toContain('SECRET3');
+    expect(out).not.toContain('display:none');
+    expect(out).toContain('Visible.');
+  });
+
+  it('removes content when the literal > is inside a CSS string literal in the style attribute itself', () => {
+    const out = stripHiddenContent(
+      '<div style="content:\'>\';display:none">HIDDEN INSTRUCTION PAYLOAD</div>Visible.'
+    );
+    expect(out).not.toContain('HIDDEN INSTRUCTION PAYLOAD');
+    expect(out).toContain('Visible.');
+  });
+
+  it('removes content behind a single-quoted data attribute containing a literal >', () => {
+    const out = stripHiddenContent(
+      "<div data-x='a>b' style='display:none'>SECRET4</div>Visible."
+    );
+    expect(out).not.toContain('SECRET4');
+    expect(out).toContain('Visible.');
+  });
+
+  it('removes content behind a quoted title containing > that precedes aria-hidden', () => {
+    const out = stripHiddenContent(
+      '<span title="a>b" aria-hidden="true">SECRET8</span>Keep.'
+    );
+    expect(out).not.toContain('SECRET8');
+    expect(out).toContain('Keep.');
+  });
+
+  it('removes content behind a quoted data attribute containing > on a class-hidden element harvested from a <style> block', () => {
+    const out = stripHiddenContent(
+      '<style>.h{display:none}</style><div data-t="x>y" class="h">SECRET9</div>Visible.'
+    );
+    expect(out).not.toContain('SECRET9');
+    expect(out).toContain('Visible.');
+  });
+});
+
+describe('stripHiddenContent — unquoted > still terminates the tag (no over-correction)', () => {
+  it('keeps content when an unquoted > genuinely closes the tag before the hiding declaration', () => {
+    // With no quotes, the `>` genuinely closes the tag in any real HTML parser, so
+    // `b style="display:none">SECRET6` is ordinary visible text in a browser too.
+    // Stripping it would be a false positive that removes prose a human can see.
+    const out = stripHiddenContent(
+      '<div data-x=a>b style="display:none">SECRET6</div>Visible.'
+    );
+    expect(out).toContain('SECRET6');
+  });
+});
+
 describe('stripHiddenContent — no false positives', () => {
   it('keeps opacity:0.85 element content', () => {
     const out = stripHiddenContent('<span style="opacity:0.85">Keep me</span>');
@@ -180,6 +235,12 @@ describe('stripHiddenContent — idempotence', () => {
     'Before.<script>alert(1); still going forever',
     'Plain text with no markup at all.',
     '<table><tr><td><a href="https://x.example">link</a></td></tr></table>Trailing text.',
+    '<div data-x="a>b" style="display:none">SECRET3</div>Visible.',
+    '<div style="content:\'>\';display:none">HIDDEN INSTRUCTION PAYLOAD</div>Visible.',
+    "<div data-x='a>b' style='display:none'>SECRET4</div>Visible.",
+    '<span title="a>b" aria-hidden="true">SECRET8</span>Keep.',
+    '<style>.h{display:none}</style><div data-t="x>y" class="h">SECRET9</div>Visible.',
+    '<div data-x=a>b style="display:none">SECRET6</div>Visible.',
   ];
 
   it.each(fixtures)('stripHiddenContent(stripHiddenContent(s)) === stripHiddenContent(s) for %#', (s) => {
