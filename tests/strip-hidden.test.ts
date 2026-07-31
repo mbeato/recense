@@ -878,6 +878,132 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
   });
 }, 20000);
 
+describe('stripHiddenContent — WR-02: the 62-VERIFICATION.md adversarial shape must not be quadratic', () => {
+  // WR-02 gap closure (62-14). 62-VERIFICATION.md measured the report's shape at
+  // 1,983 / 7,904 / 31,616 / 126,422 ms for 64/128/256/512 KB against dist/ — a single
+  // crafted ~512 KB email stalls ingest for over two minutes. Planning-time instrumentation
+  // (confirmed by this executor's own per-stage measurement, recorded in the 62-14 SUMMARY)
+  // attributes ~100% of that cost to RULE_RE's backtracking-heavy scan over brace-free
+  // <style> content, NOT to the ATTRS widening the report blamed.
+  //
+  // RED note: against the current (pre-Bound-A/Bound-B) module, every 512 KB assertion
+  // below that targets the RULE_RE cause (report, V, W, Y, Z) FAILS because the underlying
+  // synchronous call itself takes on the order of two minutes — far past the 1000ms bound
+  // asserted here. The failure mode is the assertion evaluating false once that (very slow)
+  // call finally returns, not a vitest-runner timeout race; do not mistake the long wall
+  // clock for flakiness. Shapes X and X3 are CONTROLS that already pass in this RED state:
+  // stripCssComments's unterminated-comment case truncates their content to (near) nothing
+  // before RULE_RE ever sees it. Shapes Y and Z are NOT controls, contrary to a naive
+  // reading of 62-13's own cost table for stripCssComments in isolation — Y and Z contain
+  // no `/*` at all, so stripCssComments's early-exit (`indexOf('/*') === -1`) returns them
+  // UNCHANGED in well under a millisecond (measured directly, see the SUMMARY's per-stage
+  // table), and the FULL, UNSHORTENED content then hits the exact same RULE_RE quadratic as
+  // the report's shape. This is recorded here with numbers, not assumed: the dominant stage
+  // for Y and Z is RULE_RE (~7,900-8,030 ms at 128 KB alone, matching the full-pipeline
+  // number almost exactly), not stripCssComments (~0.00-0.04 ms at 128 KB). Task 2's Bound B
+  // (already targeting RULE_RE) is therefore expected to fix Y and Z as a direct
+  // consequence, with no separate change to stripCssComments required — see the 62-14
+  // SUMMARY for the full argument and the decision it produced.
+  //
+  // The 1000 ms bound: the planning-measured post-fix value for the report's shape is
+  // ~1.5 ms, so 1000 ms is roughly 600x headroom — chosen per IN-03 so the assertion catches
+  // a RETURN of the quadratic and cannot catch a loaded CI runner.
+  const shapeReport = (bytes: number) => {
+    const unit = 'a<x ';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
+  };
+  const shapeV = (bytes: number) => '<style>{' + 'y'.repeat(bytes) + '}</style>';
+  const shapeW = (bytes: number) => '<style>' + 'y'.repeat(bytes) + '}.legal{display:none}</style>';
+  const shapeX = (bytes: number) => {
+    const unit = '/*y';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
+  };
+  const shapeX3 = (bytes: number) => {
+    const unit = '/*y';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '.legal{display:none}</style>';
+  };
+  const shapeY = (bytes: number) => {
+    const unit = '"y';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
+  };
+  const shapeZ = (bytes: number) => {
+    const unit = 'url(a';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
+  };
+
+  it('the report shape (a<x repeated, no braces) at 512 KB completes in under 1000ms and does not throw', () => {
+    const input = shapeReport(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('the report shape growth from 128 KB to 256 KB stays polynomial (t256/max(t128,1) <= 8)', () => {
+    const input128 = shapeReport(128 * 1024);
+    const start128 = performance.now();
+    stripHiddenContent(input128);
+    const t128 = performance.now() - start128;
+
+    const input256 = shapeReport(256 * 1024);
+    const start256 = performance.now();
+    stripHiddenContent(input256);
+    const t256 = performance.now() - start256;
+
+    // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow past 8x
+    // or hang. max(t128, 1) avoids a divide-by-tiny false failure.
+    expect(t256 / Math.max(t128, 1)).toBeLessThanOrEqual(8);
+  });
+
+  it('Shape V (an open brace then a brace-free tail) at 512 KB completes in under 1000ms', () => {
+    const input = shapeV(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape W (a brace-free run followed by a real hiding rule) at 512 KB completes in under 1000ms', () => {
+    const input = shapeW(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape X (unterminated CSS comment, no rule) at 512 KB completes in under 1000ms — control, already passes pre-fix', () => {
+    const input = shapeX(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape X3 (unterminated CSS comment that would carry a rule if closed) at 512 KB completes in under 1000ms — control, already passes pre-fix', () => {
+    const input = shapeX3(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape Y (alternating quotes, no comment marker — reaches RULE_RE unshortened) at 512 KB completes in under 1000ms', () => {
+    const input = shapeY(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape Z (repeated unterminated url-tokens, no comment marker — reaches RULE_RE unshortened) at 512 KB completes in under 1000ms', () => {
+    const input = shapeZ(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+}, 20000);
+
 describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL-02 bug class (62-12 decision #1)', () => {
   // Retitled from "bug-class guard" (62-09): WR-06 (62-REVIEW.md) established that a
   // string-matching source guard can never GUARANTEE this bug class does not recur — every
