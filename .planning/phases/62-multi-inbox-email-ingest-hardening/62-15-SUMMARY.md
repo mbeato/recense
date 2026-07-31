@@ -249,3 +249,7 @@ None — no external service configuration required.
 ---
 *Phase: 62-multi-inbox-email-ingest-hardening*
 *Completed: 2026-07-30*
+
+## Self-Check: PASSED
+
+Both modified files confirmed present (`src/source/gmail-adapter.ts`, `tests/gmail-hidden-content.test.ts`); all four commits (`4a310a0`, `c61d5e6`, `c8b0c82`, `cc9cd70`) confirmed present in `git log --oneline --all`.
