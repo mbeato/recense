@@ -19,7 +19,7 @@
 
 - [ ] **EMAIL-01**: User can authorize an additional Google account through a guided CLI flow that mints and stores `GOOGLE_<ID>_REFRESH_TOKEN` without hand-rolling OAuth. Loopback redirect (`http://127.0.0.1:<random>`), which is the current flow for the Desktop client type recense already uses — the OOB flow is dead. Uses existing `googleapis` OAuth2 primitives, `node:http`, and the existing `writeEnvFile` helper; no new runtime deps.
 - [ ] **EMAIL-02**: User can set a per-account Gmail query so each inbox scopes independently, **with the documented limitation that scoping applies to an account's initial backfill only** — `users.history.list` accepts no `q` parameter (verified against the live API reference), so incremental pulls are not query-filtered and rely on the existing gmail source-weight (0.35) + skip-threshold (0.4) dampening. The limitation is stated in the config doc comment and surfaced by `recense doctor` — never implied away.
-- [ ] **EMAIL-03**: HTML-only emails are deterministically stripped of markup and hidden content (`display:none`, zero-width characters, hidden spans) at the ingest boundary before any content reaches the extractor or classifier. Today `extractBodyText`'s fallback hands raw HTML through, so hidden text invisible to a human is present in the model's token stream.
+- [x] **EMAIL-03**: HTML-only emails are deterministically stripped of markup and hidden content (`display:none`, zero-width characters, hidden spans) at the ingest boundary before any content reaches the extractor or classifier. Today `extractBodyText`'s fallback hands raw HTML through, so hidden text invisible to a human is present in the model's token stream.
 - [ ] **EMAIL-04**: Each email episode carries an `event_ts` derived from the already-read `Date:` header, and fresh-account backfill batches are consolidated in chronological order — so a first-run backfill of a second inbox cannot apply old evidence over newer state.
 
 ### CLASSIFY — Offline intent classification
@@ -110,7 +110,7 @@
 |-------------|-------|--------|
 | EMAIL-01 | 62 | Pending |
 | EMAIL-02 | 62 | Pending |
-| EMAIL-03 | 62 | Pending |
+| EMAIL-03 | 62 | Complete |
 | EMAIL-04 | 62 | Pending |
 | CLASSIFY-01 | 63 | Pending |
 | CLASSIFY-02 | 63 | Pending |
