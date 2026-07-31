@@ -500,6 +500,86 @@ describe('stripHiddenContent — CSS comment removal must be string-aware (contr
   });
 });
 
+describe('stripHiddenContent — VF-01 ground-truth-by-construction generator (62-13, closed-enumeration proof)', () => {
+  // Deterministic seeded LCG (Numerical Recipes constants) — NOT Math.random — so any
+  // failure is reproducible purely from the printed iteration index. No second
+  // implementation is involved: ground truth here is known BY CONSTRUCTION, not by
+  // differential against another comment scanner (which would share this scanner's blind
+  // spots — see the postcss cross-check and the weak-differential residual in the SUMMARY
+  // for why this generator, not a differential, is the PRIMARY oracle).
+  function makeLcg(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+  }
+
+  // DECOY fragments: each is a SELF-CONTAINED CSS rule that a spec-compliant tokenizer
+  // provably treats as containing NO comment, one drawn per enumerated context —
+  // double/single-quoted strings (§4.3.5), unquoted url-tokens in lower/upper-case,
+  // whitespace, escaped-`)`, and QUOTED forms (§4.3.6 + §4.3.14), and an identity escape
+  // (§4.3.7) — plus one benign rule with no CSS-syntax significance at all. None of these
+  // decoys carries a hiding signature, so none should ever be harvested regardless of
+  // where stripCssComments draws its boundaries.
+  const DECOY_FRAGMENTS = [
+    '.gd1{content:"/*"}',
+    '.gd2{content:"*/"}',
+    ".gd3{content:'/*'}",
+    ".gd4{content:'*/'}",
+    '.gd5{background:url(a/*)}',
+    '.gd6{background:URL(b*/c)}',
+    '.gd7{background:url( d/* )}',
+    '.gd8{background:url(e\\)f/*)}',
+    '.gd9{background:url("g)h/*")}',
+    '.gd10\\/*z{q:1}',
+    '.gd11{color:red}',
+  ];
+
+  // A REAL comment wrapping a decoy hiding rule — the OVER-strip direction check: this
+  // rule must NEVER be live (it sits inside a genuine comment in every browser), so the
+  // element it would hide must always survive.
+  const REAL_COMMENT = '/* real comment wrapping .commented-out{display:none} should not harvest */';
+
+  it('a seeded generator over >= 2000 stylesheets asserts both directions with zero failures', () => {
+    const rand = makeLcg(0x5eed1337);
+    const N = 2000;
+    const underStripFailures: number[] = [];
+    const overStripFailures: number[] = [];
+    const visibleFailures: number[] = [];
+
+    for (let i = 0; i < N; i++) {
+      const pieceCount = 3 + Math.floor(rand() * 4);
+      const pieces: string[] = [];
+      for (let p = 0; p < pieceCount; p++) {
+        const idx = Math.floor(rand() * DECOY_FRAGMENTS.length);
+        pieces.push(DECOY_FRAGMENTS[idx]!);
+      }
+      // Insert the real-comment-wrapped decoy hiding rule at a random position.
+      pieces.splice(Math.floor(rand() * (pieces.length + 1)), 0, REAL_COMMENT);
+      // Insert the live hiding rule at a random position.
+      pieces.splice(Math.floor(rand() * (pieces.length + 1)), 0, '.legal{display:none}');
+
+      const stylesheet = pieces.join('');
+      const html =
+        `<style>${stylesheet}</style>` +
+        'VISIBLE_SENTENCE ' +
+        '<span class="legal">PAYLOAD_GEN</span>' +
+        '<span class="commented-out">COMMENTED_OUT_PAYLOAD</span>';
+
+      const out = stripHiddenContent(html);
+
+      if (out.includes('PAYLOAD_GEN')) underStripFailures.push(i);
+      if (!out.includes('COMMENTED_OUT_PAYLOAD')) overStripFailures.push(i);
+      if (!out.includes('VISIBLE_SENTENCE')) visibleFailures.push(i);
+    }
+
+    expect(underStripFailures).toEqual([]);
+    expect(overStripFailures).toEqual([]);
+    expect(visibleFailures).toEqual([]);
+  });
+});
+
 describe('stripInvisibleCodepoints — carriers sourced from the BL-03 threat class, not from the implementation', () => {
   it.each(BL03_THREAT_CLASS_CARRIERS)('removes %s (%s)', (_label, cp) => {
     expect(stripInvisibleCodepoints('a' + cp + 'b')).toBe('ab');
@@ -831,16 +911,24 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
   // hold after 62-12: the alternation now appears exactly ONCE, inside the ATTRS
   // definition itself, not once per regex. These are the single-source-of-truth
   // assertions that assertion should always have been.
-  it('the quote-aware alternation is defined exactly once, and used by exactly four compile-once RegExp constructions', () => {
+  //
+  // 62-13: both counts rise from 4 to 5. RAWTEXT_CLOSE_TAIL_RE (the NEW-01 fix's
+  // sticky close-tag-tail regex) is a FIFTH literal built from the shared ATTRS
+  // fragment — this is the guard working as intended (a fifth tag-boundary regex was
+  // added and it stayed structurally in agreement, via ATTRS, with the other four),
+  // not the guard being weakened. Avoiding ATTRS in the close tail to keep the count at
+  // 4 would reintroduce exactly the cross-stage boundary divergence (T-62-43) this
+  // guard exists to detect, so that path is deliberately not taken.
+  it('the quote-aware alternation is defined exactly once, and used by exactly five compile-once RegExp constructions', () => {
     const alternationPrefix = '(?:"[^"]*"|\'[^\']*\'|';
     const alternationCount = COMMENT_STRIPPED_SOURCE.split(alternationPrefix).length - 1;
     expect(alternationCount).toBe(1);
 
     const attrsInterpolationLines = SOURCE.split('\n').filter(line => line.includes('${ATTRS}'));
-    expect(attrsInterpolationLines.length).toBe(4);
+    expect(attrsInterpolationLines.length).toBe(5);
 
     const newRegExpLines = SOURCE.split('\n').filter(line => line.includes('new RegExp('));
-    expect(newRegExpLines.length).toBe(4);
+    expect(newRegExpLines.length).toBe(5);
     for (const line of newRegExpLines) {
       expect(line.trimStart().startsWith('const ')).toBe(true);
     }
