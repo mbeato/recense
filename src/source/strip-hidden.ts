@@ -125,10 +125,10 @@
  *     Z contain no `/*`, so its early exit fires immediately) — the cost is 100% downstream,
  *     in the rule scan this bound replaces. The scan's full equivalence argument is stated in
  *     `harvestHidingSelectors`'s own doc comment.
- * The one quadratic this module still exhibits — `STYLE_BLOCK_RE`'s lazy `</style>` tail scan
- * on a body with complete open tags but no close tag anywhere (T-62-54) — is untouched here;
- * it is measured and named, not fixed, and is the residual plan 62-15's input cap is sized
- * against.
+ * The one quadratic this module still exhibited — `STYLE_BLOCK_RE`'s lazy `</style>` tail scan
+ * on a body with complete open tags but no close tag anywhere (T-62-54) — was untouched here;
+ * it was measured and named, not fixed, and was the residual plan 62-15's input cap was sized
+ * against. It is ELIMINATED, not re-bounded, by the "62-18 gap closure" section below.
  *
  * 62-17 gap closure — the third rewrite of this module's CSS layer, and the first that
  * replaces the underlying MECHANISM (raw-text scanning) instead of patching another
@@ -172,6 +172,65 @@
  *    decode derivation). This gap closure's scope floor is therefore TWO closed leaks, not
  *    three.
  *
+ * 62-18 gap closure (T62-91, 62-VERIFICATION.md) — eliminates the one quadratic 62-14 named
+ * but did not fix. `62-VERIFICATION.md` found that plan 62-15's 1 MiB cap was sized against
+ * ONE parametrization of `STYLE_BLOCK_RE`'s lazy `</style>`-tail scan (T-62-54); a denser,
+ * cheaper-to-construct variant costs far more at the identical cap boundary. Measured in
+ * isolation at exactly 1,048,576 code units, comparing `html.matchAll(STYLE_BLOCK_RE)`
+ * (left) against this plan's linear replacement (right):
+ *
+ *   shape at exactly 1,048,576 code units                     STYLE_BLOCK_RE   linear walk
+ *   bare `<style>` repeated (T62-91's own worst case)            23,249 ms         0.3 ms
+ *   62-15's Shape T, 4 attribute pairs                            2,887 ms         0.2 ms
+ *   single unquoted attribute triple                              8,381 ms         0.2 ms
+ *   `<style ` repeated with NO `>` until the final byte (new)   156,223 ms         2.5 ms
+ *   well-formed `<style>.g{display:none}</style>` repeated           2.5 ms         3.6 ms
+ *
+ * The `<style ` -with-no-`>` shape had never been measured by any prior wave: it is reachable
+ * end-to-end because stage 0 (Bound A, 62-14) truncates from the first `<` that FOLLOWS the
+ * last `>`, so a body whose only `>` is its final byte is not truncated at all and reaches
+ * `harvestHidingSelectors` in full. At 156 seconds it is 7x worse than the 22.7 s the
+ * verification report found and 156x the wave's own 1000 ms budget.
+ *
+ * `STYLE_BLOCK_RE` is DELETED, not re-bounded, in favor of stage 2 locating `<style>`
+ * elements with the SAME primitives stage 4 already uses: `START_TAG_RE` finds each
+ * `<style ...>` open tag (its attribute region is built from the shared `ATTRS` fragment,
+ * which PERMITS an unquoted `<` per HTML §13.2.5.36, so `<style<style<style…>` is ONE start
+ * tag, not thousands of failing scans — the same amortization argument Bound A already
+ * established for stage 0 (62-14), now applied to stage 2 as well); `findRawtextCloseBounds`
+ * (placed above `findRawtextCloseEnd`, in the shared tag-matching primitives section) then
+ * finds the matching `</style...>` close tag with a cursor that only moves FORWARD. The first
+ * failure to find any further `</style` proves no LATER `<style` can find one either (the
+ * cursor never rewinds), so the walk BREAKS on the first unterminated element rather than
+ * retrying a failing scan from every subsequent `<style` — this is what converts T-62-54's
+ * O(n²) into O(n).
+ *
+ * On the pathological shapes above, the two implementations also disagree on RESULT, not just
+ * cost: `matchAll` requires a close tag and finds 0 blocks; the linear walk finds 1 block
+ * whose content runs to end of input. This is a DELIBERATE, specified behavior change: per
+ * HTML §13.2.5, an unterminated `<style>` element's content runs to end of input — exactly
+ * the range stage 4's own `findRawtextCloseEnd` fail-safe already deletes. Harvesting it is
+ * the FAITHFUL outcome (a browser applies the hiding rule too), not an over-reach: before
+ * this closure, a class-hidden payload behind an unterminated `<style>` leaked as prose
+ * (under-strip); after, it is correctly hidden, and a separate hiding-signature-negative test
+ * confirms harvesting to EOF does not start removing content no rule actually hides
+ * (over-strip control).
+ *
+ * Also closes the T-62-43 cross-stage boundary bug class for `<style>` specifically: BL-01
+ * and BL-02 (62-12 gap closure #1, above) were both instances of stage 2 and stage 4 holding
+ * DIFFERENT opinions about where a `<style>` element begins and ends. Both properties those
+ * fixes established — the CR-01 quote-aware open tag, the BL-02 ATTRS-built close tail
+ * (rejecting a simpler `<\/style\b[^>]*>` form, which would both reintroduce the 62-09 source
+ * guard's banned substring and reopen a fifth independent boundary opinion) — are now
+ * INHERITED by stage 2 rather than re-asserted by a separate regex, because stage 2 uses the
+ * exact same `START_TAG_RE` and `RAWTEXT_CLOSE_TAIL_RE` primitives stage 4 already used.
+ * There is now only one opinion about a `<style>` element's boundary, not two that happen to
+ * agree.
+ *
+ * `<style/>` (self-closing) is unaffected by this closure — the outer walk below skips any
+ * match `SELF_CLOSING_SUFFIX_RE` reports as self-closing, leaving WR-03 (62-REVIEW.md, still
+ * open) exactly as it was, not attempting to fix it here.
+ *
  * Stage order (load-bearing — see the block comment above each stage):
  *  0. Hoisted stray-`<` fail-safe truncation (62-14, Bound A) — runs immediately after stage
  *     1 and before stage 2; a DUPLICATE of the stage-6 truncation below, not a move of it.
@@ -185,10 +244,12 @@
  *  2. CSS hiding-selector harvest from `<style>` blocks — BEFORE those blocks are
  *     discarded, so a `.legal{display:none}` rule is remembered even though the block
  *     carrying it is about to be deleted (stage 4). Bounded to 200 harvested selectors.
- *     The `<style>` open tag is matched quote-aware, so a `type="text/css" data-y="x>y"`
- *     style tag still yields its rules to the harvest. Block content is read as a css-tree
- *     TOKEN STREAM (62-17) — rule boundaries come from `{`/`}` tokens and selector shape
- *     from token structure, not from a comment-stripped text scan.
+ *     `<style>` elements are located LINEARLY (62-18) with the same `START_TAG_RE` +
+ *     forward-only close-tag cursor stage 4 uses, so a `type="text/css" data-y="x>y"`
+ *     style tag still yields its rules to the harvest, and an unterminated `<style>`'s
+ *     content is harvested to end of input rather than silently dropped. Block content is
+ *     read as a css-tree TOKEN STREAM (62-17) — rule boundaries come from `{`/`}` tokens and
+ *     selector shape from token structure, not from a comment-stripped text scan.
  *  3. HTML comment removal.
  *  4. Non-content element removal (script/style/head/title/template/noscript/svg), with
  *     their contents. For `RAWTEXT_ELEMENTS`, the removal range's end is found by
@@ -385,10 +446,28 @@ const RAWTEXT_CLOSE_TAIL_RE = new RegExp(`${ATTRS}>`, 'y');
 /**
  * Forward-scans from `fromIndex` for the first `</tagName ...>` close tag, per the
  * raw-text parsing model: nothing in the body is a tag except the element's own end tag,
- * so the FIRST matching close tag ends the element (no depth counting). Fail-safe: returns
- * `html.length` if no matching close exists, matching `findMatchingCloseEnd`'s contract.
+ * so the FIRST matching close tag ends the element (no depth counting). Returns both
+ * boundaries a caller might need — `contentEnd` (the index of the `<` that opens the end
+ * tag, i.e. where the element's TEXT CONTENT ends) and `elementEnd` (the index just past
+ * the end tag's `>`, i.e. where the ELEMENT itself ends) — or `null` when no matching end
+ * tag exists at or after `fromIndex` (62-18, T62-91: added so stage 2's `<style>` walk and
+ * stage 4's `findRawtextCloseEnd` share ONE scan instead of stage 2 running a second,
+ * independent one).
+ *
+ * The scan cursor (`RAWTEXT_CLOSE_OPENER_RE.lastIndex`) only ever MOVES FORWARD: a failed
+ * sticky tail match at one candidate does not rewind before retrying the opener regex at
+ * the next one. This is what makes a caller's "no match found" conclusion transitive — if
+ * scanning from `fromIndex` finds no matching close tag, scanning from any `fromIndex' >
+ * fromIndex` cannot find one either, since every candidate the second scan would visit was
+ * already visited (and rejected) by the first. `harvestHidingSelectors` below relies on
+ * exactly this property to break out of its outer loop on the first unterminated `<style>`
+ * rather than repeating a failing scan from every subsequent one.
  */
-function findRawtextCloseEnd(html: string, tagName: string, fromIndex: number): number {
+function findRawtextCloseBounds(
+  html: string,
+  tagName: string,
+  fromIndex: number
+): { contentEnd: number; elementEnd: number } | null {
   const lower = tagName.toLowerCase();
   RAWTEXT_CLOSE_OPENER_RE.lastIndex = fromIndex;
   let m: RegExpExecArray | null;
@@ -397,12 +476,23 @@ function findRawtextCloseEnd(html: string, tagName: string, fromIndex: number): 
     if (name !== lower) continue;
     RAWTEXT_CLOSE_TAIL_RE.lastIndex = RAWTEXT_CLOSE_OPENER_RE.lastIndex;
     if (RAWTEXT_CLOSE_TAIL_RE.exec(html) !== null) {
-      return RAWTEXT_CLOSE_TAIL_RE.lastIndex;
+      return { contentEnd: m.index, elementEnd: RAWTEXT_CLOSE_TAIL_RE.lastIndex };
     }
     // Sticky tail match failed (e.g. no `>` anywhere after this candidate) — keep
     // scanning forward for another `</tagName` occurrence rather than giving up.
   }
-  return html.length;
+  return null;
+}
+
+/**
+ * Thin wrapper over `findRawtextCloseBounds` returning only `elementEnd` (or `html.length`
+ * on no match, matching `findMatchingCloseEnd`'s fail-safe contract) — kept so stage 4's one
+ * remaining caller (`findMatchingCloseEnd`) does not need to unpack the pair itself. The
+ * close-tag scan exists exactly ONCE, in `findRawtextCloseBounds` above.
+ */
+function findRawtextCloseEnd(html: string, tagName: string, fromIndex: number): number {
+  const bounds = findRawtextCloseBounds(html, tagName, fromIndex);
+  return bounds === null ? html.length : bounds.elementEnd;
 }
 
 /**
@@ -484,34 +574,13 @@ function applyRemovalRanges(html: string, ranges: Array<[number, number]>): stri
 // Stage 2 — CSS hiding-selector harvest (before <style> blocks are discarded)
 // ---------------------------------------------------------------------------
 
-/**
- * Matches a `<style>` open tag through to its closing tag, built from the shared `ATTRS`
- * fragment on BOTH the open tag and the close-tag tail (62-12 gap closure, BL-01/BL-02).
- *
- * OPEN TAG: quote-aware -- only an unquoted `<` or `>` terminates it, since a literal `>`
- * inside a quoted attribute value is legal HTML and was the CR-01 bypass (truncated the
- * harvested block content mid-attribute, so the rule harvest saw a garbage selector and no
- * hiding selector was ever recorded), and an unquoted `<` is legal HTML per section
- * 13.2.5.36 and was the BL-01 bypass -- 62-09 excluded `<` here to keep this regex's
- * open-tag boundary opinion in agreement with `START_TAG_RE`/`ANY_TAG_TOKEN_RE`, but they
- * agreed on FAILING: a class-hidden payload and the raw stylesheet both leaked into
- * `record.content`. All four tag-scanning literals now share `ATTRS`, so agreement is
- * structural rather than incidental.
- *
- * CLOSE TAG: the tail is built from the same ATTRS fragment, closing BL-02 (62-REVIEW.md) --
- * `</style foo>` and `</style/>` both legally end a `<style>` element (the RAWTEXT
- * end-tag-name state transitions to before-attribute-name on whitespace and to
- * self-closing-start-tag on `/`), and `ANY_TAG_TOKEN_RE` already accepted both; the old
- * `<\/style\s*>` tail did not, so stage 4 could delete the block while stage 2 harvested
- * nothing -- the evidence that the span was hidden was destroyed while the span's text
- * survived. The tail is deliberately built from the ATTRS fragment, NOT the simpler
- * `<\/style\b[^>]*>` a code reviewer proposed: `[^>]*` would (a) reintroduce the exact
- * substring the 62-09 source guard bans, forcing either a self-inflicted red suite or a
- * weakened guard, and (b) give the close tag a different boundary rule from
- * `ANY_TAG_TOKEN_RE` -- exactly the T-62-43 cross-stage disagreement this file exists to
- * prevent.
- */
-const STYLE_BLOCK_RE = new RegExp(`<style\\b${ATTRS}>([\\s\\S]*?)<\\/style\\b${ATTRS}>`, 'gi');
+// `STYLE_BLOCK_RE` (a lazy `<style\bATTRS>([\s\S]*?)<\/style\bATTRS>` scan) located `<style>`
+// elements here through 62-17. DELETED in 62-18 (T62-91): its lazy `</style>`-tail scan was
+// the module's one remaining quadratic. Stage 2 now locates `<style>` elements with the same
+// `START_TAG_RE` + `findRawtextCloseBounds` primitives stage 4 already used — see the
+// file-level doc block's "62-18 gap closure" section for the cost table and the O(n) argument,
+// and `harvestHidingSelectors`'s own doc comment below for the CR-01/BL-01/BL-02 boundary
+// decisions this deletion INHERITS rather than re-asserts.
 
 /** Cap on harvested selectors so a pathological stylesheet cannot cause quadratic work. */
 const MAX_HARVESTED_SELECTORS = 200;
@@ -821,14 +890,71 @@ function harvestFromStylesheet(
  * is now structural: `tokenize` is one linear pass regardless of brace shape, so there is no
  * failing-scan region to retry, matching this module's WR-02 property by construction rather
  * than by cursor-walk proof.
+ *
+ * 62-18 gap closure (T62-91): the OUTER loop that finds each `<style>` element's boundaries is
+ * now a `START_TAG_RE.exec` cursor walk over `html`, not `html.matchAll(STYLE_BLOCK_RE)` —
+ * `STYLE_BLOCK_RE`'s lazy `</style>`-tail scan was the module's one remaining quadratic
+ * (T-62-54), and this is what deletes it (see the file-level doc block's "62-18 gap closure"
+ * section for the cost table and the O(n) argument). This inherits, rather than re-asserts,
+ * the two boundary decisions `STYLE_BLOCK_RE`'s own doc comment used to record:
+ *  - OPEN TAG (CR-01/BL-01, 62-12): quote-aware, only an unquoted `<` or `>` terminates it —
+ *    a literal `>` inside a quoted attribute value (CR-01) and an unquoted `<` per HTML
+ *    §13.2.5.36 (BL-01) are both legal HTML that must not truncate the tag early. This is now
+ *    inherited for free: `START_TAG_RE` already has this property, since it is built from the
+ *    same shared `ATTRS` fragment `STYLE_BLOCK_RE` used to be built from.
+ *  - CLOSE TAG (BL-02, 62-13): `</style foo>` and `</style/>` both legally end a `<style>`
+ *    element (the RAWTEXT end-tag-name state transitions to before-attribute-name on
+ *    whitespace and to self-closing-start-tag on `/`); a bare `<\/style\s*>` tail would miss
+ *    both. Also inherited for free: `findRawtextCloseBounds` (above `findRawtextCloseEnd`)
+ *    uses `RAWTEXT_CLOSE_TAIL_RE`, built from the same `ATTRS` fragment, deliberately NOT the
+ *    simpler `<\/style\b[^>]*>` a code reviewer once proposed — `[^>]*` would both reintroduce
+ *    the exact substring the 62-09 source guard bans and give the close tag a boundary rule
+ *    independent of `ANY_TAG_TOKEN_RE`/`START_TAG_RE`.
+ * Because stage 2 now uses the EXACT SAME `START_TAG_RE` and `RAWTEXT_CLOSE_TAIL_RE` primitives
+ * stage 4 (`findMatchingCloseEnd`/`collectRemovalRanges`) already used, agreement between the
+ * two stages about a `<style>` element's boundary is now structural rather than the outcome of
+ * two independently-maintained regexes happening to carry the same character class — this
+ * closes the T-62-43 cross-stage boundary bug class for `<style>` specifically (BL-01 and
+ * BL-02 were both instances of that class).
+ *
+ * `<style/>` (self-closing) is skipped by the outer walk, unchanged from before this closure —
+ * WR-03 (62-REVIEW.md, still open) is not addressed here.
+ *
+ * On an UNTERMINATED `<style>` (no matching `</style...>` anywhere at or after the open tag),
+ * this walk harvests the element's content to end of input, per HTML §13.2.5, then BREAKS the
+ * outer loop rather than continuing to the next `<style` in the document — `findRawtextCloseBounds`'s
+ * forward-only cursor makes a failure at this position proof that no later position can
+ * succeed either (see that function's own doc comment), so a further attempt would only repeat
+ * the same failing scan. This is a deliberate, specified behavior change from `STYLE_BLOCK_RE`
+ * (which required a close tag and harvested nothing from an unterminated element): a browser
+ * applies an unterminated `<style>` block's rules too, so harvesting is the faithful outcome,
+ * not an over-reach.
  */
 function harvestHidingSelectors(html: string): { classes: Set<string>; ids: Set<string> } {
   const classes = new Set<string>();
   const ids = new Set<string>();
   const counter = { total: 0 };
-  for (const styleMatch of html.matchAll(STYLE_BLOCK_RE)) {
+  START_TAG_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = START_TAG_RE.exec(html)) !== null) {
     if (counter.total >= MAX_HARVESTED_SELECTORS) break;
-    harvestFromStylesheet(styleMatch[1] ?? '', classes, ids, counter);
+    const tagName = match[1]!.toLowerCase();
+    if (tagName !== 'style') continue;
+    if (SELF_CLOSING_SUFFIX_RE.test(match[0])) continue; // WR-03: unchanged, not fixed here
+    const tagEnd = START_TAG_RE.lastIndex;
+    const bounds = findRawtextCloseBounds(html, 'style', tagEnd);
+    if (bounds !== null) {
+      harvestFromStylesheet(html.slice(tagEnd, bounds.contentEnd), classes, ids, counter);
+      START_TAG_RE.lastIndex = bounds.elementEnd;
+    } else {
+      // No matching </style...> anywhere at or after tagEnd: harvest to end of input (HTML
+      // §13.2.5), then stop entirely. findRawtextCloseBounds's cursor only moves forward, so
+      // this failure proves no later `<style` in the document could find a close tag either —
+      // retrying would repeat the same failing scan. Breaking here is what converts T-62-54's
+      // O(n^2) into O(n).
+      harvestFromStylesheet(html.slice(tagEnd), classes, ids, counter);
+      break;
+    }
   }
   return { classes, ids };
 }

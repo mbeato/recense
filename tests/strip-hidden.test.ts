@@ -1320,23 +1320,34 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
   // definition itself, not once per regex. These are the single-source-of-truth
   // assertions that assertion should always have been.
   //
-  // 62-13: both counts rise from 4 to 5. RAWTEXT_CLOSE_TAIL_RE (the NEW-01 fix's
-  // sticky close-tag-tail regex) is a FIFTH literal built from the shared ATTRS
-  // fragment — this is the guard working as intended (a fifth tag-boundary regex was
+  // 62-13: both counts rose from 4 to 5. RAWTEXT_CLOSE_TAIL_RE (the NEW-01 fix's
+  // sticky close-tag-tail regex) was a FIFTH literal built from the shared ATTRS
+  // fragment — the guard working as intended (a fifth tag-boundary regex was
   // added and it stayed structurally in agreement, via ATTRS, with the other four),
   // not the guard being weakened. Avoiding ATTRS in the close tail to keep the count at
-  // 4 would reintroduce exactly the cross-stage boundary divergence (T-62-43) this
-  // guard exists to detect, so that path is deliberately not taken.
-  it('the quote-aware alternation is defined exactly once, and used by exactly five compile-once RegExp constructions', () => {
+  // 4 would have reintroduced exactly the cross-stage boundary divergence (T-62-43) this
+  // guard exists to detect, so that path was deliberately not taken.
+  //
+  // 62-18: both counts FALL from 5 to 4. `STYLE_BLOCK_RE` — one of the five ATTRS-built
+  // literals — was DELETED, not replaced: stage 2's `<style>` element boundary is now
+  // found by REUSING `START_TAG_RE` and `RAWTEXT_CLOSE_TAIL_RE`, the same two literals
+  // stage 4 already used, rather than maintaining a sixth independent boundary opinion.
+  // This is the guard working as intended in the OTHER direction from 62-13's increase —
+  // fewer independent boundary opinions is the direction this guard exists to push, and a
+  // falling count here means agreement became structural (one shared primitive reused
+  // twice) rather than incidental (two literals happening to carry the same character
+  // class). The mirror image of 62-13's rise from 4 to 5 when RAWTEXT_CLOSE_TAIL_RE was
+  // ADDED as a genuinely new boundary opinion that needed to agree with the rest.
+  it('the quote-aware alternation is defined exactly once, and used by exactly four compile-once RegExp constructions', () => {
     const alternationPrefix = '(?:"[^"]*"|\'[^\']*\'|';
     const alternationCount = COMMENT_STRIPPED_SOURCE.split(alternationPrefix).length - 1;
     expect(alternationCount).toBe(1);
 
     const attrsInterpolationLines = SOURCE.split('\n').filter(line => line.includes('${ATTRS}'));
-    expect(attrsInterpolationLines.length).toBe(5);
+    expect(attrsInterpolationLines.length).toBe(4);
 
     const newRegExpLines = SOURCE.split('\n').filter(line => line.includes('new RegExp('));
-    expect(newRegExpLines.length).toBe(5);
+    expect(newRegExpLines.length).toBe(4);
     for (const line of newRegExpLines) {
       expect(line.trimStart().startsWith('const ')).toBe(true);
     }
