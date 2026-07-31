@@ -1004,6 +1004,58 @@ describe('stripHiddenContent — WR-02: the 62-VERIFICATION.md adversarial shape
   });
 }, 20000);
 
+describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (totality, idempotence, no stray <)', () => {
+  // Seeded LCG (Numerical Recipes constants) — NOT Math.random — so any failure is
+  // reproducible purely from the printed iteration index. This is a generated-input LOCK on
+  // the invariants Bound A/B must preserve, distinct from the differential harness (scratch,
+  // not shipped) that compares byte-for-byte against the pre-change module. The "no stray <"
+  // invariant was confirmed to already hold on the PRE-change module before being asserted
+  // here (2000 generated inputs, 0 violations — see the 62-14 SUMMARY), so this locks a
+  // preserved property, not a new claim.
+  function makeLcg(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+  }
+  const ALPHABET = [
+    '<', '>', '/', '"', "'", '{', '}', '/*', '*/', '<!--', '-->',
+    '<style', '</style', '<script', '</script', 'url(', '(', ')', '\\',
+    'display:none', 'class', 'legal', ' ', '\n', 'a', 'b', 'c',
+  ];
+
+  it('>= 2000 generated inputs: total (never throws), idempotent, and output contains no stray <', () => {
+    const rand = makeLcg(0xfeed5eed);
+    const N = 2000;
+    const throwFailures: number[] = [];
+    const idempotenceFailures: number[] = [];
+    const strayAngleFailures: number[] = [];
+
+    for (let i = 0; i < N; i++) {
+      const len = 5 + Math.floor(rand() * 60);
+      let s = '';
+      for (let j = 0; j < len; j++) {
+        s += ALPHABET[Math.floor(rand() * ALPHABET.length)];
+      }
+      let once: string;
+      try {
+        once = stripHiddenContent(s);
+      } catch {
+        throwFailures.push(i);
+        continue;
+      }
+      const twice = stripHiddenContent(once);
+      if (twice !== once) idempotenceFailures.push(i);
+      if (once.includes('<')) strayAngleFailures.push(i);
+    }
+
+    expect(throwFailures).toEqual([]);
+    expect(idempotenceFailures).toEqual([]);
+    expect(strayAngleFailures).toEqual([]);
+  });
+});
+
 describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL-02 bug class (62-12 decision #1)', () => {
   // Retitled from "bug-class guard" (62-09): WR-06 (62-REVIEW.md) established that a
   // string-matching source guard can never GUARANTEE this bug class does not recur — every

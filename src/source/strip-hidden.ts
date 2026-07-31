@@ -69,7 +69,7 @@
  *     passes each harvested `<style>` block's content through `stripCssComments` (a
  *     LINEAR, regex-free scan of the three CSS Syntax contexts in which a `/*` is not a
  *     comment — see `stripCssComments`'s own doc comment for the closed enumeration and
- *     the two rejected fix forms) BEFORE `RULE_RE` scans it. Previously a CSS comment
+ *     the two rejected fix forms) BEFORE the rule harvest scans it. Previously a CSS comment
  *     anywhere near a hiding selector — before it, after it, inside its comma list, or
  *     between the selector and `{` — made the exact-match bare-selector test fail, so
  *     NOTHING in that rule was harvested and the class/id-hidden element's text reached
@@ -97,7 +97,42 @@
  * shared `ATTRS` fragment (the guard working as intended, not weakened — see
  * `RAWTEXT_CLOSE_TAIL_RE`'s own doc comment).
  *
+ * 62-14 gap closure (WR-02, 62-VERIFICATION.md) — the algorithmic half of the availability
+ * gap escalated from "accepted residual" to a filed gap: two exact linear bounds replace the
+ * module's two backtracking-heavy scans, both measured behavior-preserving against the
+ * pre-change module over the shipped test corpus and tens of thousands of generated inputs
+ * (zero differences — see the 62-14 SUMMARY for the exact counts).
+ *  1. Bound A (new stage 0, runs immediately after stage 1): duplicates stage 6's stray-`<`
+ *     fail-safe truncation BEFORE any later stage's scan can pay for it. A forward scan of
+ *     the shared `ATTRS` fragment that reaches an unquoted `>` succeeds and advances past it,
+ *     so successful matches cost O(n) in aggregate; a scan can only fail repeatedly in the
+ *     region AFTER the last `>` in the string, where no complete tag can exist — that region
+ *     is exactly what stage 6 already deletes, so hoisting an identical deletion ahead of
+ *     stages 2-6 removes the entire failing-scan region before anything else pays for it.
+ *     Stage 6's own truncation stays in place — stages 4 and 5 delete ranges and can expose a
+ *     NEW stray `<` that stage 0 could not have seen; Bound A is an addition, not a move.
+ *  2. Bound B: `harvestHidingSelectors`'s rule scan is now a linear `indexOf`/`lastIndexOf`
+ *     cursor walk in place of a `matchAll` loop over a backtracking-heavy regex. A `<style>`
+ *     body with no `{` at all — the cheapest possible attacker-authored stylesheet — forced
+ *     the old regex to retry a failing forward scan at every start position: this is why the
+ *     verification report's shape (`<style>` + `a<x ` repeated + `</style>`, no braces
+ *     anywhere) cost 126 SECONDS at 512 KB despite carrying no hiding rule at all, and why
+ *     shapes V, W, Y and Z (reached through different byte patterns — an open brace with a
+ *     brace-free tail, a brace-free run before a real rule, alternating quotes, and repeated
+ *     unterminated url-tokens, respectively) cost the same. `stripCssComments` (62-13) is NOT
+ *     the cause for any of these: it is measured directly (per-stage, at every size) to cost
+ *     under a millisecond even where it returns its input completely unchanged (shapes Y and
+ *     Z contain no `/*`, so its early exit fires immediately) — the cost is 100% downstream,
+ *     in the rule scan this bound replaces. The scan's full equivalence argument is stated in
+ *     `harvestHidingSelectors`'s own doc comment.
+ * The one quadratic this module still exhibits — `STYLE_BLOCK_RE`'s lazy `</style>` tail scan
+ * on a body with complete open tags but no close tag anywhere (T-62-54) — is untouched here;
+ * it is measured and named, not fixed, and is the residual plan 62-15's input cap is sized
+ * against.
+ *
  * Stage order (load-bearing — see the block comment above each stage):
+ *  0. Hoisted stray-`<` fail-safe truncation (62-14, Bound A) — runs immediately after stage
+ *     1 and before stage 2; a DUPLICATE of the stage-6 truncation below, not a move of it.
  *  1. Invisible-codepoint removal (zero-width chars, BOM, soft hyphen, invisible math
  *     operators, the Unicode Tags block) — unconditional, applied to ALL input including
  *     plain text, and run FIRST so a payload cannot use zero-width characters to
@@ -392,7 +427,7 @@ function applyRemovalRanges(html: string, ranges: Array<[number, number]>): stri
  *
  * OPEN TAG: quote-aware -- only an unquoted `<` or `>` terminates it, since a literal `>`
  * inside a quoted attribute value is legal HTML and was the CR-01 bypass (truncated the
- * harvested block content mid-attribute, so `RULE_RE` saw a garbage selector and no
+ * harvested block content mid-attribute, so the rule harvest saw a garbage selector and no
  * hiding selector was ever recorded), and an unquoted `<` is legal HTML per section
  * 13.2.5.36 and was the BL-01 bypass -- 62-09 excluded `<` here to keep this regex's
  * open-tag boundary opinion in agreement with `START_TAG_RE`/`ANY_TAG_TOKEN_RE`, but they
@@ -414,8 +449,6 @@ function applyRemovalRanges(html: string, ranges: Array<[number, number]>): stri
  * prevent.
  */
 const STYLE_BLOCK_RE = new RegExp(`<style\\b${ATTRS}>([\\s\\S]*?)<\\/style\\b${ATTRS}>`, 'gi');
-/** Simple non-nested `selectorList { body }` rule matcher (plain CSS has no nesting). */
-const RULE_RE = /([^{}]+)\{([^{}]*)\}/g;
 const BARE_CLASS_SELECTOR_RE = /^\.[A-Za-z0-9_-]+$/;
 const BARE_ID_SELECTOR_RE = /^#[A-Za-z0-9_-]+$/;
 
@@ -602,9 +635,34 @@ function stripCssComments(css: string): string {
  * would destroy the evidence that the span is hidden while leaving its text behind.
  *
  * VF-01 gap closure (62-13): block content is passed through `stripCssComments` BEFORE
- * `RULE_RE` scans it, so a `/* comment *\/` adjacent to a hiding selector (before it,
- * after it, inside its comma list, or between the selector and `{`) can no longer make
+ * the rule scan below sees it, so a `/* comment *\/` adjacent to a hiding selector (before
+ * it, after it, inside its comma list, or between the selector and `{`) can no longer make
  * the exact-match bare-selector test fail and drop the whole rule from the harvest.
+ *
+ * WR-02 gap closure (62-14, Bound B): the rule scan is a LINEAR `indexOf`/`lastIndexOf`
+ * cursor walk, not a regex `matchAll` loop. Plain CSS has no rule nesting, so a
+ * `selectorList { body }` rule could be described by the pattern `[^{}]+\{[^{}]*\}` — but
+ * driving that pattern with a global regex retried at every start position is what made a
+ * brace-free `<style>` body quadratic (WR-02, T-62-75): every retried start position
+ * re-scans forward looking for a `{`, and on a long run with no `{` at all that scan pays
+ * for the whole remaining string at every position.
+ *
+ * Equivalence argument (checkable, not just trusted): partition the cleaned block content on
+ * `}` into segments — the text strictly between two consecutive `}` characters, or between
+ * the start and the first `}`. Within a segment, a `[^{}]*` declaration body terminated by
+ * `}` can only begin right after that segment's LAST `{` — any earlier `{` would leave a
+ * dangling unconsumed `{` before the body could reach its terminating `}`. The selector run
+ * `[^{}]+` immediately preceding that body must, symmetrically, begin right after the
+ * PRECEDING `{` in the same segment, or at the segment start when the last `{` has no
+ * earlier `{` before it (including when the last `{` IS the segment's first character). A
+ * segment with no `{` at all cannot start a body, so it yields no rule — the same outcome as
+ * this function's existing `selectors.length === 0` skip below, since `[^{}]+` can never
+ * match zero characters and a zero-length selector slice fails that same downstream check.
+ * This produces exactly the same sequence of `(selectorText, body)` pairs, in the same
+ * order, that the regex form produced — checked, not just argued, by a differential harness
+ * over the shipped corpus and tens of thousands of generated inputs (62-14 SUMMARY).
+ * `MAX_HARVESTED_SELECTORS` is checked at the same two points as before: once per candidate
+ * rule (mirroring the old per-match check) and once per selector inside the allowed rule.
  */
 function harvestHidingSelectors(html: string): { classes: Set<string>; ids: Set<string> } {
   const classes = new Set<string>();
@@ -612,10 +670,20 @@ function harvestHidingSelectors(html: string): { classes: Set<string>; ids: Set<
   let total = 0;
   for (const styleMatch of html.matchAll(STYLE_BLOCK_RE)) {
     const blockContent = stripCssComments(styleMatch[1] ?? '');
-    for (const ruleMatch of blockContent.matchAll(RULE_RE)) {
+    const len = blockContent.length;
+    let cursor = 0;
+    while (cursor < len) {
+      const closeBrace = blockContent.indexOf('}', cursor);
+      if (closeBrace === -1) break;
+      const segment = blockContent.slice(cursor, closeBrace);
+      cursor = closeBrace + 1;
+      const lastOpen = segment.lastIndexOf('{');
+      if (lastOpen === -1) continue;
+      const precedingOpen = lastOpen > 0 ? segment.lastIndexOf('{', lastOpen - 1) : -1;
+      const selectorStart = precedingOpen === -1 ? 0 : precedingOpen + 1;
       if (total >= MAX_HARVESTED_SELECTORS) return { classes, ids };
-      const selectorText = ruleMatch[1]!.trim();
-      const body = ruleMatch[2] ?? '';
+      const selectorText = segment.slice(selectorStart, lastOpen).trim();
+      const body = segment.slice(lastOpen + 1);
       const selectors = selectorText.split(',').map(s => s.trim()).filter(Boolean);
       if (selectors.length === 0) continue;
       const allBare = selectors.every(
@@ -830,6 +898,18 @@ export function stripHiddenContent(text: string): string {
   // Stage 1: invisible codepoints first, so obfuscation like `dis<ZWSP>play:none`
   // cannot evade the stage-5 hiding-signature matcher.
   let s = stripInvisibleCodepoints(text);
+
+  // Stage 0 (62-14, Bound A, WR-02/T-62-77): hoisted duplicate of the stage-6 stray-`<`
+  // fail-safe, run BEFORE stage 2 so no later scan pays for the failing-scan region. A
+  // forward scan of the shared ATTRS fragment that reaches an unquoted `>` succeeds and
+  // advances past it (O(n) in aggregate); it can only fail repeatedly in the region after
+  // the LAST `>` in the string, where no complete tag can exist — that is exactly the region
+  // stage 6 already deletes, so deleting it here removes the entire failing-scan surface
+  // before stages 2-6 ever see it. `lastCloseAngle + 1` is 0 when there is no `>` at all,
+  // which correctly scans the whole string for a stray `<` in that case too.
+  const lastCloseAngle = s.lastIndexOf('>');
+  const earlyStrayAngleBracket = s.indexOf('<', lastCloseAngle + 1);
+  if (earlyStrayAngleBracket !== -1) s = s.slice(0, earlyStrayAngleBracket);
 
   // Stage 2: harvest class/id hiding selectors from <style> blocks before they're
   // discarded in stage 4.
