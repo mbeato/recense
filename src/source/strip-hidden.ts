@@ -130,6 +130,48 @@
  * it is measured and named, not fixed, and is the residual plan 62-15's input cap is sized
  * against.
  *
+ * 62-17 gap closure — the third rewrite of this module's CSS layer, and the first that
+ * replaces the underlying MECHANISM (raw-text scanning) instead of patching another
+ * disagreement it produced. Six independent bypasses of one contract (CR-01, BL-01, BL-02 x2,
+ * BL-03, CR-04's mechanism, VF-01, NEW-01, WR-02's quadratic, two escaped-selector leaks) had
+ * been found by reconstructing CSS Syntax Level 3 §4.3 one adversarial repro at a time.
+ * `stripCssComments`, `matchesUrlOpen`, `isCssWhitespaceCode` and `BARE_CLASS_SELECTOR_RE`/
+ * `BARE_ID_SELECTOR_RE` are deleted, replaced by a single `tokenize` pass over
+ * `css-tree/tokenizer` (`css-tree@3.2.1`, pinned `--save-exact`, 62-16) reading rule boundaries
+ * from `{`/`}` TOKENS and selector shape from TOKEN STRUCTURE, so agreement with a conformant
+ * CSS engine is structural rather than the outcome of enumerating repros.
+ *  - Adopted surface: `src/` may import ONLY `tokenize`/`tokenTypes` from the `/tokenizer`
+ *    subpath (`src/types/css-tree-tokenizer.d.ts`, 62-16) — never the bare `css-tree` package,
+ *    never its parser/lexer/walker/generator. The parser IS used, deliberately, by a test-only
+ *    liveness oracle under `tests/support/` (62-16) that answers which bare selectors a
+ *    conformant engine treats as live, independent of this module's own code — that oracle
+ *    must never be imported from `src/` (T-62-17-08, enforced by grep in the verify gate).
+ *  - postcss was measured and DISQUALIFIED as an alternative (62-16): wrong on both FB-01's and
+ *    CR-04's own input shapes, so a postcss-based rewrite would have reproduced the same two
+ *    findings under a different implementation rather than closing them.
+ *  - Two characterized css-tree tokenizer deviations from a naive reading of §4.3 (62-16,
+ *    locked by `tests/css-tokenizer-conformance.test.ts`) this harvest tolerates rather than
+ *    re-discovers: a leading U+FEFF is skipped (so a token's first offset may start at 1 —
+ *    unreachable in the real pipeline, since stage 1 removes U+FEFF before stage 2 runs, but
+ *    not assumed here); a token `end` offset may exceed `source.length` by at most 1 (every
+ *    slice below clamps with `Math.min(offset, css.length)` accordingly).
+ *  - 62-16's liveness-oracle adjudication — its own independent re-derivation, using css-tree's
+ *    PARSER, a different layer than this module's tokenizer-only production surface — found
+ *    both filed blockers reclassified as AGREEMENT on their reported inputs: FB-01 (a browser
+ *    never treats `.legal{display:none}` as reaching top level inside `.a`'s still-open,
+ *    bad-string-broken block either) and both CR-04 shapes (a browser drops the malformed
+ *    selector too). CR-04's underlying MECHANISM finding — `matchesUrlOpen` had no
+ *    token-boundary check — was left explicitly open by that reclassification; THIS gap
+ *    closure is what actually retires it, by deleting `matchesUrlOpen` outright rather than
+ *    patching it. The SAME re-derivation found two escaped-selector leaks genuinely LIVE and
+ *    never previously filed (`.leg\61 l` vs `class="legal"`, `#leg\61 l` vs `id="legal"` —
+ *    both now closed by `decodeIdentEscapes`, §4.3.7); a third row planning's own throwaway
+ *    table had guessed at, `.leg\al`, was found by that SAME re-derivation to decode to
+ *    `"leg\nl"` (one hex digit, the `content:"\A"` newline idiom) rather than `"legal"` — a
+ *    correctly-adjudicated NON-leak, not a third finding (see `62-16-SUMMARY.md` for the full
+ *    decode derivation). This gap closure's scope floor is therefore TWO closed leaks, not
+ *    three.
+ *
  * Stage order (load-bearing — see the block comment above each stage):
  *  0. Hoisted stray-`<` fail-safe truncation (62-14, Bound A) — runs immediately after stage
  *     1 and before stage 2; a DUPLICATE of the stage-6 truncation below, not a move of it.
@@ -144,8 +186,9 @@
  *     discarded, so a `.legal{display:none}` rule is remembered even though the block
  *     carrying it is about to be deleted (stage 4). Bounded to 200 harvested selectors.
  *     The `<style>` open tag is matched quote-aware, so a `type="text/css" data-y="x>y"`
- *     style tag still yields its rules to the harvest. Block content is passed through
- *     `stripCssComments` (62-13, VF-01) before the bare-selector check.
+ *     style tag still yields its rules to the harvest. Block content is read as a css-tree
+ *     TOKEN STREAM (62-17) — rule boundaries come from `{`/`}` tokens and selector shape
+ *     from token structure, not from a comment-stripped text scan.
  *  3. HTML comment removal.
  *  4. Non-content element removal (script/style/head/title/template/noscript/svg), with
  *     their contents. For `RAWTEXT_ELEMENTS`, the removal range's end is found by
@@ -184,8 +227,9 @@
  *    prose is cosmetic noise; a non-idempotent boundary function is a correctness bug,
  *    since `redactSecrets` alongside it is idempotent and callers rely on that property.
  *
- * Three named residual limitations this module does NOT close (accepted, not silently
- * omitted — see 62-03-SUMMARY.md T-62-22, 62-07-SUMMARY.md for (c)):
+ * Five named residual limitations this module does NOT close (accepted, not silently
+ * omitted — see 62-03-SUMMARY.md T-62-22, 62-07-SUMMARY.md for (c), 62-17-SUMMARY.md for
+ * (d)/(e)):
  *  (a) White-text-on-white-background hiding is NOT detected. A color-only heuristic
  *      would drop legitimate dark-mode-styled prose, trading an injection risk for a
  *      classification-accuracy regression.
@@ -202,6 +246,19 @@
  *      truncation (BL-01's over-removal direction) — that trigger is now closed, since
  *      `<` no longer terminates the attribute-scanning fragment, so only unbalanced
  *      quotes remain as a trigger of residual (c).
+ *  (d) An at-rule's contents are harvested WITHOUT evaluating the media query itself, so a
+ *      `@media print` hiding rule is treated as unconditionally live (62-17). This is TODAY'S
+ *      behavior, preserved deliberately, not a new gap: the hand-rolled scanner this replaced
+ *      had the identical blind spot (its brace-partition scan found `selector{body}` shapes
+ *      anywhere, including inside `@media`, with no awareness of the surrounding at-rule).
+ *      Errs toward removing content, the module's stated safe direction.
+ *  (e) A `Hash` token whose value would be an "unrestricted hash" rather than a valid `id`
+ *      per CSS Syntax (e.g. `#1abc`, which cannot legally be an HTML `id` either, but IS a
+ *      syntactically valid CSS hash) is harvested as an id name regardless (62-17): the plain
+ *      `tokenize` callback exposes only a token's TYPE, not the id/unrestricted flag css-tree's
+ *      parser layer computes internally. Reachable only when a matching `id="1abc"` attribute
+ *      also exists on some element in the same document, and — like (d) — errs toward removing
+ *      content rather than leaking it.
  *
  * Contract:
  *  - Pure: no side effects, no I/O, no randomness, no clock read (LLM-free online path).
@@ -211,6 +268,12 @@
  *  - Monotone toward less content: for adversarial or malformed input, the output is a
  *    subset-shaped reduction of the input — never the raw input passed through.
  */
+
+// `src/` may import ONLY `tokenize`/`tokenTypes` from the `/tokenizer` subpath (62-16's
+// `src/types/css-tree-tokenizer.d.ts` declares nothing else reachable from here) — never the
+// bare `css-tree` package, never its parser/lexer/walker/generator. See the file-level "62-17
+// gap closure" section above for the adopted-vs-not-adopted surface and why.
+import { tokenize, tokenTypes } from 'css-tree/tokenizer';
 
 // ---------------------------------------------------------------------------
 // Stage 1 — invisible codepoint removal
@@ -449,254 +512,323 @@ function applyRemovalRanges(html: string, ranges: Array<[number, number]>): stri
  * prevent.
  */
 const STYLE_BLOCK_RE = new RegExp(`<style\\b${ATTRS}>([\\s\\S]*?)<\\/style\\b${ATTRS}>`, 'gi');
-const BARE_CLASS_SELECTOR_RE = /^\.[A-Za-z0-9_-]+$/;
-const BARE_ID_SELECTOR_RE = /^#[A-Za-z0-9_-]+$/;
 
 /** Cap on harvested selectors so a pathological stylesheet cannot cause quadratic work. */
 const MAX_HARVESTED_SELECTORS = 200;
 
-/** True for the five CSS whitespace code points (space, tab, LF, CR, FF). */
-function isCssWhitespaceCode(code: number): boolean {
+/**
+ * `stripCssComments`'s naive `.replace()` fix and its follow-up string-aware-but-quadratic
+ * regex fix were both measured and rejected during 62-13/62-14 — see 62-13-SUMMARY.md for the
+ * two measured leak shapes and 62-14-SUMMARY.md for the quadratic-cost measurement. Comment
+ * skipping is now structural (62-17): `Comment` tokens are simply never appended to a prelude
+ * (see `harvestFromStylesheet` below), so neither rejected form's failure mode is reachable.
+ */
+
+/**
+ * The nine css-tree token type NUMBERS this harvest depends on, resolved from `tokenTypes`
+ * ONCE at module load rather than compared by name in the hot loop (62-17). Resolving through
+ * a helper that throws on an unknown name means a future css-tree upgrade that renames or
+ * removes one of these types fails LOUDLY at import time, rather than silently
+ * mis-classifying every token of that kind as "none of the above" and quietly
+ * under-harvesting.
+ */
+function requireTokenType(name: string): number {
+  const type = tokenTypes[name];
+  if (type === undefined) {
+    throw new Error(
+      `strip-hidden.ts: css-tree/tokenizer has no token type named "${name}" -- a css-tree ` +
+        "upgrade likely renamed or removed it, and this module's CSS harvest depends on the name."
+    );
+  }
+  return type;
+}
+
+const TT_COMMENT = requireTokenType('Comment');
+const TT_WHITESPACE = requireTokenType('WhiteSpace');
+const TT_DELIM = requireTokenType('Delim');
+const TT_IDENT = requireTokenType('Ident');
+const TT_HASH = requireTokenType('Hash');
+const TT_COMMA = requireTokenType('Comma');
+const TT_LEFT_CURLY = requireTokenType('LeftCurlyBracket');
+const TT_RIGHT_CURLY = requireTokenType('RightCurlyBracket');
+const TT_AT_KEYWORD = requireTokenType('AtKeyword');
+
+/** One prelude token, captured as a `[type, start, end]` triple into the `css` string. */
+type PreludeToken = readonly [type: number, start: number, end: number];
+
+/** True for the five CSS whitespace code points (space, tab, LF, CR, FF) — matches both
+ * css-tree's own `WhiteSpace` token category and its escape-decoding behavior (verified
+ * directly against `css-tree`'s `ident.decode` during planning: a hex escape's optional
+ * trailing separator is consumed for all five, not just space/tab/LF). */
+function isEscapeSeparatorCode(code: number): boolean {
   return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d || code === 0x0c;
 }
 
-/** True when `css[i..i+3]` is `url(`, matched ASCII-case-insensitively. */
-function matchesUrlOpen(css: string, i: number): boolean {
-  if (i + 4 > css.length) return false;
-  return (
-    (css.charCodeAt(i) | 0x20) === 0x75 /* u */ &&
-    (css.charCodeAt(i + 1) | 0x20) === 0x72 /* r */ &&
-    (css.charCodeAt(i + 2) | 0x20) === 0x6c /* l */ &&
-    css.charCodeAt(i + 3) === 0x28 /* ( */
-  );
+function isHexDigitCode(code: number): boolean {
+  return (code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x46) || (code >= 0x61 && code <= 0x66);
 }
 
 /**
- * Removes CSS comments from `css` (a harvested `<style>` block's content) ahead of the
- * bare-selector check in `harvestHidingSelectors` (VF-01, 62-VERIFICATION.md). Returns
- * `css` unchanged when it contains no `/*`.
+ * Decodes a CSS identifier/hash name per CSS Syntax Level 3 §4.3.7 ("consume an escaped code
+ * point"), applied to the RAW (still-escaped) text css-tree's tokenizer captured for an
+ * `Ident` or `Hash` token — e.g. the 8-character string `leg\61 l`, not `legal`. Decoding is
+ * MANDATORY, not cosmetic: the class/id ATTRIBUTE side (`isHiddenStartTag`, stage 5) is
+ * compared literally against an unescaped HTML attribute value, so an undecoded harvested name
+ * can NEVER equal a name a browser matches — exactly the defect the 62-16 liveness oracle found
+ * and no report had filed (`BARE_CLASS_SELECTOR_RE`/`BARE_ID_SELECTOR_RE` categorically
+ * rejected any selector text containing a backslash, so an escaped selector was never even a
+ * harvest CANDIDATE, regardless of what it decoded to).
  *
- * A LINEAR, regex-free `charCodeAt` cursor scan built from a CLOSED enumeration of the CSS
- * Syntax Level 3 productions that can consume a `/` away from a token boundary — no regex
- * of any kind appears in this function, deliberately (see the two rejected forms below).
- * CSS Syntax §4.3.1 ("consume a token") invokes §4.3.2 ("consume comments") at EVERY token
- * boundary, so `/*` starts a comment at every token boundary without exception; it
- * therefore fails to start a comment only when the `/` has already been consumed by one of
- * exactly three productions that have not returned to a token boundary:
+ * Returns `raw` unchanged and unallocated when it contains no backslash (the common case), so
+ * the fast path costs one `indexOf`.
  *
- *  Case 1 — §4.3.5 consume a string token: a double- or single-quote opens a string; a
- *    backslash consumes the following code point; a raw (unescaped) newline ends the
- *    string unterminated (a "bad string" per spec — see the Task 3 SUMMARY for the
- *    residual on whether tokenizing genuinely resumes after that newline rather than
- *    running to EOF, which this case treats as running to EOF for simplicity).
- *  Case 2 — §4.3.7 consume an escaped code point, reached from ident-sequence consumption
- *    (§4.3.11/§4.3.12): a backslash NOT already inside a string or url span consumes the
- *    following code point, UNLESS that code point is a newline (not a valid escape per
- *    spec, so a `/*` right after `\` + newline IS a comment).
- *  Case 3 — §4.3.6 consume a url token (unquoted form only) + §4.3.14 consume the
- *    remnants of a bad url: an ASCII-case-insensitive `url(` followed by optional
- *    whitespace. If the next code point is a quote, this is NOT a raw url span — it is a
- *    function token followed by a string token (case 1's job); entering "url mode" here
- *    would let a `)` inside the quoted URL desynchronize the scan, so only `url(` itself
- *    is consumed and scanning resumes normally. Otherwise skip to the first `)` not
- *    preceded by a backslash escape.
- *
- * The enumeration is closed because no other production consumes a `/` away from a token
- * boundary: `/` is not an ident code point, numeric-token consumption cannot include it,
- * and every remaining token is single-code-point or delimiter-shaped. Every OTHER function
- * token (`calc(`, `attr(`, ...) tokenizes normally inside it, so `/*` IS a comment there —
- * `url(` is the only raw-consuming function, which is why case 3 exists at all.
- *
- * Every unterminated case (string, url, comment) TERMINATES THE WHOLE SCAN rather than
- * advancing, matching the spec (an unterminated string/url/comment runs to end of the
- * stylesheet) and keeping the scan linear — without this, each unterminated opener would
- * re-scan to end of string from every subsequent position, reproducing the exact quadratic
- * the regex form below is rejected for. An unterminated STRING or URL is not itself
- * comment syntax, so everything from the current anchor through EOF is KEPT unchanged; an
- * unterminated COMMENT genuinely runs to end of stylesheet in real CSS (the rule inside it
- * never applies, so not harvesting through it is the faithful outcome), so everything from
- * the comment's `/*` through EOF is DROPPED — this is the deliberate "an unterminated
- * comment before a rule leaves the rule un-harvested, span stays visible" decision this
- * module locks with a test.
- *
- * TWO REJECTED FORMS, each for a DIFFERENT measured reason a future reader must not
- * re-propose either of:
- *  1. The verification report's naive one-line `.replace()` fix -- `blockContent` run
- *     through a lazy-alternation `RegExp` matching `/` `*` ... `*` `/` globally -- is
- *     rejected because a `/*` inside a quoted CSS string is not a comment: measured, it
- *     deletes from the `/*` in `.x{content:"/*"}` through the `*\/` in `.y{content:"*\/"}`,
- *     taking an intervening `.legal{display:none}` rule out of the harvest and leaking the
- *     class-hidden payload (measured `okPAYLOAD_STR`) — a fifth bypass of the same
- *     contract, introduced by the fix for the fourth. A string-only scan (case 1 and the
- *     comment case, without cases 2 and 3) is rejected for the identical reason one
- *     context lower: measured, it leaks on five separate url-token and escape shapes
- *     (unquoted `url(`, `URL(`/`Url(`, `url( ... )` with whitespace, an escaped `)` inside
- *     a url, and an identity escape `\/` before `*`), each with a live
- *     `.legal{display:none}` rule confirmed by a real CSS parser — which is why the case
- *     list is derived from the spec's productions rather than from the repros that
- *     happened to be filed.
- *  2. A string-aware REGEX form — one alternation of a double-quoted string, a
- *     single-quoted string and a lazy `/*` ... `*\/` comment, driven through `.replace()` —
- *     is rejected because it is QUADRATIC on attacker-controlled input: measured 47.8 /
- *     203.8 / 749.0 / 3,009.5 ms at 32 / 64 / 128 / 256 KB for block content shaped as
- *     `/*y` repeated (no `*\/` anywhere, so every `/*` starts a lazy forward scan to end of
- *     string that never finds its terminator), versus 0.2-0.9 ms for this linear scan, and
- *     it makes a currently-0.1 ms input (the same shape with a trailing hiding rule)
- *     quadratic — a scan whose cost the sender chooses does not belong in the same module
- *     as the WR-02 gap plans 62-14/62-15 exist to remove.
+ * A backslash followed by 1-6 hex digits, optionally followed by ONE trailing whitespace code
+ * point (consumed as part of the escape, not part of the name), decodes to that code point —
+ * except when the value is zero, a UTF-16 surrogate, or greater than the maximum code point
+ * (U+10FFFF), which the spec maps to U+FFFD (REPLACEMENT CHARACTER). A backslash followed by
+ * any other code point decodes to that code point literally. A backslash at the end of input
+ * (no following code point) decodes to U+FFFD per the spec's EOF case.
  */
-function stripCssComments(css: string): string {
-  if (css.indexOf('/*') === -1) return css;
-  const n = css.length;
+function decodeIdentEscapes(raw: string): string {
+  if (raw.indexOf('\\') === -1) return raw;
+  const n = raw.length;
   let out = '';
-  let anchor = 0;
   let i = 0;
   while (i < n) {
-    const code = css.charCodeAt(i);
-
-    // Case 1 -- string token (SS4.3.5): skip to the matching quote.
-    if (code === 0x22 /* " */ || code === 0x27 /* ' */) {
-      let j = i + 1;
-      let closed = false;
-      while (j < n) {
-        const cj = css.charCodeAt(j);
-        if (cj === 0x5c /* \ */) { j += 2; continue; }
-        if (cj === code) { j += 1; closed = true; break; }
-        if (cj === 0x0a /* \n */) break; // raw newline: bad-string, treated as unterminated
-        j += 1;
-      }
-      if (!closed) {
-        out += css.slice(anchor, n);
-        return out;
-      }
-      i = j;
+    const code = raw.charCodeAt(i);
+    if (code !== 0x5c /* \ */) {
+      const cp = raw.codePointAt(i)!;
+      out += String.fromCodePoint(cp);
+      i += cp > 0xffff ? 2 : 1;
       continue;
     }
-
-    // Case 2 -- escape outside a string or url (SS4.3.7): a backslash consumes the
-    // following code point unless it is a newline (not a valid escape).
-    if (code === 0x5c /* \ */) {
-      i += (i + 1 < n && css.charCodeAt(i + 1) !== 0x0a) ? 2 : 1;
+    i += 1; // consume the backslash
+    if (i >= n) {
+      out += '\uFFFD'; // trailing backslash at EOF (§4.3.7 EOF case)
+      break;
+    }
+    if (isHexDigitCode(raw.charCodeAt(i))) {
+      let hex = '';
+      let digits = 0;
+      while (i < n && digits < 6 && isHexDigitCode(raw.charCodeAt(i))) {
+        hex += raw[i];
+        i += 1;
+        digits += 1;
+      }
+      if (i < n && isEscapeSeparatorCode(raw.charCodeAt(i))) {
+        i += 1; // one trailing whitespace code point is part of the escape, not the name
+      }
+      const codePoint = parseInt(hex, 16);
+      const outOfRange =
+        codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff);
+      out += outOfRange ? '\uFFFD' : String.fromCodePoint(codePoint);
       continue;
     }
-
-    // Case 3 -- unquoted url-token (SS4.3.6 + SS4.3.14).
-    if (matchesUrlOpen(css, i)) {
-      let j = i + 4;
-      while (j < n && isCssWhitespaceCode(css.charCodeAt(j))) j += 1;
-      if (j < n && (css.charCodeAt(j) === 0x22 || css.charCodeAt(j) === 0x27)) {
-        // Quoted form -- a function token + string token, not a raw url span. Advance
-        // past `url(` only; case 1 handles the quoted string on a later position, so a
-        // `)` inside it cannot desynchronize this scan.
-        i += 4;
-        continue;
-      }
-      let k = j;
-      let closed = false;
-      while (k < n) {
-        const ck = css.charCodeAt(k);
-        if (ck === 0x5c /* \ */) { k += 2; continue; }
-        if (ck === 0x29 /* ) */) { k += 1; closed = true; break; }
-        k += 1;
-      }
-      if (!closed) {
-        out += css.slice(anchor, n);
-        return out;
-      }
-      i = k;
-      continue;
-    }
-
-    // Case 4 -- the comment itself.
-    if (code === 0x2f /* / */ && i + 1 < n && css.charCodeAt(i + 1) === 0x2a /* * */) {
-      const end = css.indexOf('*/', i + 2);
-      if (end === -1) {
-        out += css.slice(anchor, i);
-        return out;
-      }
-      out += css.slice(anchor, i);
-      i = end + 2;
-      anchor = i;
-      continue;
-    }
-
-    i += 1;
+    const cp = raw.codePointAt(i)!;
+    out += String.fromCodePoint(cp);
+    i += cp > 0xffff ? 2 : 1;
   }
-  out += css.slice(anchor, n);
   return out;
+}
+
+interface BareSelector {
+  readonly kind: 'class' | 'id';
+  readonly name: string;
+}
+
+/**
+ * Decides whether `prelude` (the token triples collected before a declaration block's `{`) is
+ * a comma-separated list of BARE `.class` / `#id` selectors only — no combinators,
+ * pseudo-classes, attribute selectors, type selectors, or element-qualified classes. Splits on
+ * `Comma` tokens; per group, drops `WhiteSpace` tokens and requires EXACTLY one of two token
+ * shapes: a `Delim` whose single source character is `.` immediately followed by an `Ident`,
+ * or a lone `Hash`. Any other shape makes the WHOLE rule non-bare (returns `null`), matching
+ * this module's pre-62-17 `allBare` semantics (`selectors.every(...)`) — reproduced here on
+ * TOKEN STRUCTURE instead of a character-class regex over reconstructed text, which is why
+ * `BARE_CLASS_SELECTOR_RE`/`BARE_ID_SELECTOR_RE` are gone: the token shape IS the check, so a
+ * comment or function token that used to get glued onto reconstructed text (VF-01, CR-04)
+ * cannot fool it — there is no reconstructed text to glue onto.
+ *
+ * An empty comma-separated entry (a stray leading/trailing/doubled comma) is DROPPED, not
+ * treated as a shape failure — matching the pre-62-17 `.split(',').filter(Boolean)` behavior.
+ * An empty prelude, or a prelude whose every entry was empty, yields `null` (nothing to
+ * harvest), matching the pre-62-17 `selectors.length === 0` skip.
+ */
+function preludeToBareSelectors(
+  css: string,
+  prelude: readonly PreludeToken[]
+): BareSelector[] | null {
+  const groups: PreludeToken[][] = [[]];
+  for (const token of prelude) {
+    if (token[0] === TT_COMMA) groups.push([]);
+    else groups[groups.length - 1]!.push(token);
+  }
+
+  const result: BareSelector[] = [];
+  for (const group of groups) {
+    const tokens = group.filter(([type]) => type !== TT_WHITESPACE);
+    if (tokens.length === 0) continue;
+
+    if (tokens.length === 1 && tokens[0]![0] === TT_HASH) {
+      const [, start, end] = tokens[0]!;
+      const raw = css.slice(start + 1, end); // strip the leading '#'
+      result.push({ kind: 'id', name: decodeIdentEscapes(raw) });
+      continue;
+    }
+
+    if (
+      tokens.length === 2 &&
+      tokens[0]![0] === TT_DELIM &&
+      css.slice(tokens[0]![1], tokens[0]![2]) === '.' &&
+      tokens[1]![0] === TT_IDENT
+    ) {
+      const [, start, end] = tokens[1]!;
+      const raw = css.slice(start, end);
+      result.push({ kind: 'class', name: decodeIdentEscapes(raw) });
+      continue;
+    }
+
+    return null;
+  }
+
+  return result.length === 0 ? null : result;
+}
+
+/**
+ * Single-pass token-stream walk over one `<style>` block's content (62-17), replacing the
+ * hand-rolled `stripCssComments` + brace-partition cursor scan entirely. Maintains an explicit
+ * frame stack so rule boundaries come from `{`/`}` TOKENS — a `BadString`, `Url`/`BadUrl`, or
+ * `Function` token cannot forge or swallow a brace, closing the raw-text-brace-counting
+ * mechanism CR-04 (a fake `url(` span) and FB-01 (a raw-newline-broken string) both probed.
+ *
+ * Prelude (selector) tokens are collected only while "collecting" is true: at the top level of
+ * the stylesheet, or one level inside a conditional-group at-rule (`@media`, `@supports`, ...)
+ * whose contents are themselves rules — this is what preserves today's `@media` harvest (a
+ * `.legal{display:none}` nested inside `@media screen {...}` is still found). The first time a
+ * `{` is reached while collecting, the just-collected prelude decides the new frame's kind:
+ * starts with an `AtKeyword` (skipping leading whitespace) -> conditional group, so collecting
+ * continues for its children; otherwise -> an ordinary declaration block, whose prelude is the
+ * pending selector list and whose content is evaluated against `hasHidingSignature` when its
+ * matching `}` is reached. `Comment` tokens are skipped entirely during collection — never
+ * appended to a prelude, so a comment adjacent to a selector (VF-01) cannot poison it the way
+ * string-glued reconstructed text could.
+ *
+ * Collecting is SUSPENDED for the entire body of a declaration block — matches this plan's
+ * `reclassify` disposition (depth-0-only prelude collection; see `62-17-PLAN.md`'s SCOPE
+ * CORRECTION note). A nested `{`/`}` pair inside a declaration block (invalid CSS, but must not
+ * desync the walk) is still pushed/popped for brace-balance bookkeeping, but its prelude is
+ * never evaluated (`hasPrelude: false`) — this is exactly the mechanism that keeps FB-01's
+ * `.legal{...}` un-harvested: it sits at depth 1 inside `.a`'s still-open (never closed by a
+ * real `}`) block, so the frame that would evaluate it as a selector is never reached.
+ *
+ * `MAX_HARVESTED_SELECTORS` is checked at the same two points as the pre-62-17 cursor walk:
+ * once per candidate declaration block (before evaluating whether it is bare/hiding) and once
+ * per selector inside an accepted rule. `harvestHidingSelectors` below also skips calling
+ * `tokenize` on any FURTHER `<style>` block once the cap is already reached.
+ */
+function harvestFromStylesheet(
+  css: string,
+  classes: Set<string>,
+  ids: Set<string>,
+  counter: { total: number }
+): void {
+  interface Frame {
+    readonly isAtRule: boolean;
+    readonly hasPrelude: boolean;
+    readonly preludeTokens: readonly PreludeToken[];
+    readonly contentStart: number;
+  }
+  const EMPTY_PRELUDE: readonly PreludeToken[] = [];
+  const stack: Frame[] = [];
+  let prelude: PreludeToken[] = [];
+
+  const startsWithAtKeyword = (tokens: readonly PreludeToken[]): boolean => {
+    for (const [type] of tokens) {
+      if (type === TT_WHITESPACE) continue;
+      return type === TT_AT_KEYWORD;
+    }
+    return false;
+  };
+
+  tokenize(css, (type, start, end) => {
+    if (type === TT_COMMENT) return;
+
+    if (type === TT_LEFT_CURLY) {
+      const collecting = stack.length === 0 || stack[stack.length - 1]!.isAtRule;
+      const isAtRule = collecting && startsWithAtKeyword(prelude);
+      const hasPrelude = collecting && !isAtRule;
+      stack.push({
+        isAtRule,
+        hasPrelude,
+        preludeTokens: hasPrelude ? prelude : EMPTY_PRELUDE,
+        contentStart: end,
+      });
+      prelude = [];
+      return;
+    }
+
+    if (type === TT_RIGHT_CURLY) {
+      const frame = stack.pop();
+      prelude = [];
+      if (!frame || !frame.hasPrelude) return;
+      if (counter.total >= MAX_HARVESTED_SELECTORS) return;
+      const contentStart = Math.min(frame.contentStart, css.length);
+      const contentEnd = Math.min(start, css.length);
+      const declarationText = css.slice(contentStart, contentEnd);
+      if (!hasHidingSignature(declarationText)) return;
+      const bareSelectors = preludeToBareSelectors(css, frame.preludeTokens);
+      if (!bareSelectors) return;
+      for (const sel of bareSelectors) {
+        if (counter.total >= MAX_HARVESTED_SELECTORS) break;
+        if (sel.kind === 'class') classes.add(sel.name);
+        else ids.add(sel.name);
+        counter.total += 1;
+      }
+      return;
+    }
+
+    const collecting = stack.length === 0 || stack[stack.length - 1]!.isAtRule;
+    if (collecting) prelude.push([type, start, end]);
+  });
 }
 
 /**
  * Harvests bare `.class`/`#id` selectors (no combinators, pseudo-selectors, attribute
- * selectors, or media queries — those selector shapes simply fail the bare-selector
- * regex test below, which also excludes `@media` blocks) whose rule body matches a
- * hiding signature (stage 5's `hasHidingSignature`). The realistic ATS shape hides a
- * span by class, not by inline style, so simply deleting the `<style>` block (stage 4)
+ * selectors, or type-qualified compounds — those shapes simply fail `preludeToBareSelectors`,
+ * which also excludes `@media`'s OWN prelude, a media query rather than a selector) whose rule
+ * body matches a hiding signature (stage 5's `hasHidingSignature`). The realistic ATS shape
+ * hides a span by class, not by inline style, so simply deleting the `<style>` block (stage 4)
  * would destroy the evidence that the span is hidden while leaving its text behind.
  *
- * VF-01 gap closure (62-13): block content is passed through `stripCssComments` BEFORE
- * the rule scan below sees it, so a `/* comment *\/` adjacent to a hiding selector (before
- * it, after it, inside its comma list, or between the selector and `{`) can no longer make
- * the exact-match bare-selector test fail and drop the whole rule from the harvest.
+ * 62-17 gap closure: replaces the hand-rolled `stripCssComments` + `indexOf`/`lastIndexOf`
+ * brace-partition cursor walk entirely with a single `tokenize` pass per `<style>` block
+ * (`harvestFromStylesheet`) reading rule boundaries from `{`/`}` TOKENS rather than raw-text
+ * brace counting. Brace counting over raw text is retired because raw-text brace counting is
+ * the exact mechanism FB-01 probed (a raw-text scan can be desynchronized by a bad string); a
+ * `{`/`}` TOKEN cannot be forged by a `BadString`, `Url`/`BadUrl`, or `Function` token, so the
+ * class of bug FB-01/CR-04 both probed (something OTHER than the tokenizer deciding a token's
+ * boundary) cannot recur here by construction. See `harvestFromStylesheet`'s own doc comment
+ * for the frame-stack argument, and `preludeToBareSelectors`'s for the selector-shape argument
+ * that replaces `BARE_CLASS_SELECTOR_RE`/`BARE_ID_SELECTOR_RE`.
  *
- * WR-02 gap closure (62-14, Bound B): the rule scan is a LINEAR `indexOf`/`lastIndexOf`
- * cursor walk, not a regex `matchAll` loop. Plain CSS has no rule nesting, so a
- * `selectorList { body }` rule could be described by the pattern `[^{}]+\{[^{}]*\}` — but
- * driving that pattern with a global regex retried at every start position is what made a
- * brace-free `<style>` body quadratic (WR-02, T-62-75): every retried start position
- * re-scans forward looking for a `{`, and on a long run with no `{` at all that scan pays
- * for the whole remaining string at every position.
- *
- * Equivalence argument (checkable, not just trusted): partition the cleaned block content on
- * `}` into segments — the text strictly between two consecutive `}` characters, or between
- * the start and the first `}`. Within a segment, a `[^{}]*` declaration body terminated by
- * `}` can only begin right after that segment's LAST `{` — any earlier `{` would leave a
- * dangling unconsumed `{` before the body could reach its terminating `}`. The selector run
- * `[^{}]+` immediately preceding that body must, symmetrically, begin right after the
- * PRECEDING `{` in the same segment, or at the segment start when the last `{` has no
- * earlier `{` before it (including when the last `{` IS the segment's first character). A
- * segment with no `{` at all cannot start a body, so it yields no rule — the same outcome as
- * this function's existing `selectors.length === 0` skip below, since `[^{}]+` can never
- * match zero characters and a zero-length selector slice fails that same downstream check.
- * This produces exactly the same sequence of `(selectorText, body)` pairs, in the same
- * order, that the regex form produced — checked, not just argued, by a differential harness
- * over the shipped corpus and tens of thousands of generated inputs (62-14 SUMMARY).
- * `MAX_HARVESTED_SELECTORS` is checked at the same two points as before: once per candidate
- * rule (mirroring the old per-match check) and once per selector inside the allowed rule.
+ * SUPERSEDED, kept for history rather than deleted silently: the 62-14 "Bound B" cursor-walk
+ * equivalence argument this replaces was a correct proof that the linear `indexOf`/
+ * `lastIndexOf` cursor walk produced the same `(selectorText, body)` pairs as the `matchAll`
+ * regex it replaced — see 62-14-SUMMARY.md for the full text. It is now MOOT: this function no
+ * longer partitions raw text into `(selectorText, body)` pairs at all, so there is nothing left
+ * for that argument to be an equivalence proof ABOUT. The property that argument actually
+ * protected — no quadratic blowup on a brace-free or brace-heavy adversarial `<style>` body —
+ * is now structural: `tokenize` is one linear pass regardless of brace shape, so there is no
+ * failing-scan region to retry, matching this module's WR-02 property by construction rather
+ * than by cursor-walk proof.
  */
 function harvestHidingSelectors(html: string): { classes: Set<string>; ids: Set<string> } {
   const classes = new Set<string>();
   const ids = new Set<string>();
-  let total = 0;
+  const counter = { total: 0 };
   for (const styleMatch of html.matchAll(STYLE_BLOCK_RE)) {
-    const blockContent = stripCssComments(styleMatch[1] ?? '');
-    const len = blockContent.length;
-    let cursor = 0;
-    while (cursor < len) {
-      const closeBrace = blockContent.indexOf('}', cursor);
-      if (closeBrace === -1) break;
-      const segment = blockContent.slice(cursor, closeBrace);
-      cursor = closeBrace + 1;
-      const lastOpen = segment.lastIndexOf('{');
-      if (lastOpen === -1) continue;
-      const precedingOpen = lastOpen > 0 ? segment.lastIndexOf('{', lastOpen - 1) : -1;
-      const selectorStart = precedingOpen === -1 ? 0 : precedingOpen + 1;
-      if (total >= MAX_HARVESTED_SELECTORS) return { classes, ids };
-      const selectorText = segment.slice(selectorStart, lastOpen).trim();
-      const body = segment.slice(lastOpen + 1);
-      const selectors = selectorText.split(',').map(s => s.trim()).filter(Boolean);
-      if (selectors.length === 0) continue;
-      const allBare = selectors.every(
-        s => BARE_CLASS_SELECTOR_RE.test(s) || BARE_ID_SELECTOR_RE.test(s)
-      );
-      if (!allBare || !hasHidingSignature(body)) continue;
-      for (const sel of selectors) {
-        if (total >= MAX_HARVESTED_SELECTORS) break;
-        if (sel.startsWith('.')) classes.add(sel.slice(1));
-        else ids.add(sel.slice(1));
-        total += 1;
-      }
-    }
+    if (counter.total >= MAX_HARVESTED_SELECTORS) break;
+    harvestFromStylesheet(styleMatch[1] ?? '', classes, ids, counter);
   }
   return { classes, ids };
 }

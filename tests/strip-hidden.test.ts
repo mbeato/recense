@@ -649,11 +649,12 @@ describe('stripHiddenContent — CSS-escaped selector names, §4.3.7 decode (62-
     expect(out).toContain('PAYLOAD_ESCAL');
   });
 
-  it('a six-hex-digit escape immediately followed by a non-hex letter (the hex run stops at the 6-digit cap, not at a non-hex character) decodes correctly', () => {
-    // \00006c is six hex digits -> 0x6c -> "l"; no trailing whitespace to consume, so the
-    // following "al" is appended literally: "leg" + "l" + "al" = "legal".
+  it('a six-hex-digit escape (the run stops at the 6-digit cap regardless of what follows, even a further hex-valid character) decodes correctly', () => {
+    // \000061 is six hex digits -> 0x61 -> "a"; the run stops at exactly 6 digits (the
+    // 7th input position is never consulted), so no trailing whitespace is present to
+    // consume and the literal "l" that follows completes the name: "leg"+"a"+"l"="legal".
     const out = stripHiddenContent(
-      '<style>.leg\\00006cal{display:none}</style>ok<span class="legal">PAYLOAD_HEX6</span>'
+      '<style>.leg\\000061l{display:none}</style>ok<span class="legal">PAYLOAD_HEX6</span>'
     );
     expect(out).not.toContain('PAYLOAD_HEX6');
     expect(out).toBe('ok');
