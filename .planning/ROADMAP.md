@@ -829,7 +829,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
   3. Hidden or invisible content in HTML-only emails (`display:none`, zero-width characters, hidden spans) is deterministically stripped before any content reaches the extractor, verified by a regression fixture containing a hidden injected instruction that must not survive into episode content — EMAIL-03
   4. A fresh account's initial backfill batch is consolidated in chronological order (derived from the email's own `Date:` header), so an older message in the same backfill cannot silently apply over newer state — EMAIL-04
 
-**Plans**: 15 plans in 11 waves (62-06..62-08 gap closure added 2026-07-30; 62-09..62-11 gap closure added 2026-07-30 after re-verification; 62-12 gap closure added 2026-07-30 from `62-REVIEW.md` BL-01/BL-02/BL-03; 62-13..62-15 gap closure added 2026-07-30 from `62-VERIFICATION.md` VF-01/NEW-01/WR-02)
+**Plans**: 19 plans in 15 waves (62-06..62-08 gap closure added 2026-07-30; 62-09..62-11 gap closure added 2026-07-30 after re-verification; 62-12 gap closure added 2026-07-30 from `62-REVIEW.md` BL-01/BL-02/BL-03; 62-13..62-15 gap closure added 2026-07-30 from `62-VERIFICATION.md` VF-01/NEW-01/WR-02; **62-16..62-19 gap closure added 2026-07-31** from `62-VERIFICATION.md` FB-01/T62-91 and `62-REVIEW.md` CR-04/WR-09/IN-05 — replaces the hand-rolled CSS scanner with a spec-conformant tokenizer after six independent bypasses of one contract)
 
 Plans:
 **Wave 1**
@@ -879,6 +879,22 @@ Plans:
 **Wave 11** *(gap closure — WR-02 input-cap half + phase-closing evidence; blocked on wave 10 for the measurement that sizes the cap)*
 
 - [x] 62-15-PLAN.md — Fail-closed `MAX_STRIP_INPUT` bound on `raw.bodyText` at the adapter boundary, sized from the worst shape in 62-14's ranked twelve-shape measurement, plus a `dist/`-level reproduction of every finding this wave closed (EMAIL-03, wave 11)
+
+**Wave 12** *(blocked on Wave 11 completion — gap closure round 5, 2026-07-31)*
+
+- [ ] 62-16-PLAN.md — Adopt `css-tree@3.2.1` (pinned) behind a §4.3 conformance gate, then build the liveness oracle WR-09 said did not exist and adjudicate every open finding against it — no production code changes (EMAIL-03, wave 12)
+
+**Wave 13** *(blocked on Wave 12 completion)*
+
+- [ ] 62-17-PLAN.md — Replace `stripCssComments` and the brace-partition scan with a token-stream harvest incl. §4.3.7 escape decoding, closing every leak the oracle confirmed live (EMAIL-03, wave 13)
+
+**Wave 14** *(blocked on Wave 13 completion)*
+
+- [ ] 62-18-PLAN.md — Delete `STYLE_BLOCK_RE` and locate `<style>` elements linearly with stage 4's own primitives, eliminating T62-91's quadratic (156 s → 2.5 ms at the cap boundary); re-size-or-confirm the cap on a corrected shape set; fix IN-05 (EMAIL-03, wave 14)
+
+**Wave 15** *(blocked on Wave 14 completion)*
+
+- [ ] 62-19-PLAN.md — Close WR-09: oracle-driven both-directions differential with exhaustive token-boundary adjacency, plus a dispositioned divergence table against the pre-wave-12 baseline (EMAIL-03, wave 15)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
