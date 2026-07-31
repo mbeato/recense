@@ -528,6 +528,25 @@ describe('stripHiddenContent — VF-01 ground-truth-by-construction generator (6
   // (§4.3.7) — plus one benign rule with no CSS-syntax significance at all. None of these
   // decoys carries a hiding signature, so none should ever be harvested regardless of
   // where stripCssComments draws its boundaries.
+  //
+  // WR-09 gap 1 (62-REVIEW.md, closed by 62-19-PLAN.md Task 2): this pool previously drew
+  // every `url(`/`URL(` token from an ENUMERATED set that always wrote it immediately after
+  // a real token boundary (`background:`) and only ever `.`-joined whole `.gdN{...}` rules —
+  // so no generated stylesheet could place an ident-sequence character directly before
+  // `url(`, the exact adjacency CR-04 exploited. Audited against that stated risk (the
+  // fragment pool's own prior doc comment conceded the class of limitation in the abstract
+  // but was never checked against it) and four fragments added below: a declaration value
+  // carrying the `<letter>url(` adjacency itself (`gd12`), a SELECTOR region carrying
+  // `xurl(a)` rather than a declaration value (`gd13`), a bad-string (raw-newline-
+  // unterminated) inside an otherwise-complete rule (`gd14`), and an escaped selector name
+  // (`gd15`). Each was cross-checked against `liveHidingSelectors` (62-16) before being
+  // added — all four report zero classes/ids/unresolved, confirming none accidentally
+  // carries a live hiding declaration that could contaminate the `legal`/`commented-out`
+  // probes below. The generator's ground truth stays by-construction (these fragments are
+  // still hand-verified to carry no hiding signature, not judged by a second scanner) — any
+  // FUTURE fragment added to this pool must come with its own by-construction liveness
+  // argument the same way, or be added to `tests/css-liveness-differential.test.ts` instead,
+  // where the 62-16 oracle supplies ground truth for shapes too complex to hand-verify.
   const DECOY_FRAGMENTS = [
     '.gd1{content:"/*"}',
     '.gd2{content:"*/"}',
@@ -540,6 +559,11 @@ describe('stripHiddenContent — VF-01 ground-truth-by-construction generator (6
     '.gd9{background:url("g)h/*")}',
     '.gd10\\/*z{q:1}',
     '.gd11{color:red}',
+    // WR-09 gap 1 additions (cross-checked against liveHidingSelectors — see comment above):
+    '.gd12{background:xurl(a/*z*/b)}', // declaration value: ident 'x' directly before 'url(' with no token boundary — CR-04's exact adjacency
+    'xurl(a).gd13{color:cyan}', // selector region carries 'xurl(a)' (a Function+Ident+RightParen prelude prefix, not a declaration value)
+    '.gd14{content:"x\ny:1}', // bad-string (raw newline before the closing quote) inside an otherwise-complete rule
+    '.g\\64 15{color:orange}', // escaped selector name (\64 = 0x64 = 'd'; decodes to "gd15")
   ];
 
   // A REAL comment wrapping a decoy hiding rule — the OVER-strip direction check: this
@@ -1234,7 +1258,7 @@ describe('stripHiddenContent — WR-02: the 62-VERIFICATION.md adversarial shape
   });
 }, 20000);
 
-describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (totality, idempotence, no stray <)', () => {
+describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (totality, idempotence, no stray <, hidden-content leakage)', () => {
   // Seeded LCG (Numerical Recipes constants) — NOT Math.random — so any failure is
   // reproducible purely from the printed iteration index. This is a generated-input LOCK on
   // the invariants Bound A/B must preserve, distinct from the differential harness (scratch,
@@ -1242,6 +1266,15 @@ describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (total
   // invariant was confirmed to already hold on the PRE-change module before being asserted
   // here (2000 generated inputs, 0 violations — see the 62-14 SUMMARY), so this locks a
   // preserved property, not a new claim.
+  //
+  // WR-09 gap 2 (62-REVIEW.md, closed by 62-19-PLAN.md Task 2 — documentation, not code):
+  // a differential between two versions of the SAME implementation (the scratch harness
+  // this comment refers to, and 62-14's 55k/80k-input differential before it) can only ever
+  // answer "did this change anything," never "is this correct" — a defect present on BOTH
+  // sides of the diff produces zero differences at any corpus size, which is exactly why
+  // CR-04 survived 62-14's 135,000-input run undetected. The oracle that CAN answer
+  // correctness is `tests/css-liveness-differential.test.ts` (62-19) — a conformant CSS
+  // engine's verdict, not a second copy of this module's own code.
   function makeLcg(seed: number): () => number {
     let state = seed >>> 0;
     return () => {
@@ -1255,12 +1288,55 @@ describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (total
     'display:none', 'class', 'legal', ' ', '\n', 'a', 'b', 'c',
   ];
 
-  it('>= 2000 generated inputs: total (never throws), idempotent, and output contains no stray <', () => {
+  /** Same structural check as `tests/css-liveness-differential.test.ts`'s
+   *  `hasUnmatchedCdo` (NF-01): true when `html` contains a CDO ("<!--") with no later CDC
+   *  ("-->") anywhere after it — the exact condition that trips stage 3's
+   *  unterminated-HTML-comment fail-safe. Duplicated locally (not imported) so this file's
+   *  own gap-3 check does not take on an inter-test-file dependency for a three-line
+   *  structural predicate. */
+  function hasUnmatchedCdoInFuzzProbe(html: string): boolean {
+    let idx = 0;
+    while (true) {
+      const cdo = html.indexOf('<!--', idx);
+      if (cdo === -1) return false;
+      const cdc = html.indexOf('-->', cdo + 4);
+      if (cdc === -1) return true;
+      idx = cdc + 3;
+    }
+  }
+
+  it('>= 2000 generated inputs: total (never throws), idempotent, output contains no stray <, and a fixed planted hiding rule is never leaked', () => {
     const rand = makeLcg(0xfeed5eed);
     const N = 2000;
     const throwFailures: number[] = [];
     const idempotenceFailures: number[] = [];
     const strayAngleFailures: number[] = [];
+    // WR-09 gap 3 (62-REVIEW.md, closed by 62-19-PLAN.md Task 2): this ALPHABET contains
+    // both single letters and the 'url(' token as independent, randomly-placed pieces, so
+    // across 2000 iterations it almost certainly generated CR-04's <letter>url( adjacency at
+    // least once — but the three lists above assert only totality, idempotence and "no
+    // stray <", never hidden-content LEAKAGE. The test had the raw material to catch CR-04
+    // and was not looking for the right thing. This fourth list closes that.
+    const leakFailures: number[] = [];
+    // This ALPHABET's '<style'/'</style'/'<script'/'</script' fragments exercise an
+    // ORTHOGONAL property (HTML raw-text tag-boundary matching, already dedicated-tested by
+    // BL-01/BL-02/NEW-01 above and by `tests/css-liveness-differential.test.ts`'s own
+    // generators, none of which reuse this HTML-tag-fragment alphabet). Embedding one of
+    // those fragments inside `s` breaks the leak check's ground-truth model below (a literal
+    // `</style` inside `s` legitimately, correctly ends the wrapper's OWN <style> element per
+    // HTML §13.2.5 raw-text rules — a real browser would too — so treating `s + the planted
+    // rule` as one uninterrupted CSS region is simply wrong for those inputs, not a
+    // production defect). Iterations containing either fragment are counted and excluded
+    // from the leak check specifically, so this check stays focused on the CSS-token-level
+    // adjacency property gap 3 is about; the totality/idempotence/no-stray-< checks above
+    // are UNCHANGED and still exercise the full alphabet including these fragments.
+    let styleScriptExcluded = 0;
+    // An unmatched CDO ("<!--" with no later "-->") is the ALREADY-KNOWN, ALREADY-LOCKED
+    // NF-01 finding from `tests/css-liveness-differential.test.ts` (stage 3's
+    // unterminated-HTML-comment fail-safe truncates past a RAWTEXT boundary) — counted here
+    // too rather than silently reproducing an unrelated already-tracked defect as a fresh
+    // "leak" in THIS list.
+    let cdoExcluded = 0;
 
     for (let i = 0; i < N; i++) {
       const len = 5 + Math.floor(rand() * 60);
@@ -1278,11 +1354,56 @@ describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (total
       const twice = stripHiddenContent(once);
       if (twice !== once) idempotenceFailures.push(i);
       if (once.includes('<')) strayAngleFailures.push(i);
+
+      const lowerS = s.toLowerCase();
+      if (lowerS.includes('style') || lowerS.includes('script')) {
+        styleScriptExcluded += 1;
+        continue;
+      }
+
+      // Append a FIXED planted hiding rule to THIS iteration's generated garbage, wrap it in
+      // its own <style> block, and compare against `liveHidingSelectors`' verdict for the
+      // IDENTICAL CSS text (s + the planted rule) — the "generated stylesheet region" this
+      // gap's fix is required to check against. Ground truth here is not always "live": when
+      // `s` itself happens to contain an unterminated string/comment/bracket, it can swallow
+      // the planted rule the same way CR-04's adjacency did — exactly the class of
+      // alphabet-driven interaction this fuzz test's raw material could always construct by
+      // chance but was never checked against.
+      const stylesheetRegion = s + '.legal{display:none}';
+      const probeTruth = liveHidingSelectors(stylesheetRegion);
+      if (probeTruth.unresolved.length > 0) continue; // AD-03-equivalent: ground truth undefined
+      const probeHtml =
+        '<style>' +
+        stylesheetRegion +
+        '</style>VISIBLE_SENTINEL<span class="legal">PAYLOAD</span>';
+      if (hasUnmatchedCdoInFuzzProbe(probeHtml)) {
+        cdoExcluded += 1;
+        continue;
+      }
+      const probeOut = stripHiddenContent(probeHtml);
+      const shouldBeLive = probeTruth.classes.has('legal');
+      const payloadPresent = probeOut.includes('PAYLOAD');
+      const visiblePresent = probeOut.includes('VISIBLE_SENTINEL');
+      // Hard failures: a genuine LEAK (oracle says live, payload still present) or total
+      // availability loss (VISIBLE_SENTINEL itself gone). An over-strip on this adversarial
+      // alphabet (oracle says NOT live, payload absent anyway) is NOT flagged — it is the
+      // module's own documented "monotone toward less content" direction on ambiguous or
+      // malformed input, not the leakage property this gap's fix targets.
+      if (!visiblePresent || (shouldBeLive && payloadPresent)) {
+        leakFailures.push(i);
+      }
     }
 
     expect(throwFailures).toEqual([]);
     expect(idempotenceFailures).toEqual([]);
     expect(strayAngleFailures).toEqual([]);
+    expect(leakFailures).toEqual([]);
+    // Magnitude bounds on the exclusions themselves, so a change that silently routed far
+    // more (or far fewer) iterations around this check would fail loudly rather than pass
+    // quietly — mirroring the accepted-divergence-allowlist discipline in
+    // `tests/css-liveness-differential.test.ts`.
+    expect(styleScriptExcluded).toBeLessThan(N);
+    expect(cdoExcluded).toBeLessThan(N);
   });
 });
 
