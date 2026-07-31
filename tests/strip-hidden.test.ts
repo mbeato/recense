@@ -1588,3 +1588,44 @@ describe('stripInvisibleCodepoints / stripHiddenContent — shared module-scope 
     }
   });
 });
+
+describe('stripHiddenContent — 62-19 Task 3 divergence triage: REG-01 (locked, not fixed this wave)', () => {
+  // Found by 62-19-PLAN.md Task 3's scratch differential against the pre-wave-12 baseline
+  // (commit 06fdebd) — the ONE disagreement out of 12 distinct divergence classes across a
+  // ~9,000-input corpus that could not be dispositioned IMPROVEMENT or ACCEPTED WIDENING
+  // (the other 11 classes, all confirmed IMPROVEMENT against `liveHidingSelectors`, are
+  // recorded in 62-19-SUMMARY.md's disposition table, not re-litigated here).
+  //
+  // Mechanism: `harvestFromStylesheet` (src/source/strip-hidden.ts) tracks ONLY curly-brace
+  // ({/}) nesting for rule boundaries — Function/Url/BadUrl tokens are deliberately NEVER
+  // tracked for paren-matching, since letting them influence brace-tracking was the FB-01/
+  // CR-04 vulnerability class 62-17 closed. The flip side: an UNCLOSED Function/Url token
+  // (no matching `)` anywhere in the stylesheet) followed by one INTERMEDIATE, fully-matched
+  // {}-pair "resets" the walk to depth 0 after that pair closes, so a REAL rule appearing
+  // AFTER that intermediate pair is treated as a fresh top-level rule and harvested — even
+  // though a conformant CSS parser still considers everything from the unclosed paren to EOF
+  // to be swallowed inside that one unterminated function call's argument list (CSS Syntax
+  // Level 3 section 5.4.9, "consume a function": with no closing ")" anywhere, consumption
+  // runs to EOF), so the real browser never sees the rule as a top-level rule at all.
+  //
+  // Direction and severity: SAFE only (over-strip — production hides content a real browser
+  // would still show), matching the module's own documented "monotone toward less content"
+  // contract; NEVER a leak. Not fixed in this wave: 62-19-PLAN.md's `files_modified` scopes
+  // this plan to tests only, and a real fix would require reintroducing SOME form of
+  // paren/function-argument depth tracking — exactly the mechanism 62-17 deliberately
+  // removed to close FB-01/CR-04, so re-adding it needs its own dedicated, carefully-scoped
+  // plan, not a same-wave patch bolted onto a test-design closure. Reported, not silently
+  // absorbed — see 62-19-SUMMARY.md's disposition table (dispositioned REGRESSION, the
+  // plan's own rubric requires this even though the direction is safe) and residual
+  // register.
+  it.fails(
+    'REG-01: an unclosed Function/Url token before an intermediate complete {}-pair causes a LATER, otherwise-independent rule to be treated as top-level when a real browser still swallows it inside the unclosed function call (over-strip, not a leak)',
+    () => {
+      const css = 'f(#a{color:red}.legal{display:none}';
+      const truth = liveHidingSelectors(css);
+      expect(truth.classes.has('legal')).toBe(false); // ground truth: a real browser never applies this rule
+      const out = stripHiddenContent('<style>' + css + '</style>ok<span class="legal">PAYLOAD</span>');
+      expect(out).toContain('PAYLOAD'); // FAILS today: production strips it (over-strip, safe direction)
+    }
+  );
+});
