@@ -23,6 +23,12 @@
  *        provenance header (From:/Subject:) gets the narrower stripInvisibleCodepoints
  *        (stage 1 only, CR-02, plan 62-11) — not the full pipeline, since headers are not
  *        markup and stages 4-6 would mangle a legitimate `Subject: Re: <urgent> pricing`.
+ *        WR-02 (plan 62-15): raw.bodyText is bounded by MAX_STRIP_INPUT_CODE_UNITS before
+ *        it reaches stripHiddenContent at all. A sender chooses both the bytes and the
+ *        size of raw.bodyText, and 62-VERIFICATION.md measured 126 s of ingest CPU for one
+ *        crafted ~512 KB body with no cap in place. Over the cap, no sender-controlled
+ *        bytes reach record.content from the body — see MAX_STRIP_INPUT_CODE_UNITS's own
+ *        doc comment for the fail-closed reasoning and the measurement that sized it.
  *  D-65: Ingest scope is config.gmail.query (native Gmail search query). Conservative
  *        default in EngineConfig; narrow without code changes.
  *  D-67: cursor:gmail historyId is advanced each pull (speed layer). UNIQUE(source,
@@ -321,6 +327,65 @@ export function parseEmailDate(header: string, nowMs: number): number | null {
   return Math.min(parsed, nowMs);
 }
 
+// ---------------------------------------------------------------------------
+// WR-02 (plan 62-15): input-cap bound on raw.bodyText before stripHiddenContent
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum length (in UTF-16 code units, not bytes — String.prototype.length counts code
+ * units, and code units are the actual cost driver for every scan inside
+ * stripHiddenContent) that raw.bodyText may be before it is handed to stripHiddenContent
+ * at all. Above this bound, the body contributes zero sender-controlled bytes to
+ * record.content (see STRIP_INPUT_OMITTED_MARKER below) rather than being truncated and
+ * stripped. `62-REVIEW.md` and `62-VERIFICATION.md` both name this bound
+ * `MAX_STRIP_INPUT_BYTES`; it is named here for what it actually measures instead, so a
+ * grep for the review's term still finds this declaration.
+ *
+ * 1. WHY A CAP EXISTS AT ALL: `62-VERIFICATION.md` measured 126,422 ms (over two minutes)
+ *    of ingest CPU for one crafted ~512 KB email body against the pre-62-14 code, and
+ *    nothing bounded raw.bodyText before stripHiddenContent — sender-chosen input size was
+ *    sender-chosen CPU with no ceiling. `EpisodicStore.capContent`'s 8 KB cap (D-58) runs
+ *    DOWNSTREAM of all of that work and bounds none of it.
+ *
+ * 2. WHY FAIL-CLOSED RATHER THAN TRUNCATE-THEN-STRIP: hiding decisions inside
+ *    stripHiddenContent are non-local — a <style> rule anywhere in the document can hide
+ *    an element anywhere else in it. Truncating raw.bodyText to this bound and then
+ *    stripping the truncated prefix would leave a class-hidden payload in the kept prefix
+ *    un-stripped whenever its hiding rule sits past the cut: a content leak of exactly the
+ *    kind EMAIL-03 forbids, introduced by a performance guard. So above the bound,
+ *    stripHiddenContent is not called on the body at all, and STRIP_INPUT_OMITTED_MARKER
+ *    (a fixed ASCII constant, no sender-controlled bytes) stands in for it. Plan 62-15's
+ *    SUMMARY records a direct measurement of the rejected truncate-then-strip design
+ *    leaking exactly this way, on exactly this shape.
+ *
+ * 3. WHY THIS VALUE: plan 62-14 measured Shape T (T-62-54 — STYLE_BLOCK_RE's lazy
+ *    </style>-tail scan, the one quadratic 62-14 deliberately did not fix) as the
+ *    worst-ranked shape in its twelve-shape adversarial set at 512 KB, by nearly two
+ *    orders of magnitude over the next-worst shape — and measured it further at 1 MiB
+ *    (~435 ms), 2 MiB (~1,751 ms) and 4 MiB (~6,946 ms). Plan 62-15 re-measured Shape T
+ *    through the full normalizeGmailMessage path (1 MiB ~439.0 ms, 2 MiB ~1,721.0 ms,
+ *    4 MiB ~6,892.5 ms) plus the comment/url-scanner shapes X/X3/Y/Z 62-14 added (all
+ *    under 15 ms even at 4 MiB) and confirmed: 1 MiB (1,048,576) is the largest
+ *    power-of-two bound under which EVERY measured shape stays under the 1000 ms budget —
+ *    2 MiB already puts Shape T at ~1,721 ms. For legitimate-mail context: Gmail itself
+ *    clips message display around 102 KB, and EpisodicStore.capContent (D-58) keeps only
+ *    8 KB of the resulting episode downstream, so a body over 1 MiB is both vanishingly
+ *    rare in genuine mail and already mostly discarded regardless of this bound.
+ *
+ * 4. WHY A MODULE CONSTANT AND NOT CONFIG: src/lib/config.ts is under the
+ *    EMAIL-01/EMAIL-02 zero-diff freeze this phase must not break. Independent of that
+ *    freeze, a boundary safety limit that must not be weakened by configuration is the
+ *    better shape on its own merits — this is a correctness bound, not a tunable.
+ */
+const MAX_STRIP_INPUT_CODE_UNITS = 1048576;
+
+/**
+ * Fixed ASCII marker substituted for the body when raw.bodyText.length exceeds
+ * MAX_STRIP_INPUT_CODE_UNITS. Contains no sender-controlled bytes — asserted verbatim by
+ * tests/gmail-hidden-content.test.ts — so the omission itself cannot become a vector.
+ */
+const STRIP_INPUT_OMITTED_MARKER = '[body omitted: exceeds MAX_STRIP_INPUT_BYTES]';
+
 /**
  * Normalise a single pre-fetched Gmail message into a NormalizedRecord.
  *
@@ -359,7 +424,15 @@ export function normalizeGmailMessage(
   // `Subject: Re: <urgent> pricing` down to `Re:`, destroying provenance the extractor
   // depends on. accountId still comes from trusted config (T-20-06) and is NOT passed
   // through the primitive.
-  const strippedBody = stripHiddenContent(raw.bodyText);
+  // WR-02 (plan 62-15): above MAX_STRIP_INPUT_CODE_UNITS, the stripper is not called on
+  // the body at all — the over-cap branch yields STRIP_INPUT_OMITTED_MARKER (fail-closed,
+  // see that constant's doc comment). The at-or-below-cap call below keeps its exact call
+  // text so the source-order regression lock (tests/gmail-hidden-content.test.ts:117-124)
+  // keeps passing unedited.
+  const strippedBody =
+    raw.bodyText.length <= MAX_STRIP_INPUT_CODE_UNITS
+      ? stripHiddenContent(raw.bodyText)
+      : STRIP_INPUT_OMITTED_MARKER;
   const strippedFrom = stripInvisibleCodepoints(raw.headers.from);
   const strippedSubject = stripInvisibleCodepoints(raw.headers.subject);
 
