@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 14/15 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 15/15 | Complete   | 2026-07-31 |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -878,7 +878,7 @@ Plans:
 
 **Wave 11** *(gap closure — WR-02 input-cap half + phase-closing evidence; blocked on wave 10 for the measurement that sizes the cap)*
 
-- [ ] 62-15-PLAN.md — Fail-closed `MAX_STRIP_INPUT` bound on `raw.bodyText` at the adapter boundary, sized from the worst shape in 62-14's ranked twelve-shape measurement, plus a `dist/`-level reproduction of every finding this wave closed (EMAIL-03, wave 11)
+- [x] 62-15-PLAN.md — Fail-closed `MAX_STRIP_INPUT` bound on `raw.bodyText` at the adapter boundary, sized from the worst shape in 62-14's ranked twelve-shape measurement, plus a `dist/`-level reproduction of every finding this wave closed (EMAIL-03, wave 11)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
