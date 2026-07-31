@@ -243,7 +243,8 @@
  *     WITHOUT the markup semantics of stages 2-6.
  *  2. CSS hiding-selector harvest from `<style>` blocks — BEFORE those blocks are
  *     discarded, so a `.legal{display:none}` rule is remembered even though the block
- *     carrying it is about to be deleted (stage 4). Bounded to 200 harvested selectors.
+ *     carrying it is about to be deleted (stage 4). No cap on harvested selectors (62-20,
+ *     CR-09 — the prior 200-selector cap failed OPEN and was deleted, not resized).
  *     `<style>` elements are located LINEARLY (62-18) with the same `START_TAG_RE` +
  *     forward-only close-tag cursor stage 4 uses, so a `type="text/css" data-y="x>y"`
  *     style tag still yields its rules to the harvest, and an unterminated `<style>`'s
@@ -582,8 +583,18 @@ function applyRemovalRanges(html: string, ranges: Array<[number, number]>): stri
 // and `harvestHidingSelectors`'s own doc comment below for the CR-01/BL-01/BL-02 boundary
 // decisions this deletion INHERITS rather than re-asserts.
 
-/** Cap on harvested selectors so a pathological stylesheet cannot cause quadratic work. */
-const MAX_HARVESTED_SELECTORS = 200;
+// CR-09 (62-REVIEW.md, closed by 62-20): the prior hard cap of 200 on the number of harvested
+// class/id hiding selectors is DELETED, not re-sized. Its own doc comment ("so a pathological
+// stylesheet cannot cause quadratic work") named a quadratic 62-18 already deleted; its only
+// remaining OBSERVABLE effect was a fail-open bypass: every check on the cap was a
+// `return`/`break`/`continue` that abandoned further harvesting and proceeded to strip with a
+// knowingly-incomplete hidden-set, so 250 attacker-authored `.fN{display:none}` rules could
+// starve out a real `.legal{display:none}` and leak the payload behind it (CR-09's own
+// reproduced payload). The real bound on harvest cost is the caller's 1 MiB
+// `MAX_STRIP_INPUT_CODE_UNITS` (`gmail-adapter.ts`), and 62-18 already established the token
+// walk is linear regardless of brace shape — the cap no longer bought anything, and its
+// deletion was verified in-plan to stay well under the 1000 ms / 1 MiB budget (see this file's
+// 62-20-SUMMARY.md for the measurement table).
 
 /**
  * `stripCssComments`'s naive `.replace()` fix and its follow-up string-aware-but-quadratic
@@ -594,11 +605,12 @@ const MAX_HARVESTED_SELECTORS = 200;
  */
 
 /**
- * The nine css-tree token type NUMBERS this harvest depends on, resolved from `tokenTypes`
- * ONCE at module load rather than compared by name in the hot loop (62-17). Resolving through
- * a helper that throws on an unknown name means a future css-tree upgrade that renames or
- * removes one of these types fails LOUDLY at import time, rather than silently
- * mis-classifying every token of that kind as "none of the above" and quietly
+ * The eleven css-tree token type NUMBERS this harvest depends on, resolved from `tokenTypes`
+ * ONCE at module load rather than compared by name in the hot loop (62-17; extended 62-20 with
+ * `Function`/`Url` for the token-derived declaration signature, see `hasHidingSignatureFromTokens`
+ * below). Resolving through a helper that throws on an unknown name means a future css-tree
+ * upgrade that renames or removes one of these types fails LOUDLY at import time, rather than
+ * silently mis-classifying every token of that kind as "none of the above" and quietly
  * under-harvesting.
  */
 function requireTokenType(name: string): number {
@@ -621,14 +633,25 @@ const TT_COMMA = requireTokenType('Comma');
 const TT_LEFT_CURLY = requireTokenType('LeftCurlyBracket');
 const TT_RIGHT_CURLY = requireTokenType('RightCurlyBracket');
 const TT_AT_KEYWORD = requireTokenType('AtKeyword');
+const TT_FUNCTION = requireTokenType('Function');
+const TT_URL = requireTokenType('Url');
 
 /** One prelude token, captured as a `[type, start, end]` triple into the `css` string. */
 type PreludeToken = readonly [type: number, start: number, end: number];
 
-/** True for the five CSS whitespace code points (space, tab, LF, CR, FF) — matches both
- * css-tree's own `WhiteSpace` token category and its escape-decoding behavior (verified
- * directly against `css-tree`'s `ident.decode` during planning: a hex escape's optional
- * trailing separator is consumed for all five, not just space/tab/LF). */
+/** True for the five CSS whitespace code points (space, tab, LF, CR, FF) — matches css-tree's
+ * own `WhiteSpace` token category, and (verified directly against `css-tree`'s `ident.decode`
+ * during planning) that a hex escape's optional trailing separator is consumed for all five
+ * single code units, not just space/tab/LF.
+ *
+ * CORRECTED 62-20 (CR-08, 62-REVIEW.md): the ORIGINAL version of this comment additionally
+ * claimed the check was "verified ... for all five whitespace code points" without qualifying
+ * that the verification covered only ONE-code-unit separators. It did not cover the
+ * TWO-code-unit CRLF case — a CR immediately followed by LF is, per CSS Syntax §3.3, ONE
+ * preprocessed whitespace code point (CR/CRLF/FF are folded to a single LF before
+ * tokenization), and must be consumed as a pair. `decodeIdentEscapes`'s caller now consumes a
+ * CRLF pair as one separator explicitly (see the `isCr` branch there) — this function still
+ * only classifies a SINGLE code unit, unchanged. */
 function isEscapeSeparatorCode(code: number): boolean {
   return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d || code === 0x0c;
 }
@@ -685,7 +708,12 @@ function decodeIdentEscapes(raw: string): string {
         digits += 1;
       }
       if (i < n && isEscapeSeparatorCode(raw.charCodeAt(i))) {
+        const isCr = raw.charCodeAt(i) === 0x0d;
         i += 1; // one trailing whitespace code point is part of the escape, not the name
+        // CR-08 (62-REVIEW.md): per CSS Syntax §3.3, CR / CRLF / FF are preprocessed to a
+        // single LF BEFORE tokenization, so a CRLF following a hex escape is ONE whitespace
+        // code point, consumed whole — not just the CR, leaving the LF stranded in the name.
+        if (isCr && i < n && raw.charCodeAt(i) === 0x0a) i += 1;
       }
       const codePoint = parseInt(hex, 16);
       const outOfRange =
@@ -790,17 +818,26 @@ function preludeToBareSelectors(
  * `.legal{...}` un-harvested: it sits at depth 1 inside `.a`'s still-open (never closed by a
  * real `}`) block, so the frame that would evaluate it as a selector is never reached.
  *
- * `MAX_HARVESTED_SELECTORS` is checked at the same two points as the pre-62-17 cursor walk:
- * once per candidate declaration block (before evaluating whether it is bare/hiding) and once
- * per selector inside an accepted rule. `harvestHidingSelectors` below also skips calling
- * `tokenize` on any FURTHER `<style>` block once the cap is already reached.
+ * A frame's declaration content is evaluated by `evaluateFrame` below, a single local function
+ * shared by BOTH the `}` branch and the EOF drain that follows the `tokenize` call — two copies
+ * of that logic is exactly the T-62-43 cross-boundary shape this phase keeps re-filing, so
+ * factoring it out means the two paths cannot diverge (CR-06, 62-REVIEW.md). Its declaration
+ * text is fed to `hasHidingSignatureFromTokens` (CR-05), a token-derived reconstruction, never
+ * `css.slice(...)` handed straight to `hasHidingSignature`. The pre-62-20 cap on harvested
+ * selectors was DELETED (CR-09; see its own doc comment above the stage-2 section for why): a
+ * stylesheet with 250+ hiding rules is harvested in full rather than abandoning the scan and
+ * stripping with a knowingly-incomplete hidden-set.
+ *
+ * CR-06 (62-REVIEW.md): per CSS Syntax (consume-a-simple-block, EOF case), an unterminated
+ * block is closed at EOF and its declarations apply — css-tree's parser agrees. Before this
+ * closure, a frame was evaluated ONLY when a `RightCurlyBracket` token popped it, so a
+ * stylesheet whose last block is unterminated silently dropped every hiding rule in it. The
+ * drain below (after `tokenize` returns) evaluates each frame still on the stack exactly as the
+ * `}` branch would, with the frame's content running to `css.length` — the faithful outcome per
+ * §4.3, not an over-reach (this module already harvests an unterminated `<style>` ELEMENT to
+ * EOF for the identical reason, 62-18's T62-91).
  */
-function harvestFromStylesheet(
-  css: string,
-  classes: Set<string>,
-  ids: Set<string>,
-  counter: { total: number }
-): void {
+function harvestFromStylesheet(css: string, classes: Set<string>, ids: Set<string>): void {
   interface Frame {
     readonly isAtRule: boolean;
     readonly hasPrelude: boolean;
@@ -817,6 +854,25 @@ function harvestFromStylesheet(
       return type === TT_AT_KEYWORD;
     }
     return false;
+  };
+
+  // Shared evaluate-and-add path — the ONLY place a frame's declaration content is checked
+  // against the hiding-signature registry and its bare selectors added to the harvest. Used by
+  // both the `}` branch (closingOffset = the `}` token's `start`) and the post-tokenize EOF
+  // drain (closingOffset = `css.length`), so the two can never disagree about what "closing" a
+  // block means (CR-06).
+  const evaluateFrame = (frame: Frame, closingOffset: number): void => {
+    if (!frame.hasPrelude) return;
+    const contentStart = Math.min(frame.contentStart, css.length);
+    const contentEnd = Math.min(closingOffset, css.length);
+    const declarationSlice = css.slice(contentStart, contentEnd);
+    if (!hasHidingSignatureFromTokens(declarationSlice)) return;
+    const bareSelectors = preludeToBareSelectors(css, frame.preludeTokens);
+    if (!bareSelectors) return;
+    for (const sel of bareSelectors) {
+      if (sel.kind === 'class') classes.add(sel.name);
+      else ids.add(sel.name);
+    }
   };
 
   tokenize(css, (type, start, end) => {
@@ -839,26 +895,22 @@ function harvestFromStylesheet(
     if (type === TT_RIGHT_CURLY) {
       const frame = stack.pop();
       prelude = [];
-      if (!frame || !frame.hasPrelude) return;
-      if (counter.total >= MAX_HARVESTED_SELECTORS) return;
-      const contentStart = Math.min(frame.contentStart, css.length);
-      const contentEnd = Math.min(start, css.length);
-      const declarationText = css.slice(contentStart, contentEnd);
-      if (!hasHidingSignature(declarationText)) return;
-      const bareSelectors = preludeToBareSelectors(css, frame.preludeTokens);
-      if (!bareSelectors) return;
-      for (const sel of bareSelectors) {
-        if (counter.total >= MAX_HARVESTED_SELECTORS) break;
-        if (sel.kind === 'class') classes.add(sel.name);
-        else ids.add(sel.name);
-        counter.total += 1;
-      }
+      if (frame) evaluateFrame(frame, start);
       return;
     }
 
     const collecting = stack.length === 0 || stack[stack.length - 1]!.isAtRule;
     if (collecting) prelude.push([type, start, end]);
   });
+
+  // CR-06: EOF closes every still-open block (CSS Syntax: consume-a-simple-block, EOF case).
+  // Drained in LIFO pop order — the order frames close does not affect the RESULT (each frame's
+  // hiding-selector contribution is independent of every other frame's), only bookkeeping, so
+  // draining innermost-first is safe.
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    evaluateFrame(frame, css.length);
+  }
 }
 
 /**
@@ -933,18 +985,16 @@ function harvestFromStylesheet(
 function harvestHidingSelectors(html: string): { classes: Set<string>; ids: Set<string> } {
   const classes = new Set<string>();
   const ids = new Set<string>();
-  const counter = { total: 0 };
   START_TAG_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = START_TAG_RE.exec(html)) !== null) {
-    if (counter.total >= MAX_HARVESTED_SELECTORS) break;
     const tagName = match[1]!.toLowerCase();
     if (tagName !== 'style') continue;
     if (SELF_CLOSING_SUFFIX_RE.test(match[0])) continue; // WR-03: unchanged, not fixed here
     const tagEnd = START_TAG_RE.lastIndex;
     const bounds = findRawtextCloseBounds(html, 'style', tagEnd);
     if (bounds !== null) {
-      harvestFromStylesheet(html.slice(tagEnd, bounds.contentEnd), classes, ids, counter);
+      harvestFromStylesheet(html.slice(tagEnd, bounds.contentEnd), classes, ids);
       START_TAG_RE.lastIndex = bounds.elementEnd;
     } else {
       // No matching </style...> anywhere at or after tagEnd: harvest to end of input (HTML
@@ -952,7 +1002,7 @@ function harvestHidingSelectors(html: string): { classes: Set<string>; ids: Set<
       // this failure proves no later `<style` in the document could find a close tag either —
       // retrying would repeat the same failing scan. Breaking here is what converts T-62-54's
       // O(n^2) into O(n).
-      harvestFromStylesheet(html.slice(tagEnd), classes, ids, counter);
+      harvestFromStylesheet(html.slice(tagEnd), classes, ids);
       break;
     }
   }
@@ -1003,10 +1053,64 @@ function isZeroValue(text: string, re: RegExp): boolean {
 }
 
 /**
+ * CR-05 (62-REVIEW.md) — reconstructs `source` (a declaration block's content, or an inline
+ * `style` attribute value) the way a conformant CSS engine reads it, then returns
+ * `hasHidingSignature`'s verdict over THAT reconstruction, never over raw/untokenized text. A
+ * regex over raw source is comparing against a string a browser never sees: a browser removes
+ * comments and decodes `\`-escapes in idents at tokenize time, before any declaration is read
+ * (see this file's `<why_a_raw_slice_can_never_agree>` in `62-20-PLAN.md` — under-strip on
+ * `display:/*x*\/none` and `display:\6eone`, over-strip on `disp/*x*\/lay:none`). Both call
+ * sites of `hasHidingSignature` (`harvestFromStylesheet`'s frame evaluation and
+ * `isHiddenStartTag`'s inline-style check) go through this helper; `hasHidingSignature` itself
+ * and its twelve regexes are UNCHANGED — only what reaches them changes.
+ *
+ * One `tokenize` pass, three reconstruction rules, in order of applicability:
+ *  - `Comment` token -> emit ONE SPACE. Never the comment text (that is today's under-strip
+ *    leak) and never nothing (`disp/*x*\/lay:none` would collapse to `display:none`, which a
+ *    browser reads as two separate idents and does NOT treat as a hiding declaration — emitting
+ *    nothing would manufacture a false positive the comment-adjacency VF-01 fix already had to
+ *    avoid on the selector side).
+ *  - ident-bearing tokens (`Ident`, `Function`, `Hash`, `AtKeyword`, `Url`) -> emit
+ *    `decodeIdentEscapes` applied to the raw slice, since these are exactly the token kinds
+ *    whose text a browser escape-decodes before comparison (CSS Syntax §4.3.7).
+ *  - every other token -> emit `source.slice(start, end)` verbatim, clamped with
+ *    `Math.min(offset, source.length)` per the characterized css-tree end-offset overrun this
+ *    module already accounts for elsewhere (see the file-level "62-17 gap closure" section).
+ */
+function hasHidingSignatureFromTokens(source: string): boolean {
+  let text = '';
+  tokenize(source, (type, start, end) => {
+    if (type === TT_COMMENT) {
+      text += ' ';
+      return;
+    }
+    const s = Math.min(start, source.length);
+    const e = Math.min(end, source.length);
+    if (
+      type === TT_IDENT ||
+      type === TT_FUNCTION ||
+      type === TT_HASH ||
+      type === TT_AT_KEYWORD ||
+      type === TT_URL
+    ) {
+      text += decodeIdentEscapes(source.slice(s, e));
+    } else {
+      text += source.slice(s, e);
+    }
+  });
+  return hasHidingSignature(text);
+}
+
+/**
  * True when `styleText` (an inline `style` attribute value, or a harvested `<style>`
  * rule's declaration block) contains any of the named hiding signatures. Zero-valued
  * properties are checked by extracting the number and comparing with `=== 0`, NOT by a
  * regex boundary trick — `opacity:0.85` must not match `opacity:0`.
+ *
+ * NEVER call this directly with a raw source slice (`css.slice(...)`, an unprocessed attribute
+ * value, etc.) — every call site must go through `hasHidingSignatureFromTokens` above, which
+ * reconstructs the text the way a conformant engine would read it first (CR-05). This is
+ * enforced by a shipped source guard in `tests/strip-hidden.test.ts`.
  */
 function hasHidingSignature(styleText: string): boolean {
   return (
@@ -1048,8 +1152,14 @@ function isHiddenStartTag(
   hiddenClasses: ReadonlySet<string>,
   hiddenIds: ReadonlySet<string>
 ): boolean {
+  // CR-05 call site 2: the inline `style` attribute value goes through the same
+  // token-derived reconstruction as the declaration side (`hasHidingSignatureFromTokens`),
+  // not straight into `hasHidingSignature`. This value is still the RAW (not yet
+  // HTML-entity-decoded) attribute value at this point — CR-07's decoding step lands ahead
+  // of it in plan 62-24; the layering is HTML decode first, CSS tokenize second, and this
+  // call is the CSS half.
   const style = extractAttr(attrs, STYLE_ATTR_RE);
-  if (style !== null && hasHidingSignature(style)) return true;
+  if (style !== null && hasHidingSignatureFromTokens(style)) return true;
   if (BARE_HIDDEN_ATTR_RE.test(attrs)) return true;
   if (ARIA_HIDDEN_TRUE_RE.test(attrs)) return true;
   const cls = extractAttr(attrs, CLASS_ATTR_RE);
