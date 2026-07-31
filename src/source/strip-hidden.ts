@@ -231,6 +231,23 @@
  * match `SELF_CLOSING_SUFFIX_RE` reports as self-closing, leaving WR-03 (62-REVIEW.md, still
  * open) exactly as it was, not attempting to fix it here.
  *
+ * 62-20 gap closure (CR-05/CR-06/CR-08/CR-09, 62-REVIEW.md/62-VERIFICATION.md) — migrates the
+ * one part of the CSS layer 62-17 left on raw text: the DECLARATION side. `hasHidingSignature`
+ * ran twelve regexes over `css.slice(contentStart, contentEnd)` — comments and escapes
+ * included — so `display:/*x*\/none` and `display:\6eone` both applied `display:none` to a
+ * conformant engine while this module saw neither (CR-05). `hasHidingSignatureFromTokens`
+ * (stage 5, immediately above `hasHidingSignature`) closes this the same way 62-17 closed the
+ * selector side: reconstruct from tokens (Comment -> one space, ident-bearing tokens
+ * escape-decoded), never compare raw text. Both call sites (`harvestFromStylesheet`'s frame
+ * evaluation, `isHiddenStartTag`'s inline-style check) are migrated; a shipped source guard
+ * bans a raw-slice call from reappearing. Two structural gaps in the same function are also
+ * closed: an unterminated final declaration block is now evaluated at EOF instead of silently
+ * abandoned (CR-06), and the 200-selector harvest cap — which failed OPEN, proceeding to strip
+ * with a known-incomplete hidden-set once exhausted — is deleted outright rather than resized,
+ * measured safe at the 1 MiB input boundary (CR-09). `decodeIdentEscapes` additionally now
+ * consumes a CRLF pair as one escape separator per CSS Syntax §3.3, matching css-tree's own
+ * decode (CR-08) — MIME's native line ending, not a corner case.
+ *
  * Stage order (load-bearing — see the block comment above each stage):
  *  0. Hoisted stray-`<` fail-safe truncation (62-14, Bound A) — runs immediately after stage
  *     1 and before stage 2; a DUPLICATE of the stage-6 truncation below, not a move of it.
