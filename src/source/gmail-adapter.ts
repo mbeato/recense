@@ -358,19 +358,33 @@ export function parseEmailDate(header: string, nowMs: number): number | null {
  *    SUMMARY records a direct measurement of the rejected truncate-then-strip design
  *    leaking exactly this way, on exactly this shape.
  *
- * 3. WHY THIS VALUE: plan 62-14 measured Shape T (T-62-54 — STYLE_BLOCK_RE's lazy
- *    </style>-tail scan, the one quadratic 62-14 deliberately did not fix) as the
- *    worst-ranked shape in its twelve-shape adversarial set at 512 KB, by nearly two
- *    orders of magnitude over the next-worst shape — and measured it further at 1 MiB
- *    (~435 ms), 2 MiB (~1,751 ms) and 4 MiB (~6,946 ms). Plan 62-15 re-measured Shape T
- *    through the full normalizeGmailMessage path (1 MiB ~439.0 ms, 2 MiB ~1,721.0 ms,
- *    4 MiB ~6,892.5 ms) plus the comment/url-scanner shapes X/X3/Y/Z 62-14 added (all
- *    under 15 ms even at 4 MiB) and confirmed: 1 MiB (1,048,576) is the largest
- *    power-of-two bound under which EVERY measured shape stays under the 1000 ms budget —
- *    2 MiB already puts Shape T at ~1,721 ms. For legitimate-mail context: Gmail itself
- *    clips message display around 102 KB, and EpisodicStore.capContent (D-58) keeps only
- *    8 KB of the resulting episode downstream, so a body over 1 MiB is both vanishingly
- *    rare in genuine mail and already mostly discarded regardless of this bound.
+ * 3. WHY THIS VALUE — RE-ESTABLISHED IN 62-18 AFTER T62-91 FALSIFIED THE ORIGINAL
+ *    JUSTIFICATION: plan 62-15 sized this cap against Shape T (T-62-54 —
+ *    STYLE_BLOCK_RE's lazy </style>-tail scan) alone, treating it as the worst case of the
+ *    quadratic. `62-VERIFICATION.md` (T62-91) found that was only ONE parametrization of
+ *    that quadratic: a denser shape (a bare `<style>` repeated) cost 23,249 ms at 1 MiB —
+ *    over 50x Shape T's own ~439 ms — and a previously-unmeasured shape (`<style ` repeated
+ *    with no `>` until the string's own final byte, which stage 0's Bound A cannot
+ *    truncate) cost 156,223 ms, 156x this constant's own 1000 ms budget. Plan 62-15's
+ *    justification was therefore WRONG, not merely incomplete: it mistook one
+ *    parametrization of a shape family for the family's worst case.
+ *
+ *    62-18 (T62-91) closed the root cause by DELETING `STYLE_BLOCK_RE` outright (see
+ *    `strip-hidden.ts`'s file-level "62-18 gap closure" section) rather than re-sizing this
+ *    cap around it, then re-measured the FULL corrected shape set — 62-14's twelve ranked
+ *    shapes, T62-91's three reported parametrizations, the newly-discovered
+ *    `<style ` -with-no-`>` shape, and the nine adversarial CSS shapes from 62-16's
+ *    `<decision_record>` (25 shapes total) — against the POST-fix module, at exactly this
+ *    constant's value. Every one of the 25 completed in under ~44 ms (worst: the
+ *    brace-free `a<x ` shape, ~44 ms through `stripHiddenContent`, ~46 ms end-to-end
+ *    through `normalizeGmailMessage`) — over 20x headroom under the 1000 ms budget, and no
+ *    longer bounded by any single quadratic. See `62-18-SUMMARY.md` for the full
+ *    25-row measurement table. Because every shape now clears the budget with wide margin,
+ *    1 MiB (1,048,576) is KEPT rather than resized — the value itself did not need to
+ *    change, only the argument for it. For legitimate-mail context: Gmail itself clips
+ *    message display around 102 KB, and EpisodicStore.capContent (D-58) keeps only 8 KB of
+ *    the resulting episode downstream, so a body over 1 MiB is both vanishingly rare in
+ *    genuine mail and already mostly discarded regardless of this bound.
  *
  * 4. WHY A MODULE CONSTANT AND NOT CONFIG: src/lib/config.ts is under the
  *    EMAIL-01/EMAIL-02 zero-diff freeze this phase must not break. Independent of that
@@ -383,8 +397,16 @@ const MAX_STRIP_INPUT_CODE_UNITS = 1048576;
  * Fixed ASCII marker substituted for the body when raw.bodyText.length exceeds
  * MAX_STRIP_INPUT_CODE_UNITS. Contains no sender-controlled bytes — asserted verbatim by
  * tests/gmail-hidden-content.test.ts — so the omission itself cannot become a vector.
+ *
+ * IN-05 (62-18): the literal deliberately does NOT name `MAX_STRIP_INPUT_CODE_UNITS` (or
+ * any other identifier) — this string lands in `record.content`, read by an LLM extractor,
+ * not by a developer grepping source, so an implementation-detail identifier belongs in
+ * this doc comment, not in the model-facing text. The prior literal named
+ * `MAX_STRIP_INPUT_BYTES`, a constant that has never existed in this codebase (the review's
+ * own term for this bound, cross-referenced above, never became a real identifier). The
+ * cross-reference stays here, in prose, where a grep for the review's term still finds it.
  */
-const STRIP_INPUT_OMITTED_MARKER = '[body omitted: exceeds MAX_STRIP_INPUT_BYTES]';
+const STRIP_INPUT_OMITTED_MARKER = '[body omitted: exceeds size limit]';
 
 /**
  * Normalise a single pre-fetched Gmail message into a NormalizedRecord.

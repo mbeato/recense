@@ -511,7 +511,7 @@ describe('adjudication — BYPASS_CORPUS (11 rows, gmail-hidden-content.test.ts)
     expect(shippedPresent(row)).toBe(false);
   });
 
-  it('WR-02 cap: oracle N/A — this row tests the byte-size fail-closed cap (MAX_STRIP_INPUT_BYTES, enforced upstream of stripHiddenContent in normalizeGmailMessage), not CSS-hiding-selector correctness; no stylesheet, no selector', () => {
+  it('WR-02 cap: oracle N/A — this row tests the byte-size fail-closed cap (MAX_STRIP_INPUT_CODE_UNITS, enforced upstream of stripHiddenContent in normalizeGmailMessage), not CSS-hiding-selector correctness; no stylesheet, no selector', () => {
     const sentinel = 'SENTINEL_BYPASS_CORPUS';
     const big = sentinel + 'x'.repeat(1048576 + 100 - sentinel.length);
     // stripHiddenContent itself has no cap (the cap is enforced by the caller); asserting

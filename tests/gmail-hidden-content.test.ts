@@ -334,7 +334,9 @@ describe(
     // under 1000 ms: at 1 MiB, Shape T is bound at ~439 ms (well under 1000 ms) while 2 MiB
     // already exceeds it (~1,721 ms). Shape T is what bounds the cap value.
     const CAP_LENGTH = 1048576;
-    const OMISSION_MARKER = '[body omitted: exceeds MAX_STRIP_INPUT_BYTES]';
+    // IN-05 (62-18): mirrors the production literal, which deliberately no longer names any
+    // constant (it lands in record.content, read by an LLM extractor, not a developer).
+    const OMISSION_MARKER = '[body omitted: exceeds size limit]';
 
     // Shape T (T-62-54), local to this file so the cost-bound test does not depend on
     // strip-hidden.test.ts's private shape closures. Mirrors that file's definition.
@@ -412,6 +414,58 @@ describe(
       expect(record).toBeDefined();
       expect(elapsed).toBeLessThan(500);
     });
+
+    // 62-18 gap closure, Task 2: re-establishes the cap's cost argument on the CORRECTED
+    // shape set (62-14's 12 ranked shapes + T62-91's 3 parametrizations + the new
+    // `<style ` -with-no->` shape + the 9 adversarial CSS shapes from 62-16's decision
+    // record, 25 shapes total, all newly measured against the post-Task-1 module — see
+    // 62-18-SUMMARY.md's full table). None of the 25 exceeded ~44 ms at exactly the cap
+    // boundary, so the cap stays at 1 MiB; these are the three worst by measured wall
+    // clock, asserted end-to-end (not just through stripHiddenContent) with a 1000 ms
+    // ceiling that carries >20x headroom over the worst measured number (IN-03: not
+    // CI-flaky).
+    const padToExactLength = (unit: string, length: number): string => {
+      const repeated = unit.repeat(Math.ceil(length / unit.length) + 1);
+      return repeated.slice(0, length);
+    };
+    const CAP_FOR_WORST3 = 1048576;
+    const worst3Shapes: Array<[string, () => string]> = [
+      [
+        'report (a<x  repeated, no braces, in <style>)',
+        () => {
+          const overhead = '<style>'.length + '</style>'.length;
+          return '<style>' + padToExactLength('a<x ', CAP_FOR_WORST3 - overhead) + '</style>';
+        },
+      ],
+      [
+        'CSS: brace-free a<x  (62-16 decision record item 4)',
+        () => {
+          const overhead = '<style>'.length + '</style>'.length;
+          return '<style>' + padToExactLength('a<x ', CAP_FOR_WORST3 - overhead) + '</style>';
+        },
+      ],
+      [
+        'CSS: { repeated (62-16 decision record item 4)',
+        () => {
+          const overhead = '<style>'.length + '</style>'.length;
+          return '<style>' + padToExactLength('{', CAP_FOR_WORST3 - overhead) + '</style>';
+        },
+      ],
+    ];
+
+    it.each(worst3Shapes)(
+      '%s: end-to-end through normalizeGmailMessage completes under 1000ms at exactly the cap boundary',
+      (_label, makeShape) => {
+        const bodyText = makeShape();
+        expect(bodyText.length).toBe(CAP_FOR_WORST3);
+        const raw = makeRaw({ bodyText });
+        const start = performance.now();
+        const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
+        const elapsed = performance.now() - start;
+        expect(record).toBeDefined();
+        expect(elapsed).toBeLessThan(1000);
+      }
+    );
 
     it('under-cap regression: the named fixture body still produces the same record.content it does today', () => {
       const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG, NOW);
@@ -545,7 +599,7 @@ const BYPASS_CORPUS: BypassCorpusRow[] = [
         'SENTINEL_BYPASS_CORPUS' + 'x'.repeat(1048576 + 100 - 'SENTINEL_BYPASS_CORPUS'.length),
     },
     forbidden: 'SENTINEL_BYPASS_CORPUS',
-    visible: '[body omitted: exceeds MAX_STRIP_INPUT_BYTES]',
+    visible: '[body omitted: exceeds size limit]', // IN-05 (62-18)
   },
   {
     name: '62-17: CSS-escaped class selector (.leg\\61 l) vs class="legal" — genuine leak closed',
