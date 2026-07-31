@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { stripHiddenContent, stripInvisibleCodepoints } from '../src/source/strip-hidden';
+import { liveHidingSelectors } from './support/css-liveness-oracle';
 
 const ZWSP = '​';
 const TAGS_BLOCK_CHAR = '\u{E0041}'; // an arbitrary codepoint inside the Tags block
@@ -1001,6 +1002,111 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
     expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
   });
 }, 20000);
+
+describe('stripHiddenContent — T62-91: STYLE_BLOCK_RE\'s quadratic eliminated (62-18 gap closure)', () => {
+  // 62-18-PLAN.md <measurements_from_planning>: STYLE_BLOCK_RE's lazy </style>-tail scan
+  // (T-62-54) costs 2.9-156.2 SECONDS on these five shapes at exactly the
+  // MAX_STRIP_INPUT_CODE_UNITS cap boundary (1,048,576 code units); the linear
+  // START_TAG_RE + findRawtextCloseBounds walk this plan ships measured 0.2-3.6 ms on the
+  // same shapes during planning — roughly two orders of magnitude of headroom under the
+  // 1000 ms ceiling below, so this is not a CI-flaky wall-clock assertion (IN-03). No
+  // custom per-test timeout is set here deliberately: against the PRE-fix module these
+  // shapes blow past vitest's default 5000ms test timeout long before they'd ever reach
+  // the `elapsed < 1000` assertion — a fast, unambiguous RED, not a multi-minute wait.
+  const CAP = 1048576;
+
+  function padToExactLength(unit: string, length: number): string {
+    const repeated = unit.repeat(Math.ceil(length / unit.length) + 1);
+    return repeated.slice(0, length);
+  }
+
+  // Shape 1: bare `<style>` repeated — T62-91's own reported worst case (23,249 ms pre-fix).
+  const shapeBareStyleRepeated = (): string => padToExactLength('<style>', CAP);
+
+  // Shape 2: 62-15's Shape T unit (four alternating double/single-quoted attribute pairs,
+  // no </style> anywhere) — 2,887 ms pre-fix.
+  const shapeFourAttrPairs = (): string =>
+    padToExactLength('<style ' + 'a="b" c=\'d\' '.repeat(4) + '>', CAP);
+
+  // Shape 3: a single open tag carrying three unquoted attributes, no </style> anywhere —
+  // 8,381 ms pre-fix.
+  const shapeUnquotedTriple = (): string => padToExactLength('<style a=1 b=2 c=3>', CAP);
+
+  // Shape 4: `<style ` repeated with NO `>` anywhere except the string's own final byte —
+  // never measured by any prior wave, and the worst of the five at 156,223 ms pre-fix.
+  // Stage 0 (Bound A, 62-14) truncates from the first `<` AFTER the LAST `>`; when the only
+  // `>` in the whole body is the final byte, indexOf('<', lastIndexOf('>') + 1) finds
+  // nothing, so stage 0 does not truncate this shape at all and it reaches
+  // harvestHidingSelectors in full.
+  const shapeNoCloseUntilFinalByte = (): string => padToExactLength('<style ', CAP - 1) + '>';
+
+  // Shape 5 (control): well-formed complete blocks repeated — confirms the linear walk does
+  // not regress ordinary throughput on the common case (2.5 ms under STYLE_BLOCK_RE, 3.6 ms
+  // under the linear walk, per planning's own measurement).
+  const shapeWellFormedRepeated = (): string =>
+    padToExactLength('<style>.g{display:none}</style>', CAP);
+
+  it.each([
+    ['bare <style> repeated', shapeBareStyleRepeated],
+    ['four attribute pairs (Shape T unit)', shapeFourAttrPairs],
+    ['single unquoted attribute triple', shapeUnquotedTriple],
+    ['<style  repeated with no > until the final byte', shapeNoCloseUntilFinalByte],
+    ['well-formed blocks repeated (control)', shapeWellFormedRepeated],
+  ] as const)('%s: completes under 1000ms at exactly 1,048,576 code units, and stays idempotent', (_label, makeShape) => {
+    const input = makeShape();
+    expect(input.length).toBe(CAP);
+    const start = performance.now();
+    let once = '';
+    expect(() => {
+      once = stripHiddenContent(input);
+    }).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+    // Totality + idempotence must still hold on every pathological shape above.
+    expect(() => stripHiddenContent(once)).not.toThrow();
+    expect(stripHiddenContent(once)).toBe(once);
+  });
+
+  it('result parity: harvested class/id sets on well-formed multi-block input match the pre-task module exactly', () => {
+    const input =
+      '<style>.a{display:none}#b{visibility:hidden}</style>' +
+      'keep1<span class="a">PARITY_A</span><span id="b">PARITY_B</span>' +
+      '<style>.c,#d{opacity:0}</style>' +
+      'keep2<span class="c">PARITY_C</span><span id="d">PARITY_D</span>';
+    const out = stripHiddenContent(input);
+    expect(out).not.toContain('PARITY_A');
+    expect(out).not.toContain('PARITY_B');
+    expect(out).not.toContain('PARITY_C');
+    expect(out).not.toContain('PARITY_D');
+    expect(out).toContain('keep1');
+    expect(out).toContain('keep2');
+  });
+
+  it('unterminated <style> — under-strip: content hidden by a rule behind an unterminated <style> must no longer leak (HTML §13.2.5: content runs to EOF)', () => {
+    // Cross-check against the 62-16 liveness oracle before asserting the production
+    // verdict: a conformant CSS engine treats `.legal{display:none}` as live-hiding
+    // `class="legal"`, so a browser applies this rule too.
+    const oracle = liveHidingSelectors('.legal{display:none}');
+    expect(oracle.classes.has('legal')).toBe(true);
+    const out = stripHiddenContent(
+      '<span class="legal">PAYLOAD_UNCLOSED</span>ok<style>.legal{display:none}'
+    );
+    expect(out).not.toContain('PAYLOAD_UNCLOSED');
+    expect(out).toBe('ok');
+  });
+
+  it('unterminated <style> — over-strip control: harvesting to EOF must not start removing content no rule hides', () => {
+    // Cross-check: `.other{color:red}` carries no hiding signature at all (no
+    // display:none/visibility:hidden/etc.), so a conformant engine treats nothing as live.
+    const oracle = liveHidingSelectors('.other{color:red}');
+    expect(oracle.classes.size).toBe(0);
+    expect(oracle.ids.size).toBe(0);
+    const out = stripHiddenContent(
+      '<span class="keep">VISIBLE_UNCLOSED</span>ok<style>.other{color:red}'
+    );
+    expect(out).toContain('VISIBLE_UNCLOSED');
+  });
+});
 
 describe('stripHiddenContent — WR-02: the 62-VERIFICATION.md adversarial shape must not be quadratic', () => {
   // WR-02 gap closure (62-14). 62-VERIFICATION.md measured the report's shape at
