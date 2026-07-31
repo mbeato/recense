@@ -17,6 +17,16 @@
  * This table is NOT accepted on `62-16-PLAN.md`'s planning-time table's authority — per the
  * plan's own instruction, this file's measurement is the authority, and every disagreement
  * with the planning table is called out in `62-16-SUMMARY.md`, not silently reconciled.
+ *
+ * DISPOSITION (Task 4, operator-confirmed `reclassify`, recorded in `62-16-SUMMARY.md`): FB-01
+ * and CR-04 are reclassified as measured NON-DEFECTS on their two reported input shapes — the
+ * assertions below ARE that reclassification, shipped as code rather than left as prose. This
+ * closes the two REPORTED-INPUT findings only. CR-04's underlying MECHANISM finding
+ * (`matchesUrlOpen` has no token-boundary check, `src/source/strip-hidden.ts:463-472`) is a
+ * SEPARATE, still-open, still-unfixed defect — reclassifying its two reported inputs does not
+ * touch the mechanism itself, which remains capable of misbehaving on an input this plan did not
+ * adjudicate. See the dedicated "CR-04 mechanism finding" block below, which tracks this
+ * explicitly so it cannot be read as silently closed.
  */
 import { describe, it, expect } from 'vitest';
 import { liveHidingSelectors } from './support/css-liveness-oracle';
@@ -121,6 +131,31 @@ describe('adjudication — CR-04 (matchesUrlOpen token-boundary defect)', () => 
     };
     expect(oracleLive(row)).toBe(true);
     expect(shippedPresent(row)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-04 MECHANISM FINDING — still open, still unfixed. Reclassifying the two REPORTED INPUTS
+// above (both non-defects) as agreement rows does NOT close this. `matchesUrlOpen`
+// (src/source/strip-hidden.ts:463-472) checks only that four characters spell "url(" — it has
+// no token-boundary check, so any `url(` substring, including one glued to an unrelated
+// identifier, opens a comment-blind raw span. Both of 62-16's reported repros happen to produce
+// an INVALID resulting selector (so a browser drops the rule too, making them non-defects) — but
+// that is a property of the two specific inputs the reviewer and this adjudication tested, not a
+// proof that no input can trigger the mechanism into producing a genuine leak. 62-17's token-walk
+// rewrite retires `matchesUrlOpen` entirely (it deletes the hand-rolled scanner), which is what
+// actually closes this — not this reclassification. Tracked here so a future reader searching
+// this file for "CR-04" sees the mechanism is unresolved, not merely that its two known repros
+// are harmless.
+// ---------------------------------------------------------------------------
+
+describe('adjudication — CR-04 mechanism finding (matchesUrlOpen token-boundary defect: OPEN, NOT closed by this reclassification)', () => {
+  it('documents the open mechanism defect and its two known-non-defect reported inputs, so it is not silently read as fixed', () => {
+    // No new assertion needed to "prove" the mechanism is open — its absence is a property of
+    // src/source/strip-hidden.ts, which this plan does not modify (Task 3's explicit charter:
+    // "No production code changes in this plan"). This test exists so the mechanism finding has
+    // a durable, named, grep-able location distinct from the two reclassified repro rows above.
+    expect(true).toBe(true);
   });
 });
 
