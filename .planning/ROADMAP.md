@@ -829,7 +829,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
   3. Hidden or invisible content in HTML-only emails (`display:none`, zero-width characters, hidden spans) is deterministically stripped before any content reaches the extractor, verified by a regression fixture containing a hidden injected instruction that must not survive into episode content — EMAIL-03
   4. A fresh account's initial backfill batch is consolidated in chronological order (derived from the email's own `Date:` header), so an older message in the same backfill cannot silently apply over newer state — EMAIL-04
 
-**Plans**: 19 plans in 15 waves (62-06..62-08 gap closure added 2026-07-30; 62-09..62-11 gap closure added 2026-07-30 after re-verification; 62-12 gap closure added 2026-07-30 from `62-REVIEW.md` BL-01/BL-02/BL-03; 62-13..62-15 gap closure added 2026-07-30 from `62-VERIFICATION.md` VF-01/NEW-01/WR-02; **62-16..62-19 gap closure added 2026-07-31** from `62-VERIFICATION.md` FB-01/T62-91 and `62-REVIEW.md` CR-04/WR-09/IN-05 — replaces the hand-rolled CSS scanner with a spec-conformant tokenizer after six independent bypasses of one contract)
+**Plans**: 25 plans in 19 waves (62-06..62-08 gap closure added 2026-07-30; 62-09..62-11 gap closure added 2026-07-30 after re-verification; 62-12 gap closure added 2026-07-30 from `62-REVIEW.md` BL-01/BL-02/BL-03; 62-13..62-15 gap closure added 2026-07-30 from `62-VERIFICATION.md` VF-01/NEW-01/WR-02; **62-16..62-19 gap closure added 2026-07-31** from `62-VERIFICATION.md` FB-01/T62-91 and `62-REVIEW.md` CR-04/WR-09/IN-05 — replaces the hand-rolled CSS scanner with a spec-conformant tokenizer after six independent bypasses of one contract; **62-20..62-25 gap closure added 2026-07-31** from `62-VERIFICATION.md` CR-05..CR-11/WR-10 — extends the same conformant-engine argument to the CSS declaration layer and, per operator decision D-GAP-02, adopts a conformant HTML parser for the comment/`<style>`/attribute layers)
 
 Plans:
 **Wave 1**
@@ -895,6 +895,24 @@ Plans:
 **Wave 15** *(blocked on Wave 14 completion)*
 
 - [x] 62-19-PLAN.md — Close WR-09: oracle-driven both-directions differential with exhaustive token-boundary adjacency, plus a dispositioned divergence table against the pre-wave-12 baseline (EMAIL-03, wave 15)
+
+**Wave 16** *(gap closure round 6 — from `62-VERIFICATION.md` CR-05..CR-11 + WR-10 and `62-REVIEW.md`; both run in parallel, no file overlap: 62-20 owns `strip-hidden.ts`, 62-21 owns `package.json`)*
+
+- [ ] 62-20-PLAN.md — Token-derived hiding-declaration signature at both call sites, EOF frame drain, no fail-open harvest bound, CRLF-correct escape decode (CR-05/CR-06/CR-08/CR-09, EMAIL-03, wave 16)
+- [ ] 62-21-PLAN.md — Adopt a conformant HTML parser behind a §13.2.5 conformance gate: four-criterion measured selection, exact pin in `dependencies`, blocking-human legitimacy gate; no production code changes (D-GAP-02, EMAIL-03, wave 16)
+
+**Wave 17** *(blocked on Wave 16; 62-22 owns `strip-hidden.ts`, 62-23 owns the tsconfig/typing surface — no file overlap)*
+
+- [ ] 62-22-PLAN.md — One `scanHtml` pass feeding stage 2 and stage 3, closing the `<style>`-inside-a-comment stage-ordering leak structurally, plus a re-derived 1 MiB cost bound (CR-10, EMAIL-03, wave 17)
+- [ ] 62-23-PLAN.md — Enforce the documented `src/` isolation boundary for real: tests-scoped tsconfig project, corrected documentation, and a shipped non-vacuous import-boundary test (WR-10, EMAIL-03, wave 17)
+
+**Wave 18** *(blocked on Wave 17 — writes `strip-hidden.ts`)*
+
+- [ ] 62-24-PLAN.md — Stages 4 and 5 driven by the parser's start tags with decoded attribute values, restoring the browser's HTML-decode-then-CSS-tokenize layering, with a dispositioned divergence table (CR-07, EMAIL-03, wave 18)
+
+**Wave 19** *(blocked on Wave 18 — the CR-11 hard gate lands AFTER the leak fixes, per the sequencing decision recorded in 62-25-PLAN.md)*
+
+- [ ] 62-25-PLAN.md — Turn the differential's leak counter into a gate (named per-mechanism predicates, exact counts, injection-proved blocking) and derive the oracle's declaration verdict from css-tree's parser instead of a copy of production's regexes (CR-11 + CR-05's oracle half, EMAIL-03, wave 19)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
