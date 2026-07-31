@@ -874,11 +874,11 @@ Plans:
 
 **Wave 10** *(gap closure — WR-02 algorithmic half; blocked on wave 9, writes the same file)*
 
-- [ ] 62-14-PLAN.md — Two exact linear bounds — a hoisted stray-`<` fail-safe and a linear rule harvest replacing `RULE_RE`'s backtracking scan — taking the verification report's 512 KB adversarial shape from 126 s to milliseconds, measured across ten adversarial shapes with equivalence demonstrated against the pre-change module (EMAIL-03, wave 10)
+- [ ] 62-14-PLAN.md — Two exact linear bounds — a hoisted stray-`<` fail-safe and a linear rule harvest replacing `RULE_RE`'s backtracking scan — taking the verification report's 512 KB adversarial shape from 126 s to milliseconds, measured across twelve adversarial shapes with equivalence demonstrated against the pre-change module (EMAIL-03, wave 10)
 
 **Wave 11** *(gap closure — WR-02 input-cap half + phase-closing evidence; blocked on wave 10 for the measurement that sizes the cap)*
 
-- [ ] 62-15-PLAN.md — Fail-closed `MAX_STRIP_INPUT` bound on `raw.bodyText` at the adapter boundary, sized from the worst shape in 62-14's ranked ten-shape measurement, plus a `dist/`-level reproduction of every finding this wave closed (EMAIL-03, wave 11)
+- [ ] 62-15-PLAN.md — Fail-closed `MAX_STRIP_INPUT` bound on `raw.bodyText` at the adapter boundary, sized from the worst shape in 62-14's ranked twelve-shape measurement, plus a `dist/`-level reproduction of every finding this wave closed (EMAIL-03, wave 11)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
