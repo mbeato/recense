@@ -757,34 +757,63 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
 
-  // Absolute ceilings raised 500ms -> 5000ms (62-12, IN-03 62-REVIEW.md): the growth-ratio
-  // assertions below are the ReDoS instrument and are UNCHANGED as the assertion of
-  // record. The absolute ceiling's only job is to catch a genuine hang, which 5s still
-  // does well within the existing 20s block timeout; a threshold with only ~1.6x headroom
-  // on the author's machine (Shape S measured 302.9ms against the old 500ms ceiling) is a
-  // CI flake source, not a security control.
-  it('Shape A at ~64 KB completes under 5000ms and does not throw', () => {
+  // Ceilings moved DOWN, 5000ms -> 1000ms (62-14, Task 3), the opposite direction from
+  // 62-12's 500ms -> 5000ms raise: the constant these ceilings guard against COLLAPSED once
+  // Bound A closed the failing-scan region (62-14 Bound A) -- shapes A/B/S/U now measure
+  // 0.05-0.13ms at 64 KB (this executor's own measurement, 62-14 SUMMARY), roughly four
+  // orders of magnitude under both the old 5000ms ceiling and the new 1000ms one. 1000ms is
+  // still a hang-catcher (matching the bound Task 1 chose for the report's shape, V, W, X,
+  // X3, Y and Z) and not a rubber stamp. The growth-ratio assertions below remain the
+  // ReDoS instrument of record, UNCHANGED.
+  it('Shape A at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeA(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
   });
 
-  it('Shape B at ~64 KB completes under 5000ms and does not throw', () => {
+  it('Shape B at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeB(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
   });
 
-  it('Shape U at ~64 KB completes under 5000ms and does not throw', () => {
+  it('Shape U at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeU(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  // 512 KB extensions (62-14, Task 3): the existing shapes above were only asserted at 32
+  // and 64 KB, far below the size the WR-02 gap was filed about. These assert the property
+  // at the size the verification report actually measured.
+  it('Shape A at 512 KB completes under 1000ms and does not throw', () => {
+    const input = shapeA(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape B at 512 KB completes under 1000ms and does not throw', () => {
+    const input = shapeB(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape U at 512 KB completes under 1000ms and does not throw', () => {
+    const input = shapeU(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
   });
 
   it('Shape A growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
@@ -843,22 +872,40 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
 
-  // See the ceiling-raise rationale above (62-12, IN-03): growth-ratio assertions are the
-  // assertion of record, absolute ceilings only catch a hang.
-  it('Shape S at ~64 KB completes under 5000ms and does not throw', () => {
+  // Ceiling moved DOWN, 5000ms -> 1000ms (62-14, Task 3) -- see the rationale above the
+  // A/B/U ceilings: Shape S measures 0.05ms at 64 KB post-Bound-A (this executor's own
+  // measurement). Shape T's ceiling ALSO moves down for consistency, even though Bound
+  // A/B do not touch its cause (STYLE_BLOCK_RE's lazy tail scan, T-62-54) -- Shape T at 64
+  // KB measures ~1.8ms, comfortably under 1000ms; T-62-54 only becomes visible at sizes
+  // this suite does not assert against (see the 62-14 SUMMARY for T measured at 512
+  // KB/1 MB/2 MB/4 MB, the residual plan 62-15's cap is sized against). Growth-ratio
+  // assertions remain the ReDoS instrument of record, UNCHANGED.
+  it('Shape S at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeS(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
   });
 
-  it('Shape T at ~64 KB completes under 5000ms and does not throw', () => {
+  it('Shape T at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeT(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  // 512 KB extension (62-14, Task 3): Shape S is fixed by Bound A/B, so it is asserted at
+  // the size the gap was filed about. Shape T is NOT asserted here -- it is the named,
+  // deliberately-unfixed residual (T-62-54); asserting it at 512 KB would imply this plan
+  // closed it, which it explicitly does not.
+  it('Shape S at 512 KB completes under 1000ms and does not throw', () => {
+    const input = shapeS(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
   });
 
   it('Shape T growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
@@ -877,6 +924,184 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
     expect(t64 / Math.max(t32, 1)).toBeLessThanOrEqual(8);
   });
 }, 20000);
+
+describe('stripHiddenContent — WR-02: the 62-VERIFICATION.md adversarial shape must not be quadratic', () => {
+  // WR-02 gap closure (62-14). 62-VERIFICATION.md measured the report's shape at
+  // 1,983 / 7,904 / 31,616 / 126,422 ms for 64/128/256/512 KB against dist/ — a single
+  // crafted ~512 KB email stalls ingest for over two minutes. Planning-time instrumentation
+  // (confirmed by this executor's own per-stage measurement, recorded in the 62-14 SUMMARY)
+  // attributes ~100% of that cost to RULE_RE's backtracking-heavy scan over brace-free
+  // <style> content, NOT to the ATTRS widening the report blamed.
+  //
+  // RED note: against the current (pre-Bound-A/Bound-B) module, every 512 KB assertion
+  // below that targets the RULE_RE cause (report, V, W, Y, Z) FAILS because the underlying
+  // synchronous call itself takes on the order of two minutes — far past the 1000ms bound
+  // asserted here. The failure mode is the assertion evaluating false once that (very slow)
+  // call finally returns, not a vitest-runner timeout race; do not mistake the long wall
+  // clock for flakiness. Shapes X and X3 are CONTROLS that already pass in this RED state:
+  // stripCssComments's unterminated-comment case truncates their content to (near) nothing
+  // before RULE_RE ever sees it. Shapes Y and Z are NOT controls, contrary to a naive
+  // reading of 62-13's own cost table for stripCssComments in isolation — Y and Z contain
+  // no `/*` at all, so stripCssComments's early-exit (`indexOf('/*') === -1`) returns them
+  // UNCHANGED in well under a millisecond (measured directly, see the SUMMARY's per-stage
+  // table), and the FULL, UNSHORTENED content then hits the exact same RULE_RE quadratic as
+  // the report's shape. This is recorded here with numbers, not assumed: the dominant stage
+  // for Y and Z is RULE_RE (~7,900-8,030 ms at 128 KB alone, matching the full-pipeline
+  // number almost exactly), not stripCssComments (~0.00-0.04 ms at 128 KB). Task 2's Bound B
+  // (already targeting RULE_RE) is therefore expected to fix Y and Z as a direct
+  // consequence, with no separate change to stripCssComments required — see the 62-14
+  // SUMMARY for the full argument and the decision it produced.
+  //
+  // The 1000 ms bound: the planning-measured post-fix value for the report's shape is
+  // ~1.5 ms, so 1000 ms is roughly 600x headroom — chosen per IN-03 so the assertion catches
+  // a RETURN of the quadratic and cannot catch a loaded CI runner.
+  const shapeReport = (bytes: number) => {
+    const unit = 'a<x ';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
+  };
+  const shapeV = (bytes: number) => '<style>{' + 'y'.repeat(bytes) + '}</style>';
+  const shapeW = (bytes: number) => '<style>' + 'y'.repeat(bytes) + '}.legal{display:none}</style>';
+  const shapeX = (bytes: number) => {
+    const unit = '/*y';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
+  };
+  const shapeX3 = (bytes: number) => {
+    const unit = '/*y';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '.legal{display:none}</style>';
+  };
+  const shapeY = (bytes: number) => {
+    const unit = '"y';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
+  };
+  const shapeZ = (bytes: number) => {
+    const unit = 'url(a';
+    return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
+  };
+
+  it('the report shape (a<x repeated, no braces) at 512 KB completes in under 1000ms and does not throw', () => {
+    const input = shapeReport(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('the report shape growth from 128 KB to 256 KB stays polynomial (t256/max(t128,1) <= 8)', () => {
+    const input128 = shapeReport(128 * 1024);
+    const start128 = performance.now();
+    stripHiddenContent(input128);
+    const t128 = performance.now() - start128;
+
+    const input256 = shapeReport(256 * 1024);
+    const start256 = performance.now();
+    stripHiddenContent(input256);
+    const t256 = performance.now() - start256;
+
+    // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow past 8x
+    // or hang. max(t128, 1) avoids a divide-by-tiny false failure.
+    expect(t256 / Math.max(t128, 1)).toBeLessThanOrEqual(8);
+  });
+
+  it('Shape V (an open brace then a brace-free tail) at 512 KB completes in under 1000ms', () => {
+    const input = shapeV(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape W (a brace-free run followed by a real hiding rule) at 512 KB completes in under 1000ms', () => {
+    const input = shapeW(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape X (unterminated CSS comment, no rule) at 512 KB completes in under 1000ms — control, already passes pre-fix', () => {
+    const input = shapeX(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape X3 (unterminated CSS comment that would carry a rule if closed) at 512 KB completes in under 1000ms — control, already passes pre-fix', () => {
+    const input = shapeX3(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape Y (alternating quotes, no comment marker — reaches RULE_RE unshortened) at 512 KB completes in under 1000ms', () => {
+    const input = shapeY(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape Z (repeated unterminated url-tokens, no comment marker — reaches RULE_RE unshortened) at 512 KB completes in under 1000ms', () => {
+    const input = shapeZ(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+}, 20000);
+
+describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (totality, idempotence, no stray <)', () => {
+  // Seeded LCG (Numerical Recipes constants) — NOT Math.random — so any failure is
+  // reproducible purely from the printed iteration index. This is a generated-input LOCK on
+  // the invariants Bound A/B must preserve, distinct from the differential harness (scratch,
+  // not shipped) that compares byte-for-byte against the pre-change module. The "no stray <"
+  // invariant was confirmed to already hold on the PRE-change module before being asserted
+  // here (2000 generated inputs, 0 violations — see the 62-14 SUMMARY), so this locks a
+  // preserved property, not a new claim.
+  function makeLcg(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+  }
+  const ALPHABET = [
+    '<', '>', '/', '"', "'", '{', '}', '/*', '*/', '<!--', '-->',
+    '<style', '</style', '<script', '</script', 'url(', '(', ')', '\\',
+    'display:none', 'class', 'legal', ' ', '\n', 'a', 'b', 'c',
+  ];
+
+  it('>= 2000 generated inputs: total (never throws), idempotent, and output contains no stray <', () => {
+    const rand = makeLcg(0xfeed5eed);
+    const N = 2000;
+    const throwFailures: number[] = [];
+    const idempotenceFailures: number[] = [];
+    const strayAngleFailures: number[] = [];
+
+    for (let i = 0; i < N; i++) {
+      const len = 5 + Math.floor(rand() * 60);
+      let s = '';
+      for (let j = 0; j < len; j++) {
+        s += ALPHABET[Math.floor(rand() * ALPHABET.length)];
+      }
+      let once: string;
+      try {
+        once = stripHiddenContent(s);
+      } catch {
+        throwFailures.push(i);
+        continue;
+      }
+      const twice = stripHiddenContent(once);
+      if (twice !== once) idempotenceFailures.push(i);
+      if (once.includes('<')) strayAngleFailures.push(i);
+    }
+
+    expect(throwFailures).toEqual([]);
+    expect(idempotenceFailures).toEqual([]);
+    expect(strayAngleFailures).toEqual([]);
+  });
+});
 
 describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL-02 bug class (62-12 decision #1)', () => {
   // Retitled from "bug-class guard" (62-09): WR-06 (62-REVIEW.md) established that a
