@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v10.0
 milestone_name: Action Proposals
 status: executing
-stopped_at: Completed 62-16-PLAN.md (css-tree adoption + liveness oracle + reclassify disposition)
-last_updated: "2026-07-31T16:29:06.728Z"
+stopped_at: Completed 62-17-PLAN.md (token-stream CSS hiding-rule harvest)
+last_updated: "2026-07-31T16:59:12.058Z"
 last_activity: 2026-07-31
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 19
-  completed_plans: 16
+  completed_plans: 17
   percent: 0
 ---
 
@@ -42,7 +42,7 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 ## Current Position
 
 Phase: 62 (multi-inbox-email-ingest-hardening) — EXECUTING
-Plan: 2 of 19
+Plan: 3 of 19
 Status: Ready to execute
 Last activity: 2026-07-31
 
@@ -73,6 +73,7 @@ Last activity: 2026-07-31
 | Phase 56 P02 | 15min | 2 tasks | 1 files |
 | Phase 56 P04 | 20min | 2 tasks | 1 files |
 | Phase 62 P16 | 37min | 4 tasks | 9 files |
+| Phase 62 P17 | 33min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -240,8 +241,8 @@ Carried from v7.0/v8.0 close:
 
 ## Session Continuity
 
-Last session: 2026-07-31T16:29:06.722Z
-Stopped at: Completed 62-16-PLAN.md (css-tree adoption + liveness oracle + reclassify disposition)
+Last session: 2026-07-31T16:59:12.052Z
+Stopped at: Completed 62-17-PLAN.md (token-stream CSS hiding-rule harvest)
 Next: `/gsd:plan-phase 62` (Multi-Inbox Email Ingest Hardening) — first phase of v10.0, no dependencies.
 
 ## Operator Next Steps

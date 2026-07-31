@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 16/19 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 17/19 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -886,7 +886,7 @@ Plans:
 
 **Wave 13** *(blocked on Wave 12 completion)*
 
-- [ ] 62-17-PLAN.md — Replace `stripCssComments` and the brace-partition scan with a token-stream harvest incl. §4.3.7 escape decoding, closing every leak the oracle confirmed live (EMAIL-03, wave 13)
+- [x] 62-17-PLAN.md — Replace `stripCssComments` and the brace-partition scan with a token-stream harvest incl. §4.3.7 escape decoding, closing every leak the oracle confirmed live (EMAIL-03, wave 13)
 
 **Wave 14** *(blocked on Wave 13 completion)*
 
