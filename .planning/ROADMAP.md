@@ -870,7 +870,7 @@ Plans:
 
 **Wave 9** *(gap closure — from `62-VERIFICATION.md` VF-01 (blocker) + NEW-01; single plan, owns `strip-hidden.ts` alone)*
 
-- [ ] 62-13-PLAN.md — Linear, string-aware CSS comment scanner ahead of the bare-selector check (VF-01) and a RAWTEXT-scoped close-tag scan so a `<letter` inside a `<style>`/`<script>` body stops deleting to EOF (NEW-01), with every historical bypass audited against a shipped test in both directions (EMAIL-03, wave 9)
+- [ ] 62-13-PLAN.md — Linear CSS comment scanner built from a closed enumeration of the three CSS Syntax contexts where `/*` is not a comment — string token, unquoted url-token, backslash escape — ahead of the bare-selector check (VF-01) and a RAWTEXT-scoped close-tag scan so a `<letter` inside a `<style>`/`<script>` body stops deleting to EOF (NEW-01), with every historical bypass audited against a shipped test in both directions (EMAIL-03, wave 9)
 
 **Wave 10** *(gap closure — WR-02 algorithmic half; blocked on wave 9, writes the same file)*
 
