@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 17/19 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 18/19 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -890,7 +890,7 @@ Plans:
 
 **Wave 14** *(blocked on Wave 13 completion)*
 
-- [ ] 62-18-PLAN.md — Delete `STYLE_BLOCK_RE` and locate `<style>` elements linearly with stage 4's own primitives, eliminating T62-91's quadratic (156 s → 2.5 ms at the cap boundary); re-size-or-confirm the cap on a corrected shape set; fix IN-05 (EMAIL-03, wave 14)
+- [x] 62-18-PLAN.md — Delete `STYLE_BLOCK_RE` and locate `<style>` elements linearly with stage 4's own primitives, eliminating T62-91's quadratic (156 s → 2.5 ms at the cap boundary); re-size-or-confirm the cap on a corrected shape set; fix IN-05 (EMAIL-03, wave 14)
 
 **Wave 15** *(blocked on Wave 14 completion)*
 
