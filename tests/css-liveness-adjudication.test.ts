@@ -330,7 +330,7 @@ describe('adjudication — CSS-escaped selector names (never harvested by shippe
     expect(oracleLive(row)).toBe(true);
   });
 
-  it.fails('UNDER-STRIP (genuine leak, never filed): shipped never harvests an escaped class selector (BARE_CLASS_SELECTOR_RE rejects any text containing a backslash), so PAYLOAD_ESC61 leaks despite the rule being genuinely LIVE', () => {
+  it('CLOSED (62-17): the token-stream harvest decodes §4.3.7 escapes via decodeIdentEscapes, so an escaped class selector is now harvested and PAYLOAD_ESC61 no longer leaks — the rule is genuinely LIVE and the harvest agrees', () => {
     const row = {
       html: '<style>.leg\\61 l{display:none}</style>ok<span class="legal">PAYLOAD_ESC61</span>',
       payload: 'PAYLOAD_ESC61',
@@ -347,7 +347,7 @@ describe('adjudication — CSS-escaped selector names (never harvested by shippe
     expect(oracleLive(row)).toBe(true);
   });
 
-  it.fails('UNDER-STRIP (genuine leak, never filed): shipped never harvests an escaped id selector, so PAYLOAD_ESCID leaks despite the rule being genuinely LIVE', () => {
+  it('CLOSED (62-17): the token-stream harvest decodes §4.3.7 escapes via decodeIdentEscapes, so an escaped id selector is now harvested and PAYLOAD_ESCID no longer leaks — the rule is genuinely LIVE and the harvest agrees', () => {
     const row = {
       html: '<style>#leg\\61 l{display:none}</style>ok<span id="legal">PAYLOAD_ESCID</span>',
       payload: 'PAYLOAD_ESCID',

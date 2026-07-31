@@ -97,6 +97,11 @@ const IDEMPOTENCE_FIXTURES = [
   '<style>.a{background:url("a)b/*")}.legal{display:none}.c{content:"*/"}</style>ok<span class="legal">PAYLOAD_URLQ</span>',
   '<style>.legal{display:none}/* trailing</style>ok<span class="legal">PAYLOAD_UNT</span>',
   '<style>/* eats rest .legal{display:none}</style>ok<span class="legal">VISIBLE_UNT</span>',
+  // 62-17: CSS-escaped selector names (§4.3.7 decode) — the two confirmed-live leaks and one
+  // decoding edge case, reused here so the fuzz/idempotence locks cover them too.
+  '<style>.leg\\61 l{display:none}</style>ok<span class="legal">PAYLOAD_ESC1</span>',
+  '<style>#leg\\61 l{display:none}</style>ok<span id="legal">PAYLOAD_ESC3</span>',
+  '<style>.leg\\al{display:none}</style>ok<span class="legal">PAYLOAD_ESCAL</span>',
 ];
 
 // Same three inputs as the "invisible Unicode" describe block below (:158-177 pre-edit),
@@ -613,6 +618,77 @@ describe('stripHiddenContent — CSS class/id hiding harvest', () => {
     );
     expect(out).not.toContain('PAYLOAD2');
     expect(out).toContain('Visible.');
+  });
+});
+
+describe('stripHiddenContent — CSS-escaped selector names, §4.3.7 decode (62-17, confirmed-live scope floor)', () => {
+  // The scope floor 62-16 measured: TWO confirmed-live leaks, not the three planning's
+  // throwaway table guessed at. BARE_CLASS_SELECTOR_RE/BARE_ID_SELECTOR_RE categorically
+  // rejected any selector text containing a backslash, so neither rule was ever a harvest
+  // candidate, regardless of what it decoded to (62-16-SUMMARY.md).
+  it('.leg\\61 l (hex escape + trailing-whitespace terminator) decodes to "legal" and is now harvested — genuine leak closed', () => {
+    const out = stripHiddenContent(
+      '<style>.leg\\61 l{display:none}</style>ok<span class="legal">PAYLOAD_ESC1</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_ESC1');
+    expect(out).toBe('ok');
+  });
+
+  it('#leg\\61 l (hex escape + trailing-whitespace terminator, ID form) decodes to "legal" and is now harvested — genuine leak closed', () => {
+    const out = stripHiddenContent(
+      '<style>#leg\\61 l{display:none}</style>ok<span id="legal">PAYLOAD_ESC3</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_ESC3');
+    expect(out).toBe('ok');
+  });
+
+  it('.leg\\al is NOT a leak: \\a is a ONE-digit hex escape decoding to U+000A (the content:"\\A" newline idiom), never "legal" — payload stays present (agreement, not fixed)', () => {
+    const out = stripHiddenContent(
+      '<style>.leg\\al{display:none}</style>ok<span class="legal">PAYLOAD_ESCAL</span>'
+    );
+    expect(out).toContain('PAYLOAD_ESCAL');
+  });
+
+  it('a six-hex-digit escape immediately followed by a non-hex letter (the hex run stops at the 6-digit cap, not at a non-hex character) decodes correctly', () => {
+    // \00006c is six hex digits -> 0x6c -> "l"; no trailing whitespace to consume, so the
+    // following "al" is appended literally: "leg" + "l" + "al" = "legal".
+    const out = stripHiddenContent(
+      '<style>.leg\\00006cal{display:none}</style>ok<span class="legal">PAYLOAD_HEX6</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_HEX6');
+    expect(out).toBe('ok');
+  });
+
+  it('a short hex run (fewer than 6 digits) immediately followed by a non-hex letter, with no separating whitespace, decodes correctly', () => {
+    // \61 is two hex digits (the following "l" is not a hex digit, terminating the run at
+    // 0x61 = "a"); no whitespace follows so nothing extra is consumed: "leg"+"a"+"l"="legal".
+    const out = stripHiddenContent(
+      '<style>.leg\\61l{display:none}</style>ok<span class="legal">PAYLOAD_HEX_NOSPACE</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_HEX_NOSPACE');
+    expect(out).toBe('ok');
+  });
+
+  it('an escape encoding U+0000 maps to U+FFFD (never matches a real class) and does not throw', () => {
+    expect(() => stripHiddenContent('<style>.leg\\0{display:none}</style>ok<span class="legal">PAYLOAD_ZERO</span>')).not.toThrow();
+    const out = stripHiddenContent(
+      '<style>.leg\\0{display:none}</style>ok<span class="legal">PAYLOAD_ZERO</span>'
+    );
+    expect(out).toContain('PAYLOAD_ZERO');
+  });
+
+  it('an escape encoding a UTF-16 surrogate maps to U+FFFD (never matches a real class) and does not throw', () => {
+    const out = stripHiddenContent(
+      '<style>.leg\\d800zz{display:none}</style>ok<span class="legd800zz">PAYLOAD_SURR</span>'
+    );
+    expect(() => stripHiddenContent('<style>.leg\\d800zz{display:none}</style>ok')).not.toThrow();
+    expect(out).toContain('PAYLOAD_SURR');
+  });
+
+  it('an escape encoding a code point past U+10FFFF maps to U+FFFD and does not throw', () => {
+    expect(() =>
+      stripHiddenContent('<style>.leg\\110000zz{display:none}</style>ok<span class="legzz">PAYLOAD_OOR</span>')
+    ).not.toThrow();
   });
 });
 
