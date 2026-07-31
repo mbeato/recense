@@ -757,34 +757,63 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
 
-  // Absolute ceilings raised 500ms -> 5000ms (62-12, IN-03 62-REVIEW.md): the growth-ratio
-  // assertions below are the ReDoS instrument and are UNCHANGED as the assertion of
-  // record. The absolute ceiling's only job is to catch a genuine hang, which 5s still
-  // does well within the existing 20s block timeout; a threshold with only ~1.6x headroom
-  // on the author's machine (Shape S measured 302.9ms against the old 500ms ceiling) is a
-  // CI flake source, not a security control.
-  it('Shape A at ~64 KB completes under 5000ms and does not throw', () => {
+  // Ceilings moved DOWN, 5000ms -> 1000ms (62-14, Task 3), the opposite direction from
+  // 62-12's 500ms -> 5000ms raise: the constant these ceilings guard against COLLAPSED once
+  // Bound A closed the failing-scan region (62-14 Bound A) -- shapes A/B/S/U now measure
+  // 0.05-0.13ms at 64 KB (this executor's own measurement, 62-14 SUMMARY), roughly four
+  // orders of magnitude under both the old 5000ms ceiling and the new 1000ms one. 1000ms is
+  // still a hang-catcher (matching the bound Task 1 chose for the report's shape, V, W, X,
+  // X3, Y and Z) and not a rubber stamp. The growth-ratio assertions below remain the
+  // ReDoS instrument of record, UNCHANGED.
+  it('Shape A at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeA(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
   });
 
-  it('Shape B at ~64 KB completes under 5000ms and does not throw', () => {
+  it('Shape B at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeB(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
   });
 
-  it('Shape U at ~64 KB completes under 5000ms and does not throw', () => {
+  it('Shape U at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeU(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  // 512 KB extensions (62-14, Task 3): the existing shapes above were only asserted at 32
+  // and 64 KB, far below the size the WR-02 gap was filed about. These assert the property
+  // at the size the verification report actually measured.
+  it('Shape A at 512 KB completes under 1000ms and does not throw', () => {
+    const input = shapeA(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape B at 512 KB completes under 1000ms and does not throw', () => {
+    const input = shapeB(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('Shape U at 512 KB completes under 1000ms and does not throw', () => {
+    const input = shapeU(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
   });
 
   it('Shape A growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
@@ -843,22 +872,40 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
 
-  // See the ceiling-raise rationale above (62-12, IN-03): growth-ratio assertions are the
-  // assertion of record, absolute ceilings only catch a hang.
-  it('Shape S at ~64 KB completes under 5000ms and does not throw', () => {
+  // Ceiling moved DOWN, 5000ms -> 1000ms (62-14, Task 3) -- see the rationale above the
+  // A/B/U ceilings: Shape S measures 0.05ms at 64 KB post-Bound-A (this executor's own
+  // measurement). Shape T's ceiling ALSO moves down for consistency, even though Bound
+  // A/B do not touch its cause (STYLE_BLOCK_RE's lazy tail scan, T-62-54) -- Shape T at 64
+  // KB measures ~1.8ms, comfortably under 1000ms; T-62-54 only becomes visible at sizes
+  // this suite does not assert against (see the 62-14 SUMMARY for T measured at 512
+  // KB/1 MB/2 MB/4 MB, the residual plan 62-15's cap is sized against). Growth-ratio
+  // assertions remain the ReDoS instrument of record, UNCHANGED.
+  it('Shape S at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeS(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
   });
 
-  it('Shape T at ~64 KB completes under 5000ms and does not throw', () => {
+  it('Shape T at ~64 KB completes under 1000ms and does not throw', () => {
     const input = shapeT(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  // 512 KB extension (62-14, Task 3): Shape S is fixed by Bound A/B, so it is asserted at
+  // the size the gap was filed about. Shape T is NOT asserted here -- it is the named,
+  // deliberately-unfixed residual (T-62-54); asserting it at 512 KB would imply this plan
+  // closed it, which it explicitly does not.
+  it('Shape S at 512 KB completes under 1000ms and does not throw', () => {
+    const input = shapeS(512 * 1024);
+    const start = performance.now();
+    expect(() => stripHiddenContent(input)).not.toThrow();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(1000);
   });
 
   it('Shape T growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
