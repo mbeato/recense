@@ -8,11 +8,11 @@
  *
  * This declaration exposes ONLY the two exports `src/` is permitted to use — `tokenize`
  * and `tokenTypes` — deliberately, not the full css-tree API surface. Declaring only the
- * adopted surface means an accidental future `import ... from 'css-tree'` (the parser,
- * lexer, walker or generator) from a file under `src/` fails to compile, since no ambient
- * declaration exists for that path from `src/`'s perspective. The css-tree parser IS used,
- * intentionally, by the test-only liveness oracle (`tests/support/css-liveness-oracle.ts`)
- * — that file imports directly from `'css-tree'` and is typed by css-tree's own untyped
+ * adopted surface means an accidental future import of the bare `css-tree` package (its
+ * parser, lexer, walker or generator) from a file under `src/` fails to compile, since no
+ * ambient declaration exists for that import path from `src/`'s perspective. The css-tree
+ * parser IS used, intentionally, by a test-only liveness oracle under `tests/support/` —
+ * that file imports the bare package directly and is typed by css-tree's own untyped
  * (implicit `any`) module resolution, which is acceptable in `tests/` but not in `src/`.
  *
  * Lives under `src/` (not `tests/` or a root `types/` dir) because `tsconfig.json`'s
