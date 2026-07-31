@@ -314,6 +314,11 @@ None - no external service configuration required.
   references are unrelated to escaped-selector leak count.
 - No blockers.
 
+## Self-Check: PASSED
+
+All 7 files verified present on disk; all 4 commits (`8f9617b`, `fa17235`, `5027d27`, `e5583af`)
+verified present in `git log`; `package.json` verified to contain `"css-tree": "3.2.1"` exactly.
+
 ---
 *Phase: 62-multi-inbox-email-ingest-hardening*
 *Completed: 2026-07-31*
