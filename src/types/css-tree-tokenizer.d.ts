@@ -15,10 +15,20 @@
  * that file imports the bare package directly and is typed by css-tree's own untyped
  * (implicit `any`) module resolution, which is acceptable in `tests/` but not in `src/`.
  *
- * Lives under `src/` (not `tests/` or a root `types/` dir) because `tsconfig.json`'s
- * `include` is exactly `["src", "tests", "scripts"]` — nothing outside those three roots
- * is type-checked at all, so this declaration must live inside one of them, and `src/` is
- * the one whose compile-time surface it exists to constrain.
+ * Lives under `src/` (not `tests/` or a root `types/` dir) because root `tsconfig.json`'s
+ * `include` is `["src", "scripts"]` — `src/` is the one root whose compile-time surface
+ * this declaration exists to constrain.
+ *
+ * ENFORCEMENT (as of 62-23-PLAN.md; was documented-but-unenforced prose from 62-17 until
+ * then, per WR-10 in `62-REVIEW.md`): the program-global `declare module 'css-tree'` in
+ * `tests/support/css-tree-ambient.d.ts` that the oracle relies on is visible ONLY to the
+ * separate `tests/tsconfig.json` project — root `tsconfig.json`'s `include` no longer
+ * covers `tests/`, so that ambient declaration is out of scope for anything type-checked
+ * as part of `src/`. A file under `src/` importing the bare `css-tree` package therefore
+ * fails `tsc --noEmit -p tsconfig.json` with TS7016, exactly as this paragraph claims. This
+ * is proven by construction (a probe file that fails to compile, then compiles once
+ * removed — recorded verbatim in `62-23-SUMMARY.md`) and locked by a shipped, non-vacuous
+ * regression test at `tests/src-import-boundary.test.ts`.
  */
 declare module 'css-tree/tokenizer' {
   /**
