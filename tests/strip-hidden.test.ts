@@ -9,8 +9,9 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it, expect } from 'vitest';
-import { stripHiddenContent, stripInvisibleCodepoints } from '../src/source/strip-hidden';
+import { describe, it, expect, vi } from 'vitest';
+import { stripHiddenContent, stripInvisibleCodepoints, scanHtml } from '../src/source/strip-hidden';
+import { Parser } from 'htmlparser2';
 import { liveHidingSelectors } from './support/css-liveness-oracle';
 
 const ZWSP = '​';
@@ -832,6 +833,125 @@ describe('stripHiddenContent — 62-20 gap closure: locked repros for CR-05/CR-0
     );
     expect(out).not.toContain('PAYLOAD_J');
     expect(out).toBe('ok');
+  });
+});
+
+describe('scanHtml — one htmlparser2 pass yielding comment ranges, style-element ranges and start-tag records (62-22-PLAN.md Task 1, CR-10)', () => {
+  it('CR-10: a <style> inside an HTML comment is never a live element — styleElements has length 1, and its content slices to exactly the real rule', () => {
+    const html = '<!-- <style>a{}</style> --><style>.legal{display:none}</style>';
+    const scan = scanHtml(html);
+    expect(scan.styleElements).toHaveLength(1);
+    const el = scan.styleElements[0]!;
+    expect(html.slice(el.contentStart, el.contentEnd)).toBe('.legal{display:none}');
+  });
+
+  it('CR-10 (plan-text shape): "<!-- <style> --><style>.legal{display:none}</style>" also yields exactly one styleElement, content ".legal{display:none}"', () => {
+    const html = '<!-- <style> --><style>.legal{display:none}</style>';
+    const scan = scanHtml(html);
+    expect(scan.styleElements).toHaveLength(1);
+    const el = scan.styleElements[0]!;
+    expect(html.slice(el.contentStart, el.contentEnd)).toBe('.legal{display:none}');
+  });
+
+  it('an unterminated <style> (no close tag at all) harvests to EOF: contentEnd === elementEnd === html.length', () => {
+    const html = '<style>.legal{display:none}';
+    const scan = scanHtml(html);
+    expect(scan.styleElements).toHaveLength(1);
+    const el = scan.styleElements[0]!;
+    expect(el.contentEnd).toBe(html.length);
+    expect(el.elementEnd).toBe(html.length);
+    expect(html.slice(el.contentStart, el.contentEnd)).toBe('.legal{display:none}');
+  });
+
+  it('a self-closing <style/> is excluded from styleElements (WR-03 status quo preserved, out of this plan\'s scope)', () => {
+    const scan = scanHtml('<style/>after');
+    expect(scan.styleElements).toHaveLength(0);
+  });
+
+  it('startTags carries lowercased name, decoded attrs (CR-07 shape) and the three offsets — class="leg&#97;l" decodes to "legal"', () => {
+    const html = '<span class="leg&#97;l">x</span>';
+    const scan = scanHtml(html);
+    expect(scan.startTags).toHaveLength(1);
+    const tag = scan.startTags[0]!;
+    expect(tag.name).toBe('span');
+    expect(tag.attrs.get('class')).toBe('legal');
+    expect(html.slice(tag.tagStart, tag.tagEnd)).toBe('<span class="leg&#97;l">');
+    expect(html.slice(tag.tagStart, tag.elementEnd)).toBe(html);
+  });
+
+  it('a bogus comment ("<!x>") is recorded in comments and slices back to its exact substring', () => {
+    const html = 'a<!x>b';
+    const scan = scanHtml(html);
+    expect(scan.comments).toHaveLength(1);
+    expect(html.slice(scan.comments[0]!.start, scan.comments[0]!.end)).toBe('<!x>');
+  });
+
+  it('an unterminated comment ("a<!--x", no closing "-->") is recorded running to end of input', () => {
+    const html = 'a<!--x';
+    const scan = scanHtml(html);
+    expect(scan.comments).toHaveLength(1);
+    expect(scan.comments[0]!.end).toBe(html.length);
+    expect(html.slice(scan.comments[0]!.start, scan.comments[0]!.end)).toBe('<!--x');
+  });
+
+  it('comments and styleElements ranges are ascending and non-overlapping over a multi-comment, multi-style document', () => {
+    const html = '<!--a--><style>.x{color:red}</style><!--b--><style>.y{color:blue}</style>';
+    const scan = scanHtml(html);
+    expect(scan.comments).toHaveLength(2);
+    expect(scan.comments[0]!.end).toBeLessThanOrEqual(scan.comments[1]!.start);
+    expect(scan.styleElements).toHaveLength(2);
+    expect(scan.styleElements[0]!.elementEnd).toBeLessThanOrEqual(scan.styleElements[1]!.contentStart);
+  });
+
+  it('scanHtml never throws, over >= 20,000 seeded hostile HTML-shaped inputs (LCG, never Math.random)', () => {
+    function makeLcg(seed: number): () => number {
+      let state = seed >>> 0;
+      return () => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        return state / 0x100000000;
+      };
+    }
+    const ALPHABET = [
+      '<', '>', '/', '"', "'", '=', '!', '-', '?',
+      '<!--', '-->', '<!', '<style', '</style', '<style/', '</style/', '<style ',
+      '<span', '</span', '<div', '</div', '<br', '<br/',
+      '\0', String.fromCharCode(0xd800), String.fromCharCode(0xdfff),
+      '&', '&amp', '&amp;', '&#97;', '&colon;',
+      ' ', '\n', '\t', 'a', 'b', 'foo', 'class', 'display:none',
+    ];
+    const rand = makeLcg(0x62220001);
+    const N = 20000;
+    const throwFailures: number[] = [];
+    for (let i = 0; i < N; i++) {
+      const pieceCount = 5 + Math.floor(rand() * 20);
+      let s = '';
+      for (let p = 0; p < pieceCount; p++) {
+        s += ALPHABET[Math.floor(rand() * ALPHABET.length)];
+      }
+      try {
+        scanHtml(s);
+      } catch {
+        throwFailures.push(i);
+      }
+    }
+    expect(throwFailures).toEqual([]);
+  });
+
+  it('T-62-22-02: a parser-internal error produces the maximally-reducing scan (one comment and one styleElement spanning the whole input), never an empty fail-open scan', () => {
+    const spy = vi.spyOn(Parser.prototype, 'write').mockImplementationOnce(() => {
+      throw new Error('forced parser failure (T-62-22-02 test)');
+    });
+    try {
+      const html = 'anything at all, the content does not matter here';
+      const scan = scanHtml(html);
+      expect(scan.comments).toEqual([{ start: 0, end: html.length }]);
+      expect(scan.styleElements).toEqual([
+        { contentStart: 0, contentEnd: html.length, elementEnd: html.length },
+      ]);
+      expect(scan.startTags).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
