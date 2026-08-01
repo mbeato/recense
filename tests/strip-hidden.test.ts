@@ -753,6 +753,51 @@ describe('stripHiddenContent — CSS-escaped selector names, §4.3.7 decode (62-
   });
 });
 
+describe('stripHiddenContent — 62-24 gap closure: CR-07 locked payloads (attribute-value HTML-entity decoding, 62-REVIEW.md/62-VERIFICATION.md)', () => {
+  // CR-07: `isHiddenStartTag` now reads `scanHtml().startTags[].attrs` — a decoded
+  // `ReadonlyMap` (htmlparser2's own HTML character-reference decode) — instead of a raw
+  // source-text region. The layering is the browser's: HTML decode first, THEN CSS
+  // tokenize/escape-decode (`hasHidingSignatureFromTokens`, 62-20). B1/B2 exercise the
+  // class/id side; B3/B4 exercise the style side (numeric and named character reference);
+  // B5 proves the LAYER ORDER (HTML decode must run before CSS-comment-skip, not after,
+  // or the embedded `/*x*/` would never be recognized as a CSS comment); B6 is the
+  // over-strip control (a DOUBLY-escaped `&amp;#58;` decodes to the literal text `&#58;`,
+  // not to `:`, so it must NOT be treated as a hiding declaration).
+  it('B1: class="leg&#97;l" (numeric character reference) decodes to match a harvested .legal selector', () => {
+    const out = stripHiddenContent(
+      '<style>.legal{display:none}</style>ok<span class="leg&#97;l">PAYLOAD_B1</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('B2: id="leg&#97;l" (numeric character reference) decodes to match a harvested #legal selector', () => {
+    const out = stripHiddenContent(
+      '<style>#legal{display:none}</style>ok<span id="leg&#97;l">PAYLOAD_B2</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('B3: style="display&#58;none" (numeric character reference for the colon) decodes to a hiding declaration', () => {
+    const out = stripHiddenContent('<div style="display&#58;none">PAYLOAD_B3</div>ok');
+    expect(out).toBe('ok');
+  });
+
+  it('B4: style="display&colon;none" (named character reference for the colon) decodes to a hiding declaration', () => {
+    const out = stripHiddenContent('<div style="display&colon;none">PAYLOAD_B4</div>ok');
+    expect(out).toBe('ok');
+  });
+
+  it('B5: style="display&#58;/*x*/none" proves the layer order — HTML decode (producing the CSS comment) must run BEFORE CSS tokenize/comment-skip', () => {
+    const out = stripHiddenContent('<div style="display&#58;/*x*/none">PAYLOAD_B5</div>ok');
+    expect(out).toBe('ok');
+  });
+
+  it('B6 (over-strip control): style="display&amp;#58;none" double-escapes to the literal text "&#58;", NOT a colon — must NOT be treated as a hiding declaration', () => {
+    const out = stripHiddenContent('<div style="display&amp;#58;none">VISIBLE_B6</div>');
+    expect(out).toContain('VISIBLE_B6');
+  });
+});
+
 describe('stripHiddenContent — 62-20 gap closure: locked repros for CR-05/CR-06/CR-08/CR-09 (62-REVIEW.md, 62-VERIFICATION.md)', () => {
   // CR-05: the hiding-declaration signature is now computed from a token-derived
   // reconstruction at BOTH call sites (harvestFromStylesheet's frame evaluation, and
@@ -1830,6 +1875,71 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
     const offender2 = 'return hasHidingSignature(  someOtherVar.slice(0, 5) );';
     expect(offender2).not.toContain('hasHidingSignature(css.slice');
     expect(RAW_SLICE_INTO_SIGNATURE_RE.test(offender2)).toBe(true);
+  });
+
+  // CR-07 (62-REVIEW.md, closed by 62-24): the attribute-decoding layer must stay
+  // parser-decoded (`scanHtml().startTags[].attrs`), never a raw source-text region matched
+  // by a hand-rolled regex again. Uses COMMENT_STRIPPED_SOURCE (this describe block's existing
+  // discipline) so this file's own doc comments — which legitimately mention `extractAttr`,
+  // `STYLE_ATTR_RE`, etc. in PAST-TENSE historical explanation — cannot self-invalidate the
+  // guard. The offender predicate is exported-by-reference (a plain function, shared between
+  // the real check below and its own non-vacuousness check), matching the pattern
+  // `tests/src-import-boundary.test.ts` (62-23) established: two copies of a guard predicate
+  // is the same duplication defect this phase keeps filing at a different layer.
+  const CR07_BANNED_IDENTIFIERS = [
+    'extractAttr',
+    'STYLE_ATTR_RE',
+    'CLASS_ATTR_RE',
+    'ID_ATTR_RE',
+    'ARIA_HIDDEN_TRUE_RE',
+    'BARE_HIDDEN_ATTR_RE',
+  ];
+  // Matches a `.match(` call on a variable/parameter literally named `attrs` — the exact
+  // shape `extractAttr(attrs: string, re: RegExp)` used (`attrs.match(re)`) to compare a RAW,
+  // not-yet-HTML-decoded attribute-text region against a regex. Deliberately narrower than
+  // banning every `.match(` call in the file: `isZeroValue`'s own `text.match(re)` (stage 5,
+  // operating on ALREADY CSS-token-reconstructed declaration text, not a raw HTML attrs
+  // string) is legitimate and must not trip this guard — the control test below asserts
+  // exactly that.
+  const RAW_ATTRS_MATCH_RE = /\battrs\.match\(/;
+
+  function findCr07Offenders(source: string): string[] {
+    const offenders: string[] = [];
+    for (const banned of CR07_BANNED_IDENTIFIERS) {
+      if (source.includes(banned)) offenders.push(`reintroduces banned identifier: ${banned}`);
+    }
+    if (RAW_ATTRS_MATCH_RE.test(source)) offenders.push('raw attrs.match(...) call reintroduced');
+    return offenders;
+  }
+
+  it('CR-07: no raw attribute-value regex-extraction helper (extractAttr or the five deleted ATTR_RE regexes) or a raw attrs.match(...) call has reappeared', () => {
+    expect(findCr07Offenders(COMMENT_STRIPPED_SOURCE)).toEqual([]);
+  });
+
+  it('the CR-07 guard above is not vacuous: the same predicate flags every banned shape on synthetic offenders, and does NOT flag the shipped, legitimate text.match(re) in isZeroValue', () => {
+    expect(findCr07Offenders('function extractAttr(attrs: string, re: RegExp) {}')).toContain(
+      'reintroduces banned identifier: extractAttr'
+    );
+    expect(findCr07Offenders('const STYLE_ATTR_RE = /x/;')).toContain(
+      'reintroduces banned identifier: STYLE_ATTR_RE'
+    );
+    expect(findCr07Offenders('const CLASS_ATTR_RE = /x/;')).toContain(
+      'reintroduces banned identifier: CLASS_ATTR_RE'
+    );
+    expect(findCr07Offenders('const ID_ATTR_RE = /x/;')).toContain(
+      'reintroduces banned identifier: ID_ATTR_RE'
+    );
+    expect(findCr07Offenders('const ARIA_HIDDEN_TRUE_RE = /x/;')).toContain(
+      'reintroduces banned identifier: ARIA_HIDDEN_TRUE_RE'
+    );
+    expect(findCr07Offenders('const BARE_HIDDEN_ATTR_RE = /x/;')).toContain(
+      'reintroduces banned identifier: BARE_HIDDEN_ATTR_RE'
+    );
+    expect(findCr07Offenders('const style = attrs.match(STYLE_ATTR_RE)?.[1];')).toEqual(
+      expect.arrayContaining(['raw attrs.match(...) call reintroduced'])
+    );
+    // Control: the shipped isZeroValue's own call, verbatim, must NOT trip this guard.
+    expect(findCr07Offenders('const m = text.match(re);')).toEqual([]);
   });
 });
 
