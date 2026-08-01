@@ -985,6 +985,63 @@ describe('stripHiddenContent — 62-22 gap closure: CR-10 locked shapes (a <styl
   });
 });
 
+describe('stripHiddenContent — 62-24 Task 2 divergence: implied/omitted end tags no longer destroy trailing visible prose', () => {
+  // Found by this plan's differential harness (62-24-SUMMARY.md's disposition table): the
+  // PRE-62-24 module's stage 4/5 tag scanner (`findMatchingCloseEnd`, deleted) depth-counted
+  // SAME-NAME open/close tokens to find a hidden/removed element's matching close. When a
+  // hidden element had NO explicit close tag and was immediately followed by a sibling that
+  // HTML implicitly closes it for (a second `<p>`, a sibling `<li>`/`<dt>`/`<option>`, a
+  // `<div>` inside a `<p>`, an ancestor's own close tag), the old scanner mistook the
+  // sibling's OPEN tag for a nested child of the SAME name, incremented its depth counter,
+  // never found a matching close for that fictional extra nesting level, and fell through to
+  // the "no match found" fail-safe — deleting from the hidden element's start to END OF THE
+  // DOCUMENT. This destroyed legitimate visible prose that was never inside the hidden
+  // element at all (a real browser renders it normally) — an AVAILABILITY defect, not a leak,
+  // but a serious one on ordinary hand-written HTML email (multiple unclosed `<p>` tags is
+  // extremely common). `scanHtml().startTags` (62-24) reads htmlparser2's own tree-construction
+  // event stream, which already implements HTML's tag-omission/auto-close rules, so a hidden
+  // element's `elementEnd` now stops exactly where a conformant browser would end it — IMPROVEMENT,
+  // not a regression, confirmed by manual trace against the HTML tag-omission rules for every
+  // shape below (verified DIFFERENT from the control: an explicitly-closed `<p>...</p><p>...`
+  // pair never triggered the old bug, since depth-counting had no ambiguity to resolve there).
+  it('a hidden <p> immediately followed by a sibling <p> no longer destroys the second <p>\'s content (PRE-62-24: this returned "")', () => {
+    const out = stripHiddenContent('<p style="display:none">HIDDEN1<p>VISIBLE1</p>');
+    expect(out).toBe('VISIBLE1');
+  });
+
+  it('control: an explicitly-closed hidden <p> followed by a sibling <p> was ALREADY correct pre-62-24 (no divergence — the bug needs an implied close, not any sibling <p>)', () => {
+    const out = stripHiddenContent('<p style="display:none">HIDDEN1</p><p>VISIBLE1</p>');
+    expect(out).toBe('VISIBLE1');
+  });
+
+  it('a hidden <li> (no ul/ol wrapper) implicitly closed by a sibling <li> no longer destroys trailing prose (PRE-62-24: "")', () => {
+    const out = stripHiddenContent('<ul><li style="display:none">HIDDEN2<li>VISIBLE2</li></ul>');
+    expect(out).toBe('VISIBLE2');
+  });
+
+  it('a hidden <span> closed only by its ANCESTOR\'s end tag no longer destroys the sibling text after that ancestor (PRE-62-24: "")', () => {
+    const out = stripHiddenContent('<div><span style="display:none">HIDDEN3</div>VISIBLE3');
+    expect(out).toBe('VISIBLE3');
+  });
+
+  it('the same ancestor-close shape two levels deep (PRE-62-24: "")', () => {
+    const out = stripHiddenContent('<article><section><span hidden>HIDDEN4</section></article>VISIBLE4');
+    expect(out).toBe('VISIBLE4');
+  });
+
+  it('a class-hidden <dt> implicitly closed by a sibling <dd> no longer destroys the <dd> content (PRE-62-24: "")', () => {
+    const out = stripHiddenContent(
+      '<style>.legal{display:none}</style><dl><dt class="legal">HIDDEN5<dd>VISIBLE5</dd></dl>'
+    );
+    expect(out).toBe('VISIBLE5');
+  });
+
+  it('an aria-hidden <option> implicitly closed by a sibling <option> no longer destroys the sibling (PRE-62-24: "")', () => {
+    const out = stripHiddenContent('<select><option aria-hidden="true">HIDDEN6<option>VISIBLE6</option></select>');
+    expect(out).toBe('VISIBLE6');
+  });
+});
+
 describe('stripHiddenContent — invisible Unicode', () => {
   it('removes zero-width characters from plain-text (no markup) input', () => {
     const out = stripHiddenContent(`a${ZWSP}b${ZWSP}c`);
