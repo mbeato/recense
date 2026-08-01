@@ -27,10 +27,23 @@
  * had reason to enumerate. This is exactly the WR-09 failure mode being closed: a
  * differential drawn from the same case enumeration it validates cannot find a defect
  * outside that enumeration; this one's alphabet was NOT drawn from that enumeration, and it
- * found four. None are fixed by this plan (test-only scope, per this plan's own
- * `files_modified`) — each is locked as a named, dedicated `it.fails` reproduction so the
- * finding stays visible and reproducible, matching the precedent
- * `tests/css-liveness-adjudication.test.ts` already established for FB-01/CR-04.
+ * found four. NF-01 closed as a predicted side effect of 62-22 (CR-10); NF-03/04/05 remain
+ * open (CSS-tokenizer layer, out of every plan's scope in this wave set so far) — each is
+ * locked as a named, dedicated `it.fails` reproduction so the finding stays visible and
+ * reproducible, matching the precedent `tests/css-liveness-adjudication.test.ts` already
+ * established for FB-01/CR-04.
+ *
+ * 62-25 gap closure (CR-11, T-62-25-01/02): through 62-19..62-24, EVERY leak this differential
+ * found — named (NF-03/04/05) or not — landed in one bucket (`NFDANGER_leak`) bounded only by
+ * an upper-magnitude assertion (`< pairCount * 0.05`). A magnitude bound is a counter, not a
+ * gate: `62-VERIFICATION.md` independently re-ran the shipped exhaustive cross-product and
+ * measured 19 genuine leaks passing silently under that bound, with room for 77 more before it
+ * would even notice — directly contradicting this file's own three test titles ("zero
+ * unclassified divergences"), which described a property the suite never actually enforced.
+ * This plan closes that gap: every leak is now attributed to a NAMED mechanism with its own
+ * structural predicate and its own exact-count assertion, or it is unattributed and fails the
+ * suite outright (`attributeLeak`, below) — the gate is proven blocking by Task 3's injection
+ * proof, recorded in `62-25-SUMMARY.md`, not merely asserted.
  *
  * WHAT THIS ORACLE CAN DETECT: a divergence between recense's harvest and a conformant CSS
  * engine's verdict on ANY input its three generators can construct — including shapes
@@ -52,23 +65,21 @@
  * spot is how this phase got to WR-09 in the first place (T-62-19-01, this plan's threat
  * register).
  *
- * A SECOND, NARROWER RESIDUAL of this specific file: the bulk generators below classify
- * every divergence they find into one of the accepted-divergence allowlist (AD-*, expected
- * agreement) or the newly-filed-defect buckets (NF-*, confirmed open defects) by DIRECTION
- * (leak vs. safe over-strip) plus a structural check for the one bucket (NF-01) that has a
- * cheap, precise structural signature. NF-danger/NF-safe are NOT further narrowed by a
- * structural predicate per mechanism — they are bounded by count instead (mirroring the
- * "counts asserted against expected magnitudes" requirement this plan places on the AD-*
- * allowlist). A sample from every bucket in every generator was manually traced against the
- * css-tree tokenizer/parser during this plan's execution and confirmed to match one of the
- * four named NF-* mechanisms below with zero unexplained outliers found — but that is
- * sampling, not exhaustive structural proof, and is recorded here as this file's own
- * residual rather than silently assumed complete.
+ * A SECOND, NARROWER RESIDUAL of this specific file: the over-strip bucket (`NFSAFE_overStrip`)
+ * is NOT narrowed to a per-mechanism structural predicate the way the leak buckets are as of
+ * 62-25 — WR-11/12/13 (`62-REVIEW.md`) are out of this plan's fix scope, and building
+ * per-mechanism over-strip predicates was judged out of scope for the same reason. It is,
+ * however, no longer absorbed by a magnitude bound either: it carries an exact count per
+ * generator, so a change in over-strip volume still fails loudly and must be dispositioned,
+ * even though WHICH mechanism moved stays undifferentiated. This is a real, named residual —
+ * not silently assumed complete — and is carried forward in `62-25-SUMMARY.md`'s residual
+ * register.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tokenize, tokenTypes } from 'css-tree/tokenizer';
+import { parse as parseCss, walk as walkCss, ident } from 'css-tree';
 import { liveHidingSelectors, type LiveHidingSelectors } from './support/css-liveness-oracle';
 import { stripHiddenContent } from '../src/source/strip-hidden';
 
@@ -222,44 +233,209 @@ function newAllowlistCounters(): AllowlistCounters {
 }
 
 /**
- * Newly-filed-defect buckets — NOT an allowlist entry, NOT accepted as fine. Each bucket
- * below is a CONFIRMED, OPEN, currently-unfixed defect this differential found live during
- * this plan's execution (see the "Newly discovered defects" section at the end of this
- * file for each mechanism's own minimal, dedicated `it.fails` reproduction). Bucketing a
- * divergence here does not silence it: every bucket is bounded below (a magnitude
- * assertion, mirroring the allowlist's own "counts asserted against expected magnitudes"
- * requirement), and every mechanism is separately named, reported in the SUMMARY, and
- * locked as its own failing-as-expected test — the SAME visibility contract
- * `tests/css-liveness-adjudication.test.ts` already established for FB-01/CR-04.
+ * Newly-filed-defect buckets — NOT an allowlist entry, NOT accepted as fine.
+ *
+ * 62-25 gap closure (CR-11, T-62-25-01): through 62-19..62-24 every leak (`NFDANGER_leak`)
+ * fell into ONE bucket bounded only by an upper-magnitude assertion (less than 5% of the
+ * generator's pair count) — a magnitude bound is a counter, not a gate, and
+ * `62-VERIFICATION.md` independently measured 19 genuine leaks passing silently under that
+ * bound with room for 77 more before it would even notice. This
+ * plan replaces the single bounded bucket with NAMED, PER-MECHANISM counters (`NF03_*`,
+ * `NF04_*`, `NF05_*` below), each backed by its own structural predicate and its own minimal
+ * `it.fails` reproduction in the "Newly discovered defects" section at the end of this file.
+ * A leak matching NO named predicate is no longer counted anywhere — it is pushed straight to
+ * `failures` (see `runDifferential`'s `attributeLeak` helper) and fails the suite. Every
+ * per-mechanism counter below is asserted with `toBe(<exact count>)`, not a bound: a NEW
+ * instance of a KNOWN mechanism must fail loudly, the same way an unnamed one already does.
  */
 interface NewlyFiledCounters {
   /** NF-01: CLOSED by 62-22 (CR-10, `scanHtml`) -- an unmatched CDO ("<!--" with no later
    *  "-->" anywhere in the whole document) inside a `<style>` block no longer trips stage 3's
    *  old unterminated-HTML-comment fail-safe (deleted; see `removeComments`'s own doc
    *  comment), because the parser never mistakes RAWTEXT content for a comment in the first
-   *  place. This counter is now OBSERVABILITY-ONLY (an unmatched-CDO input was generated and
-   *  is no longer skipped -- see `runDifferential`'s own comment): every input that trips it
-   *  flows through the SAME VISIBLE_SENTENCE / leak / over-strip checks every other input
-   *  gets, rather than returning early. Detected structurally (not by re-running production),
-   *  so counting it cannot silently widen to cover an unrelated failure. */
+   *  place. This counter is OBSERVABILITY-ONLY and unrelated to the leak/over-strip gate below
+   *  (an unmatched-CDO input was generated and is no longer skipped -- see `runDifferential`'s
+   *  own comment): every input that trips it flows through the SAME VISIBLE_SENTENCE / leak /
+   *  over-strip checks every other input gets, rather than returning early. Detected
+   *  structurally (not by re-running production), so counting it cannot silently widen to
+   *  cover an unrelated failure. */
   NF01_cdoTruncation: number;
-  /** NF-DANGER: a residual UNDER-strip (leak) divergence, not explained by NF-01. Manual
-   *  trace during this plan's execution confirmed three distinct root mechanisms feed this
-   *  bucket (comma-separated selector lists rejected all-or-nothing rather than
-   *  per-selector [NF-03]; a blockless `@media;` at-rule misattributing the NEXT rule's
-   *  block as its own [NF-04]; CDO/CDC not special-cased as ignorable at the stylesheet top
-   *  level per CSS Syntax Level 3 §5.4.1, matched or not [NF-05]) — see their dedicated
-   *  locked repros below. Every instance here is a REAL, EXPLOITABLE leak. */
-  NFDANGER_leak: number;
-  /** NF-SAFE: a residual OVER-strip divergence, not explained by NF-01. Manual trace
-   *  confirmed this is always a stray/unmatched punctuation or bracket token poisoning a
-   *  prelude's token-shape match, in the SAFE direction only (production hides content a
-   *  real browser would still show; never a leak). */
+  /** NF-03 (open, CSS-tokenizer layer, out of this plan's fix scope): a comma-separated
+   *  selector list is rejected all-or-nothing rather than per-selector
+   *  (`preludeToBareSelectors`'s `allBare` semantics) — a bare hiding selector sharing a comma
+   *  list with any non-bare sibling is silently dropped from the harvest. Detected by
+   *  `isNf03CommaList`, a structural check independent of production (css-tree's own
+   *  parser/walker, never `preludeToBareSelectors`). Minimal repro: "a,.legal{display:none}". */
+  NF03_commaList: number;
+  /** NF-04 (open, CSS-tokenizer layer, out of this plan's fix scope): a semicolon-terminated,
+   *  blockless at-rule ("@media;", no braces) leaves a stale AtKeyword-first pending prelude
+   *  that production's frame walker only clears on `{`/`}`, never on `;` — so the NEXT rule's
+   *  own "{" gets misread as opening the stale at-rule's conditional-group body, and that
+   *  rule's hiding declaration is never evaluated. Detected by `isNf04BlocklessAtRule`, a
+   *  structural tokenizer-only check independent of production. Minimal repro:
+   *  "@media;.legal{display:none}". */
+  NF04_blocklessAtRule: number;
+  /** NF-05 (open, CSS-tokenizer layer, out of this plan's fix scope): CDO ("<!--")/CDC
+   *  ("-->") tokens are not special-cased as ignorable at the stylesheet top level (CSS Syntax
+   *  Level 3 §5.4.1), so one poisons the pending prelude's token-shape check for whichever
+   *  rule's "{" is reached next. Detected by `isNf05TopLevelCdoCdc`, a structural
+   *  tokenizer-only check independent of production. Minimal repro: "-->.legal{display:none}". */
+  NF05_topLevelCdoCdc: number;
+  /** NF-SAFE: a residual OVER-strip divergence, not explained by NF-01/03/04/05. WR-11/12/13
+   *  (`62-REVIEW.md`) are out of this plan's fix scope, so this bucket is not narrowed to a
+   *  per-mechanism breakdown the way the leak buckets above now are — but per this plan's own
+   *  instruction it is no longer absorbed by a magnitude bound either: an exact count per
+   *  generator (asserted below) means a change in over-strip volume fails loudly and must be
+   *  dispositioned, even though the mechanism behind it stays undifferentiated. */
   NFSAFE_overStrip: number;
 }
 
 function newNewlyFiledCounters(): NewlyFiledCounters {
-  return { NF01_cdoTruncation: 0, NFDANGER_leak: 0, NFSAFE_overStrip: 0 };
+  return {
+    NF01_cdoTruncation: 0,
+    NF03_commaList: 0,
+    NF04_blocklessAtRule: 0,
+    NF05_topLevelCdoCdc: 0,
+    NFSAFE_overStrip: 0,
+  };
+}
+
+/**
+ * NF-03 (CR-11 gate closure): true when `css` contains a Rule whose prelude is a comma-
+ * separated `SelectorList` (more than one `Selector`) where one `Selector` is a BARE class/id
+ * equal to `probeName` and at least one OTHER `Selector` in the SAME list is NOT bare. This is
+ * exactly the shape production's `preludeToBareSelectors` (`src/source/strip-hidden.ts`)
+ * rejects all-or-nothing. Computed independently via css-tree's own parser/walker — the same
+ * library the oracle itself is built on, never production's `preludeToBareSelectors`.
+ */
+function isNf03CommaList(css: string, probeName: string): boolean {
+  let found = false;
+  const ast = parseCss(css, { onParseError: () => {} });
+  walkCss(ast, (node: any) => {
+    if (found || node.type !== 'Rule' || node.prelude.type !== 'SelectorList') return;
+    const selectors = node.prelude.children.toArray();
+    if (selectors.length < 2) return;
+    let hasProbeBare = false;
+    let hasNonBare = false;
+    for (const sel of selectors) {
+      if (sel.type !== 'Selector') continue;
+      const parts = sel.children.toArray();
+      const only = parts.length === 1 ? parts[0] : null;
+      const isBare = only !== null && (only.type === 'ClassSelector' || only.type === 'IdSelector');
+      if (isBare) {
+        if (ident.decode((only as { name: string }).name) === probeName) hasProbeBare = true;
+      } else {
+        hasNonBare = true;
+      }
+    }
+    if (hasProbeBare && hasNonBare) found = true;
+  });
+  return found;
+}
+
+/**
+ * NF-04 (CR-11 gate closure): true when `css` contains a semicolon-terminated at-rule prelude
+ * (an `AtKeyword`-first token run, at nesting depth 0, that reaches a `Semicolon` before any
+ * `{`/`}`), with no intervening `{`/`}` reset before the NEXT `{`. Production's frame-based
+ * walker (`harvestFromStylesheet`) never clears its pending prelude on `;`, only on `{`/`}`,
+ * so that `{` gets misread as opening the STALE at-rule's conditional-group body instead of an
+ * ordinary declaration block, and the rule it actually belongs to is never evaluated. Minimal
+ * repro: "@media;.legal{display:none}". Computed via the shared css-tree tokenizer only, never
+ * by calling production's `harvestFromStylesheet`.
+ */
+function isNf04BlocklessAtRule(css: string): boolean {
+  let depth = 0;
+  let firstTokenSinceReset: number | null = null;
+  let sawSemicolonSinceReset = false;
+  let found = false;
+  tokenize(css, type => {
+    if (found) return;
+    if (type === tokenTypes.WhiteSpace || type === tokenTypes.Comment) return;
+    if (type === tokenTypes.LeftCurlyBracket) {
+      if (depth === 0 && firstTokenSinceReset === tokenTypes.AtKeyword && sawSemicolonSinceReset) {
+        found = true;
+      }
+      depth += 1;
+      firstTokenSinceReset = null;
+      sawSemicolonSinceReset = false;
+      return;
+    }
+    if (type === tokenTypes.RightCurlyBracket) {
+      depth = Math.max(0, depth - 1);
+      firstTokenSinceReset = null;
+      sawSemicolonSinceReset = false;
+      return;
+    }
+    if (depth !== 0) return;
+    if (firstTokenSinceReset === null) firstTokenSinceReset = type;
+    if (type === tokenTypes.Semicolon) sawSemicolonSinceReset = true;
+  });
+  return found;
+}
+
+/**
+ * NF-05 (CR-11 gate closure): true when `css` contains a CDO ("<!--") or CDC ("-->") token at
+ * nesting depth 0, before the next `{`. CSS Syntax Level 3 §5.4.1 says such a token MUST be
+ * ignored at the stylesheet top level, but production's frame-based walker has no such special
+ * case — the token is pushed into the pending prelude like any other, so the prelude's
+ * token-shape check (exactly a `Hash`, or `Delim('.')` + `Ident`) fails for whichever rule's
+ * `{` is reached next. Minimal repro: "-->.legal{display:none}". Computed via the shared
+ * css-tree tokenizer only, never by calling production's `harvestFromStylesheet`.
+ */
+function isNf05TopLevelCdoCdc(css: string): boolean {
+  let depth = 0;
+  let sawCdoCdcSinceReset = false;
+  let found = false;
+  tokenize(css, type => {
+    if (found) return;
+    if (type === tokenTypes.LeftCurlyBracket) {
+      if (depth === 0 && sawCdoCdcSinceReset) found = true;
+      depth += 1;
+      sawCdoCdcSinceReset = false;
+      return;
+    }
+    if (type === tokenTypes.RightCurlyBracket) {
+      depth = Math.max(0, depth - 1);
+      sawCdoCdcSinceReset = false;
+      return;
+    }
+    if (depth !== 0) return;
+    if (type === tokenTypes.CDO || type === tokenTypes.CDC) sawCdoCdcSinceReset = true;
+  });
+  return found;
+}
+
+/**
+ * The gate itself (CR-11 closure): attributes one confirmed leak (`probeName`, `selectorKind`)
+ * to the first NAMED mechanism whose structural predicate matches `css`. A leak matching NO
+ * named predicate is NOT counted anywhere — it is pushed to `failures` with the generating
+ * input, so `throwIfFailures` fails the suite. This is the exact property this differential's
+ * three test titles have claimed since 62-19 ("zero unclassified divergences") and, before
+ * this plan, never actually had: every leak used to reach `NFDANGER_leak` unconditionally,
+ * with no predicate required to enter it.
+ */
+function attributeLeak(
+  css: string,
+  probeName: string,
+  selectorKind: 'class' | 'id',
+  newlyFiled: NewlyFiledCounters,
+  failures: string[]
+): void {
+  if (isNf03CommaList(css, probeName)) {
+    newlyFiled.NF03_commaList += 1;
+    return;
+  }
+  if (isNf04BlocklessAtRule(css)) {
+    newlyFiled.NF04_blocklessAtRule += 1;
+    return;
+  }
+  if (isNf05TopLevelCdoCdc(css)) {
+    newlyFiled.NF05_topLevelCdoCdc += 1;
+    return;
+  }
+  failures.push(
+    `UNATTRIBUTED LEAK (matches no named mechanism — NF03/NF04/NF05) — probe=${probeName} (${selectorKind}) generating input=${JSON.stringify(css)}`
+  );
 }
 
 /**
@@ -365,9 +541,9 @@ function runDifferential(
     const classPresent = out.includes(classMarker(name));
     const idPresent = out.includes(idMarker(name));
 
-    if (classLive && classPresent) newlyFiled.NFDANGER_leak += 1;
+    if (classLive && classPresent) attributeLeak(css, name, 'class', newlyFiled, failures);
     if (!classLive && !classPresent) newlyFiled.NFSAFE_overStrip += 1;
-    if (idLive && idPresent) newlyFiled.NFDANGER_leak += 1;
+    if (idLive && idPresent) attributeLeak(css, name, 'id', newlyFiled, failures);
     if (!idLive && !idPresent) newlyFiled.NFSAFE_overStrip += 1;
   }
 }
@@ -404,11 +580,15 @@ describe('css-liveness-differential — Generator 1: exhaustive token-boundary a
     expect(pairCount).toBe(TOKEN_ALPHABET.length * TOKEN_ALPHABET.length);
     throwIfFailures(failures, 'Generator 1 (exhaustive k=2)');
     expect(counters.AD04).toBe(0);
-    // Magnitude bounds on the newly-filed buckets — a change that suddenly routes many more
-    // cases into one of these must fail loudly rather than pass quietly.
-    expect(newlyFiled.NF01_cdoTruncation).toBeLessThan(pairCount * 0.2);
-    expect(newlyFiled.NFDANGER_leak).toBeLessThan(pairCount * 0.05);
-    expect(newlyFiled.NFSAFE_overStrip).toBeLessThan(pairCount * 0.2);
+    // Exact counts (CR-11 gate closure) — measured against this file's own alphabet and this
+    // generator's exhaustive k=2 cross product, not a re-derivable formula. A count that moves
+    // means the corpus or the shipped module changed; either way it must be re-measured and
+    // re-recorded here, not silently absorbed by a bound.
+    expect(newlyFiled.NF01_cdoTruncation).toBe(86);
+    expect(newlyFiled.NF03_commaList).toBe(10);
+    expect(newlyFiled.NF04_blocklessAtRule).toBe(1);
+    expect(newlyFiled.NF05_topLevelCdoCdc).toBe(16);
+    expect(newlyFiled.NFSAFE_overStrip).toBe(50);
   });
 }, 30000);
 
@@ -440,9 +620,13 @@ describe('css-liveness-differential — Generator 2: seeded adjacency k=3..6', (
 
     throwIfFailures(failures, 'Generator 2 (seeded k=3..6)');
     expect(counters.AD04).toBe(0);
-    expect(newlyFiled.NF01_cdoTruncation).toBeLessThan(N * 0.3);
-    expect(newlyFiled.NFDANGER_leak).toBeLessThan(N * 0.05);
-    expect(newlyFiled.NFSAFE_overStrip).toBeLessThan(N * 0.3);
+    // Exact counts (CR-11 gate closure), measured against this LCG seed's own 20,000-input
+    // stream — see Generator 1's comment for why a moved count must be re-measured, not bound.
+    expect(newlyFiled.NF01_cdoTruncation).toBe(1921);
+    expect(newlyFiled.NF03_commaList).toBe(52);
+    expect(newlyFiled.NF04_blocklessAtRule).toBe(10);
+    expect(newlyFiled.NF05_topLevelCdoCdc).toBe(461);
+    expect(newlyFiled.NFSAFE_overStrip).toBe(1768);
   });
 }, 60000);
 
@@ -523,19 +707,25 @@ describe('css-liveness-differential — Generator 3: structured stylesheets from
 
     throwIfFailures(failures, 'Generator 3 (structured stylesheets)');
 
-    // Allowlist magnitude assertions — a change that suddenly routes thousands of cases
-    // into one of these must fail loudly rather than pass quietly.
+    // Allowlist coverage assertions — "this path was actually exercised", never an upper
+    // magnitude tolerance standing in for a gate (CR-11).
     expect(counters.AD01).toBeGreaterThan(0); // @media coverage was actually exercised
-    expect(counters.AD01).toBeLessThan(N);
     expect(counters.AD02).toBeGreaterThan(0); // unrestricted-hash coverage was actually exercised
-    expect(counters.AD02).toBeLessThan(N);
     expect(counters.AD03).toBeGreaterThan(0); // the unresolvable-escape input was actually generated
-    expect(counters.AD03).toBeLessThan(N * 0.15); // well under "a few percent" of the corpus
     expect(counters.AD04).toBe(0);
 
-    expect(newlyFiled.NF01_cdoTruncation).toBeLessThan(N * 0.2);
-    expect(newlyFiled.NFDANGER_leak).toBeLessThan(N * 0.1);
-    expect(newlyFiled.NFSAFE_overStrip).toBeLessThan(N * 0.15);
+    // Exact counts (CR-11 gate closure), measured against this LCG seed's own 5,000-document
+    // stream — see Generator 1's comment for why a moved count must be re-measured, not bound.
+    // NF03/NF04 measure zero here: RULE_LIBRARY's own hiding rules never form a comma list or
+    // sit adjacent to a blockless at-rule, and this generator's noise pieces did not happen to
+    // construct either shape across 5,000 seeded documents — a real absence for THIS seed, not
+    // a skip; Generator 1's exhaustive cross product and Generator 2's larger seeded stream
+    // both DO exercise NF03/NF04, so neither mechanism is uncovered by the suite as a whole.
+    expect(newlyFiled.NF01_cdoTruncation).toBe(407);
+    expect(newlyFiled.NF03_commaList).toBe(0);
+    expect(newlyFiled.NF04_blocklessAtRule).toBe(0);
+    expect(newlyFiled.NF05_topLevelCdoCdc).toBe(277);
+    expect(newlyFiled.NFSAFE_overStrip).toBe(358);
   });
 }, 30000);
 
