@@ -716,6 +716,123 @@ describe('stripHiddenContent — CSS-escaped selector names, §4.3.7 decode (62-
       stripHiddenContent('<style>.leg\\110000zz{display:none}</style>ok<span class="legzz">PAYLOAD_OOR</span>')
     ).not.toThrow();
   });
+
+  // CR-08 (62-REVIEW.md): the block above covered space, no-separator and the 6-digit cap, but
+  // never CR, CRLF or FF — the three remaining CSS whitespace escape-separator code points.
+  it('CR: a bare CR (\\r) trailing-whitespace terminator decodes to "legal" and is harvested', () => {
+    const out = stripHiddenContent(
+      '<style>.leg\\61\rl{display:none}</style>ok<span class="legal">PAYLOAD_CR</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_CR');
+    expect(out).toBe('ok');
+  });
+
+  it('CR-08: a CRLF (\\r\\n) trailing-whitespace terminator is consumed as ONE separator (§3.3) and decodes to "legal" — the genuine leak this finding closes', () => {
+    const out = stripHiddenContent(
+      '<style>.leg\\61\r\nl{display:none}</style>ok<span class="legal">PAYLOAD_CRLF</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_CRLF');
+    expect(out).toBe('ok');
+  });
+
+  it('FF: a bare FF (\\f, U+000C) trailing-whitespace terminator decodes to "legal" and is harvested', () => {
+    const out = stripHiddenContent(
+      '<style>.leg\\61\fl{display:none}</style>ok<span class="legal">PAYLOAD_FF</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_FF');
+    expect(out).toBe('ok');
+  });
+
+  it('plain-space control: a bare space trailing-whitespace terminator still decodes to "legal" (CR-08 must not regress the already-covered separator)', () => {
+    const out = stripHiddenContent(
+      '<style>.leg\\61 l{display:none}</style>ok<span class="legal">PAYLOAD_SPACE_CTRL</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_SPACE_CTRL');
+    expect(out).toBe('ok');
+  });
+});
+
+describe('stripHiddenContent — 62-20 gap closure: locked repros for CR-05/CR-06/CR-08/CR-09 (62-REVIEW.md, 62-VERIFICATION.md)', () => {
+  // CR-05: the hiding-declaration signature is now computed from a token-derived
+  // reconstruction at BOTH call sites (harvestFromStylesheet's frame evaluation, and
+  // isHiddenStartTag's inline-style check), never from a raw css.slice(...) handed straight to
+  // hasHidingSignature. Named a/b/c per the review's own three reproduced payloads.
+  it('CR-05a: a CSS comment between "display:" and "none" inside a harvested <style> rule no longer defeats the hiding signature', () => {
+    const out = stripHiddenContent(
+      '<style>.legal{display:/*x*/none}</style>ok<span class="legal">PAYLOAD_CR05A</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_CR05A');
+    expect(out).toBe('ok');
+  });
+
+  it('CR-05b: an escaped ident ("\\6eone" decoding to "none") inside a harvested <style> rule no longer defeats the hiding signature', () => {
+    const out = stripHiddenContent(
+      '<style>.legal{display:\\6eone}</style>ok<span class="legal">PAYLOAD_CR05B</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_CR05B');
+    expect(out).toBe('ok');
+  });
+
+  it('CR-05c: a CSS comment inside an INLINE style attribute value no longer defeats the hiding signature', () => {
+    const out = stripHiddenContent('<div style="display:/*x*/none">PAYLOAD_CR05C</div>ok');
+    expect(out).not.toContain('PAYLOAD_CR05C');
+    expect(out).toBe('ok');
+  });
+
+  // Over-strip control (WHY_A_RAW_SLICE_CAN_NEVER_AGREE row 4, this plan's own scope floor):
+  // a comment that splits a PROPERTY NAME is a token boundary, not a hiding rule, and must
+  // never join two idents into one.
+  it('CR-05 over-strip control: a comment splitting the PROPERTY NAME itself ("disp/*x*/lay:none") is not read as "display:none" — the element stays visible', () => {
+    const out = stripHiddenContent(
+      '<style>.legal{disp/*x*/lay:none}</style>ok<span class="legal">VISIBLE_CR05_CTRL</span>'
+    );
+    expect(out).toContain('VISIBLE_CR05_CTRL');
+  });
+
+  // CR-06: EOF closes an open declaration block (CSS Syntax: consume-a-simple-block, EOF
+  // case), so an unterminated final rule is harvested rather than silently dropped.
+  it('CR-06 (class selector, no trailing content): an unterminated final <style> block is still harvested at EOF', () => {
+    const out = stripHiddenContent(
+      '<style>.legal{display:none</style>ok<span class="legal">PAYLOAD_A1</span>Thanks.'
+    );
+    expect(out).toBe('okThanks.');
+  });
+
+  it('CR-06 (id selector): an unterminated final <style> block is still harvested at EOF, id form', () => {
+    const out = stripHiddenContent(
+      '<style>#legal{display:none</style>ok<span id="legal">PAYLOAD_A2</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('CR-06 (preceding closed rule): a closed rule before an unterminated final rule does not prevent the unterminated one from being harvested at EOF', () => {
+    const out = stripHiddenContent(
+      '<style>.a{color:red}.legal{display:none</style>ok<span class="legal">PAYLOAD_A3</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  // CR-08: locked end-to-end repro (the escape-decode block above already covers
+  // decodeIdentEscapes in isolation; this asserts the same fix through the full pipeline).
+  it('CR-08: a hex-escaped selector terminated by CRLF (the native MIME line ending) is harvested — genuine leak closed', () => {
+    const out = stripHiddenContent(
+      '<style>.leg\\61\r\nl{display:none}</style>ok<span class="legal">PAYLOAD_CRLF_E2E</span>'
+    );
+    expect(out).not.toContain('PAYLOAD_CRLF_E2E');
+    expect(out).toBe('ok');
+  });
+
+  // CR-09: the harvest has no fail-open bound — 250 attacker-authored junk rules do not
+  // starve out a real hiding rule that follows them.
+  it('CR-09: 250 junk hiding rules ahead of the real one do not prevent the real one from being harvested (no fail-open cap)', () => {
+    let junk = '';
+    for (let i = 0; i < 250; i += 1) junk += `.f${i}{display:none}`;
+    const out = stripHiddenContent(
+      `<style>${junk}.legal{display:none}</style>ok<span class="legal">PAYLOAD_J</span>`
+    );
+    expect(out).not.toContain('PAYLOAD_J');
+    expect(out).toBe('ok');
+  });
 });
 
 describe('stripHiddenContent — invisible Unicode', () => {
@@ -1286,6 +1403,9 @@ describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (total
     '<', '>', '/', '"', "'", '{', '}', '/*', '*/', '<!--', '-->',
     '<style', '</style', '<script', '</script', 'url(', '(', ')', '\\',
     'display:none', 'class', 'legal', ' ', '\n', 'a', 'b', 'c',
+    '\r\n', // CR-08 (62-REVIEW.md): CRLF as a fragment, so the fuzz walk can place a hex
+    // escape's CRLF trailing-whitespace terminator anywhere a single-code-unit separator
+    // previously could.
   ];
 
   /** Same structural check as `tests/css-liveness-differential.test.ts`'s
@@ -1472,6 +1592,28 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
     for (const line of newRegExpLines) {
       expect(line.trimStart().startsWith('const ')).toBe(true);
     }
+  });
+
+  // CR-05 (62-REVIEW.md, closed by 62-20): the declaration-signature layer must stay
+  // token-derived. Uses COMMENT_STRIPPED_SOURCE so this file's own doc comments (which
+  // legitimately mention "css.slice" and "hasHidingSignature" in prose) cannot self-invalidate
+  // the guard — matching this describe block's existing discipline.
+  const RAW_SLICE_INTO_SIGNATURE_RE = /hasHidingSignature\(\s*[\w.]*\.slice\(/;
+
+  it('hasHidingSignature is never called with a bare raw-source .slice(...) expression — every call site goes through the token-derived reconstruction (hasHidingSignatureFromTokens)', () => {
+    expect(COMMENT_STRIPPED_SOURCE).not.toContain('hasHidingSignature(css.slice');
+    expect(RAW_SLICE_INTO_SIGNATURE_RE.test(COMMENT_STRIPPED_SOURCE)).toBe(false);
+  });
+
+  it('the raw-slice guard above is not vacuous: the same predicate DOES flag a synthetic offending line', () => {
+    const offender = 'if (!hasHidingSignature(css.slice(contentStart, contentEnd))) return;';
+    expect(offender).toContain('hasHidingSignature(css.slice');
+    expect(RAW_SLICE_INTO_SIGNATURE_RE.test(offender)).toBe(true);
+    // A second offender shape not caught by the plain substring check above, to prove the
+    // regex form is pulling its own weight rather than duplicating the substring check.
+    const offender2 = 'return hasHidingSignature(  someOtherVar.slice(0, 5) );';
+    expect(offender2).not.toContain('hasHidingSignature(css.slice');
+    expect(RAW_SLICE_INTO_SIGNATURE_RE.test(offender2)).toBe(true);
   });
 });
 
