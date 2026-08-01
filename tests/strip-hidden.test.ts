@@ -955,6 +955,36 @@ describe('scanHtml — one htmlparser2 pass yielding comment ranges, style-eleme
   });
 });
 
+describe('stripHiddenContent — 62-22 gap closure: CR-10 locked shapes (a <style> hidden inside an HTML comment can no longer be harvested)', () => {
+  it('CR-10 shape 1: a live <style> AFTER a comment containing a bare <style> mention strips the payload and keeps visible prose', () => {
+    const out = stripHiddenContent(
+      '<!-- <style> --><p>hi</p><style>.legal{display:none}</style>ok<span class="legal">PAYLOAD_C1</span>Thanks.'
+    );
+    expect(out).toBe('hiokThanks.');
+  });
+
+  it('CR-10 shape 2: a bogus-comment-shaped "<!--<style-->" ahead of the real <style> element does not let the real rule pair with the bogus open tag', () => {
+    const out = stripHiddenContent(
+      '<!--<style-->Dear applicant,<style>.legal{display:none}</style>ok<span class="legal">PAYLOAD_C2</span>Bye.'
+    );
+    expect(out).toBe('Dear applicant,okBye.');
+  });
+
+  it('stripHiddenContent computes exactly one scanHtml pass per call (cross-stage conservation check)', () => {
+    // Spy on the module's own htmlparser2 dependency rather than re-implementing a counter:
+    // every scanHtml invocation constructs exactly one `Parser`, so counting `Parser`
+    // constructions across one stripHiddenContent call is a direct, non-invasive proxy for
+    // "stage 2 and stage 3 read the SAME scan object" -- two scans would construct two
+    // Parsers; zero would mean neither stage is wired to scanHtml at all.
+    const spy = vi.spyOn(Parser.prototype, 'write');
+    const callsBefore = spy.mock.calls.length;
+    stripHiddenContent('<!--a--><style>.legal{display:none}</style>ok<span class="legal">X</span>');
+    const callsAfter = spy.mock.calls.length;
+    expect(callsAfter - callsBefore).toBe(1);
+    spy.mockRestore();
+  });
+});
+
 describe('stripHiddenContent — invisible Unicode', () => {
   it('removes zero-width characters from plain-text (no markup) input', () => {
     const out = stripHiddenContent(`a${ZWSP}b${ZWSP}c`);

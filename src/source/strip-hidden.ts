@@ -251,7 +251,8 @@
  * 62-22 gap closure (CR-10, 62-REVIEW.md) — closes the LAST T-62-43 cross-stage boundary
  * disagreement this file names: stage 2 and stage 3 held TWO independent opinions about where
  * a comment and a `<style>` element begin and end (`START_TAG_RE`+`findRawtextCloseBounds` vs
- * `HTML_COMMENT_RE`), so a `<style>` open tag written inside an HTML comment could be harvested
+ * the old comment-removal regex this closure deletes), so a `<style>` open tag written inside
+ * an HTML comment could be harvested
  * as a live stylesheet, and an unterminated CDO (`<!--`) inside a `<style>` block could trigger
  * stage 3's own truncation fail-safe and destroy the rest of the document (NF-01). Both stages
  * now read ONE `scanHtml` pass (`htmlparser2@10.0.0`, exact-pinned, 62-21) computed once per
@@ -290,9 +291,9 @@
  *     inside an HTML comment can no longer be mistaken for a live element (CR-10). Block
  *     content is read as a css-tree TOKEN STREAM (62-17) — rule boundaries come from `{`/`}`
  *     tokens and selector shape from token structure, not from a comment-stripped text scan.
- *  3. HTML comment removal — deletes `scanHtml().comments` (62-22) rather than
- *     `HTML_COMMENT_RE` plus an `indexOf('<!--')` truncation fail-safe; the parser sees an
- *     unterminated comment's true extent and never mistakes RAWTEXT content (a CDO inside
+ *  3. HTML comment removal — deletes `scanHtml().comments` (62-22) rather than the old
+ *     comment-matching regex plus an `indexOf('<!--')` truncation fail-safe; the parser sees
+ *     an unterminated comment's true extent and never mistakes RAWTEXT content (a CDO inside
  *     `<style>`) for a comment, so the fail-safe this replaced had nothing left to guard.
  *  4. Non-content element removal (script/style/head/title/template/noscript/svg), with
  *     their contents. For `RAWTEXT_ELEMENTS`, the removal range's end is found by
@@ -626,8 +627,9 @@ function applyRemovalRanges(html: string, ranges: Array<[number, number]>): stri
  * 62-22 gap closure (CR-10, 62-REVIEW.md) — gives the module ONE opinion about HTML
  * structure, the adopted parser's (`htmlparser2@10.0.0`, 62-21, exact-pinned), for comments
  * and `<style>` elements. Before this closure, stage 2 (`START_TAG_RE` +
- * `findRawtextCloseBounds`) and stage 3 (`HTML_COMMENT_RE`) held two INDEPENDENT opinions
- * about where a comment and a RAWTEXT element begin and end — the T-62-43 cross-stage
+ * `findRawtextCloseBounds`) and stage 3 (its own separate comment-matching regex) held two
+ * INDEPENDENT opinions about where a comment and a RAWTEXT element begin and end — the T-62-43
+ * cross-stage
  * boundary bug class this file exists to close (CR-01, BL-01, BL-02, NEW-01, FB-01 were all
  * prior instances; 62-18 closed it for `<style>`-vs-`<style>` by sharing one primitive
  * between stages 2 and 4). `scanHtml` closes it for `<style>`-vs-comment the only way that
@@ -1292,10 +1294,11 @@ function harvestHidingSelectors(
 
 /**
  * 62-22 gap closure (CR-10, T-62-22-03): deletes `scan.comments` — `scanHtml`'s own,
- * conformant-tokenizer-derived comment ranges — instead of running `HTML_COMMENT_RE` plus an
- * `indexOf('<!--')` truncation fail-safe. That fail-safe existed because a regex over raw text
- * cannot SEE an unterminated comment's true extent (it can only detect "no match, therefore
- * truncate to end of string" — the NF-01 defect: an unmatched CDO/HTML-comment-opener INSIDE a
+ * conformant-tokenizer-derived comment ranges — instead of running the old comment-matching
+ * regex plus an `indexOf('<!--')` truncation fail-safe. That fail-safe existed because a
+ * regex over raw text cannot SEE an unterminated comment's true extent (it can only detect
+ * "no match, therefore truncate to end of string" — the NF-01 defect: an unmatched
+ * CDO/HTML-comment-opener INSIDE a
  * `<style>` block is ordinary, spec-legal CSS syntax, not an HTML comment at all, yet the old
  * fail-safe could not tell the difference and destroyed the rest of the document, including a
  * real `</style>` tag and every visible sentence after it). `scanHtml`'s parser CAN see an
