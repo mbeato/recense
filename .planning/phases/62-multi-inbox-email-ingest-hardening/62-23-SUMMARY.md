@@ -149,3 +149,15 @@ None — no external service configuration required.
 ---
 *Phase: 62-multi-inbox-email-ingest-hardening*
 *Completed: 2026-08-01*
+
+## Self-Check: PASSED
+
+- FOUND: `tsconfig.json`
+- FOUND: `tests/tsconfig.json`
+- FOUND: `tests/src-import-boundary.test.ts`
+- FOUND: `.planning/phases/62-multi-inbox-email-ingest-hardening/62-23-SUMMARY.md`
+- FOUND commit `62ede24` (Task 1)
+- FOUND commit `fc8c2ee` (Task 2 RED)
+- FOUND commit `d83660d` (Task 2 GREEN)
+- FOUND commit `3231c65` (SUMMARY)
+- `git diff --stat b06e521..HEAD` (excluding this commit) touches exactly the plan's declared `files_modified` — no files outside the declared set, no files declared for sibling plan 62-22.
