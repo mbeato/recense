@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 21/25 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 23/25 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -903,8 +903,8 @@ Plans:
 
 **Wave 17** *(blocked on Wave 16; 62-22 owns `strip-hidden.ts`, 62-23 owns the tsconfig/typing surface — no file overlap)*
 
-- [ ] 62-22-PLAN.md — One `scanHtml` pass feeding stage 2 and stage 3, closing the `<style>`-inside-a-comment stage-ordering leak structurally, plus a re-derived 1 MiB cost bound (CR-10, EMAIL-03, wave 17)
-- [ ] 62-23-PLAN.md — Enforce the documented `src/` isolation boundary for real: tests-scoped tsconfig project, corrected documentation, and a shipped non-vacuous import-boundary test (WR-10, EMAIL-03, wave 17)
+- [x] 62-22-PLAN.md — One `scanHtml` pass feeding stage 2 and stage 3, closing the `<style>`-inside-a-comment stage-ordering leak structurally, plus a re-derived 1 MiB cost bound (CR-10, EMAIL-03, wave 17)
+- [x] 62-23-PLAN.md — Enforce the documented `src/` isolation boundary for real: tests-scoped tsconfig project, corrected documentation, and a shipped non-vacuous import-boundary test (WR-10, EMAIL-03, wave 17)
 
 **Wave 18** *(blocked on Wave 17 — writes `strip-hidden.ts`)*
 
