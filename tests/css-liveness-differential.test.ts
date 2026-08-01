@@ -66,6 +66,8 @@
  * residual rather than silently assumed complete.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { tokenize, tokenTypes } from 'css-tree/tokenizer';
 import { liveHidingSelectors, type LiveHidingSelectors } from './support/css-liveness-oracle';
 import { stripHiddenContent } from '../src/source/strip-hidden';
@@ -122,6 +124,62 @@ describe('css-liveness-differential — TOKEN_ALPHABET coverage', () => {
     const namedTypeCount = Object.keys(tokenTypes).length;
     expect(namedTypeCount).toBe(26);
     expect(seen.size).toBeGreaterThanOrEqual(25);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Oracle self-test (62-25-PLAN.md Task 1): the six declaration-layer independence behaviors
+// the oracle rewrite (`tests/support/css-liveness-oracle.ts`) must produce, asserted here
+// (not in `tests/css-liveness-adjudication.test.ts`) because this plan's own `files_modified`
+// scope is exactly this file and the oracle module itself — no third file is touched to ship
+// these locks. Behaviors 1-3 are genuine FIXES (the old oracle, which ran production's twelve
+// regexes over a raw block-text slice, got all three wrong — see the oracle's own updated
+// file-level doc comment for the false-positive/false-negative trace on each). Behavior 4 is a
+// preserved-behavior regression guard (the old oracle already got it right). Behaviors 5-6 are
+// already independently enforced by shipped tests this plan does not modify
+// (`tests/src-import-boundary.test.ts`'s src-side boundary guard; the FB-01/CR-04/NEW-01 rows
+// in `tests/css-liveness-adjudication.test.ts`, which already exercise malformed CSS through
+// `liveHidingSelectors` without throwing) — re-asserted here in this behavior's own terms so
+// the six-item list from the plan is fully accounted for in one place.
+// ---------------------------------------------------------------------------
+describe('css-liveness-oracle — 62-25 Task 1: declaration-layer independence (CR-05 blind spot closed)', () => {
+  it('behavior 1 (FIX): display:/*x*/none — a comment between the colon and the value no longer hides a live declaration from the oracle (old oracle: NOT live, wrong; new oracle: LIVE)', () => {
+    const { classes } = liveHidingSelectors('.legal{display:/*x*/none}');
+    expect(classes.has('legal')).toBe(true);
+  });
+
+  it('behavior 2 (FIX): display:\\6eone — a hex-escaped ident value ("none" spelled \\6e + "one") resolves to a live hiding declaration (old oracle: NOT live, wrong; new oracle: LIVE)', () => {
+    const { classes } = liveHidingSelectors('.legal{display:\\6eone}');
+    expect(classes.has('legal')).toBe(true);
+  });
+
+  it('behavior 3 (FIX): /*display:none*/color:red — a hiding declaration entirely INSIDE a comment is not a declaration at all (a browser never tokenizes it), so the rule is NOT live (old oracle: LIVE, a false positive from matching raw comment text; new oracle: NOT live)', () => {
+    const { classes } = liveHidingSelectors('.legal{/*display:none*/color:red}');
+    expect(classes.has('legal')).toBe(false);
+  });
+
+  it('behavior 4 (preserved): opacity:0.85 is NOT live (not exactly zero); opacity:0 IS live', () => {
+    expect(liveHidingSelectors('.legal{opacity:0.85}').classes.has('legal')).toBe(false);
+    expect(liveHidingSelectors('.legal{opacity:0}').classes.has('legal')).toBe(true);
+  });
+
+  it('behavior 5: the oracle module imports nothing from src/ (also independently enforced from the src/ side by the shipped tests/src-import-boundary.test.ts, not modified by this plan)', () => {
+    const oracleSource = readFileSync(resolve(__dirname, 'support', 'css-liveness-oracle.ts'), 'utf8');
+    expect(oracleSource).not.toMatch(/from\s+['"][^'"]*\/src\//);
+    expect(oracleSource).not.toMatch(/require\(\s*['"][^'"]*\/src\//);
+  });
+
+  it('behavior 6: a malformed stylesheet still produces a best-effort AST rather than throwing (onParseError swallowed, browser-like error recovery)', () => {
+    // Unterminated block (no closing "}"): css-tree recovers to EOF, the same browser-like
+    // behavior 62-18 already relies on for unterminated <style> harvest — the declaration
+    // still parses cleanly, so the rule IS live, not an exception.
+    expect(() => liveHidingSelectors('.legal{display:none')).not.toThrow();
+    expect(liveHidingSelectors('.legal{display:none').classes.has('legal')).toBe(true);
+    // CR-04 shape 2 (invalid prelude, `xurl(a/*z*/b)` glued onto `.legal`): the Rule's own
+    // prelude fails to parse as a SelectorList (Raw fallback), so the rule contributes
+    // nothing — not an exception, and not a false LIVE either.
+    expect(() => liveHidingSelectors('xurl(a/*z*/b).legal{display:none}')).not.toThrow();
+    expect(liveHidingSelectors('xurl(a/*z*/b).legal{display:none}').classes.has('legal')).toBe(false);
   });
 });
 
