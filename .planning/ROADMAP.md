@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 23/25 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 24/25 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -908,7 +908,7 @@ Plans:
 
 **Wave 18** *(blocked on Wave 17 — writes `strip-hidden.ts`)*
 
-- [ ] 62-24-PLAN.md — Stages 4 and 5 driven by the parser's start tags with decoded attribute values, restoring the browser's HTML-decode-then-CSS-tokenize layering, with a dispositioned divergence table (CR-07, EMAIL-03, wave 18)
+- [x] 62-24-PLAN.md — Stages 4 and 5 driven by the parser's start tags with decoded attribute values, restoring the browser's HTML-decode-then-CSS-tokenize layering, with a dispositioned divergence table (CR-07, EMAIL-03, wave 18)
 
 **Wave 19** *(blocked on Wave 18 — the CR-11 hard gate lands AFTER the leak fixes, per the sequencing decision recorded in 62-25-PLAN.md)*
 
