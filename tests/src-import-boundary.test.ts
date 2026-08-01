@@ -55,10 +55,24 @@ function collectTsFiles(dir: string): string[] {
  * NOT banned (must never be reported): `css-tree/tokenizer` (adopted, typed via
  * `src/types/css-tree-tokenizer.d.ts`), `htmlparser2` (adopted per 62-21-SUMMARY.md).
  */
-// RED (Task 2, TDD): stub predicate — deliberately does not implement the ban list yet.
-// The non-vacuousness check below must fail against this stub; GREEN replaces this body.
-export function findBoundaryOffenders(_filePath: string, _source: string): string[] {
-  return [];
+// Matches `from 'css-tree'` / `require('css-tree')` — EXACT bare specifier only. The
+// closing quote must follow immediately, so `'css-tree/tokenizer'` never matches.
+const BARE_CSS_TREE_RE = /(?:from\s+['"]css-tree['"])|(?:require\(\s*['"]css-tree['"]\s*\))/;
+
+// Matches any import/require specifier that traverses into `tests/support/` — the
+// test-only oracle tree. Path-segment match, not a substring of an unrelated word.
+const TESTS_SUPPORT_IMPORT_RE =
+  /(?:from\s+['"][^'"]*tests\/support\/)|(?:require\(\s*['"][^'"]*tests\/support\/)/;
+
+export function findBoundaryOffenders(filePath: string, source: string): string[] {
+  const offenders: string[] = [];
+  if (BARE_CSS_TREE_RE.test(source)) {
+    offenders.push(`${filePath}: imports the bare css-tree package`);
+  }
+  if (TESTS_SUPPORT_IMPORT_RE.test(source)) {
+    offenders.push(`${filePath}: imports tests/support/`);
+  }
+  return offenders;
 }
 
 describe('T-62-17-08 import-boundary guard (62-23)', () => {
