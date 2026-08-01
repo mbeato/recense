@@ -478,6 +478,67 @@ describe(
   20000
 );
 
+describe(
+  '62-22 gap closure — MAX_STRIP_INPUT_CODE_UNITS cost argument re-derived against htmlparser2@10.0.0 (Task 3)',
+  () => {
+    // Own block, per this plan's own instruction (WR-14's existing rows in the block above —
+    // a known, out-of-scope duplicate-shape defect — stay untouched, not "fixed" here).
+    //
+    // scanHtml (62-22, CR-10) added a SECOND conformant tokenizer pass (`htmlparser2@10.0.0`,
+    // exact-pinned, 62-21) to `stripHiddenContent`, running once per call alongside the
+    // existing `css-tree` pass — a new parser on the online ingest path re-opens the
+    // availability question this cap answers (T-62-22-04), so its cost is re-measured here
+    // rather than inherited by assertion (62-15 was falsified once already, by T62-91, for
+    // exactly that reason). See `gmail-adapter.ts`'s `MAX_STRIP_INPUT_CODE_UNITS` doc comment
+    // (§3) for the narrative and `62-22-SUMMARY.md` for the full 29-row measurement table this
+    // block's two worst rows are drawn from.
+    const CAP = 1048576;
+
+    function padToExactLength(unit: string, length: number): string {
+      const repeated = unit.repeat(Math.ceil(length / unit.length) + 1);
+      return repeated.slice(0, length);
+    }
+
+    // Worst-measured shape across all 29 (~47 ms through stripHiddenContent, ~31 ms
+    // end-to-end): identical to 62-18's own worst shape (the brace-free `a<x ` run inside
+    // <style>) — the second parser pass does not introduce a new worst case, it stays in the
+    // same band as the existing css-tree-bound cost.
+    const shapeBraceFreeAX = (): string => {
+      const overhead = '<style>'.length + '</style>'.length;
+      return '<style>' + padToExactLength('a<x ', CAP - overhead) + '</style>';
+    };
+
+    // Second-worst measured shape, and the one this plan's own new scanHtml pass is
+    // responsible for: many `</style foo>` RAWTEXT close tags, each one paying scanHtml's
+    // D-62-21-01 `indexOf('>', closetag.end)` forward-scan correction once per close event —
+    // the exact new per-close-tag bookkeeping cost 62-18's own 25-shape table never had to
+    // account for, since it predates scanHtml entirely.
+    const shapeManyTruncatedStyleCloses = (): string =>
+      padToExactLength('<style>.a{display:none}</style foo>', CAP);
+
+    it.each([
+      ['CSS: brace-free a<x  repeated (worst measured, 62-18/62-22 unchanged)', shapeBraceFreeAX],
+      [
+        'NEW (62-22): many </style foo> truncated-offset RAWTEXT closes repeated (scanHtml\'s own new cost)',
+        shapeManyTruncatedStyleCloses,
+      ],
+    ] as const)(
+      '%s: end-to-end through normalizeGmailMessage completes under 1000ms at exactly the cap boundary',
+      (_label, makeShape) => {
+        const bodyText = makeShape();
+        expect(bodyText.length).toBe(CAP);
+        const raw = makeRaw({ bodyText });
+        const start = performance.now();
+        const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
+        const elapsed = performance.now() - start;
+        expect(record).toBeDefined();
+        expect(elapsed).toBeLessThan(1000);
+      }
+    );
+  },
+  20000
+);
+
 /**
  * The phase's headline guarantee, pinned in a single place: does any known bypass of
  * EMAIL-03 still work? One row per historical/adversarial finding this phase closed

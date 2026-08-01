@@ -379,12 +379,37 @@ export function parseEmailDate(header: string, nowMs: number): number | null {
  *    brace-free `a<x ` shape, ~44 ms through `stripHiddenContent`, ~46 ms end-to-end
  *    through `normalizeGmailMessage`) — over 20x headroom under the 1000 ms budget, and no
  *    longer bounded by any single quadratic. See `62-18-SUMMARY.md` for the full
- *    25-row measurement table. Because every shape now clears the budget with wide margin,
- *    1 MiB (1,048,576) is KEPT rather than resized — the value itself did not need to
- *    change, only the argument for it. For legitimate-mail context: Gmail itself clips
- *    message display around 102 KB, and EpisodicStore.capContent (D-58) keeps only 8 KB of
- *    the resulting episode downstream, so a body over 1 MiB is both vanishingly rare in
- *    genuine mail and already mostly discarded regardless of this bound.
+ *    25-row measurement table.
+ *
+ *    RE-DERIVED AGAIN IN 62-22 after `strip-hidden.ts` adopted `htmlparser2@10.0.0`
+ *    (exact-pinned, 62-21) as a second, conformant tokenizer alongside `css-tree`, replacing
+ *    the `START_TAG_RE`/`HTML_COMMENT_RE` regex scans stage 2/3 used to run (CR-10, closing
+ *    the `<style>`-vs-comment cross-stage boundary disagreement) — a new parser on the
+ *    online ingest path re-opens the availability question this cap answers, so its cost
+ *    must be re-measured, not inherited by assertion (62-15 was falsified once already, by
+ *    T62-91, for exactly that reason — see the paragraph above). Re-measured, at exactly
+ *    1,048,576 code units, through `stripHiddenContent`: all 25 of 62-18's shapes (now
+ *    additionally paying `scanHtml`'s single `htmlparser2` pass on every call, not just
+ *    `css-tree`'s), the two HTML-layer shapes 62-21's C4 evaluation separately measured
+ *    against the raw parser (one unterminated HTML comment to EOF; `<style ` repeated with
+ *    no `>` until the final byte), and two new shapes chosen to stress `scanHtml` ITSELF —
+ *    the new per-tag/per-close-tag bookkeeping this plan adds that no prior wave's cap
+ *    measurement had to account for: many small tags (`<span>a</span>` repeated, stressing
+ *    `startTags`' per-open/per-close stack push-pop) and many `</style foo>` RAWTEXT closes
+ *    with the D-62-21-01 truncated-offset correction (stressing the `indexOf('>', ...)`
+ *    forward-scan `scanHtml` runs once per non-implied close tag). Worst measured shape
+ *    across all 29: ~47 ms through `stripHiddenContent` (the brace-free `a<x ` shape,
+ *    unchanged from 62-18 — `scanHtml`'s own added shapes measured ~42-47 ms, in the same
+ *    band, not a new tail), ~41 ms end-to-end through `normalizeGmailMessage` for the worst
+ *    of those. Every shape stays over 20x under the 1000 ms budget — the SAME margin 62-18
+ *    measured, not eroded by the second parser pass. **1 MiB (1,048,576) is KEPT, not
+ *    resized** — the value did not change, only the argument, again. See `62-22-SUMMARY.md`
+ *    for the full 29-row table.
+ *
+ *    Because every shape clears the budget with wide margin: for legitimate-mail context,
+ *    Gmail itself clips message display around 102 KB, and EpisodicStore.capContent (D-58)
+ *    keeps only 8 KB of the resulting episode downstream, so a body over 1 MiB is both
+ *    vanishingly rare in genuine mail and already mostly discarded regardless of this bound.
  *
  * 4. WHY A MODULE CONSTANT AND NOT CONFIG: src/lib/config.ts is under the
  *    EMAIL-01/EMAIL-02 zero-diff freeze this phase must not break. Independent of that

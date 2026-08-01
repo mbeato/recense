@@ -175,14 +175,15 @@ function newAllowlistCounters(): AllowlistCounters {
  * `tests/css-liveness-adjudication.test.ts` already established for FB-01/CR-04.
  */
 interface NewlyFiledCounters {
-  /** NF-01: an unmatched CDO ("<!--" with no later "-->" anywhere in the whole document)
-   *  inside a `<style>` block trips stage 3's unterminated-HTML-comment fail-safe, which
-   *  truncates the ENTIRE REST OF THE DOCUMENT -- including the real `</style>` tag and all
-   *  visible prose after it -- because stage 3 does not respect the RAWTEXT boundary of a
-   *  `<style>`/`<script>`/etc. element (a CDO/CDC pair is ordinary, spec-legal CSS syntax,
-   *  not an HTML comment, inside a RAWTEXT element). Detected structurally (not by
-   *  re-running production), so this early-return cannot silently widen to cover an
-   *  unrelated failure. Severity: availability (total content loss), not a leak. */
+  /** NF-01: CLOSED by 62-22 (CR-10, `scanHtml`) -- an unmatched CDO ("<!--" with no later
+   *  "-->" anywhere in the whole document) inside a `<style>` block no longer trips stage 3's
+   *  old unterminated-HTML-comment fail-safe (deleted; see `removeComments`'s own doc
+   *  comment), because the parser never mistakes RAWTEXT content for a comment in the first
+   *  place. This counter is now OBSERVABILITY-ONLY (an unmatched-CDO input was generated and
+   *  is no longer skipped -- see `runDifferential`'s own comment): every input that trips it
+   *  flows through the SAME VISIBLE_SENTENCE / leak / over-strip checks every other input
+   *  gets, rather than returning early. Detected structurally (not by re-running production),
+   *  so counting it cannot silently widen to cover an unrelated failure. */
   NF01_cdoTruncation: number;
   /** NF-DANGER: a residual UNDER-strip (leak) divergence, not explained by NF-01. Manual
    *  trace during this plan's execution confirmed three distinct root mechanisms feed this
@@ -279,10 +280,16 @@ function runDifferential(
     'VISIBLE_SENTENCE' +
     probeNames.map(name => `<span class="${name}">${classMarker(name)}</span><span id="${name}">${idMarker(name)}</span>`).join('');
 
-  if (hasUnmatchedCdo(html)) {
-    newlyFiled.NF01_cdoTruncation += 1;
-    return;
-  }
+  // 62-22 gap closure (CR-10) closed NF-01: `scanHtml`'s conformant tokenizer never mistakes
+  // a CDO inside `<style>` RAWTEXT for an HTML comment, so stage 3 no longer truncates the
+  // rest of the document on an unmatched "<!--". `NF01_cdoTruncation` is NO LONGER a skip of
+  // an input whose ground truth cannot be checked (the `return` below is deleted) — it is
+  // retained ONLY as an observability counter (an unmatched-CDO input was generated), and the
+  // input now flows through to the SAME VISIBLE_SENTENCE / leak / over-strip checks every
+  // other input gets. Per this plan's own instruction: do not widen any bound here to
+  // accommodate what falls out; any newly surfaced divergence is 62-25's hard-gate redesign
+  // to fix, not this plan's to silence.
+  if (hasUnmatchedCdo(html)) newlyFiled.NF01_cdoTruncation += 1;
 
   const out = stripHiddenContent(html);
 
@@ -483,21 +490,32 @@ describe('css-liveness-differential — Generator 3: structured stylesheets from
 // `tests/css-liveness-adjudication.test.ts` already uses for FB-01/CR-04.
 // ---------------------------------------------------------------------------
 describe('css-liveness-differential — newly discovered defects (found by this differential, not fixed here)', () => {
-  it.fails(
-    'NF-01: an unmatched CDO ("<!--") inside a <style> block truncates the ENTIRE rest of the document, not just the style block (stage 3 does not respect the RAWTEXT boundary)',
-    () => {
-      // A CDO/CDC pair (or a lone CDO) is ordinary, spec-legal CSS syntax inside a
-      // stylesheet (the historic "SGML comment hack", still valid per CSS Syntax §4.3.3) —
-      // it is NOT an HTML comment when it appears inside a RAWTEXT element like <style>.
-      // Stage 3's `removeComments` does not know about RAWTEXT semantics: its fail-safe for
-      // an unterminated "<!--" truncates from that point to end of string, deleting the
-      // real </style> tag and every visible sentence that followed it.
-      const out = stripHiddenContent(
-        '<style><!--.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
-      );
-      expect(out).toContain('VISIBLE_SENTENCE');
-    }
-  );
+  // CLOSED by 62-22 (CR-10, scanHtml): htmlparser2's conformant tokenizer knows a CDO
+  // ("<!--") inside a <style> RAWTEXT body is ordinary CSS text (the historic "SGML comment
+  // hack", CSS Syntax §4.3.3), never an HTML comment — so `scan.comments` contains no entry
+  // for it at all, and stage 3's old `indexOf('<!--')` truncation fail-safe (which had no way
+  // to distinguish this from a genuinely unterminated HTML comment) is gone. The document's
+  // real </style> tag and every visible sentence after it survive. Converted from `it.fails`
+  // to a passing `it`, per this plan's own instruction, rather than silently deleting the
+  // lock.
+  //
+  // NOT closed by this same conversion: PAYLOAD in this exact combined shape still leaks --
+  // NOT because NF-01 reopened, but because of a SEPARATE, already-filed, still-open defect
+  // (NF-05, own locked repro below): `harvestFromStylesheet`'s prelude collection has no
+  // special case for a CDO token at the stylesheet top level (CSS Syntax §5.4.1 says it MUST
+  // be skipped there), so the leading CDO token is pushed into the pending prelude and
+  // corrupts the shape-match for the ".legal{display:none}" rule that immediately follows it
+  // -- the SAME mechanism NF-05's own repro demonstrates with a CDC ("-->") instead of a CDO.
+  // This is exactly the acceptance criterion's documented escape hatch ("or the SUMMARY
+  // states precisely why it did not close [in the leak dimension]") -- NF-01 was filed as an
+  // AVAILABILITY defect only ("Severity: availability (total content loss), not a leak"), and
+  // this test's assertion was always scoped to that dimension, not to PAYLOAD's presence.
+  it('NF-01 (CLOSED, 62-22/CR-10): an unmatched CDO ("<!--") inside a <style> block no longer truncates the rest of the document (stage 3 now respects the RAWTEXT boundary via scanHtml)', () => {
+    const out = stripHiddenContent(
+      '<style><!--.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
+    );
+    expect(out).toContain('VISIBLE_SENTENCE');
+  });
 
   it.fails(
     'NF-03: a comma-separated selector list is rejected all-or-nothing rather than per-selector, letting a bare hiding selector hide behind ANY non-bare sibling in the same list',

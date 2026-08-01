@@ -248,9 +248,29 @@
  * consumes a CRLF pair as one escape separator per CSS Syntax §3.3, matching css-tree's own
  * decode (CR-08) — MIME's native line ending, not a corner case.
  *
+ * 62-22 gap closure (CR-10, 62-REVIEW.md) — closes the LAST T-62-43 cross-stage boundary
+ * disagreement this file names: stage 2 and stage 3 held TWO independent opinions about where
+ * a comment and a `<style>` element begin and end (`START_TAG_RE`+`findRawtextCloseBounds` vs
+ * the old comment-removal regex this closure deletes), so a `<style>` open tag written inside
+ * an HTML comment could be harvested
+ * as a live stylesheet, and an unterminated CDO (`<!--`) inside a `<style>` block could trigger
+ * stage 3's own truncation fail-safe and destroy the rest of the document (NF-01). Both stages
+ * now read ONE `scanHtml` pass (`htmlparser2@10.0.0`, exact-pinned, 62-21) computed once per
+ * `stripHiddenContent` call — see `scanHtml`'s own doc block, placed just above the Stage 2
+ * section, for the offset-conversion rule and the three named residuals it accepts rather than
+ * hand-rolls a fallback for. `scanHtml` is a RANGES-ONLY primitive (comment ranges, `<style>`
+ * content/element ranges, start-tag records) — it never serializes a parse tree, preserving the
+ * "range-deleting transformer over the original source" contract every idempotence/entity
+ * guarantee below depends on. `startTags` is produced and unit-tested in this plan but not yet
+ * consumed by any stage — **plan 62-24 owns wiring it into stages 4/5** (the CR-07
+ * attribute-decoding closure); stage 0's hoisted stray-`<` truncation and stage 6's
+ * `ANY_TAG_RE` sweep remain hand-rolled scanners after this plan, an ACCEPTED residual, not an
+ * oversight (no total-coverage claim is made here).
+ *
  * Stage order (load-bearing — see the block comment above each stage):
  *  0. Hoisted stray-`<` fail-safe truncation (62-14, Bound A) — runs immediately after stage
  *     1 and before stage 2; a DUPLICATE of the stage-6 truncation below, not a move of it.
+ *     Still a hand-rolled regex scan after 62-22 — no plan in this wave set owns it.
  *  1. Invisible-codepoint removal (zero-width chars, BOM, soft hyphen, invisible math
  *     operators, the Unicode Tags block) — unconditional, applied to ALL input including
  *     plain text, and run FIRST so a payload cannot use zero-width characters to
@@ -258,17 +278,23 @@
  *     standalone as `stripInvisibleCodepoints` (CR-02) for non-markup callers — e.g.
  *     `normalizeGmailMessage`'s provenance header — that need invisible-codepoint removal
  *     WITHOUT the markup semantics of stages 2-6.
+ *  1.5. `scanHtml` — ONE conformant `htmlparser2` pass over the post-stage-0/1 string,
+ *     computed once and shared by stages 2 and 3 below (62-22, CR-10).
  *  2. CSS hiding-selector harvest from `<style>` blocks — BEFORE those blocks are
  *     discarded, so a `.legal{display:none}` rule is remembered even though the block
  *     carrying it is about to be deleted (stage 4). No cap on harvested selectors (62-20,
  *     CR-09 — the prior 200-selector cap failed OPEN and was deleted, not resized).
- *     `<style>` elements are located LINEARLY (62-18) with the same `START_TAG_RE` +
- *     forward-only close-tag cursor stage 4 uses, so a `type="text/css" data-y="x>y"`
- *     style tag still yields its rules to the harvest, and an unterminated `<style>`'s
- *     content is harvested to end of input rather than silently dropped. Block content is
- *     read as a css-tree TOKEN STREAM (62-17) — rule boundaries come from `{`/`}` tokens and
- *     selector shape from token structure, not from a comment-stripped text scan.
- *  3. HTML comment removal.
+ *     `<style>` elements are located via `scanHtml().styleElements` (62-22) rather than a
+ *     second, independently-maintained tag scan, so a `type="text/css" data-y="x>y"` style
+ *     tag still yields its rules to the harvest, and an unterminated `<style>`'s content is
+ *     harvested to end of input rather than silently dropped — and a `<style>` written
+ *     inside an HTML comment can no longer be mistaken for a live element (CR-10). Block
+ *     content is read as a css-tree TOKEN STREAM (62-17) — rule boundaries come from `{`/`}`
+ *     tokens and selector shape from token structure, not from a comment-stripped text scan.
+ *  3. HTML comment removal — deletes `scanHtml().comments` (62-22) rather than the old
+ *     comment-matching regex plus an `indexOf('<!--')` truncation fail-safe; the parser sees
+ *     an unterminated comment's true extent and never mistakes RAWTEXT content (a CDO inside
+ *     `<style>`) for a comment, so the fail-safe this replaced had nothing left to guard.
  *  4. Non-content element removal (script/style/head/title/template/noscript/svg), with
  *     their contents. For `RAWTEXT_ELEMENTS`, the removal range's end is found by
  *     `findRawtextCloseEnd` (62-13, NEW-01) rather than the depth-counting tag scan, since
@@ -353,6 +379,11 @@
 // bare `css-tree` package, never its parser/lexer/walker/generator. See the file-level "62-17
 // gap closure" section above for the adopted-vs-not-adopted surface and why.
 import { tokenize, tokenTypes } from 'css-tree/tokenizer';
+// `htmlparser2` (62-21, exact-pinned `10.0.0`) is the single conformant HTML tokenizer this
+// module now shares between stage 2 (<style> location) and stage 3 (comment location) — see
+// the "62-22 gap closure" section below for why, and `62-21-SUMMARY.md` for the parser's exact
+// event/offset semantics this file's offset arithmetic is built against.
+import { Parser } from 'htmlparser2';
 
 // ---------------------------------------------------------------------------
 // Stage 1 — invisible codepoint removal
@@ -586,6 +617,239 @@ function applyRemovalRanges(html: string, ranges: Array<[number, number]>): stri
   }
   result += html.slice(cursor);
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// scanHtml — ONE conformant parser pass, shared by stage 2 and stage 3 (62-22 gap closure)
+// ---------------------------------------------------------------------------
+
+/**
+ * 62-22 gap closure (CR-10, 62-REVIEW.md) — gives the module ONE opinion about HTML
+ * structure, the adopted parser's (`htmlparser2@10.0.0`, 62-21, exact-pinned), for comments
+ * and `<style>` elements. Before this closure, stage 2 (`START_TAG_RE` +
+ * `findRawtextCloseBounds`) and stage 3 (its own separate comment-matching regex) held two
+ * INDEPENDENT opinions about where a comment and a RAWTEXT element begin and end — the T-62-43
+ * cross-stage
+ * boundary bug class this file exists to close (CR-01, BL-01, BL-02, NEW-01, FB-01 were all
+ * prior instances; 62-18 closed it for `<style>`-vs-`<style>` by sharing one primitive
+ * between stages 2 and 4). `scanHtml` closes it for `<style>`-vs-comment the only way that
+ * generalizes: both stages now read the same conformant tokenizer's output. A `<style>`
+ * opening tag appearing inside an HTML comment (`<!-- <style> -->`) can no longer be
+ * harvested as a live stylesheet, and a real stylesheet can no longer be paired with a bogus
+ * open tag, because comment-vs-element is decided ONCE, by the parser, not by two regexes
+ * that happen to (dis)agree.
+ *
+ * `scanHtml` is a RANGE-ONLY primitive: it never serializes a parse tree, never emits text,
+ * and never decodes an entity into prose. This is load-bearing, not a style choice — the
+ * module's two documented contracts (idempotence; every entity except `&nbsp;`/`&#160;` is
+ * left literal) both depend on `stripHiddenContent` staying a range-deleting transformer over
+ * the ORIGINAL source string (see the file-level doc block's "Contract" section). A
+ * parse-then-serialize design would break both (`&amp;amp;` -> `&amp;` -> `&` across two
+ * passes). `HtmlStartTag.attrs` values ARE decoded (`htmlparser2`'s own `decodeEntities: true`)
+ * because that decoded map is compared against, never emitted into, the output text — a
+ * design 62-24 (CR-07) will consume, not this plan.
+ *
+ * Offset convention: `htmlparser2`'s own `parser.startIndex`/`endIndex` are an INCLUSIVE
+ * `[start, end]` pair (62-21-SUMMARY.md's "Exact API Surface"), NOT the `[start, end)`
+ * exclusive convention this file's OTHER primitives (`collectRemovalRanges`,
+ * `applyRemovalRanges`, css-tree's own token offsets) already use. Every range this function
+ * returns is converted to `[start, end)` exclusive at the point of construction — callers of
+ * `scanHtml` never see an inclusive offset. `tests/html-parser-conformance.test.ts` is the
+ * gate that keeps the inclusive-offset premise this conversion depends on from silently
+ * drifting under a future `htmlparser2` upgrade.
+ *
+ * Three named residuals, each a deliberate, faithful reading of the parser's OWN behavior
+ * rather than a bug this function introduces:
+ *  - `</style/>` (D-62-21-01, 62-21-SUMMARY.md): htmlparser2 does not recognize this as a
+ *    close tag at all -- the element swallows everything through EOF as RAWTEXT content. This
+ *    function does NOT hand-roll a fallback detector for this one shape (a fallback the
+ *    residual note flags as an acceptable alternative, not a requirement): the resulting
+ *    over-inclusive `styleElements`/`comments` range is MONOTONE TOWARD LESS CONTENT (more of
+ *    the document gets treated as hidden `<style>` content, never less), which is this
+ *    module's stated safe direction, so accepting the parser's own (deviant) EOF-implied
+ *    close here costs nothing beyond what 62-18 already accepted for a genuinely-unterminated
+ *    `<style>`.
+ *  - `</style foo>` (D-62-21-01): the close tag's own reported end is truncated before the
+ *    real `>`; a forward `indexOf('>', ...)` scan from the truncated offset recovers the true
+ *    boundary (a no-op, not just a correction, on a well-formed close tag, which already sits
+ *    on its own `>`).
+ *  - The empty bogus comment `<!>` fires NEITHER `oncomment` NOR `onprocessinginstruction`
+ *    (62-21-SUMMARY.md: "a genuine gap... no offset information at all") -- accepted, not
+ *    recovered, matching 62-21's own disposition. An empty bogus comment carries no content,
+ *    so it cannot hide a `<style>` open tag inside it (CR-10's threat shape needs comment
+ *    DATA, which `<!>` has none of).
+ *
+ * A DOCTYPE declaration (`<!DOCTYPE html>`) and an HTML-bogus-comment-shaped `<?...?>` both
+ * route through `onprocessinginstruction` in htmlparser2, same as a `<!x>` bogus comment --
+ * HTML §13.2.5.1 sends `<?` to the SAME bogus-comment state a doctype's malformed sibling
+ * would reach. Both are included in `comments` alongside real `<!--...-->` comments and `<!x>`
+ * bogus comments: deleting a DOCTYPE is inert (no leak; email body fragments essentially never
+ * carry one), and folding it in keeps `scanHtml`'s mental model to one rule -- "every
+ * `oncomment` and `onprocessinginstruction` event is a comment range" -- rather than a
+ * doctype-shaped carve-out with no threat-model justification.
+ */
+export interface HtmlComment {
+  /** Index of the comment's first character (`<`, [start, end) over the input). */
+  readonly start: number;
+  /** Index just past the comment's last character. */
+  readonly end: number;
+}
+
+export interface HtmlStyleElement {
+  /** Index just past the `<style ...>` open tag -- where the element's RAWTEXT content begins. */
+  readonly contentStart: number;
+  /** Index of the `<` that opens the matching (or EOF-implied) close tag. */
+  readonly contentEnd: number;
+  /** Index just past the whole element, including its close tag (or `html.length`). */
+  readonly elementEnd: number;
+}
+
+export interface HtmlStartTag {
+  /** Lowercased tag name. */
+  name: string;
+  /** Lowercased attribute name -> DECODED value (CR-07, wired in 62-24). */
+  attrs: ReadonlyMap<string, string>;
+  /** Index of the tag's own `<`. */
+  readonly tagStart: number;
+  /** Index just past the tag's own `>`. */
+  readonly tagEnd: number;
+  /** Index just past the element's end, including its close tag (or `html.length`). Mutated
+   *  once, when the matching close event fires -- see `scanHtml`'s own body. */
+  elementEnd: number;
+}
+
+export interface HtmlScan {
+  readonly comments: readonly HtmlComment[];
+  readonly styleElements: readonly HtmlStyleElement[];
+  readonly startTags: readonly HtmlStartTag[];
+}
+
+/**
+ * T-62-22-02: a parser-internal error (a future `htmlparser2` regression, not observed today --
+ * Block 3 of `tests/html-parser-conformance.test.ts` measures 0/20,000 throws) must never
+ * degrade to an EMPTY scan. An empty scan reads as "no comments, no style elements anywhere in
+ * this document" -- FAIL-OPEN, and this module's one hard invariant is that a failure mode
+ * never leaks more than the happy path would. This is the opposite: one comment spanning the
+ * entire input (stage 3 deletes everything) and one style element whose content is the entire
+ * input (stage 2 harvests from the whole document as if it were one stylesheet) -- the
+ * maximally-REDUCING scan, matching "monotone toward less content, never raw passthrough."
+ */
+function maximallyReducingScan(html: string): HtmlScan {
+  return {
+    comments: [{ start: 0, end: html.length }],
+    styleElements: [{ contentStart: 0, contentEnd: html.length, elementEnd: html.length }],
+    startTags: [],
+  };
+}
+
+/**
+ * Runs `htmlparser2`'s low-level `Parser` ONCE over `html` (no rescanning -- the cost table in
+ * this file's `MAX_STRIP_INPUT_CODE_UNITS` re-derivation, `gmail-adapter.ts` §3, is what proves
+ * this stays bounded) and returns the `HtmlScan` shape documented above. See that doc block for
+ * the offset-conversion rule, the three named residuals, and the DOCTYPE/bogus-comment folding
+ * decision.
+ */
+export function scanHtml(html: string): HtmlScan {
+  const comments: HtmlComment[] = [];
+  const styleElements: HtmlStyleElement[] = [];
+  const startTags: HtmlStartTag[] = [];
+
+  interface OpenFrame {
+    readonly record: HtmlStartTag;
+    readonly selfClosingSyntax: boolean;
+  }
+  const stack: OpenFrame[] = [];
+
+  const recordComment = (start: number, end: number): void => {
+    comments.push({ start, end: Math.min(end, html.length) });
+  };
+
+  try {
+    let parser: Parser;
+    const handler = {
+      onopentag(name: string, attribs: Record<string, string>): void {
+        const tagStart = parser.startIndex;
+        const tagEnd = parser.endIndex + 1;
+        const attrs = new Map<string, string>();
+        for (const key of Object.keys(attribs)) {
+          attrs.set(key.toLowerCase(), attribs[key]!);
+        }
+        const record: HtmlStartTag = { name, attrs, tagStart, tagEnd, elementEnd: tagEnd };
+        const selfClosingSyntax = SELF_CLOSING_SUFFIX_RE.test(html.slice(tagStart, tagEnd));
+        startTags.push(record); // document order -- pushed at OPEN, mutated at CLOSE below
+        stack.push({ record, selfClosingSyntax });
+      },
+      onclosetag(_name: string, isImplied: boolean): void {
+        const frame = stack.pop();
+        if (!frame) return; // defensive; htmlparser2's own tree construction keeps this balanced
+        const closeStart = parser.startIndex;
+        const closeEnd = parser.endIndex;
+        let elementEnd: number;
+        if (!isImplied) {
+          // D-62-21-01: the RAWTEXT close tag's OWN reported end may be truncated before the
+          // real `>` (`</style foo>`). Forward-scan for it -- a no-op on a well-formed close
+          // tag, which is already sitting on its own `>`.
+          const realGt = html.indexOf('>', closeEnd);
+          elementEnd = realGt === -1 ? closeEnd + 1 : realGt + 1;
+        } else if (closeStart < frame.record.tagEnd) {
+          // Synthetic close ECHOING the open tag's own position (a void element, or a
+          // self-closing void like `<br/>`) -- there is no separate close location; the
+          // element's range is exactly its own open tag.
+          elementEnd = frame.record.tagEnd;
+        } else {
+          // EOF-implied, or an ancestor's close tag triggered an implied close: the element's
+          // content runs up to (never including) the position the synthetic close was
+          // recognized at -- `html.length` for EOF, or the ancestor's own close-tag start.
+          elementEnd = closeStart;
+        }
+        frame.record.elementEnd = elementEnd;
+
+        if (frame.record.name === 'style' && !frame.selfClosingSyntax) {
+          // WR-03 (62-REVIEW.md, still open, out of THIS plan's scope): a self-closing
+          // `<style/>` is deliberately excluded here, preserving stage 4's own pre-existing
+          // `SELF_CLOSING_SUFFIX_RE` treatment of it -- this plan does not touch stage 4, so
+          // stage 2 must not silently start harvesting a shape stage 4 still treats as
+          // self-closing (that would desynchronize the two stages' opinions again, the exact
+          // class this plan exists to close, not reopen).
+          styleElements.push({
+            contentStart: frame.record.tagEnd,
+            contentEnd: Math.min(closeStart, html.length),
+            elementEnd: Math.min(elementEnd, html.length),
+          });
+        }
+      },
+      oncomment(): void {
+        recordComment(parser.startIndex, parser.endIndex + 1);
+      },
+      onprocessinginstruction(): void {
+        // A bogus comment (`<!x>`, `<?xml?>`) or a DOCTYPE -- see this section's doc block for
+        // why all three are folded into `comments` uniformly.
+        recordComment(parser.startIndex, parser.endIndex + 1);
+      },
+    };
+    parser = new Parser(handler, { decodeEntities: true });
+    parser.write(html);
+    parser.end();
+  } catch {
+    return maximallyReducingScan(html);
+  }
+
+  // Defensive drain: htmlparser2 always emits a synthetic EOF close for every still-open
+  // element (verified directly -- a multiply-nested unclosed input drains the whole stack at
+  // EOF, one isImplied close per frame), so this loop is not expected to run. Kept so a future
+  // htmlparser2 behavior change cannot silently leave `elementEnd` at its `tagEnd` placeholder.
+  for (const frame of stack) {
+    frame.record.elementEnd = html.length;
+    if (frame.record.name === 'style' && !frame.selfClosingSyntax) {
+      styleElements.push({
+        contentStart: frame.record.tagEnd,
+        contentEnd: html.length,
+        elementEnd: html.length,
+      });
+    }
+  }
+
+  return { comments, styleElements, startTags };
 }
 
 // ---------------------------------------------------------------------------
@@ -990,38 +1254,36 @@ function harvestFromStylesheet(css: string, classes: Set<string>, ids: Set<strin
  * WR-03 (62-REVIEW.md, still open) is not addressed here.
  *
  * On an UNTERMINATED `<style>` (no matching `</style...>` anywhere at or after the open tag),
- * this walk harvests the element's content to end of input, per HTML §13.2.5, then BREAKS the
- * outer loop rather than continuing to the next `<style` in the document — `findRawtextCloseBounds`'s
- * forward-only cursor makes a failure at this position proof that no later position can
- * succeed either (see that function's own doc comment), so a further attempt would only repeat
- * the same failing scan. This is a deliberate, specified behavior change from `STYLE_BLOCK_RE`
- * (which required a close tag and harvested nothing from an unterminated element): a browser
- * applies an unterminated `<style>` block's rules too, so harvesting is the faithful outcome,
- * not an over-reach.
+ * this walk harvests the element's content to end of input, per HTML §13.2.5. This is a
+ * deliberate, specified behavior change from `STYLE_BLOCK_RE` (which required a close tag and
+ * harvested nothing from an unterminated element): a browser applies an unterminated `<style>`
+ * block's rules too, so harvesting is the faithful outcome, not an over-reach.
+ *
+ * 62-22 gap closure (CR-10, 62-REVIEW.md): the OUTER loop that finds each `<style>` element's
+ * boundaries is no longer `START_TAG_RE` + `findRawtextCloseBounds` — it is `scanHtml().styleElements`,
+ * computed ONCE per `stripHiddenContent` call and shared with stage 3 (see `scanHtml`'s own doc
+ * block, above the Stage 2 header, for the full argument). This closes the LAST remaining
+ * instance of the T-62-43 boundary-disagreement class this file has been retiring stage by
+ * stage: `<style>`-vs-`<style>` (62-18) and now `<style>`-vs-COMMENT. A `<style>` opening tag
+ * that appears inside an HTML comment (`<!-- <style> -->`) can no longer be mistaken for a live
+ * element, because `scanHtml`'s single parser pass is the one place that decision is made, for
+ * BOTH `comments` and `styleElements` at once — there is no second, independently-maintained
+ * regex left to disagree with it. Two decisions this inherits from `scanHtml` rather than
+ * re-deriving here:
+ *  - A self-closing `<style/>` is excluded from `styleElements` (WR-03, 62-REVIEW.md, still
+ *    open, untouched by this plan) — see `scanHtml`'s own comment on why.
+ *  - An unterminated `<style>`'s content runs to `html.length` (`contentEnd === elementEnd`),
+ *    the SAME 62-18 behavior this doc block's paragraph above describes, now produced by the
+ *    parser directly instead of `findRawtextCloseBounds`'s forward-only-cursor break.
  */
-function harvestHidingSelectors(html: string): { classes: Set<string>; ids: Set<string> } {
+function harvestHidingSelectors(
+  html: string,
+  styleElements: readonly HtmlStyleElement[]
+): { classes: Set<string>; ids: Set<string> } {
   const classes = new Set<string>();
   const ids = new Set<string>();
-  START_TAG_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = START_TAG_RE.exec(html)) !== null) {
-    const tagName = match[1]!.toLowerCase();
-    if (tagName !== 'style') continue;
-    if (SELF_CLOSING_SUFFIX_RE.test(match[0])) continue; // WR-03: unchanged, not fixed here
-    const tagEnd = START_TAG_RE.lastIndex;
-    const bounds = findRawtextCloseBounds(html, 'style', tagEnd);
-    if (bounds !== null) {
-      harvestFromStylesheet(html.slice(tagEnd, bounds.contentEnd), classes, ids);
-      START_TAG_RE.lastIndex = bounds.elementEnd;
-    } else {
-      // No matching </style...> anywhere at or after tagEnd: harvest to end of input (HTML
-      // §13.2.5), then stop entirely. findRawtextCloseBounds's cursor only moves forward, so
-      // this failure proves no later `<style` in the document could find a close tag either —
-      // retrying would repeat the same failing scan. Breaking here is what converts T-62-54's
-      // O(n^2) into O(n).
-      harvestFromStylesheet(html.slice(tagEnd), classes, ids);
-      break;
-    }
+  for (const el of styleElements) {
+    harvestFromStylesheet(html.slice(el.contentStart, el.contentEnd), classes, ids);
   }
   return { classes, ids };
 }
@@ -1030,12 +1292,26 @@ function harvestHidingSelectors(html: string): { classes: Set<string>; ids: Set<
 // Stage 3 — comment removal
 // ---------------------------------------------------------------------------
 
-const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
-
-function removeComments(html: string): string {
-  const s = html.replace(HTML_COMMENT_RE, '');
-  const idx = s.indexOf('<!--');
-  return idx === -1 ? s : s.slice(0, idx);
+/**
+ * 62-22 gap closure (CR-10, T-62-22-03): deletes `scan.comments` — `scanHtml`'s own,
+ * conformant-tokenizer-derived comment ranges — instead of running the old comment-matching
+ * regex plus an `indexOf('<!--')` truncation fail-safe. That fail-safe existed because a
+ * regex over raw text cannot SEE an unterminated comment's true extent (it can only detect
+ * "no match, therefore truncate to end of string" — the NF-01 defect: an unmatched
+ * CDO/HTML-comment-opener INSIDE a
+ * `<style>` block is ordinary, spec-legal CSS syntax, not an HTML comment at all, yet the old
+ * fail-safe could not tell the difference and destroyed the rest of the document, including a
+ * real `</style>` tag and every visible sentence after it). `scanHtml`'s parser CAN see an
+ * unterminated comment's true extent (it reports the comment running to `html.length`, per
+ * `tests/html-parser-conformance.test.ts`'s own pinned deviation numbers) and never mistakes
+ * RAWTEXT content for a comment in the first place — so the truncation fail-safe has nothing
+ * left to guard against and is deleted, not kept as a blunter instrument. `applyRemovalRanges`
+ * (already shared with stages 4/5) does the deletion — `scan.comments` is naturally
+ * non-overlapping and ascending, since it is built from one forward parser pass, matching that
+ * helper's existing contract.
+ */
+function removeComments(html: string, comments: readonly HtmlComment[]): string {
+  return applyRemovalRanges(html, comments.map(c => [c.start, c.end] as [number, number]));
 }
 
 // ---------------------------------------------------------------------------
@@ -1296,12 +1572,18 @@ export function stripHiddenContent(text: string): string {
   const earlyStrayAngleBracket = s.indexOf('<', lastCloseAngle + 1);
   if (earlyStrayAngleBracket !== -1) s = s.slice(0, earlyStrayAngleBracket);
 
+  // 62-22 gap closure (CR-10): ONE `scanHtml` pass, computed here and shared by stage 2 and
+  // stage 3 below — see `scanHtml`'s own doc block for why. Ranges are offsets into THIS
+  // string (post-stage-0/1), which is exactly the basis every later stage already works on;
+  // do not compute a second scan and do not re-scan after a deletion.
+  const scan = scanHtml(s);
+
   // Stage 2: harvest class/id hiding selectors from <style> blocks before they're
   // discarded in stage 4.
-  const { classes: hiddenClasses, ids: hiddenIds } = harvestHidingSelectors(s);
+  const { classes: hiddenClasses, ids: hiddenIds } = harvestHidingSelectors(s, scan.styleElements);
 
   // Stage 3: strip comments.
-  s = removeComments(s);
+  s = removeComments(s, scan.comments);
 
   // Stage 4: remove non-content elements (script/style/head/title/template/noscript/svg)
   // and their contents.
