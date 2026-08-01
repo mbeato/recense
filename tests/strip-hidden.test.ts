@@ -753,6 +753,51 @@ describe('stripHiddenContent — CSS-escaped selector names, §4.3.7 decode (62-
   });
 });
 
+describe('stripHiddenContent — 62-24 gap closure: CR-07 locked payloads (attribute-value HTML-entity decoding, 62-REVIEW.md/62-VERIFICATION.md)', () => {
+  // CR-07: `isHiddenStartTag` now reads `scanHtml().startTags[].attrs` — a decoded
+  // `ReadonlyMap` (htmlparser2's own HTML character-reference decode) — instead of a raw
+  // source-text region. The layering is the browser's: HTML decode first, THEN CSS
+  // tokenize/escape-decode (`hasHidingSignatureFromTokens`, 62-20). B1/B2 exercise the
+  // class/id side; B3/B4 exercise the style side (numeric and named character reference);
+  // B5 proves the LAYER ORDER (HTML decode must run before CSS-comment-skip, not after,
+  // or the embedded `/*x*/` would never be recognized as a CSS comment); B6 is the
+  // over-strip control (a DOUBLY-escaped `&amp;#58;` decodes to the literal text `&#58;`,
+  // not to `:`, so it must NOT be treated as a hiding declaration).
+  it('B1: class="leg&#97;l" (numeric character reference) decodes to match a harvested .legal selector', () => {
+    const out = stripHiddenContent(
+      '<style>.legal{display:none}</style>ok<span class="leg&#97;l">PAYLOAD_B1</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('B2: id="leg&#97;l" (numeric character reference) decodes to match a harvested #legal selector', () => {
+    const out = stripHiddenContent(
+      '<style>#legal{display:none}</style>ok<span id="leg&#97;l">PAYLOAD_B2</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('B3: style="display&#58;none" (numeric character reference for the colon) decodes to a hiding declaration', () => {
+    const out = stripHiddenContent('<div style="display&#58;none">PAYLOAD_B3</div>ok');
+    expect(out).toBe('ok');
+  });
+
+  it('B4: style="display&colon;none" (named character reference for the colon) decodes to a hiding declaration', () => {
+    const out = stripHiddenContent('<div style="display&colon;none">PAYLOAD_B4</div>ok');
+    expect(out).toBe('ok');
+  });
+
+  it('B5: style="display&#58;/*x*/none" proves the layer order — HTML decode (producing the CSS comment) must run BEFORE CSS tokenize/comment-skip', () => {
+    const out = stripHiddenContent('<div style="display&#58;/*x*/none">PAYLOAD_B5</div>ok');
+    expect(out).toBe('ok');
+  });
+
+  it('B6 (over-strip control): style="display&amp;#58;none" double-escapes to the literal text "&#58;", NOT a colon — must NOT be treated as a hiding declaration', () => {
+    const out = stripHiddenContent('<div style="display&amp;#58;none">VISIBLE_B6</div>');
+    expect(out).toContain('VISIBLE_B6');
+  });
+});
+
 describe('stripHiddenContent — 62-20 gap closure: locked repros for CR-05/CR-06/CR-08/CR-09 (62-REVIEW.md, 62-VERIFICATION.md)', () => {
   // CR-05: the hiding-declaration signature is now computed from a token-derived
   // reconstruction at BOTH call sites (harvestFromStylesheet's frame evaluation, and
@@ -982,6 +1027,63 @@ describe('stripHiddenContent — 62-22 gap closure: CR-10 locked shapes (a <styl
     const callsAfter = spy.mock.calls.length;
     expect(callsAfter - callsBefore).toBe(1);
     spy.mockRestore();
+  });
+});
+
+describe('stripHiddenContent — 62-24 Task 2 divergence: implied/omitted end tags no longer destroy trailing visible prose', () => {
+  // Found by this plan's differential harness (62-24-SUMMARY.md's disposition table): the
+  // PRE-62-24 module's stage 4/5 tag scanner (`findMatchingCloseEnd`, deleted) depth-counted
+  // SAME-NAME open/close tokens to find a hidden/removed element's matching close. When a
+  // hidden element had NO explicit close tag and was immediately followed by a sibling that
+  // HTML implicitly closes it for (a second `<p>`, a sibling `<li>`/`<dt>`/`<option>`, a
+  // `<div>` inside a `<p>`, an ancestor's own close tag), the old scanner mistook the
+  // sibling's OPEN tag for a nested child of the SAME name, incremented its depth counter,
+  // never found a matching close for that fictional extra nesting level, and fell through to
+  // the "no match found" fail-safe — deleting from the hidden element's start to END OF THE
+  // DOCUMENT. This destroyed legitimate visible prose that was never inside the hidden
+  // element at all (a real browser renders it normally) — an AVAILABILITY defect, not a leak,
+  // but a serious one on ordinary hand-written HTML email (multiple unclosed `<p>` tags is
+  // extremely common). `scanHtml().startTags` (62-24) reads htmlparser2's own tree-construction
+  // event stream, which already implements HTML's tag-omission/auto-close rules, so a hidden
+  // element's `elementEnd` now stops exactly where a conformant browser would end it — IMPROVEMENT,
+  // not a regression, confirmed by manual trace against the HTML tag-omission rules for every
+  // shape below (verified DIFFERENT from the control: an explicitly-closed `<p>...</p><p>...`
+  // pair never triggered the old bug, since depth-counting had no ambiguity to resolve there).
+  it('a hidden <p> immediately followed by a sibling <p> no longer destroys the second <p>\'s content (PRE-62-24: this returned "")', () => {
+    const out = stripHiddenContent('<p style="display:none">HIDDEN1<p>VISIBLE1</p>');
+    expect(out).toBe('VISIBLE1');
+  });
+
+  it('control: an explicitly-closed hidden <p> followed by a sibling <p> was ALREADY correct pre-62-24 (no divergence — the bug needs an implied close, not any sibling <p>)', () => {
+    const out = stripHiddenContent('<p style="display:none">HIDDEN1</p><p>VISIBLE1</p>');
+    expect(out).toBe('VISIBLE1');
+  });
+
+  it('a hidden <li> (no ul/ol wrapper) implicitly closed by a sibling <li> no longer destroys trailing prose (PRE-62-24: "")', () => {
+    const out = stripHiddenContent('<ul><li style="display:none">HIDDEN2<li>VISIBLE2</li></ul>');
+    expect(out).toBe('VISIBLE2');
+  });
+
+  it('a hidden <span> closed only by its ANCESTOR\'s end tag no longer destroys the sibling text after that ancestor (PRE-62-24: "")', () => {
+    const out = stripHiddenContent('<div><span style="display:none">HIDDEN3</div>VISIBLE3');
+    expect(out).toBe('VISIBLE3');
+  });
+
+  it('the same ancestor-close shape two levels deep (PRE-62-24: "")', () => {
+    const out = stripHiddenContent('<article><section><span hidden>HIDDEN4</section></article>VISIBLE4');
+    expect(out).toBe('VISIBLE4');
+  });
+
+  it('a class-hidden <dt> implicitly closed by a sibling <dd> no longer destroys the <dd> content (PRE-62-24: "")', () => {
+    const out = stripHiddenContent(
+      '<style>.legal{display:none}</style><dl><dt class="legal">HIDDEN5<dd>VISIBLE5</dd></dl>'
+    );
+    expect(out).toBe('VISIBLE5');
+  });
+
+  it('an aria-hidden <option> implicitly closed by a sibling <option> no longer destroys the sibling (PRE-62-24: "")', () => {
+    const out = stripHiddenContent('<select><option aria-hidden="true">HIDDEN6<option>VISIBLE6</option></select>');
+    expect(out).toBe('VISIBLE6');
   });
 });
 
@@ -1729,16 +1831,25 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
   // twice) rather than incidental (two literals happening to carry the same character
   // class). The mirror image of 62-13's rise from 4 to 5 when RAWTEXT_CLOSE_TAIL_RE was
   // ADDED as a genuinely new boundary opinion that needed to agree with the rest.
-  it('the quote-aware alternation is defined exactly once, and used by exactly four compile-once RegExp constructions', () => {
+  //
+  // 62-24: the count FALLS from 4 to 1. `START_TAG_RE`, `ANY_TAG_TOKEN_RE` and
+  // `RAWTEXT_CLOSE_TAIL_RE` — the three ATTRS-built literals stage 4/5's own regex-driven
+  // tag/close-tag discovery depended on — are DELETED, not migrated: stage 4 and 5 now
+  // read element boundaries from `scanHtml().startTags` (a parser event stream, not a
+  // regex) instead of re-deriving them with a second, independently-maintained scan. Only
+  // stage 6's leftover-tag sweep (`ANY_TAG_RE`) still needs the shared `ATTRS` fragment.
+  // This is the guard's floor, not a weakening of it: fewer independently-maintained
+  // ATTRS-built literals means fewer opinions that could disagree in the first place.
+  it('the quote-aware alternation is defined exactly once, and used by exactly one compile-once RegExp construction', () => {
     const alternationPrefix = '(?:"[^"]*"|\'[^\']*\'|';
     const alternationCount = COMMENT_STRIPPED_SOURCE.split(alternationPrefix).length - 1;
     expect(alternationCount).toBe(1);
 
     const attrsInterpolationLines = SOURCE.split('\n').filter(line => line.includes('${ATTRS}'));
-    expect(attrsInterpolationLines.length).toBe(4);
+    expect(attrsInterpolationLines.length).toBe(1);
 
     const newRegExpLines = SOURCE.split('\n').filter(line => line.includes('new RegExp('));
-    expect(newRegExpLines.length).toBe(4);
+    expect(newRegExpLines.length).toBe(1);
     for (const line of newRegExpLines) {
       expect(line.trimStart().startsWith('const ')).toBe(true);
     }
@@ -1764,6 +1875,71 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
     const offender2 = 'return hasHidingSignature(  someOtherVar.slice(0, 5) );';
     expect(offender2).not.toContain('hasHidingSignature(css.slice');
     expect(RAW_SLICE_INTO_SIGNATURE_RE.test(offender2)).toBe(true);
+  });
+
+  // CR-07 (62-REVIEW.md, closed by 62-24): the attribute-decoding layer must stay
+  // parser-decoded (`scanHtml().startTags[].attrs`), never a raw source-text region matched
+  // by a hand-rolled regex again. Uses COMMENT_STRIPPED_SOURCE (this describe block's existing
+  // discipline) so this file's own doc comments — which legitimately mention `extractAttr`,
+  // `STYLE_ATTR_RE`, etc. in PAST-TENSE historical explanation — cannot self-invalidate the
+  // guard. The offender predicate is exported-by-reference (a plain function, shared between
+  // the real check below and its own non-vacuousness check), matching the pattern
+  // `tests/src-import-boundary.test.ts` (62-23) established: two copies of a guard predicate
+  // is the same duplication defect this phase keeps filing at a different layer.
+  const CR07_BANNED_IDENTIFIERS = [
+    'extractAttr',
+    'STYLE_ATTR_RE',
+    'CLASS_ATTR_RE',
+    'ID_ATTR_RE',
+    'ARIA_HIDDEN_TRUE_RE',
+    'BARE_HIDDEN_ATTR_RE',
+  ];
+  // Matches a `.match(` call on a variable/parameter literally named `attrs` — the exact
+  // shape `extractAttr(attrs: string, re: RegExp)` used (`attrs.match(re)`) to compare a RAW,
+  // not-yet-HTML-decoded attribute-text region against a regex. Deliberately narrower than
+  // banning every `.match(` call in the file: `isZeroValue`'s own `text.match(re)` (stage 5,
+  // operating on ALREADY CSS-token-reconstructed declaration text, not a raw HTML attrs
+  // string) is legitimate and must not trip this guard — the control test below asserts
+  // exactly that.
+  const RAW_ATTRS_MATCH_RE = /\battrs\.match\(/;
+
+  function findCr07Offenders(source: string): string[] {
+    const offenders: string[] = [];
+    for (const banned of CR07_BANNED_IDENTIFIERS) {
+      if (source.includes(banned)) offenders.push(`reintroduces banned identifier: ${banned}`);
+    }
+    if (RAW_ATTRS_MATCH_RE.test(source)) offenders.push('raw attrs.match(...) call reintroduced');
+    return offenders;
+  }
+
+  it('CR-07: no raw attribute-value regex-extraction helper (extractAttr or the five deleted ATTR_RE regexes) or a raw attrs.match(...) call has reappeared', () => {
+    expect(findCr07Offenders(COMMENT_STRIPPED_SOURCE)).toEqual([]);
+  });
+
+  it('the CR-07 guard above is not vacuous: the same predicate flags every banned shape on synthetic offenders, and does NOT flag the shipped, legitimate text.match(re) in isZeroValue', () => {
+    expect(findCr07Offenders('function extractAttr(attrs: string, re: RegExp) {}')).toContain(
+      'reintroduces banned identifier: extractAttr'
+    );
+    expect(findCr07Offenders('const STYLE_ATTR_RE = /x/;')).toContain(
+      'reintroduces banned identifier: STYLE_ATTR_RE'
+    );
+    expect(findCr07Offenders('const CLASS_ATTR_RE = /x/;')).toContain(
+      'reintroduces banned identifier: CLASS_ATTR_RE'
+    );
+    expect(findCr07Offenders('const ID_ATTR_RE = /x/;')).toContain(
+      'reintroduces banned identifier: ID_ATTR_RE'
+    );
+    expect(findCr07Offenders('const ARIA_HIDDEN_TRUE_RE = /x/;')).toContain(
+      'reintroduces banned identifier: ARIA_HIDDEN_TRUE_RE'
+    );
+    expect(findCr07Offenders('const BARE_HIDDEN_ATTR_RE = /x/;')).toContain(
+      'reintroduces banned identifier: BARE_HIDDEN_ATTR_RE'
+    );
+    expect(findCr07Offenders('const style = attrs.match(STYLE_ATTR_RE)?.[1];')).toEqual(
+      expect.arrayContaining(['raw attrs.match(...) call reintroduced'])
+    );
+    // Control: the shipped isZeroValue's own call, verbatim, must NOT trip this guard.
+    expect(findCr07Offenders('const m = text.match(re);')).toEqual([]);
   });
 });
 
