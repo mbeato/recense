@@ -1729,16 +1729,25 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
   // twice) rather than incidental (two literals happening to carry the same character
   // class). The mirror image of 62-13's rise from 4 to 5 when RAWTEXT_CLOSE_TAIL_RE was
   // ADDED as a genuinely new boundary opinion that needed to agree with the rest.
-  it('the quote-aware alternation is defined exactly once, and used by exactly four compile-once RegExp constructions', () => {
+  //
+  // 62-24: the count FALLS from 4 to 1. `START_TAG_RE`, `ANY_TAG_TOKEN_RE` and
+  // `RAWTEXT_CLOSE_TAIL_RE` — the three ATTRS-built literals stage 4/5's own regex-driven
+  // tag/close-tag discovery depended on — are DELETED, not migrated: stage 4 and 5 now
+  // read element boundaries from `scanHtml().startTags` (a parser event stream, not a
+  // regex) instead of re-deriving them with a second, independently-maintained scan. Only
+  // stage 6's leftover-tag sweep (`ANY_TAG_RE`) still needs the shared `ATTRS` fragment.
+  // This is the guard's floor, not a weakening of it: fewer independently-maintained
+  // ATTRS-built literals means fewer opinions that could disagree in the first place.
+  it('the quote-aware alternation is defined exactly once, and used by exactly one compile-once RegExp construction', () => {
     const alternationPrefix = '(?:"[^"]*"|\'[^\']*\'|';
     const alternationCount = COMMENT_STRIPPED_SOURCE.split(alternationPrefix).length - 1;
     expect(alternationCount).toBe(1);
 
     const attrsInterpolationLines = SOURCE.split('\n').filter(line => line.includes('${ATTRS}'));
-    expect(attrsInterpolationLines.length).toBe(4);
+    expect(attrsInterpolationLines.length).toBe(1);
 
     const newRegExpLines = SOURCE.split('\n').filter(line => line.includes('new RegExp('));
-    expect(newRegExpLines.length).toBe(4);
+    expect(newRegExpLines.length).toBe(1);
     for (const line of newRegExpLines) {
       expect(line.trimStart().startsWith('const ')).toBe(true);
     }
