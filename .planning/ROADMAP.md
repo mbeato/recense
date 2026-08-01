@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 19/19 | Complete   | 2026-07-31 |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 21/25 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -898,8 +898,8 @@ Plans:
 
 **Wave 16** *(gap closure round 6 — from `62-VERIFICATION.md` CR-05..CR-11 + WR-10 and `62-REVIEW.md`; both run in parallel, no file overlap: 62-20 owns `strip-hidden.ts`, 62-21 owns `package.json`)*
 
-- [ ] 62-20-PLAN.md — Token-derived hiding-declaration signature at both call sites, EOF frame drain, no fail-open harvest bound, CRLF-correct escape decode (CR-05/CR-06/CR-08/CR-09, EMAIL-03, wave 16)
-- [ ] 62-21-PLAN.md — Adopt a conformant HTML parser behind a §13.2.5 conformance gate: four-criterion measured selection, exact pin in `dependencies`, blocking-human legitimacy gate; no production code changes (D-GAP-02, EMAIL-03, wave 16)
+- [x] 62-20-PLAN.md — Token-derived hiding-declaration signature at both call sites, EOF frame drain, no fail-open harvest bound, CRLF-correct escape decode (CR-05/CR-06/CR-08/CR-09, EMAIL-03, wave 16)
+- [x] 62-21-PLAN.md — Adopt a conformant HTML parser behind a §13.2.5 conformance gate: four-criterion measured selection, exact pin in `dependencies`, blocking-human legitimacy gate; no production code changes (D-GAP-02, EMAIL-03, wave 16)
 
 **Wave 17** *(blocked on Wave 16; 62-22 owns `strip-hidden.ts`, 62-23 owns the tsconfig/typing surface — no file overlap)*
 
