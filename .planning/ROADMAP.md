@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 27/31 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 28/31 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -921,7 +921,7 @@ Plans:
 
 **Wave 21** *(blocked on Wave 20 — the structural fix, sequenced BEFORE every point fix so its non-vacuousness is demonstrated rather than argued)*
 
-- [ ] 62-28-PLAN.md — HTML-wrapper differential: 22 named wrapper shapes crossed against a fixed hiding rule, adjudicated by a parse5-derived rendered-text oracle, run against the unfixed module and recorded rediscovering the CR-01 and CR-03 families on its own; hard-gated, injection-proved (WR-03, EMAIL-03, wave 21)
+- [x] 62-28-PLAN.md — HTML-wrapper differential: 22 named wrapper shapes crossed against a fixed hiding rule, adjudicated by a parse5-derived rendered-text oracle, run against the unfixed module and recorded rediscovering the CR-01 and CR-03 families on its own; hard-gated, injection-proved (WR-03, EMAIL-03, wave 21)
 
 **Wave 22** *(blocked on Wave 21 — sole owner of `strip-hidden.ts` this wave)*
 
