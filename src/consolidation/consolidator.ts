@@ -178,6 +178,10 @@ interface ClaimDecision {
    * CLASSIFY-02: intent classification, threaded from ExtractedClaim.intent_status.
    * All three claimIntent* fields present together or all absent (D-05) — mirrors the
    * all-or-nothing gate already enforced in claim-extractor.ts's parseClaimsFromArray.
+   * D-10 / WR-01 (Phase 64): populated for `episode.source === 'gmail'` episodes ONLY,
+   * enforced by the hoisted `gmailSourced` gate at all three claim-side fill sites. Absence
+   * for any other source is structural — the extraction model has no channel to smuggle
+   * these fields onto a non-gmail decision, regardless of prompt-injection or model drift.
    * INERT this phase (D-08): nothing consumes these fields and no DB row is written from
    * them. Phase 64 resolves claimIntentEntity against the canonical entity list, Phase 65
    * maps claimIntentConfidence onto PE magnitude, Phase 66 persists via action_proposal.
@@ -662,6 +666,13 @@ export class Consolidator {
           continue;
         }
 
+        // ── D-10 / WR-01: hoisted once-per-episode source gate ──
+        // Gates all three claim-side intent fill sites below (sites 1-3) so intent fields are
+        // populated for gmail episodes only, regardless of what an extraction response smuggles.
+        // Positioned textually AFTER the hard stop above — it inherits that guard by construction
+        // (Pitfall 6 / D-03 discipline) and must never be hoisted above it.
+        const gmailSourced = episode.source === 'gmail';
+
         // ── Per-episode Phase A: all async work into plain array ───────────
         const claimOrigin: Origin = episode.origin; // inherit episode origin (T-02-SELFCONF)
         // Claim extraction via ModelProvider.generate (SEAM-01, D-46):
@@ -768,9 +779,9 @@ export class Consolidator {
               claimActionType: claim.action_type, // TEMP-02
               gcalSourceEventId,               // TEMP-02
               gcalRecurrenceRule,              // TEMP-02
-              claimIntentStatus: claim.intent_status,         // CLASSIFY-02
-              claimIntentEntity: claim.intent_entity,         // CLASSIFY-02
-              claimIntentConfidence: claim.intent_confidence, // CLASSIFY-02
+              claimIntentStatus: gmailSourced ? claim.intent_status : undefined,         // CLASSIFY-02 / D-10
+              claimIntentEntity: gmailSourced ? claim.intent_entity : undefined,         // CLASSIFY-02 / D-10
+              claimIntentConfidence: gmailSourced ? claim.intent_confidence : undefined, // CLASSIFY-02 / D-10
             };
           } else {
             // M1: entity-anchored candidate expansion (Phase A sync reads — T-02-ASYNC preserved).
@@ -866,9 +877,9 @@ export class Consolidator {
                 gcalSourceEventId,               // TEMP-02
                 gcalRecurrenceRule,              // TEMP-02
                 claimVec: queryVec,              // DEDUP-01: embed-on-mint
-                claimIntentStatus: claim.intent_status,         // CLASSIFY-02
-                claimIntentEntity: claim.intent_entity,         // CLASSIFY-02
-                claimIntentConfidence: claim.intent_confidence, // CLASSIFY-02
+                claimIntentStatus: gmailSourced ? claim.intent_status : undefined,         // CLASSIFY-02 / D-10
+                claimIntentEntity: gmailSourced ? claim.intent_entity : undefined,         // CLASSIFY-02 / D-10
+                claimIntentConfidence: gmailSourced ? claim.intent_confidence : undefined, // CLASSIFY-02 / D-10
               };
             } else {
               // Phase 46 D-02: extend union — cosine → anchors → BM25 (D-02 ordering).
@@ -892,9 +903,9 @@ export class Consolidator {
                 candidates: judgeCandidates,
                 claimDueAt: claim.due_at,        // TEMP-02
                 claimActionType: claim.action_type, // TEMP-02
-                claimIntentStatus: claim.intent_status,         // CLASSIFY-02
-                claimIntentEntity: claim.intent_entity,         // CLASSIFY-02
-                claimIntentConfidence: claim.intent_confidence, // CLASSIFY-02
+                claimIntentStatus: gmailSourced ? claim.intent_status : undefined,         // CLASSIFY-02 / D-10
+                claimIntentEntity: gmailSourced ? claim.intent_entity : undefined,         // CLASSIFY-02 / D-10
+                claimIntentConfidence: gmailSourced ? claim.intent_confidence : undefined, // CLASSIFY-02 / D-10
               });
             }
           }
@@ -955,6 +966,9 @@ export class Consolidator {
             gcalSourceEventId,                                    // TEMP-02
             gcalRecurrenceRule,                                   // TEMP-02
             claimVec: claimVecs[pendingJudges[i]!.slotIdx] ?? undefined, // DEDUP-01: embed-on-mint
+            // D-10: values arrive pre-gated from the site-3 pendingJudges.push above — this site
+            // inherits by construction and does NOT re-gate. WARNING: if site 3's gate is ever
+            // removed, this site does NOT compensate and the WR-01 smuggling path reopens here.
             claimIntentStatus: pendingJudges[i]!.claimIntentStatus,         // CLASSIFY-02
             claimIntentEntity: pendingJudges[i]!.claimIntentEntity,         // CLASSIFY-02
             claimIntentConfidence: pendingJudges[i]!.claimIntentConfidence, // CLASSIFY-02
