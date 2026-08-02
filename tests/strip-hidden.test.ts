@@ -19,6 +19,7 @@ import {
   NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS,
 } from '../src/source/strip-hidden';
 import { Parser } from 'htmlparser2';
+import { tokenTypes } from 'css-tree/tokenizer';
 import { liveHidingSelectors } from './support/css-liveness-oracle';
 
 const ZWSP = '​';
@@ -2098,6 +2099,173 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
     );
     // Control: the shipped isZeroValue's own call, verbatim, must NOT trip this guard.
     expect(findCr07Offenders('const m = text.match(re);')).toEqual([]);
+  });
+});
+
+describe('strip-hidden.ts — 62-31 gap closure (WR-05, T-62-31-03): a stale doc-comment identifier fails the suite', () => {
+  // `62-VERIFICATION.md` named this drift as the DIRECT MECHANISM of CR-01: the one-sided
+  // `<style/>` exclusion was justified by a comment describing code 62-24 had already deleted.
+  // This guard makes that specific failure mode mechanical: every backtick-quoted,
+  // identifier-shaped token in strip-hidden.ts must resolve to something that still exists.
+  const SOURCE = readFileSync(
+    join(__dirname, '..', 'src', 'source', 'strip-hidden.ts'),
+    'utf8'
+  );
+
+  // Token selection rule, stated explicitly per the plan's own requirement: a backtick-quoted
+  // token matching `^[A-Za-z_$][A-Za-z0-9_$]*$` qualifies as a candidate identifier when it is
+  // EITHER (a) CONSTANT_CASE -- contains an underscore AND an uppercase letter -- OR (b)
+  // camelCase/PascalCase with an INTERNAL capital (an uppercase letter anywhere after the
+  // first character). All-lowercase single words (`style`, `div`, `display`) are excluded --
+  // they are HTML tag names and CSS properties in this file's prose, not code identifiers.
+  const BACKTICK_TOKEN_RE = /`([A-Za-z_$][A-Za-z0-9_$]*)`/g;
+  function isConstantCase(name: string): boolean {
+    return name.includes('_') && /[A-Z]/.test(name);
+  }
+  function isCamelOrPascalWithInternalCapital(name: string): boolean {
+    return /[A-Z]/.test(name.slice(1));
+  }
+  function isCandidateIdentifier(name: string): boolean {
+    return isConstantCase(name) || isCamelOrPascalWithInternalCapital(name);
+  }
+
+  function extractCandidates(source: string): string[] {
+    const found = new Set<string>();
+    let match: RegExpExecArray | null;
+    BACKTICK_TOKEN_RE.lastIndex = 0;
+    while ((match = BACKTICK_TOKEN_RE.exec(source))) {
+      const name = match[1]!;
+      if (isCandidateIdentifier(name)) found.add(name);
+    }
+    return Array.from(found).sort();
+  }
+
+  // Comments stripped exactly the way this file's OTHER source-text guard (above) already
+  // does, so a doc comment mentioning a real code pattern in prose cannot resolve itself.
+  function stripComments(source: string): string {
+    return source
+      .split('\n')
+      .filter(line => {
+        const t = line.trim();
+        return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*'));
+      })
+      .join('\n');
+  }
+
+  // Resolution category 1+2: a real definition (const/let/var/function/interface/type/class)
+  // or an imported binding, in the CODE (comments stripped).
+  function isDefinedOrImported(name: string, code: string): boolean {
+    const defRe = new RegExp(`\\b(?:const|let|var|function|interface|type|class)\\s+${name}\\b`);
+    if (defRe.test(code)) return true;
+    const importRe = new RegExp(`\\bimport\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`);
+    return importRe.test(code);
+  }
+
+  // Resolution category 3: the identifier is USED as real code somewhere -- a method/property
+  // access, a call, a type/generic position, or a parameter/property name -- not merely
+  // described in prose. This is what lets `indexOf`/`startIndex`/`endIndex`/`ReadonlyMap`/
+  // `styleText` resolve without a definition of their own in this file (a method call site,
+  // a `parser.startIndex` property read, a type annotation, and a parameter declaration,
+  // respectively) while a name that ONLY ever appears inside a comment stays unresolved.
+  function isUsedAsCode(name: string, code: string): boolean {
+    const usageRe = new RegExp(
+      `\\.${name}\\b` +
+        `|\\b${name}\\s*\\(` +
+        `|:\\s*(?:readonly\\s+)?${name}\\b` +
+        `|<\\s*${name}\\b` +
+        `|\\b${name}\\s*<` +
+        `|\\b${name}\\s*:` +
+        `|\\{[^}]*\\b${name}\\b[^}]*\\}\\s*[:=]`
+    );
+    return usageRe.test(code);
+  }
+
+  // Resolution category 4: a real css-tree tokenizer token-type name, verified against the
+  // ACTUAL imported `tokenTypes` object (`css-tree/tokenizer`) rather than a hand-copied list
+  // that could itself drift out of sync with a future css-tree upgrade.
+  const CSS_TREE_TOKEN_TYPE_NAMES = new Set(Object.keys(tokenTypes));
+
+  // Resolution category 5: a real Unicode binary-property name valid inside a `u`-flag
+  // regex's `\p{...}` escape, verified by actually constructing the regex rather than a
+  // hardcoded list of property names.
+  function isValidUnicodePropertyName(name: string): boolean {
+    try {
+      // eslint-disable-next-line no-new
+      new RegExp(`\\p{${name}}`, 'u');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Resolution category 6: a production identifier genuinely defined in ANOTHER file this
+  // module's doc comments legitimately cross-reference. Verified by grepping the actual
+  // target file for a real definition at test-run time -- not a blind trust list, so this
+  // category itself fails loudly if the cross-file identifier goes stale.
+  const EXTERNAL_IDENTIFIERS: Record<string, string> = {
+    normalizeGmailMessage: 'src/source/gmail-adapter.ts',
+    MAX_STRIP_INPUT_CODE_UNITS: 'src/source/gmail-adapter.ts',
+    extractBodyText: 'src/source/gmail-adapter.ts',
+    redactSecrets: 'src/source/redact.ts',
+  };
+  function isVerifiedExternalIdentifier(name: string): boolean {
+    const relPath = EXTERNAL_IDENTIFIERS[name];
+    if (relPath === undefined) return false;
+    const externalSource = readFileSync(join(__dirname, '..', relPath), 'utf8');
+    const defRe = new RegExp(`\\b(?:const|let|var|function|class)\\s+${name}\\b`);
+    return defRe.test(externalSource);
+  }
+
+  // Resolution category 7 (the deletion registry itself): a token this file's own text marks
+  // with a `(deleted, 62-NN)` marker naming the plan that removed it -- the file-level doc
+  // block's "Deletion registry" section is the canonical home for these, but the pattern is
+  // matched anywhere in the file so a per-function doc comment could carry one too. Name and
+  // marker share ONE backtick span (`` `NAME (deleted, 62-NN)` ``, not `` `NAME` (deleted...) ``)
+  // so that raw, non-backtick-quoted "NAME ... deleted, 62-" text also exists in the file for
+  // any coarser, independent grep-based check to find (e.g. this plan's own <verify> gate).
+  function isInDeletionRegistry(name: string, source: string): boolean {
+    const registryRe = new RegExp('`' + name + '\\s*\\(deleted, 62-\\d+\\)`');
+    return registryRe.test(source);
+  }
+
+  // Resolution category 8: a small, explicit set of JS/TS built-in vocabulary this file's
+  // comments legitimately reference as a general discipline (e.g. "reset lastIndex before a
+  // manual .exec() loop") even where this file's OWN code currently has no such call site.
+  // Kept deliberately tiny -- this is an escape hatch for genuine language vocabulary, not a
+  // way to launder a project-internal identifier out of the deletion-registry requirement.
+  const KNOWN_JS_BUILTIN_VOCABULARY = new Set(['lastIndex']);
+
+  function findOrphanedIdentifiers(source: string): string[] {
+    const code = stripComments(source);
+    const candidates = extractCandidates(source);
+    return candidates.filter(name => {
+      if (isDefinedOrImported(name, code)) return false;
+      if (isUsedAsCode(name, code)) return false;
+      if (CSS_TREE_TOKEN_TYPE_NAMES.has(name)) return false;
+      if (isValidUnicodePropertyName(name)) return false;
+      if (isVerifiedExternalIdentifier(name)) return false;
+      if (isInDeletionRegistry(name, source)) return false;
+      if (KNOWN_JS_BUILTIN_VOCABULARY.has(name)) return false;
+      return true;
+    });
+  }
+
+  it('every backtick-quoted, identifier-shaped token in strip-hidden.ts resolves to a definition, an import, a real code usage site, a verified external identifier, or a deletion-registry entry', () => {
+    expect(findOrphanedIdentifiers(SOURCE)).toEqual([]);
+  });
+
+  it('the guard above is not vacuous: an injected backticked reference to a plausibly-named, nonexistent identifier is flagged', () => {
+    const injected =
+      SOURCE +
+      '\n// a synthetic reference to `TotallyMadeUpHelperFunction`, which this file never defines\n';
+    expect(findOrphanedIdentifiers(injected)).toContain('TotallyMadeUpHelperFunction');
+  });
+
+  it('the guard above is not vacuous: a genuinely deleted identifier NOT registered with a (deleted, 62-NN) marker is flagged', () => {
+    const injected =
+      SOURCE +
+      '\n// `SomeRemovedRegexLiteral` used to do this, but was quietly deleted with no registry entry\n';
+    expect(findOrphanedIdentifiers(injected)).toContain('SomeRemovedRegexLiteral');
   });
 });
 

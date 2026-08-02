@@ -14,323 +14,13 @@
  * compile-once discipline. Global regexes have their `lastIndex` reset immediately before
  * each manual `.exec()` loop for the same reason `redactSecrets` does; regexes driven
  * through `.replace()`/`.match()`/`.test()` with no manual loop need no such reset (the
- * built-in @@replace/@@match algorithms reset lastIndex themselves). Four of these regexes
- * are RegExp-constructed from a shared template-literal fragment (`ATTRS`, see below)
- * rather than written as bare literals; each is still constructed exactly once, at
- * module load, so the compile-once invariant holds literally. This SUPERSEDES 62-07's
- * acceptance criterion `grep -c "new RegExp" == 0`, which was a proxy for the real
- * invariant ("compiled once, never per call") rather than the invariant itself — the thing
- * that criterion was actually guarding against, constructing a regex per matched tag name
- * inside `findMatchingCloseEnd`, remains forbidden and remains absent.
- *
- * 62-12 gap closure (BL-01/BL-02/BL-03, 62-REVIEW.md) — three decisions recorded here:
- *  1. REVERSED 62-09's decision to exclude `<` from the unquoted-attribute class in
- *     `STYLE_BLOCK_RE` (and, by the same reasoning, in `START_TAG_RE`/`ANY_TAG_TOKEN_RE`).
- *     Per HTML §13.2.5.36 (attribute value, unquoted state), `<` is a parse error but is
- *     APPENDED to the attribute value — it does NOT terminate the tag; only an unquoted
- *     `>` does. 62-09 excluded `<` to keep stage 2 in agreement with stage 4. They did
- *     agree — they agreed on FAILING, and the shared failure was the leak (BL-01): a
- *     class-hidden payload and the raw `<style>` block both reached `record.content`. All
- *     four tag-scanning literals now share ONE fragment (`ATTRS`, permitting `<`), so
- *     agreement is structural rather than four literals happening to carry the same
- *     character class — a fifth literal built from the shared ATTRS fragment cannot silently diverge.
- *  2. REJECTED `\p{Cf}\p{Variation_Selector}` (the code-reviewer's proposed
- *     `INVISIBLE_CODEPOINTS_RE`) in favor of `\p{Default_Ignorable_Code_Point}`. Verified
- *     during planning by enumerating all of Unicode: `\p{Cf}` NARROWS current coverage by
- *     31 codepoints (`U+E0000`, `U+E0002-U+E001F` — the unassigned part of the Tags block
- *     the shipped literal already covers and `\p{Cf}` does not), which would have regressed
- *     part of the very carrier BL-03 is about. `\p{Default_Ignorable_Code_Point}` misses
- *     ZERO currently-covered codepoints, covers every BL-03 threat-class row except
- *     `U+2028`/`U+2029` (added explicitly), and additionally reaches the unassigned
- *     plane-14 remainder (`U+E0080-U+E00FF`, `U+E01F0-U+E0FFF`) that neither the shipped
- *     literal nor `\p{Cf}` reaches — coverage goes from 139 to 4176 codepoints, with zero
- *     narrowing anywhere. `\p{Cf}` would also strip the Arabic/Syriac prepended
- *     concatenation marks (`U+0600-U+0605`, `U+06DD`, `U+070F`, `U+08E2`, `U+110BD`,
- *     `U+110CD`) — legitimate formatting characters in Arabic/Syriac prose that
- *     `Default_Ignorable_Code_Point` correctly excludes. `U+FFF9-U+FFFB` (interlinear
- *     annotation anchors) are `Cf` but NOT `Default_Ignorable` — they are meant to be
- *     rendered in fallback, are not in BL-03's table, and are deliberately not added.
- *  3. ACCEPTED two behavior changes on legitimate (non-attacker) mail as a consequence of
- *     widening `INVISIBLE_CODEPOINTS_RE` to a Unicode-property-derived set: (a) bidi
- *     embedding/override/isolate controls and LRM/RLM/ALM are now stripped from
- *     legitimate right-to-left subjects/bodies, changing how such text would render in a
- *     client — but this module produces text for an LLM extractor, not for display, and
- *     Trojan-Source-class visual reordering is exactly the threat this stage exists to
- *     stop; only invisible controls are touched, letters are never touched (verified: the
- *     property matches no ASCII codepoint and no Arabic/Hebrew LETTER codepoint), and the
- *     precedent already exists in shipped code (`U+200C` ZWNJ — required for correct
- *     Persian/Devanagari rendering — has been stripped since 62-03). (b) `U+FE0F`
- *     VARIATION SELECTOR-16 is now stripped, so an emoji written with an explicit
- *     presentation selector loses it (e.g. a heart-plus-VS16 sequence renders as a bare
- *     heart) — the same class of accepted loss as the existing ZWJ stripping.
- *
- * 62-13 gap closure (VF-01/NEW-01, 62-VERIFICATION.md) — two more decisions recorded here:
- *  1. VF-01 (BLOCKER, falsified roadmap SC #3 / EMAIL-03): `harvestHidingSelectors` now
- *     passes each harvested `<style>` block's content through `stripCssComments` (a
- *     LINEAR, regex-free scan of the three CSS Syntax contexts in which a `/*` is not a
- *     comment — see `stripCssComments`'s own doc comment for the closed enumeration and
- *     the two rejected fix forms) BEFORE the rule harvest scans it. Previously a CSS comment
- *     anywhere near a hiding selector — before it, after it, inside its comma list, or
- *     between the selector and `{` — made the exact-match bare-selector test fail, so
- *     NOTHING in that rule was harvested and the class/id-hidden element's text reached
- *     `record.content`.
- *  2. NEW-01 (regression introduced by 62-12's `ATTRS` widening): `findMatchingCloseEnd`
- *     now delegates to `findRawtextCloseEnd` for the `RAWTEXT_ELEMENTS` set (script,
- *     style, title, textarea, iframe, noembed, noframes, xmp — `noscript` deliberately
- *     excluded, see `RAWTEXT_ELEMENTS`'s own doc comment). Per HTML §13.2.5.1-13.2.5.20,
- *     inside a raw-text element NOTHING in the body is a tag except the element's own end
- *     tag, so the old depth-counting `ANY_TAG_TOKEN_RE` scan — which tokenizes arbitrary
- *     tags in the body — mis-tokenized an unquoted `<` plus an ASCII letter as a new open
- *     tag, whose `ATTRS` region then consumed forward through the real close tag's `>`. No
- *     matching close was found, the fail-safe returned `html.length`, and everything from
- *     the open tag to EOF was deleted — reachable by ordinary JavaScript
- *     (`<script>if (a<x) {}</script>`), not only adversarial input.
- *
- * The 62-09 source guard (tests/strip-hidden.test.ts) is UPDATED, not removed, by this
- * change: its first assertion (no bare `[^>]*`/`[^<>]*` class survives) is kept UNCHANGED
- * — true only because the shared `ATTRS` fragment's `STYLE_BLOCK_RE` close tail is built
- * from the shared ATTRS fragment, NOT the reviewer-proposed `[^>]*` tail, which would have reintroduced
- * that exact banned substring. Its second assertion (a `>= 4` count of the alternation
- * prefix) is REPLACED with single-source-of-truth counts, since the alternation now
- * appears exactly once (inside `ATTRS` itself) rather than once per regex; 62-13 raises
- * both counts from 4 to 5, since `RAWTEXT_CLOSE_TAIL_RE` is a fifth literal built from the
- * shared `ATTRS` fragment (the guard working as intended, not weakened — see
- * `RAWTEXT_CLOSE_TAIL_RE`'s own doc comment).
- *
- * 62-14 gap closure (WR-02, 62-VERIFICATION.md) — the algorithmic half of the availability
- * gap escalated from "accepted residual" to a filed gap: two exact linear bounds replace the
- * module's two backtracking-heavy scans, both measured behavior-preserving against the
- * pre-change module over the shipped test corpus and tens of thousands of generated inputs
- * (zero differences — see the 62-14 SUMMARY for the exact counts).
- *  1. Bound A (new stage 0, runs immediately after stage 1): duplicates stage 6's stray-`<`
- *     fail-safe truncation BEFORE any later stage's scan can pay for it. A forward scan of
- *     the shared `ATTRS` fragment that reaches an unquoted `>` succeeds and advances past it,
- *     so successful matches cost O(n) in aggregate; a scan can only fail repeatedly in the
- *     region AFTER the last `>` in the string, where no complete tag can exist — that region
- *     is exactly what stage 6 already deletes, so hoisting an identical deletion ahead of
- *     stages 2-6 removes the entire failing-scan region before anything else pays for it.
- *     Stage 6's own truncation stays in place — stages 4 and 5 delete ranges and can expose a
- *     NEW stray `<` that stage 0 could not have seen; Bound A is an addition, not a move.
- *  2. Bound B: `harvestHidingSelectors`'s rule scan is now a linear `indexOf`/`lastIndexOf`
- *     cursor walk in place of a `matchAll` loop over a backtracking-heavy regex. A `<style>`
- *     body with no `{` at all — the cheapest possible attacker-authored stylesheet — forced
- *     the old regex to retry a failing forward scan at every start position: this is why the
- *     verification report's shape (`<style>` + `a<x ` repeated + `</style>`, no braces
- *     anywhere) cost 126 SECONDS at 512 KB despite carrying no hiding rule at all, and why
- *     shapes V, W, Y and Z (reached through different byte patterns — an open brace with a
- *     brace-free tail, a brace-free run before a real rule, alternating quotes, and repeated
- *     unterminated url-tokens, respectively) cost the same. `stripCssComments` (62-13) is NOT
- *     the cause for any of these: it is measured directly (per-stage, at every size) to cost
- *     under a millisecond even where it returns its input completely unchanged (shapes Y and
- *     Z contain no `/*`, so its early exit fires immediately) — the cost is 100% downstream,
- *     in the rule scan this bound replaces. The scan's full equivalence argument is stated in
- *     `harvestHidingSelectors`'s own doc comment.
- * The one quadratic this module still exhibited — `STYLE_BLOCK_RE`'s lazy `</style>` tail scan
- * on a body with complete open tags but no close tag anywhere (T-62-54) — was untouched here;
- * it was measured and named, not fixed, and was the residual plan 62-15's input cap was sized
- * against. It is ELIMINATED, not re-bounded, by the "62-18 gap closure" section below.
- *
- * 62-17 gap closure — the third rewrite of this module's CSS layer, and the first that
- * replaces the underlying MECHANISM (raw-text scanning) instead of patching another
- * disagreement it produced. Six independent bypasses of one contract (CR-01, BL-01, BL-02 x2,
- * BL-03, CR-04's mechanism, VF-01, NEW-01, WR-02's quadratic, two escaped-selector leaks) had
- * been found by reconstructing CSS Syntax Level 3 §4.3 one adversarial repro at a time.
- * `stripCssComments`, `matchesUrlOpen`, `isCssWhitespaceCode` and `BARE_CLASS_SELECTOR_RE`/
- * `BARE_ID_SELECTOR_RE` are deleted, replaced by a single `tokenize` pass over
- * `css-tree/tokenizer` (`css-tree@3.2.1`, pinned `--save-exact`, 62-16) reading rule boundaries
- * from `{`/`}` TOKENS and selector shape from TOKEN STRUCTURE, so agreement with a conformant
- * CSS engine is structural rather than the outcome of enumerating repros.
- *  - Adopted surface: `src/` may import ONLY `tokenize`/`tokenTypes` from the `/tokenizer`
- *    subpath (`src/types/css-tree-tokenizer.d.ts`, 62-16) — never the bare `css-tree` package,
- *    never its parser/lexer/walker/generator. The parser IS used, deliberately, by a test-only
- *    liveness oracle under `tests/support/` (62-16) that answers which bare selectors a
- *    conformant engine treats as live, independent of this module's own code — that oracle
- *    must never be imported from `src/` (T-62-17-08, enforced by grep in the verify gate).
- *  - postcss was measured and DISQUALIFIED as an alternative (62-16): wrong on both FB-01's and
- *    CR-04's own input shapes, so a postcss-based rewrite would have reproduced the same two
- *    findings under a different implementation rather than closing them.
- *  - Two characterized css-tree tokenizer deviations from a naive reading of §4.3 (62-16,
- *    locked by `tests/css-tokenizer-conformance.test.ts`) this harvest tolerates rather than
- *    re-discovers: a leading U+FEFF is skipped (so a token's first offset may start at 1 —
- *    unreachable in the real pipeline, since stage 1 removes U+FEFF before stage 2 runs, but
- *    not assumed here); a token `end` offset may exceed `source.length` by at most 1 (every
- *    slice below clamps with `Math.min(offset, css.length)` accordingly).
- *  - 62-16's liveness-oracle adjudication — its own independent re-derivation, using css-tree's
- *    PARSER, a different layer than this module's tokenizer-only production surface — found
- *    both filed blockers reclassified as AGREEMENT on their reported inputs: FB-01 (a browser
- *    never treats `.legal{display:none}` as reaching top level inside `.a`'s still-open,
- *    bad-string-broken block either) and both CR-04 shapes (a browser drops the malformed
- *    selector too). CR-04's underlying MECHANISM finding — `matchesUrlOpen` had no
- *    token-boundary check — was left explicitly open by that reclassification; THIS gap
- *    closure is what actually retires it, by deleting `matchesUrlOpen` outright rather than
- *    patching it. The SAME re-derivation found two escaped-selector leaks genuinely LIVE and
- *    never previously filed (`.leg\61 l` vs `class="legal"`, `#leg\61 l` vs `id="legal"` —
- *    both now closed by `decodeIdentEscapes`, §4.3.7); a third row planning's own throwaway
- *    table had guessed at, `.leg\al`, was found by that SAME re-derivation to decode to
- *    `"leg\nl"` (one hex digit, the `content:"\A"` newline idiom) rather than `"legal"` — a
- *    correctly-adjudicated NON-leak, not a third finding (see `62-16-SUMMARY.md` for the full
- *    decode derivation). This gap closure's scope floor is therefore TWO closed leaks, not
- *    three.
- *
- * 62-18 gap closure (T62-91, 62-VERIFICATION.md) — eliminates the one quadratic 62-14 named
- * but did not fix. `62-VERIFICATION.md` found that plan 62-15's 1 MiB cap was sized against
- * ONE parametrization of `STYLE_BLOCK_RE`'s lazy `</style>`-tail scan (T-62-54); a denser,
- * cheaper-to-construct variant costs far more at the identical cap boundary. Measured in
- * isolation at exactly 1,048,576 code units, comparing `html.matchAll(STYLE_BLOCK_RE)`
- * (left) against this plan's linear replacement (right):
- *
- *   shape at exactly 1,048,576 code units                     STYLE_BLOCK_RE   linear walk
- *   bare `<style>` repeated (T62-91's own worst case)            23,249 ms         0.3 ms
- *   62-15's Shape T, 4 attribute pairs                            2,887 ms         0.2 ms
- *   single unquoted attribute triple                              8,381 ms         0.2 ms
- *   `<style ` repeated with NO `>` until the final byte (new)   156,223 ms         2.5 ms
- *   well-formed `<style>.g{display:none}</style>` repeated           2.5 ms         3.6 ms
- *
- * The `<style ` -with-no-`>` shape had never been measured by any prior wave: it is reachable
- * end-to-end because stage 0 (Bound A, 62-14) truncates from the first `<` that FOLLOWS the
- * last `>`, so a body whose only `>` is its final byte is not truncated at all and reaches
- * `harvestHidingSelectors` in full. At 156 seconds it is 7x worse than the 22.7 s the
- * verification report found and 156x the wave's own 1000 ms budget.
- *
- * `STYLE_BLOCK_RE` is DELETED, not re-bounded, in favor of stage 2 locating `<style>`
- * elements with the SAME primitives stage 4 already uses: `START_TAG_RE` finds each
- * `<style ...>` open tag (its attribute region is built from the shared `ATTRS` fragment,
- * which PERMITS an unquoted `<` per HTML §13.2.5.36, so `<style<style<style…>` is ONE start
- * tag, not thousands of failing scans — the same amortization argument Bound A already
- * established for stage 0 (62-14), now applied to stage 2 as well); `findRawtextCloseBounds`
- * (placed above `findRawtextCloseEnd`, in the shared tag-matching primitives section) then
- * finds the matching `</style...>` close tag with a cursor that only moves FORWARD. The first
- * failure to find any further `</style` proves no LATER `<style` can find one either (the
- * cursor never rewinds), so the walk BREAKS on the first unterminated element rather than
- * retrying a failing scan from every subsequent `<style` — this is what converts T-62-54's
- * O(n²) into O(n).
- *
- * On the pathological shapes above, the two implementations also disagree on RESULT, not just
- * cost: `matchAll` requires a close tag and finds 0 blocks; the linear walk finds 1 block
- * whose content runs to end of input. This is a DELIBERATE, specified behavior change: per
- * HTML §13.2.5, an unterminated `<style>` element's content runs to end of input — exactly
- * the range stage 4's own `findRawtextCloseEnd` fail-safe already deletes. Harvesting it is
- * the FAITHFUL outcome (a browser applies the hiding rule too), not an over-reach: before
- * this closure, a class-hidden payload behind an unterminated `<style>` leaked as prose
- * (under-strip); after, it is correctly hidden, and a separate hiding-signature-negative test
- * confirms harvesting to EOF does not start removing content no rule actually hides
- * (over-strip control).
- *
- * Also closes the T-62-43 cross-stage boundary bug class for `<style>` specifically: BL-01
- * and BL-02 (62-12 gap closure #1, above) were both instances of stage 2 and stage 4 holding
- * DIFFERENT opinions about where a `<style>` element begins and ends. Both properties those
- * fixes established — the CR-01 quote-aware open tag, the BL-02 ATTRS-built close tail
- * (rejecting a simpler `<\/style\b[^>]*>` form, which would both reintroduce the 62-09 source
- * guard's banned substring and reopen a fifth independent boundary opinion) — are now
- * INHERITED by stage 2 rather than re-asserted by a separate regex, because stage 2 uses the
- * exact same `START_TAG_RE` and `RAWTEXT_CLOSE_TAIL_RE` primitives stage 4 already used.
- * There is now only one opinion about a `<style>` element's boundary, not two that happen to
- * agree.
- *
- * `<style/>` (self-closing) was UNAFFECTED by this closure at the time it landed — the outer
- * walk skipped any match its own self-closing check reported, leaving WR-03 (62-REVIEW.md)
- * open. WR-03 is CLOSED by 62-29 (CR-01): a self-closing `<style/>` start tag is a
- * spec-correct no-op on a non-void element (HTML §13.2.5) and is now harvested like any other
- * `<style>` — see `HTML_ELEMENT_DISPOSITIONS` and `scanHtml`'s `onclosetag` handler below.
- *
- * 62-20 gap closure (CR-05/CR-06/CR-08/CR-09, 62-REVIEW.md/62-VERIFICATION.md) — migrates the
- * one part of the CSS layer 62-17 left on raw text: the DECLARATION side. `hasHidingSignature`
- * ran twelve regexes over `css.slice(contentStart, contentEnd)` — comments and escapes
- * included — so `display:/*x*\/none` and `display:\6eone` both applied `display:none` to a
- * conformant engine while this module saw neither (CR-05). `hasHidingSignatureFromTokens`
- * (stage 5, immediately above `hasHidingSignature`) closes this the same way 62-17 closed the
- * selector side: reconstruct from tokens (Comment -> one space, ident-bearing tokens
- * escape-decoded), never compare raw text. Both call sites (`harvestFromStylesheet`'s frame
- * evaluation, `isHiddenStartTag`'s inline-style check) are migrated; a shipped source guard
- * bans a raw-slice call from reappearing. Two structural gaps in the same function are also
- * closed: an unterminated final declaration block is now evaluated at EOF instead of silently
- * abandoned (CR-06), and the 200-selector harvest cap — which failed OPEN, proceeding to strip
- * with a known-incomplete hidden-set once exhausted — is deleted outright rather than resized,
- * measured safe at the 1 MiB input boundary (CR-09). `decodeIdentEscapes` additionally now
- * consumes a CRLF pair as one escape separator per CSS Syntax §3.3, matching css-tree's own
- * decode (CR-08) — MIME's native line ending, not a corner case.
- *
- * 62-22 gap closure (CR-10, 62-REVIEW.md) — closed the T-62-43 cross-stage boundary
- * disagreement between stage 2 and stage 3: they held TWO independent opinions about where a
- * comment and a `<style>` element begin and end (`START_TAG_RE`+`findRawtextCloseBounds` vs
- * the old comment-removal regex that closure deleted), so a `<style>` open tag written inside
- * an HTML comment could be harvested as a live stylesheet, and an unterminated CDO (`<!--`)
- * inside a `<style>` block could trigger stage 3's own truncation fail-safe and destroy the
- * rest of the document (NF-01). Both stages read ONE `scanHtml` pass (`htmlparser2@10.0.0`,
- * exact-pinned, 62-21) computed once per `stripHiddenContent` call — see `scanHtml`'s own doc
- * block, placed just above the Stage 2 section, for the offset-conversion rule and the two
- * named residuals it accepts rather than hand-rolls a fallback for. `scanHtml` is a
- * RANGES-ONLY primitive (comment ranges, `<style>` content/element ranges, start-tag records)
- * — it never serializes a parse tree, preserving the "range-deleting transformer over the
- * original source" contract every idempotence/entity guarantee below depends on. 62-22 produced
- * `startTags` but did not yet wire it into any stage; 62-24 (below) is what does.
- *
- * 62-24 gap closure (CR-07, 62-REVIEW.md) — closes CR-07 the same way CR-10 was closed: by
- * DELETING the second opinion, not by bolting a decoder onto it. Stages 4 and 5 now ALSO read
- * `scanHtml().startTags` — the SAME single scan stages 2 and 3 already read — instead of their
- * own `START_TAG_RE`/`findMatchingCloseEnd` regex walk (deleted, along with the five raw
- * attribute-value regexes `isHiddenStartTag` used to extract from a raw source slice). Every
- * stage that needs to know where an element begins and ends now agrees BY CONSTRUCTION, not by
- * four/five independently-maintained regexes happening to carry the same character class.
- * `isHiddenStartTag`'s `class`/`id`/`style`/`aria-hidden` reads now go through
- * `HtmlStartTag.attrs` — a decoded `ReadonlyMap`, HTML-entity-decoding already applied by
- * `htmlparser2` — closing the false premise `decodeIdentEscapes`'s own doc comment used to
- * assert ("compared literally against an unescaped HTML attribute value"): the two layers a
- * browser actually applies (HTML character-reference decode, THEN CSS tokenize-and-escape-decode)
- * are now both implemented, in that order, so an entity-encoded attribute value
- * (`class="leg&#97;l"`, `style="display&#58;none"`) and a harvested selector/declaration built
- * from the SAME decoded text can no longer disagree. Because stage 4/5's own removal ranges and
- * stage 3's comment ranges are now BOTH derived from the one scan computed BEFORE any of the
- * three stages mutates the string, they are merged and deleted together in a single
- * `applyRemovalRanges` call (`collectStartTagRemovalRanges` + `mergeCommentAndElementRanges`,
- * defined near stage 5) rather than three sequential ones — see those functions' own doc
- * comments for why sequential deletion no longer composes once tag positions stop being
- * re-derived from whatever string a prior stage's deletion left behind. This plan also widened
- * D-62-21-01's disposition: `</style/>` (a RAWTEXT close tag htmlparser2 itself fails to
- * recognize) is now RECOVERED at the source, by neutralizing the trigger before parsing
- * (`neutralizeRawtextCloseDefect`, in `scanHtml`'s own section) — see that function's doc
- * comment for why a post-hoc numeric correction was rejected (it cannot resurrect a real
- * element htmlparser2 already decided was RAWTEXT text and never tokenized as a tag at all).
- *
- * 62-30 gap closure (CR-02, 62-REVIEW.md/62-VERIFICATION.md pass 5) — the residual immediately
- * below used to read "both run on a string later stages have already reduced." That premise is
- * INVERTED by a real repro: `ANY_TAG_RE` (stage 6's sweep) is built from the shared `ATTRS`
- * fragment, which PERMITS an unquoted `<` (62-12's own widening) — so a run of `<` with no
- * LATER `>` fails the scan from every start position after consuming the whole remaining tail,
- * O(n^2). Stage 6's own stray-`<` truncation ran AFTER that sweep, not before it; stage 0's
- * Bound A (62-14) runs before stages 2-5 and could not have seen a `<`-run those stages'
- * deletion exposes. Deleting a single element or comment is enough to strip every `>` from the
- * document's tail — the reduction stages 3/4/5 perform is exactly what BUILDS the pathological
- * input, not a precondition that makes stage 6 safe. Measured at HEAD before this closure: 2.5 /
- * 20.0 / 262.1 / 4164.4 ms at n = 1k/4k/16k/64k code units (the clean 16x-per-4x curve that is
- * this quadratic's signature), 4166.6 ms for the equally-good comment-only trigger
- * (`'<'.repeat(n) + '<!--c-->'`), and 4080 ms end-to-end through `normalizeGmailMessage` at a
- * 64 KB body — 4x over this module's own 1000 ms budget at 1/16 of the permitted 1 MiB cap; the
- * sender chooses both the bytes and the size.
- *
- * Fix: the stray-`<` truncation now ALSO runs immediately before the stage-6 sweep, mirroring
- * stage 0's Bound A exactly (`lastIndexOf('>')`, then `indexOf('<', last + 1)`, then slice when
- * found) — see stage 6's own body below. Equivalence, proven not assumed: everything from the
- * hoisted truncation point onward contains no `>`, so no complete tag can exist there and
- * `ANY_TAG_RE` can never match inside it; the pre-existing post-sweep truncation already deletes
- * from the first `<` REMAINING after the sweep, an index <= the hoisted one, so the hoisted
- * deletion is a strict subset of what that fail-safe already removed — same output, minus the
- * failing-scan region the sweep would otherwise pay for. A 200+-input equivalence corpus (see
- * `62-30-SUMMARY.md`) diffs byte-identical before and after this change. New bound: every
- * remaining `<` has a `>` after it, so every scan from a live start position succeeds and
- * advances past its `>` — the sweep is linear in aggregate, like every other stage in this file.
- *
- * The lesson, stated once because this is the third time the same failure mode has shipped in
- * this file (T-62-43's cross-stage boundary-disagreement class, then T62-91's shape-set-vs-
- * worst-case gap, now this): a cost bound enumerated over a shape set is a claim about the shape
- * set; only a bound argued from the algorithm's worst case is a claim about the cap
- * (`gmail-adapter.ts`'s `MAX_STRIP_INPUT_CODE_UNITS` doc block, section 3, restates this for the
- * cap side).
- *
- * Stage 0's hoisted stray-`<` truncation and stage 6's now-DUPLICATED stray-`<` truncation
- * (immediately before AND after the sweep) remain hand-rolled regex scanners after this plan —
- * an ACCEPTED residual on the SCANNER MECHANISM, not on its cost: both are bounded linear, and
- * neither participates in the hiding decision itself.
+ * built-in @@replace/@@match algorithms reset lastIndex themselves). `ANY_TAG_RE` (stage 6)
+ * is RegExp-constructed from a shared template-literal fragment (`ATTRS`, see below) rather
+ * than written as a bare literal; it is still constructed exactly once, at module load, so
+ * the compile-once invariant holds literally. `RAWTEXT_CLOSE_SLASH_RE` is a second,
+ * independent dynamic construction, built from `RAWTEXT_ELEMENT_NAMES` rather than `ATTRS`
+ * (see the "residual source-text checks" describe block in `tests/strip-hidden.test.ts` for
+ * the exact-count guard over both).
  *
  * Stage order (load-bearing — see the block comment above each stage):
  *  0. Hoisted stray-`<` fail-safe truncation (62-14, Bound A) — runs immediately after stage
@@ -438,6 +128,94 @@
  *    nested input.
  *  - Monotone toward less content: for adversarial or malformed input, the output is a
  *    subset-shaped reduction of the input — never the raw input passed through.
+ *
+ * Changelog (62-31 gap closure, WR-05, T-62-31-03) — one line per plan that changed this
+ * module's behavior; the reasoning, measurements and repros live in each plan's own
+ * SUMMARY.md, not restated here. This replaces the accumulated per-plan "gap closure"
+ * narrative that used to sit inline above each stage — the exact drift `62-VERIFICATION.md`
+ * named as the direct mechanism of CR-01 (a justification comment describing code 62-24 had
+ * already deleted). Every identifier below that no longer exists is carried in the deletion
+ * registry after this list, not left as a dangling backtick reference.
+ *  - 62-03: stage-1 invisible-codepoint stripping baseline (zero-width chars incl. ZWNJ
+ *    U+200C).
+ *  - 62-07: CR-01 quote-aware close-tag fix; established residual (c) (unbalanced quotes).
+ *  - 62-09: source guard for the CR-01/BL-01/BL-02 tag-boundary bug class.
+ *  - 62-12 (BL-01/BL-02/BL-03): unified the tag-scanning character class into the shared
+ *    `ATTRS` fragment (permits unquoted `<`); widened `INVISIBLE_CODEPOINTS_RE` to a
+ *    `Default_Ignorable_Code_Point`-derived set plus two explicit extras.
+ *  - 62-13 (VF-01/NEW-01): CSS-comment stripping ahead of selector harvest (superseded
+ *    62-17); RAWTEXT-aware close-tag handling for the eight raw-text elements (superseded
+ *    62-24).
+ *  - 62-14 (WR-02): Bound A, the hoisted stray-`<` fail-safe truncation (stage 0, still
+ *    present); Bound B, a linear cursor-walk selector harvest replacing a backtracking
+ *    regex (superseded 62-17).
+ *  - 62-17: rewrote the CSS layer onto `css-tree/tokenizer`'s token stream; restricted this
+ *    file's adopted css-tree surface to `tokenize`/`tokenTypes` only.
+ *  - 62-18 (T62-91): eliminated `STYLE_BLOCK_RE`'s lazy `</style>`-tail quadratic by
+ *    locating `<style>` elements via the same tag-matching primitives stage 4 used
+ *    (superseded 62-22).
+ *  - 62-20 (CR-05/CR-06/CR-08/CR-09): `hasHidingSignatureFromTokens`, a token-derived
+ *    declaration reconstruction, replaces every raw-slice `hasHidingSignature` call; deleted
+ *    the 200-selector harvest cap (failed open); evaluates an unterminated final
+ *    declaration block at EOF; consumes a CRLF pair as one escape separator.
+ *  - 62-21: adopted `htmlparser2@10.0.0` as this file's one conformant HTML tokenizer;
+ *    named the RAWTEXT close-slash defect (D-62-21-01), recovered at the source by 62-24.
+ *  - 62-22 (CR-10): `scanHtml`, one parser pass shared by stages 2 and 3, replacing two
+ *    independent regex-driven scans that could disagree about a comment/`<style>` boundary.
+ *  - 62-24 (CR-07): stages 4 and 5 read `scanHtml().startTags` directly instead of a second
+ *    regex-driven tag walk; `neutralizeRawtextCloseDefect` recovers D-62-21-01 pre-parse;
+ *    comment and element ranges are merged and deleted in one `applyRemovalRanges` call.
+ *  - 62-29 (CR-01/CR-03/WR-01): `HTML_ELEMENT_DISPOSITIONS`, the one dispositioned
+ *    element-name source, replacing two independently hand-maintained lists and a one-sided
+ *    self-closing-`<style/>` exclusion; added the WR-01 never-applied-stylesheet-context
+ *    filter.
+ *  - 62-30 (CR-02): hoists the stray-`<` fail-safe truncation a second time, immediately
+ *    before stage 6's sweep, closing an O(n^2) the sweep paid on a post-deletion `<`-run.
+ *  - 62-31 (WR-05/WR-09/WR-10): `applyRemovalRanges` now normalizes its ranges (total sort,
+ *    consumed-range skip, monotonic cursor) instead of assuming a prior stage argued the
+ *    ascending/non-overlapping precondition correctly; the close-tag boundary scan
+ *    (`scanHtml`'s `onclosetag`) is now quote-aware (`findUnquotedGt`); this doc block is
+ *    collapsed to current-state-plus-changelog, with the guard below keeping it honest.
+ *  - CR-01 stealth-regression addendum (corrects `62-24-SUMMARY.md`'s divergence table,
+ *    per `62-VERIFICATION.md` pass 5's `re_verification.regressions` note): the self-closing
+ *    `<style/>` shape, run through `stripHiddenContent('<style/>.legal{display:none}</style>
+ *    ok<span class="legal">PAYLOAD</span>')`, produced three different outputs across this
+ *    round. At base `c144c23` (before 62-24): `".legal{display:none}okPAYLOAD"` — the leak
+ *    announced itself by dumping the raw stylesheet as prose. After 62-24: `"okPAYLOAD"` —
+ *    the identical payload leaked, but behind clean-looking output with no CSS text to
+ *    signal a problem; this is the stealth regression 62-24-SUMMARY.md's own
+ *    divergence table never named. After 62-29: `"ok"` — closed. `62-24-SUMMARY.md` is a
+ *    historical record and is not edited by this addendum.
+ *
+ * Deletion registry (62-31 gap closure, WR-05) — every identifier this file's own comments
+ * still name that no longer has a definition or import in this file, with the plan that
+ * removed it. The guard in `tests/strip-hidden.test.ts` resolves every backtick-quoted,
+ * identifier-shaped token in this file against a definition, an import, or an entry here;
+ * an entry that stops being referenced anywhere may be deleted from this list.
+ *  - `STYLE_BLOCK_RE (deleted, 62-18)`
+ *  - `START_TAG_RE (deleted, 62-24)`
+ *  - `ANY_TAG_TOKEN_RE (deleted, 62-24)`
+ *  - `RAWTEXT_CLOSE_TAIL_RE (deleted, 62-24)`
+ *  - `findMatchingCloseEnd (deleted, 62-24)`
+ *  - `collectRemovalRanges (deleted, 62-24)`
+ *  - `RAWTEXT_ELEMENTS (deleted, 62-24)`
+ *  - `VOID_ELEMENTS (deleted, 62-24)`
+ *  - `RAWTEXT_CLOSE_OPENER_RE (deleted, 62-24)`
+ *  - `findRawtextCloseBounds (deleted, 62-24)`
+ *  - `findRawtextCloseEnd (deleted, 62-24)`
+ *  - `extractAttr (deleted, 62-24)`
+ *  - `STYLE_ATTR_RE (deleted, 62-24)`
+ *  - `CLASS_ATTR_RE (deleted, 62-24)`
+ *  - `ID_ATTR_RE (deleted, 62-24)`
+ *  - `ARIA_HIDDEN_TRUE_RE (deleted, 62-24)`
+ *  - `BARE_HIDDEN_ATTR_RE (deleted, 62-24)`
+ *  - `stripCssComments (deleted, 62-17)`
+ *  - `matchesUrlOpen (deleted, 62-17)`
+ *  - `isCssWhitespaceCode (deleted, 62-17)`
+ *  - `BARE_CLASS_SELECTOR_RE (deleted, 62-17)`
+ *  - `BARE_ID_SELECTOR_RE (deleted, 62-17)`
+ *  - `selfClosingSyntax (deleted, 62-29)`
+ *  - `SELF_CLOSING_SUFFIX_RE (deleted, 62-29)`
  */
 
 // `src/` may import ONLY `tokenize`/`tokenTypes` from the `/tokenizer` subpath (62-16's
@@ -702,7 +480,7 @@ export function applyRemovalRanges(html: string, ranges: Array<[number, number]>
  *
  * Offset convention: `htmlparser2`'s own `parser.startIndex`/`endIndex` are an INCLUSIVE
  * `[start, end]` pair (62-21-SUMMARY.md's "Exact API Surface"), NOT the `[start, end)`
- * exclusive convention this file's OTHER primitives (`collectRemovalRanges`,
+ * exclusive convention this file's OTHER primitives (`collectStartTagRemovalRanges`,
  * `applyRemovalRanges`, css-tree's own token offsets) already use. Every range this function
  * returns is converted to `[start, end)` exclusive at the point of construction — callers of
  * `scanHtml` never see an inclusive offset. `tests/html-parser-conformance.test.ts` is the
@@ -711,8 +489,7 @@ export function applyRemovalRanges(html: string, ranges: Array<[number, number]>
  *
  * Two named residuals, each a deliberate, faithful reading of the parser's OWN behavior
  * rather than a bug this function introduces (a THIRD, `</style/>`, was accepted-not-recovered
- * through 62-22 and is now RECOVERED -- see `RAWTEXT_ELEMENTS`'s own doc comment below, 62-24
- * gap closure):
+ * through 62-22 and is now RECOVERED at the source by `neutralizeRawtextCloseDefect`, below):
  *  - `</style foo>` (D-62-21-01): the close tag's own reported end is truncated before the
  *    real `>`; a forward `indexOf('>', ...)` scan from the truncated offset recovers the true
  *    boundary (a no-op, not just a correction, on a well-formed close tag, which already sits
@@ -958,13 +735,11 @@ export function scanHtml(html: string): HtmlScan {
 // Stage 2 — CSS hiding-selector harvest (before <style> blocks are discarded)
 // ---------------------------------------------------------------------------
 
-// `STYLE_BLOCK_RE` (a lazy `<style\bATTRS>([\s\S]*?)<\/style\bATTRS>` scan) located `<style>`
-// elements here through 62-17. DELETED in 62-18 (T62-91): its lazy `</style>`-tail scan was
-// the module's one remaining quadratic. Stage 2 now locates `<style>` elements with the same
-// `START_TAG_RE` + `findRawtextCloseBounds` primitives stage 4 already used — see the
-// file-level doc block's "62-18 gap closure" section for the cost table and the O(n) argument,
-// and `harvestHidingSelectors`'s own doc comment below for the CR-01/BL-01/BL-02 boundary
-// decisions this deletion INHERITS rather than re-asserts.
+// `<style>` elements are located via `scanHtml().styleElements` (see `scanHtml`'s own doc
+// block, above), computed once and shared with stage 3 — not a second, independently
+// maintained tag scan. See `harvestHidingSelectors`'s own doc comment below for the boundary
+// decisions this inherits from `scanHtml` (see the file-level doc block's changelog for the
+// plans that established and later superseded the mechanisms this stage no longer uses).
 
 // CR-09 (62-REVIEW.md, closed by 62-20): the prior hard cap of 200 on the number of harvested
 // class/id hiding selectors is DELETED, not re-sized. Its own doc comment ("so a pathological
@@ -1134,7 +909,7 @@ interface BareSelector {
  * `Comma` tokens; per group, drops `WhiteSpace` tokens and requires EXACTLY one of two token
  * shapes: a `Delim` whose single source character is `.` immediately followed by an `Ident`,
  * or a lone `Hash`. Any other shape makes the WHOLE rule non-bare (returns `null`), matching
- * this module's pre-62-17 `allBare` semantics (`selectors.every(...)`) — reproduced here on
+ * this module's pre-62-17 all-selectors-bare semantics — reproduced here on
  * TOKEN STRUCTURE instead of a character-class regex over reconstructed text, which is why
  * `BARE_CLASS_SELECTOR_RE`/`BARE_ID_SELECTOR_RE` are gone: the token shape IS the check, so a
  * comment or function token that used to get glued onto reconstructed text (VF-01, CR-04)
@@ -1315,80 +1090,35 @@ function harvestFromStylesheet(css: string, classes: Set<string>, ids: Set<strin
  * hides a span by class, not by inline style, so simply deleting the `<style>` block (stage 4)
  * would destroy the evidence that the span is hidden while leaving its text behind.
  *
- * 62-17 gap closure: replaces the hand-rolled `stripCssComments` + `indexOf`/`lastIndexOf`
- * brace-partition cursor walk entirely with a single `tokenize` pass per `<style>` block
- * (`harvestFromStylesheet`) reading rule boundaries from `{`/`}` TOKENS rather than raw-text
- * brace counting. Brace counting over raw text is retired because raw-text brace counting is
- * the exact mechanism FB-01 probed (a raw-text scan can be desynchronized by a bad string); a
- * `{`/`}` TOKEN cannot be forged by a `BadString`, `Url`/`BadUrl`, or `Function` token, so the
- * class of bug FB-01/CR-04 both probed (something OTHER than the tokenizer deciding a token's
- * boundary) cannot recur here by construction. See `harvestFromStylesheet`'s own doc comment
- * for the frame-stack argument, and `preludeToBareSelectors`'s for the selector-shape argument
- * that replaces `BARE_CLASS_SELECTOR_RE`/`BARE_ID_SELECTOR_RE`.
+ * Each `<style>` element's boundaries come from `scanHtml().styleElements` (see `scanHtml`'s
+ * own doc block, above the Stage 2 header) — computed once per `stripHiddenContent` call and
+ * shared with stage 3, so a `<style>` open tag written inside an HTML comment can never be
+ * mistaken for a live element (there is no second, independently-maintained scan left to
+ * disagree with the parser). Two boundary properties this inherits from `scanHtml`, both load
+ * -bearing:
+ *  - OPEN TAG: quote-aware, only an unquoted `<` or `>` terminates it — a literal `>` inside a
+ *    quoted attribute value and an unquoted `<` per HTML §13.2.5.36 are both legal HTML that
+ *    must not truncate the tag early.
+ *  - CLOSE TAG: `</style foo>` and `</style/>` both legally end a `<style>` element (the
+ *    RAWTEXT end-tag-name state transitions to before-attribute-name on whitespace and to
+ *    self-closing-start-tag on `/`) — see `scanHtml`'s own `onclosetag` handler for the
+ *    D-62-21-01 recovery this depends on. A self-closing `<style/>` opens the element
+ *    normally (HTML §13.2.5, a spec-correct no-op on a non-void element) and is harvested
+ *    like any other `<style>` — see `HTML_ELEMENT_DISPOSITIONS` and `scanHtml`'s `onclosetag`
+ *    handler.
  *
- * SUPERSEDED, kept for history rather than deleted silently: the 62-14 "Bound B" cursor-walk
- * equivalence argument this replaces was a correct proof that the linear `indexOf`/
- * `lastIndexOf` cursor walk produced the same `(selectorText, body)` pairs as the `matchAll`
- * regex it replaced — see 62-14-SUMMARY.md for the full text. It is now MOOT: this function no
- * longer partitions raw text into `(selectorText, body)` pairs at all, so there is nothing left
- * for that argument to be an equivalence proof ABOUT. The property that argument actually
- * protected — no quadratic blowup on a brace-free or brace-heavy adversarial `<style>` body —
- * is now structural: `tokenize` is one linear pass regardless of brace shape, so there is no
- * failing-scan region to retry, matching this module's WR-02 property by construction rather
- * than by cursor-walk proof.
+ * An UNTERMINATED `<style>` (no matching `</style...>` anywhere at or after the open tag) is
+ * harvested to end of input, per HTML §13.2.5: a browser applies an unterminated `<style>`
+ * block's rules too, so harvesting the element's content to EOF is the faithful outcome, not
+ * an over-reach.
  *
- * 62-18 gap closure (T62-91): the OUTER loop that finds each `<style>` element's boundaries is
- * now a `START_TAG_RE.exec` cursor walk over `html`, not `html.matchAll(STYLE_BLOCK_RE)` —
- * `STYLE_BLOCK_RE`'s lazy `</style>`-tail scan was the module's one remaining quadratic
- * (T-62-54), and this is what deletes it (see the file-level doc block's "62-18 gap closure"
- * section for the cost table and the O(n) argument). This inherits, rather than re-asserts,
- * the two boundary decisions `STYLE_BLOCK_RE`'s own doc comment used to record:
- *  - OPEN TAG (CR-01/BL-01, 62-12): quote-aware, only an unquoted `<` or `>` terminates it —
- *    a literal `>` inside a quoted attribute value (CR-01) and an unquoted `<` per HTML
- *    §13.2.5.36 (BL-01) are both legal HTML that must not truncate the tag early. This is now
- *    inherited for free: `START_TAG_RE` already has this property, since it is built from the
- *    same shared `ATTRS` fragment `STYLE_BLOCK_RE` used to be built from.
- *  - CLOSE TAG (BL-02, 62-13): `</style foo>` and `</style/>` both legally end a `<style>`
- *    element (the RAWTEXT end-tag-name state transitions to before-attribute-name on
- *    whitespace and to self-closing-start-tag on `/`); a bare `<\/style\s*>` tail would miss
- *    both. Also inherited for free: `findRawtextCloseBounds` (above `findRawtextCloseEnd`)
- *    uses `RAWTEXT_CLOSE_TAIL_RE`, built from the same `ATTRS` fragment, deliberately NOT the
- *    simpler `<\/style\b[^>]*>` a code reviewer once proposed — `[^>]*` would both reintroduce
- *    the exact substring the 62-09 source guard bans and give the close tag a boundary rule
- *    independent of `ANY_TAG_TOKEN_RE`/`START_TAG_RE`.
- * Because stage 2 now uses the EXACT SAME `START_TAG_RE` and `RAWTEXT_CLOSE_TAIL_RE` primitives
- * stage 4 (`findMatchingCloseEnd`/`collectRemovalRanges`) already used, agreement between the
- * two stages about a `<style>` element's boundary is now structural rather than the outcome of
- * two independently-maintained regexes happening to carry the same character class — this
- * closes the T-62-43 cross-stage boundary bug class for `<style>` specifically (BL-01 and
- * BL-02 were both instances of that class).
- *
- * `<style/>` (self-closing) was skipped by the outer walk, unchanged from before this closure,
- * at the time it landed — WR-03 (62-REVIEW.md) was open. WR-03 is CLOSED by 62-29: see
- * `HTML_ELEMENT_DISPOSITIONS` and `scanHtml`'s `onclosetag` handler.
- *
- * On an UNTERMINATED `<style>` (no matching `</style...>` anywhere at or after the open tag),
- * this walk harvests the element's content to end of input, per HTML §13.2.5. This is a
- * deliberate, specified behavior change from `STYLE_BLOCK_RE` (which required a close tag and
- * harvested nothing from an unterminated element): a browser applies an unterminated `<style>`
- * block's rules too, so harvesting is the faithful outcome, not an over-reach.
- *
- * 62-22 gap closure (CR-10, 62-REVIEW.md): the OUTER loop that finds each `<style>` element's
- * boundaries is no longer `START_TAG_RE` + `findRawtextCloseBounds` — it is `scanHtml().styleElements`,
- * computed ONCE per `stripHiddenContent` call and shared with stage 3 (see `scanHtml`'s own doc
- * block, above the Stage 2 header, for the full argument). This closes the LAST remaining
- * instance of the T-62-43 boundary-disagreement class this file has been retiring stage by
- * stage: `<style>`-vs-`<style>` (62-18) and now `<style>`-vs-COMMENT. A `<style>` opening tag
- * that appears inside an HTML comment (`<!-- <style> -->`) can no longer be mistaken for a live
- * element, because `scanHtml`'s single parser pass is the one place that decision is made, for
- * BOTH `comments` and `styleElements` at once — there is no second, independently-maintained
- * regex left to disagree with it. Two decisions this inherits from `scanHtml` rather than
- * re-deriving here:
- *  - A self-closing `<style/>` used to be excluded from `styleElements` (WR-03, 62-REVIEW.md);
- *    CLOSED by 62-29 — see `scanHtml`'s own `onclosetag` comment.
- *  - An unterminated `<style>`'s content runs to `html.length` (`contentEnd === elementEnd`),
- *    the SAME 62-18 behavior this doc block's paragraph above describes, now produced by the
- *    parser directly instead of `findRawtextCloseBounds`'s forward-only-cursor break.
+ * Block content is read as a css-tree TOKEN STREAM (`harvestFromStylesheet`), reading rule
+ * boundaries from `{`/`}` TOKENS rather than raw-text brace counting: a `{`/`}` TOKEN cannot
+ * be forged by a `BadString`, `Url`/`BadUrl`, or `Function` token — a raw-text brace-counting
+ * scan CAN be desynchronized by a bad string, which is exactly the class of bug this design
+ * closes structurally rather than by patching a specific repro. See `harvestFromStylesheet`'s
+ * own doc comment for the frame-stack argument, and `preludeToBareSelectors`'s for the
+ * selector-shape argument.
  */
 function harvestHidingSelectors(
   html: string,
@@ -1459,29 +1189,20 @@ function filterStyleElementsOutsideNeverAppliedContext(
 // ---------------------------------------------------------------------------
 
 /**
- * 62-22 gap closure (CR-10, T-62-22-03): deletes `scan.comments` — `scanHtml`'s own,
- * conformant-tokenizer-derived comment ranges — instead of running the old comment-matching
- * regex plus an `indexOf('<!--')` truncation fail-safe. That fail-safe existed because a
- * regex over raw text cannot SEE an unterminated comment's true extent (it can only detect
- * "no match, therefore truncate to end of string" — the NF-01 defect: an unmatched
- * CDO/HTML-comment-opener INSIDE a
- * `<style>` block is ordinary, spec-legal CSS syntax, not an HTML comment at all, yet the old
- * fail-safe could not tell the difference and destroyed the rest of the document, including a
- * real `</style>` tag and every visible sentence after it). `scanHtml`'s parser CAN see an
- * unterminated comment's true extent (it reports the comment running to `html.length`, per
- * `tests/html-parser-conformance.test.ts`'s own pinned deviation numbers) and never mistakes
- * RAWTEXT content for a comment in the first place — so the truncation fail-safe has nothing
- * left to guard against and is deleted, not kept as a blunter instrument.
+ * Deletes `scan.comments` — `scanHtml`'s own, conformant-tokenizer-derived comment ranges.
+ * `scanHtml`'s parser sees an unterminated comment's true extent (it reports the comment
+ * running to `html.length`, per `tests/html-parser-conformance.test.ts`'s own pinned
+ * deviation numbers) and never mistakes RAWTEXT content for a comment (an unmatched
+ * CDO/HTML-comment-opener INSIDE a `<style>` block is ordinary, spec-legal CSS syntax, not an
+ * HTML comment at all) — the NF-01 defect this closes.
  *
- * 62-24 gap closure (CR-07): stage 3 no longer runs as its OWN `applyRemovalRanges` call
- * ahead of stage 4/5. Stage 4 and 5 now read element boundaries from
- * `scanHtml().startTags` directly (see `collectStartTagRemovalRanges` below) rather than
- * re-deriving tag positions with a fresh regex walk over whatever string stage 3 left
- * behind — so stage 3's comment ranges and stage 4/5's element ranges must be resolved
- * against the SAME original (pre-any-deletion) string and deleted together in ONE
- * `applyRemovalRanges` call, or the offsets of one would be stale by the time the other
- * ran. `collectRemovalAndElementRanges` (near stage 5, below) is where `scan.comments`
- * now gets consumed.
+ * Stage 3 does not run as its own `applyRemovalRanges` call ahead of stage 4/5: stage 3's
+ * comment ranges and stage 4/5's element ranges must be resolved against the SAME original
+ * (pre-any-deletion) string, since stage 4/5 read element boundaries from `scanHtml().startTags`
+ * directly (see `collectStartTagRemovalRanges` below) rather than re-deriving tag positions
+ * from whatever string a prior stage's deletion left behind. `mergeCommentAndElementRanges`
+ * (near stage 5, below) is where `scan.comments` is combined with stage 4/5's element ranges
+ * into the single ordered list `applyRemovalRanges` deletes in one pass.
  */
 
 // ---------------------------------------------------------------------------
