@@ -14,10 +14,12 @@ import {
   stripHiddenContent,
   stripInvisibleCodepoints,
   scanHtml,
+  applyRemovalRanges,
   NON_CONTENT_TAGS,
   NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS,
 } from '../src/source/strip-hidden';
 import { Parser } from 'htmlparser2';
+import { tokenTypes } from 'css-tree/tokenizer';
 import { liveHidingSelectors } from './support/css-liveness-oracle';
 
 const ZWSP = '​';
@@ -1843,6 +1845,91 @@ describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (total
   });
 });
 
+describe('applyRemovalRanges — 62-31 gap closure (WR-09, T-62-31-01): the ascending/non-overlapping precondition is now enforced, not assumed', () => {
+  // Before this closure, every caller argued in PROSE that its own ranges were ascending
+  // and pairwise non-overlapping; nothing in `applyRemovalRanges` itself checked that. A
+  // violated argument moved the cursor BACKWARDS and re-emitted text an earlier range had
+  // already deleted -- the failure mode of a broken containment argument is a leak, in the
+  // one function every stage's output flows through.
+
+  it('unchanged behavior: a single range deletes exactly its own span', () => {
+    expect(applyRemovalRanges('0123456789', [[2, 5]])).toBe('0156789');
+  });
+
+  it('a nested range does NOT re-emit characters the outer range already deleted, in ascending-then-narrower order', () => {
+    // RED (pre-fix algorithm, recorded verbatim): '056789' -- the cursor was reset
+    // backwards from 8 to 5 by the second, nested range, re-emitting characters 5-7 that
+    // the first range [1,8) had already deleted.
+    expect(applyRemovalRanges('0123456789', [[1, 8], [3, 5]])).toBe('089');
+  });
+
+  it('the same nested-range case is order-independent: reversing the input order produces the identical result', () => {
+    // RED (pre-fix algorithm, recorded verbatim): '01289' -- a DIFFERENT wrong output than
+    // the ascending-order case above, demonstrating the pre-fix function was order-dependent
+    // (its correctness depended on the caller happening to hand it ranges in the right
+    // order, an assumption nothing checked).
+    expect(applyRemovalRanges('0123456789', [[3, 5], [1, 8]])).toBe('089');
+  });
+
+  it('duplicate and touching ranges are idempotent', () => {
+    expect(applyRemovalRanges('0123456789', [[2, 5], [2, 5]])).toBe('0156789');
+    expect(applyRemovalRanges('0123456789', [[2, 5], [5, 8]])).toBe('0189');
+  });
+
+  it('property check (500 randomized trials): the output never contains a character covered by any input range', () => {
+    // Each trial builds an input string where character i IS its own position, base-36
+    // encoded (single digit, so n is capped at 36) -- this lets the assertion below recover
+    // each surviving character's ORIGINAL index directly from the character itself, with no
+    // separate bookkeeping array to keep in sync.
+    for (let trial = 0; trial < 500; trial += 1) {
+      const n = 2 + Math.floor(Math.random() * 34); // 2..35
+      const html = Array.from({ length: n }, (_, i) => i.toString(36)).join('');
+      const rangeCount = 1 + Math.floor(Math.random() * 5);
+      const ranges: Array<[number, number]> = [];
+      for (let r = 0; r < rangeCount; r += 1) {
+        const a = Math.floor(Math.random() * (n + 1));
+        const b = Math.floor(Math.random() * (n + 1));
+        const start = Math.min(a, b);
+        const end = Math.max(a, b);
+        if (start === end) continue; // an empty range deletes nothing; skip
+        ranges.push([start, end]);
+      }
+      const result = applyRemovalRanges(html, ranges);
+      for (const ch of result) {
+        const idx = parseInt(ch, 36);
+        for (const [start, end] of ranges) {
+          expect(idx < start || idx >= end).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe('stripHiddenContent — 62-31 gap closure (WR-10, T-62-31-02): the close-tag boundary scan is now quote-aware', () => {
+  it('sender-controlled bytes inside a close tag\'s bogus quoted attribute no longer survive into content', () => {
+    // RED (recorded against the shipped `dist/` build, before this plan's fix): "b\">tail" --
+    // the bare `html.indexOf('>', closeEnd)` found the IN-QUOTE `>` inside `foo="a>b"` first
+    // and stopped there, leaking `b">tail` even though every remaining tag is supposed to be
+    // removed.
+    expect(
+      stripHiddenContent('<div style="display:none">SECRET</div foo="a>b">tail')
+    ).toBe('tail');
+  });
+
+  it('controls: the D-62-21-01 RAWTEXT close-tag recovery is unaffected', () => {
+    expect(
+      stripHiddenContent('<style foo>.x{display:none}</style foo>ok<span class="x">PAYLOAD</span>')
+    ).toBe('ok');
+    expect(
+      stripHiddenContent('<style >.x{display:none}</style >ok<span class="x">PAYLOAD</span>')
+    ).toBe('ok');
+  });
+
+  it('control: a well-formed close tag is unaffected', () => {
+    expect(stripHiddenContent('<div>hi</div>tail')).toBe('hitail');
+  });
+});
+
 describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL-02 bug class (62-12 decision #1)', () => {
   // Retitled from "bug-class guard" (62-09): WR-06 (62-REVIEW.md) established that a
   // string-matching source guard can never GUARANTEE this bug class does not recur — every
@@ -2012,6 +2099,173 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
     );
     // Control: the shipped isZeroValue's own call, verbatim, must NOT trip this guard.
     expect(findCr07Offenders('const m = text.match(re);')).toEqual([]);
+  });
+});
+
+describe('strip-hidden.ts — 62-31 gap closure (WR-05, T-62-31-03): a stale doc-comment identifier fails the suite', () => {
+  // `62-VERIFICATION.md` named this drift as the DIRECT MECHANISM of CR-01: the one-sided
+  // `<style/>` exclusion was justified by a comment describing code 62-24 had already deleted.
+  // This guard makes that specific failure mode mechanical: every backtick-quoted,
+  // identifier-shaped token in strip-hidden.ts must resolve to something that still exists.
+  const SOURCE = readFileSync(
+    join(__dirname, '..', 'src', 'source', 'strip-hidden.ts'),
+    'utf8'
+  );
+
+  // Token selection rule, stated explicitly per the plan's own requirement: a backtick-quoted
+  // token matching `^[A-Za-z_$][A-Za-z0-9_$]*$` qualifies as a candidate identifier when it is
+  // EITHER (a) CONSTANT_CASE -- contains an underscore AND an uppercase letter -- OR (b)
+  // camelCase/PascalCase with an INTERNAL capital (an uppercase letter anywhere after the
+  // first character). All-lowercase single words (`style`, `div`, `display`) are excluded --
+  // they are HTML tag names and CSS properties in this file's prose, not code identifiers.
+  const BACKTICK_TOKEN_RE = /`([A-Za-z_$][A-Za-z0-9_$]*)`/g;
+  function isConstantCase(name: string): boolean {
+    return name.includes('_') && /[A-Z]/.test(name);
+  }
+  function isCamelOrPascalWithInternalCapital(name: string): boolean {
+    return /[A-Z]/.test(name.slice(1));
+  }
+  function isCandidateIdentifier(name: string): boolean {
+    return isConstantCase(name) || isCamelOrPascalWithInternalCapital(name);
+  }
+
+  function extractCandidates(source: string): string[] {
+    const found = new Set<string>();
+    let match: RegExpExecArray | null;
+    BACKTICK_TOKEN_RE.lastIndex = 0;
+    while ((match = BACKTICK_TOKEN_RE.exec(source))) {
+      const name = match[1]!;
+      if (isCandidateIdentifier(name)) found.add(name);
+    }
+    return Array.from(found).sort();
+  }
+
+  // Comments stripped exactly the way this file's OTHER source-text guard (above) already
+  // does, so a doc comment mentioning a real code pattern in prose cannot resolve itself.
+  function stripComments(source: string): string {
+    return source
+      .split('\n')
+      .filter(line => {
+        const t = line.trim();
+        return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*'));
+      })
+      .join('\n');
+  }
+
+  // Resolution category 1+2: a real definition (const/let/var/function/interface/type/class)
+  // or an imported binding, in the CODE (comments stripped).
+  function isDefinedOrImported(name: string, code: string): boolean {
+    const defRe = new RegExp(`\\b(?:const|let|var|function|interface|type|class)\\s+${name}\\b`);
+    if (defRe.test(code)) return true;
+    const importRe = new RegExp(`\\bimport\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`);
+    return importRe.test(code);
+  }
+
+  // Resolution category 3: the identifier is USED as real code somewhere -- a method/property
+  // access, a call, a type/generic position, or a parameter/property name -- not merely
+  // described in prose. This is what lets `indexOf`/`startIndex`/`endIndex`/`ReadonlyMap`/
+  // `styleText` resolve without a definition of their own in this file (a method call site,
+  // a `parser.startIndex` property read, a type annotation, and a parameter declaration,
+  // respectively) while a name that ONLY ever appears inside a comment stays unresolved.
+  function isUsedAsCode(name: string, code: string): boolean {
+    const usageRe = new RegExp(
+      `\\.${name}\\b` +
+        `|\\b${name}\\s*\\(` +
+        `|:\\s*(?:readonly\\s+)?${name}\\b` +
+        `|<\\s*${name}\\b` +
+        `|\\b${name}\\s*<` +
+        `|\\b${name}\\s*:` +
+        `|\\{[^}]*\\b${name}\\b[^}]*\\}\\s*[:=]`
+    );
+    return usageRe.test(code);
+  }
+
+  // Resolution category 4: a real css-tree tokenizer token-type name, verified against the
+  // ACTUAL imported `tokenTypes` object (`css-tree/tokenizer`) rather than a hand-copied list
+  // that could itself drift out of sync with a future css-tree upgrade.
+  const CSS_TREE_TOKEN_TYPE_NAMES = new Set(Object.keys(tokenTypes));
+
+  // Resolution category 5: a real Unicode binary-property name valid inside a `u`-flag
+  // regex's `\p{...}` escape, verified by actually constructing the regex rather than a
+  // hardcoded list of property names.
+  function isValidUnicodePropertyName(name: string): boolean {
+    try {
+      // eslint-disable-next-line no-new
+      new RegExp(`\\p{${name}}`, 'u');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Resolution category 6: a production identifier genuinely defined in ANOTHER file this
+  // module's doc comments legitimately cross-reference. Verified by grepping the actual
+  // target file for a real definition at test-run time -- not a blind trust list, so this
+  // category itself fails loudly if the cross-file identifier goes stale.
+  const EXTERNAL_IDENTIFIERS: Record<string, string> = {
+    normalizeGmailMessage: 'src/source/gmail-adapter.ts',
+    MAX_STRIP_INPUT_CODE_UNITS: 'src/source/gmail-adapter.ts',
+    extractBodyText: 'src/source/gmail-adapter.ts',
+    redactSecrets: 'src/source/redact.ts',
+  };
+  function isVerifiedExternalIdentifier(name: string): boolean {
+    const relPath = EXTERNAL_IDENTIFIERS[name];
+    if (relPath === undefined) return false;
+    const externalSource = readFileSync(join(__dirname, '..', relPath), 'utf8');
+    const defRe = new RegExp(`\\b(?:const|let|var|function|class)\\s+${name}\\b`);
+    return defRe.test(externalSource);
+  }
+
+  // Resolution category 7 (the deletion registry itself): a token this file's own text marks
+  // with a `(deleted, 62-NN)` marker naming the plan that removed it -- the file-level doc
+  // block's "Deletion registry" section is the canonical home for these, but the pattern is
+  // matched anywhere in the file so a per-function doc comment could carry one too. Name and
+  // marker share ONE backtick span (`` `NAME (deleted, 62-NN)` ``, not `` `NAME` (deleted...) ``)
+  // so that raw, non-backtick-quoted "NAME ... deleted, 62-" text also exists in the file for
+  // any coarser, independent grep-based check to find (e.g. this plan's own <verify> gate).
+  function isInDeletionRegistry(name: string, source: string): boolean {
+    const registryRe = new RegExp('`' + name + '\\s*\\(deleted, 62-\\d+\\)`');
+    return registryRe.test(source);
+  }
+
+  // Resolution category 8: a small, explicit set of JS/TS built-in vocabulary this file's
+  // comments legitimately reference as a general discipline (e.g. "reset lastIndex before a
+  // manual .exec() loop") even where this file's OWN code currently has no such call site.
+  // Kept deliberately tiny -- this is an escape hatch for genuine language vocabulary, not a
+  // way to launder a project-internal identifier out of the deletion-registry requirement.
+  const KNOWN_JS_BUILTIN_VOCABULARY = new Set(['lastIndex']);
+
+  function findOrphanedIdentifiers(source: string): string[] {
+    const code = stripComments(source);
+    const candidates = extractCandidates(source);
+    return candidates.filter(name => {
+      if (isDefinedOrImported(name, code)) return false;
+      if (isUsedAsCode(name, code)) return false;
+      if (CSS_TREE_TOKEN_TYPE_NAMES.has(name)) return false;
+      if (isValidUnicodePropertyName(name)) return false;
+      if (isVerifiedExternalIdentifier(name)) return false;
+      if (isInDeletionRegistry(name, source)) return false;
+      if (KNOWN_JS_BUILTIN_VOCABULARY.has(name)) return false;
+      return true;
+    });
+  }
+
+  it('every backtick-quoted, identifier-shaped token in strip-hidden.ts resolves to a definition, an import, a real code usage site, a verified external identifier, or a deletion-registry entry', () => {
+    expect(findOrphanedIdentifiers(SOURCE)).toEqual([]);
+  });
+
+  it('the guard above is not vacuous: an injected backticked reference to a plausibly-named, nonexistent identifier is flagged', () => {
+    const injected =
+      SOURCE +
+      '\n// a synthetic reference to `TotallyMadeUpHelperFunction`, which this file never defines\n';
+    expect(findOrphanedIdentifiers(injected)).toContain('TotallyMadeUpHelperFunction');
+  });
+
+  it('the guard above is not vacuous: a genuinely deleted identifier NOT registered with a (deleted, 62-NN) marker is flagged', () => {
+    const injected =
+      SOURCE +
+      '\n// `SomeRemovedRegexLiteral` used to do this, but was quietly deleted with no registry entry\n';
+    expect(findOrphanedIdentifiers(injected)).toContain('SomeRemovedRegexLiteral');
   });
 });
 
