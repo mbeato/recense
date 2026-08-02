@@ -1,24 +1,32 @@
 # Deferred Items — Phase 63
 
-## Pre-existing full-suite failures observed during 63-02 execution (out of scope)
+Out-of-scope discoveries found during plan execution, not fixed (per scope-boundary rule).
 
-`npx vitest run` (full suite) shows 23 pre-existing failures across 7 subprocess-spawning CLI
-test files, all `expect(result.status).toBe(0)` assertions against a `spawnSync`/`execSync`
-child process exiting 1 instead of 0:
+## Plan 01 (2026-08-02)
 
-- `tests/adapter-capture.test.ts` (6 tests)
-- `tests/adapter-inject.test.ts` (5 tests)
-- `tests/episodic-dryrun-gate.test.ts` (1 test)
-- `tests/eval-harness-smoke.test.ts` (3 tests)
-- `tests/locomo-harness.test.ts` (2 tests)
-- `tests/locomo-latency-curve.test.ts` (1 test)
-- `tests/locomo-scorer.test.ts` (3 tests)
+**23 pre-existing test failures across 7 files** — unrelated to `src/model/claim-extractor.ts` /
+`tests/claim-extractor-intent.test.ts` (the only files this plan touched). Root cause: these
+tests spawn compiled CLI binaries from `dist/` (e.g. `tests/adapter-capture.test.ts` spawns
+`dist/turn-capture-cli.js` via `spawnSync`), and `dist/` does not exist in this fresh worktree
+(no `npm run build` has run). Confirmed unrelated by inspecting the spawn target and the
+absence of `dist/`.
 
-None of these files import `src/source/extraction-prompts.ts` or `src/model/claim-extractor.ts`
-(the only files 63-02 touches), and none are in 63-02's `files_modified`. Failure signature
-(child process exit 1 uniformly) is consistent with a missing/stale build artifact or
-environment setup gap in this specific worktree, not a regression introduced by this plan.
-The three plan-scoped test files (`tests/extraction-prompts-intent.test.ts`,
+Files affected: `tests/adapter-capture.test.ts`, `tests/adapter-inject.test.ts`,
+`tests/episodic-dryrun-gate.test.ts`, `tests/eval-harness-smoke.test.ts`,
+`tests/locomo-harness.test.ts`, `tests/locomo-latency-curve.test.ts`, `tests/locomo-scorer.test.ts`.
+
+Not fixed — out of scope for this plan (no `dist/` build step is part of 63-01's task list).
+Both plan-scoped test files (`tests/claim-extractor-intent.test.ts`,
+`tests/claim-extractor-temporal.test.ts`) pass; full-suite pass count otherwise unaffected
+(3352 passed / 6 expected-fail / 9 skipped besides the 23 pre-existing dist-dependent failures).
+
+## Plan 02 (2026-08-02) — same failure set, observed independently
+
+`npx vitest run` (full suite) in the 63-02 worktree showed the same 23 pre-existing failures
+across the same 7 subprocess-spawning CLI test files, all `expect(result.status).toBe(0)`
+assertions against a `spawnSync`/`execSync` child process exiting 1 instead of 0. None of these
+files import `src/source/extraction-prompts.ts` or `src/model/claim-extractor.ts`, and none are
+in 63-02's `files_modified`. Consistent with Plan 01's root cause: fresh worktrees have no
+`dist/` build. The three 63-02 plan-scoped test files (`tests/extraction-prompts-intent.test.ts`,
 `tests/extraction-prompts-temporal.test.ts`, `tests/no-ats-domain-table.test.ts`) all pass
-(27/27), and `npm run typecheck` is clean. Out of scope per the executor scope-boundary rule
-— not fixed here.
+(27/27), and `npm run typecheck` is clean. Out of scope — not fixed.

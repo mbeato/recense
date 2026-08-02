@@ -55,6 +55,61 @@ export function toActionType(raw: unknown): ActionType {
   return 'other';
 }
 
+// ---------------------------------------------------------------------------
+// IntentStatus / IntentConfidence — closed enums, drop-on-mismatch (D-04/D-05/D-06, Phase 63)
+// ---------------------------------------------------------------------------
+
+/**
+ * Closed vocabulary of job-application status states (CLASSIFY-04 scoped vocabulary, D-04).
+ * Exactly these four members — no 'other', no 'unknown', no 'ghosted'. This is the single
+ * place the vocabulary is defined; CLAIM_ARRAY_SCHEMA's enum is built from INTENT_STATUSES
+ * below, never re-typed as a literal array (parity is what makes 63-05's prompt/schema/parser
+ * test meaningful).
+ */
+export type IntentStatus = 'applied' | 'interviewing' | 'rejected' | 'offer';
+
+/** Canonical set of valid IntentStatus values (used for O(1) membership test in toIntentStatus). */
+export const INTENT_STATUSES: ReadonlySet<IntentStatus> = new Set([
+  'applied', 'interviewing', 'rejected', 'offer',
+]);
+
+/** Closed vocabulary of coarse categorical confidence levels (D-06 — never raw numeric). */
+export type IntentConfidence = 'high' | 'medium' | 'low';
+
+/** Canonical set of valid IntentConfidence values. */
+export const INTENT_CONFIDENCES: ReadonlySet<IntentConfidence> = new Set([
+  'high', 'medium', 'low',
+]);
+
+/**
+ * Coerce an unknown value to IntentStatus.
+ *
+ * D-05 deliberate inversion of toActionType's coerce-to-'other' contract: absence over
+ * guess. Returns the value unchanged only when it is a string member of INTENT_STATUSES;
+ * otherwise returns undefined (never a fallback value). A wrong status reaching Phase 64/65
+ * as if it were a real classification is worse than no classification at all — do NOT
+ * "fix" this into symmetry with toActionType.
+ */
+export function toIntentStatus(raw: unknown): IntentStatus | undefined {
+  if (typeof raw === 'string' && INTENT_STATUSES.has(raw as IntentStatus)) {
+    return raw as IntentStatus;
+  }
+  return undefined;
+}
+
+/**
+ * Coerce an unknown value to IntentConfidence.
+ *
+ * Same drop-on-mismatch shape as toIntentStatus (D-05). Numeric input (e.g. 0.87) returns
+ * undefined — D-06 forbids any raw numeric confidence anywhere in the schema or output.
+ */
+export function toIntentConfidence(raw: unknown): IntentConfidence | undefined {
+  if (typeof raw === 'string' && INTENT_CONFIDENCES.has(raw as IntentConfidence)) {
+    return raw as IntentConfidence;
+  }
+  return undefined;
+}
+
 /**
  * A single extracted knowledge unit from a document.
  * links = wikilink target values found in the same claim's context (D-05).
@@ -78,6 +133,19 @@ export type ExtractedClaim = {
   due_at?: string;
   /** Closed enum for surfacing; present only when due_at is set (D-02/D-03). */
   action_type?: ActionType;
+  /**
+   * Phase 63 (CLASSIFY-01/04, D-04/D-05): job-application status implied by a gmail episode.
+   * All-or-nothing presence with intent_entity/intent_confidence — the three appear together
+   * or not at all (D-05). Absence means "not status-relevant", the overwhelmingly common case.
+   */
+  intent_status?: IntentStatus;
+  /**
+   * Free-text company/role descriptor as the source email states it (D-04). Resolution to a
+   * graph node is Phase 64's job — this field is NEVER matched against the graph in Phase 63.
+   */
+  intent_entity?: string;
+  /** Coarse categorical confidence for the intent classification (D-04/D-06 — never numeric). */
+  intent_confidence?: IntentConfidence;
 };
 
 /** Narrow extraction seam — the only contract the seeder depends on. */
@@ -215,6 +283,11 @@ export const CLAIM_ARRAY_SCHEMA: object = {
         type: 'string',
         enum: ['deadline', 'flight', 'appointment', 'receipt', 'payment', 'meeting', 'other'],
       },
+      // Phase 63 additions (CLASSIFY-01/04, D-04): present only when the gmail classification
+      // prompt is active. Optional in required[] — omitted by baseline prompts (backward-compat).
+      intent_status: { type: 'string', enum: [...INTENT_STATUSES] },
+      intent_entity: { type: 'string' },
+      intent_confidence: { type: 'string', enum: [...INTENT_CONFIDENCES] },
     },
     required: ['type', 'value'],
   },
@@ -295,7 +368,34 @@ export function parseClaimsFromArray(raw: unknown[]): ExtractedClaim[] {
       typeof rawDueAt === 'string' && rawDueAt.trim() ? rawDueAt.trim() : undefined;
     const action_type = due_at !== undefined ? toActionType(obj['action_type']) : undefined;
 
-    return [{ type: type as NodeType, value: value.trim(), links, due_at, action_type }];
+    // Phase 63 intent gate (D-05): all-or-nothing, cross-field-coupled — the opposite shape
+    // of the TEMP-02 gate above, where each field is computed independently. If ANY of the
+    // three is invalid/missing, ALL THREE are dropped. This prevents a partially-classified
+    // claim (e.g. a status with no entity) from reaching Phase 64/65 as if it were a complete
+    // signal, which would corrupt belief-gated status drift on a single ambiguous email.
+    let intent_status = toIntentStatus(obj['intent_status']);
+    let intent_confidence = toIntentConfidence(obj['intent_confidence']);
+    const rawIntentEntity = obj['intent_entity'];
+    let intent_entity =
+      typeof rawIntentEntity === 'string' && rawIntentEntity.trim()
+        ? rawIntentEntity.trim()
+        : undefined;
+    if (intent_status === undefined || intent_entity === undefined || intent_confidence === undefined) {
+      intent_status = undefined;
+      intent_entity = undefined;
+      intent_confidence = undefined;
+    }
+
+    return [{
+      type: type as NodeType,
+      value: value.trim(),
+      links,
+      due_at,
+      action_type,
+      intent_status,
+      intent_entity,
+      intent_confidence,
+    }];
   });
 }
 
