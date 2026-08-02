@@ -263,7 +263,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
 | 62. Multi-Inbox Email Ingest Hardening | v10.0 | 31/31 | Complete   | 2026-08-02 |
-| 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
+| 63. Offline Intent Classification | v10.0 | 3/6 | In Progress|  |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
@@ -956,9 +956,9 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 63-01-PLAN.md — ExtractedClaim intent contract: 4-state/3-level closed vocabularies, drop-on-mismatch coercers, JSON schema, all-or-nothing parse gate (wave 1)
-- [ ] 63-02-PLAN.md — gmail intent-classification prompt block shared across both gmail prompt variants + CLASSIFY-04 no-fingerprint-table structural guard (wave 1)
-- [ ] 63-03-PLAN.md — CLASSIFY-03 online LLM-free regression sentinel across SessionStart inject, retrieval, and GET /v1/surface (wave 1)
+- [x] 63-01-PLAN.md — ExtractedClaim intent contract: 4-state/3-level closed vocabularies, drop-on-mismatch coercers, JSON schema, all-or-nothing parse gate (wave 1)
+- [x] 63-02-PLAN.md — gmail intent-classification prompt block shared across both gmail prompt variants + CLASSIFY-04 no-fingerprint-table structural guard (wave 1)
+- [x] 63-03-PLAN.md — CLASSIFY-03 online LLM-free regression sentinel across SessionStart inject, retrieval, and GET /v1/surface (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
