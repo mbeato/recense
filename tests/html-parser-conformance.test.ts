@@ -369,6 +369,17 @@ describe('htmlparser2@10.0.0 — totality (Block 3): must never throw and must a
   });
 
   it('parsing always terminates (bounded wall-clock per input, no pathological hang), over the same >= 20000 seeded hostile inputs', () => {
+    // WR-07 (62-REVIEW.md): calibration-relative, not absolute. An absolute wall-clock
+    // threshold is the same construction as the already-known-flaky WR-02 growth-ratio
+    // assertion: DOCUMENTED budget is 5000 ms (this executor measured ~20-26 ms locally,
+    // >190x headroom, but a loaded shared CI runner (ubuntu-22.04 + macos-15 matrix) can
+    // regularly erode that margin). Reference: 20000 parses of the same benign body
+    // (`<p>hello world</p>`) through the same `Parser` entry point, in the same test
+    // invocation, so both sides share whatever JIT/GC/runner variance is currently in effect.
+    // Locally measured ratio: ~3.0-3.3x (62-30-SUMMARY.md, 5 trials) — a 15x bound carries
+    // ~4.5x headroom over the observed max while staying within one order of magnitude of it;
+    // a real pathological hang would blow past 15x by orders of magnitude (the hostile
+    // generator would need to stop terminating, not merely run 3x slower).
     const rand = makeLcg(0xc0ffee00);
     const N = 20000;
     const start = performance.now();
@@ -379,8 +390,15 @@ describe('htmlparser2@10.0.0 — totality (Block 3): must never throw and must a
       parser.end();
     }
     const elapsed = performance.now() - start;
-    // Each input is small (a few hundred bytes at most); 20000 of them completing well
-    // under a second rules out per-input pathological blowup, not just a global timeout race.
-    expect(elapsed).toBeLessThan(5000);
+
+    const referenceStart = performance.now();
+    for (let i = 0; i < N; i++) {
+      const parser = new Parser({}, { decodeEntities: true });
+      parser.write('<p>hello world</p>');
+      parser.end();
+    }
+    const referenceElapsed = performance.now() - referenceStart;
+
+    expect(elapsed).toBeLessThanOrEqual(15 * Math.max(referenceElapsed, 1));
   });
 });

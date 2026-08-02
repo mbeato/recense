@@ -1644,6 +1644,53 @@ describe('stripHiddenContent — WR-02: the 62-VERIFICATION.md adversarial shape
   });
 }, 20000);
 
+describe('stripHiddenContent — CR-02: stage 6 ANY_TAG_RE sweep must not pay quadratic cost on a post-deletion stray-< run', () => {
+  // CR-02 gap closure (62-30, 62-REVIEW.md/62-VERIFICATION.md pass 5). `ANY_TAG_RE`'s own
+  // `ATTRS` fragment admits an unquoted `<` (62-12's own widening), so a run of `<` with no
+  // LATER `>` fails the scan from every start position after consuming the whole remaining
+  // tail — O(n^2). Deleting a single element or comment (stage 3/4/5's own reduction) is what
+  // EXPOSES that run: stage 0's Bound A runs before that deletion and cannot have seen it.
+  // Two removable-construct triggers, both closed by re-hoisting an identical truncation
+  // immediately before the stage-6 sweep (mirroring stage 0's Bound A exactly). RED (before
+  // this fix, at commit 3bb5fc2): 2.5 / 20.0 / 262.1 / 4164.4 ms at n = 1k/4k/16k/64k for T1
+  // (clean 16x-per-4x curve), 4166.6 ms for T2 at n=64000. See 62-30-SUMMARY.md for the full
+  // RED/GREEN growth tables including both executed cap rows.
+  const t1 = (n: number) => '<'.repeat(n) + '<div style="display:none">Y</div>';
+  const t2 = (n: number) => '<'.repeat(n) + '<!--c-->';
+
+  it('T1 (element trigger) at n=1000 returns the empty string', () => {
+    expect(stripHiddenContent(t1(1000))).toBe('');
+  });
+
+  it('T2 (comment trigger) at n=1000 returns the empty string', () => {
+    expect(stripHiddenContent(t2(1000))).toBe('');
+  });
+
+  it('T1 growth from 16k to 64k (4x size) stays linear (t64k/max(t16k,1) <= 8) — the pre-fix quadratic signature was ~16x', () => {
+    const start16 = performance.now();
+    stripHiddenContent(t1(16000));
+    const t16 = performance.now() - start16;
+
+    const start64 = performance.now();
+    stripHiddenContent(t1(64000));
+    const t64 = performance.now() - start64;
+
+    expect(t64 / Math.max(t16, 1)).toBeLessThanOrEqual(8);
+  });
+
+  it('T2 growth from 16k to 64k (4x size) stays linear (t64k/max(t16k,1) <= 8) — the pre-fix quadratic signature was ~16x', () => {
+    const start16 = performance.now();
+    stripHiddenContent(t2(16000));
+    const t16 = performance.now() - start16;
+
+    const start64 = performance.now();
+    stripHiddenContent(t2(64000));
+    const t64 = performance.now() - start64;
+
+    expect(t64 / Math.max(t16, 1)).toBeLessThanOrEqual(8);
+  });
+}, 20000);
+
 describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (totality, idempotence, no stray <, hidden-content leakage)', () => {
   // Seeded LCG (Numerical Recipes constants) — NOT Math.random — so any failure is
   // reproducible purely from the printed iteration index. This is a generated-input LOCK on

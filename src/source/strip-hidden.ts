@@ -292,10 +292,45 @@
  * comment for why a post-hoc numeric correction was rejected (it cannot resurrect a real
  * element htmlparser2 already decided was RAWTEXT text and never tokenized as a tag at all).
  *
- * Stage 0's hoisted stray-`<` truncation and stage 6's `ANY_TAG_RE` leftover-tag sweep remain
- * hand-rolled regex scanners after this plan — an ACCEPTED residual, not an oversight (no
- * total-coverage claim is made here): both run on a string later stages have already reduced,
- * and neither participates in the hiding decision itself.
+ * 62-30 gap closure (CR-02, 62-REVIEW.md/62-VERIFICATION.md pass 5) — the residual immediately
+ * below used to read "both run on a string later stages have already reduced." That premise is
+ * INVERTED by a real repro: `ANY_TAG_RE` (stage 6's sweep) is built from the shared `ATTRS`
+ * fragment, which PERMITS an unquoted `<` (62-12's own widening) — so a run of `<` with no
+ * LATER `>` fails the scan from every start position after consuming the whole remaining tail,
+ * O(n^2). Stage 6's own stray-`<` truncation ran AFTER that sweep, not before it; stage 0's
+ * Bound A (62-14) runs before stages 2-5 and could not have seen a `<`-run those stages'
+ * deletion exposes. Deleting a single element or comment is enough to strip every `>` from the
+ * document's tail — the reduction stages 3/4/5 perform is exactly what BUILDS the pathological
+ * input, not a precondition that makes stage 6 safe. Measured at HEAD before this closure: 2.5 /
+ * 20.0 / 262.1 / 4164.4 ms at n = 1k/4k/16k/64k code units (the clean 16x-per-4x curve that is
+ * this quadratic's signature), 4166.6 ms for the equally-good comment-only trigger
+ * (`'<'.repeat(n) + '<!--c-->'`), and 4080 ms end-to-end through `normalizeGmailMessage` at a
+ * 64 KB body — 4x over this module's own 1000 ms budget at 1/16 of the permitted 1 MiB cap; the
+ * sender chooses both the bytes and the size.
+ *
+ * Fix: the stray-`<` truncation now ALSO runs immediately before the stage-6 sweep, mirroring
+ * stage 0's Bound A exactly (`lastIndexOf('>')`, then `indexOf('<', last + 1)`, then slice when
+ * found) — see stage 6's own body below. Equivalence, proven not assumed: everything from the
+ * hoisted truncation point onward contains no `>`, so no complete tag can exist there and
+ * `ANY_TAG_RE` can never match inside it; the pre-existing post-sweep truncation already deletes
+ * from the first `<` REMAINING after the sweep, an index <= the hoisted one, so the hoisted
+ * deletion is a strict subset of what that fail-safe already removed — same output, minus the
+ * failing-scan region the sweep would otherwise pay for. A 200+-input equivalence corpus (see
+ * `62-30-SUMMARY.md`) diffs byte-identical before and after this change. New bound: every
+ * remaining `<` has a `>` after it, so every scan from a live start position succeeds and
+ * advances past its `>` — the sweep is linear in aggregate, like every other stage in this file.
+ *
+ * The lesson, stated once because this is the third time the same failure mode has shipped in
+ * this file (T-62-43's cross-stage boundary-disagreement class, then T62-91's shape-set-vs-
+ * worst-case gap, now this): a cost bound enumerated over a shape set is a claim about the shape
+ * set; only a bound argued from the algorithm's worst case is a claim about the cap
+ * (`gmail-adapter.ts`'s `MAX_STRIP_INPUT_CODE_UNITS` doc block, section 3, restates this for the
+ * cap side).
+ *
+ * Stage 0's hoisted stray-`<` truncation and stage 6's now-DUPLICATED stray-`<` truncation
+ * (immediately before AND after the sweep) remain hand-rolled regex scanners after this plan —
+ * an ACCEPTED residual on the SCANNER MECHANISM, not on its cost: both are bounded linear, and
+ * neither participates in the hiding decision itself.
  *
  * Stage order (load-bearing — see the block comment above each stage):
  *  0. Hoisted stray-`<` fail-safe truncation (62-14, Bound A) — runs immediately after stage
@@ -1752,9 +1787,24 @@ export function stripHiddenContent(text: string): string {
   );
   s = applyRemovalRanges(s, mergeCommentAndElementRanges(scan.comments, elementRanges));
 
-  // Stage 6: remove every remaining tag. An unterminated trailing `<` (no closing `>`
-  // anywhere after it) is fail-safe-truncated to end of string rather than kept as
-  // ambiguous, possibly-markup text.
+  // Stage 6: remove every remaining tag. CR-02 gap closure (62-30): stages 3/4/5's own
+  // deletion just above can expose a NEW stray `<` with no later `>` — deleting a single
+  // element or comment is enough to strip every `>` from the tail. `ANY_TAG_RE` is built
+  // from the shared `ATTRS` fragment, which PERMITS an unquoted `<`, so a scan starting
+  // inside such a run fails from every start position after consuming the whole remaining
+  // tail (O(n^2)). Re-hoisting stage 0's Bound A truncation to run immediately BEFORE the
+  // sweep — on THIS, post-deletion string — removes that failing-scan region before
+  // `.replace()` pays for it; see the file-level "62-30 gap closure" doc block above for the
+  // full equivalence argument and the measured growth curve this closes.
+  const lastCloseAngleBeforeSweep = s.lastIndexOf('>');
+  const strayAngleBracketBeforeSweep = s.indexOf('<', lastCloseAngleBeforeSweep + 1);
+  if (strayAngleBracketBeforeSweep !== -1) s = s.slice(0, strayAngleBracketBeforeSweep);
+
+  // An unterminated trailing `<` (no closing `>` anywhere after it) is fail-safe-truncated
+  // to end of string rather than kept as ambiguous, possibly-markup text. This second
+  // truncation still guards a `<` that sits BEFORE the last `>` in the pre-sweep string
+  // (matching no complete tag) — the hoisted truncation above is an ADDITION, not a
+  // replacement, exactly as stage 0's Bound A is to this one.
   s = s.replace(ANY_TAG_RE, '');
   const strayAngleBracket = s.indexOf('<');
   if (strayAngleBracket !== -1) s = s.slice(0, strayAngleBracket);
