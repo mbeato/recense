@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 25/25 | Complete   | 2026-08-01 |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 27/31 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -916,8 +916,8 @@ Plans:
 
 **Wave 20** *(gap closure round 7 — from `62-VERIFICATION.md` CR-01/CR-02/CR-03/WR-03 and `62-REVIEW.md` WR-01..WR-10; both run in parallel, no file overlap: 62-26 owns `package.json`, 62-27 owns the CSS differential + CI + requirements record)*
 
-- [ ] 62-26-PLAN.md — Install `parse5@7.3.0` as an exact-pinned devDependency behind a blocking-human legitimacy gate, so an HTML ground truth can be computed by a parser production does not use; no test and no production code (WR-03 prerequisite, EMAIL-03, wave 20)
-- [ ] 62-27-PLAN.md — Causal leak attribution (a predicate must prove its mechanism by counterfactual, not co-occur with it), oracle preconditions moved out of the `it.fails` bodies, `npm run typecheck` wired into CI, and the inverted EMAIL requirement record corrected (WR-02/WR-04/WR-06 + doc defect, EMAIL-03, wave 20)
+- [x] 62-26-PLAN.md — Install `parse5@7.3.0` as an exact-pinned devDependency behind a blocking-human legitimacy gate, so an HTML ground truth can be computed by a parser production does not use; no test and no production code (WR-03 prerequisite, EMAIL-03, wave 20)
+- [x] 62-27-PLAN.md — Causal leak attribution (a predicate must prove its mechanism by counterfactual, not co-occur with it), oracle preconditions moved out of the `it.fails` bodies, `npm run typecheck` wired into CI, and the inverted EMAIL requirement record corrected (WR-02/WR-04/WR-06 + doc defect, EMAIL-03, wave 20)
 
 **Wave 21** *(blocked on Wave 20 — the structural fix, sequenced BEFORE every point fix so its non-vacuousness is demonstrated rather than argued)*
 
