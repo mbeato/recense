@@ -951,7 +951,15 @@ Plans:
   3. SessionStart inject, retrieval, `/v1/surface`, and the new `/v1/proposals` route all remain LLM-free, confirmed by an automated regression test that fails if any online path calls the model provider — CLASSIFY-03
   4. The classified status vocabulary stays limited to the four scoped states (applied/interviewing/rejected/offer), and no sender-domain fingerprint table exists anywhere in config or code — sender domain is at most a weak prior the model reads, never a routing table — CLASSIFY-04
 
-**Plans**: TBD
+**Plans**: 6 plans (3 waves)
+
+Plans:
+- [ ] 63-01-PLAN.md — ExtractedClaim intent contract: 4-state/3-level closed vocabularies, drop-on-mismatch coercers, JSON schema, all-or-nothing parse gate (wave 1)
+- [ ] 63-02-PLAN.md — gmail intent-classification prompt block shared across both gmail prompt variants + CLASSIFY-04 no-fingerprint-table structural guard (wave 1)
+- [ ] 63-03-PLAN.md — CLASSIFY-03 online LLM-free regression sentinel across SessionStart inject, retrieval, and GET /v1/surface (wave 1)
+- [ ] 63-04-PLAN.md — consolidator threading through ClaimDecision/PendingJudge at all four decision sites + hitl/inferred/echo sentinel + one-generate-call sentinel (wave 2)
+- [ ] 63-06-PLAN.md — honest input-token delta measurement for the enlarged prompt prefix, with founder checkpoint (wave 2)
+- [ ] 63-05-PLAN.md — cross-stage conservation: vocabulary parity prompt/schema/parser/decision + zero-DB-delta inertness proof (wave 3)
 
 ### Phase 64: Entity Resolution Hardening
 
