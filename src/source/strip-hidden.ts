@@ -220,13 +220,14 @@
 
 // `src/` may import ONLY `tokenize`/`tokenTypes` from the `/tokenizer` subpath (62-16's
 // `src/types/css-tree-tokenizer.d.ts` declares nothing else reachable from here) — never the
-// bare `css-tree` package, never its parser/lexer/walker/generator. See the file-level "62-17
-// gap closure" section above for the adopted-vs-not-adopted surface and why.
+// bare `css-tree` package, never its parser/lexer/walker/generator. `62-17-SUMMARY.md` records
+// the adopted-vs-not-adopted surface and why; `tests/src-import-boundary.test.ts` enforces it.
 import { tokenize, tokenTypes } from 'css-tree/tokenizer';
 // `htmlparser2` (62-21, exact-pinned `10.0.0`) is the single conformant HTML tokenizer this
-// module now shares between stage 2 (<style> location) and stage 3 (comment location) — see
-// the "62-22 gap closure" section below for why, and `62-21-SUMMARY.md` for the parser's exact
-// event/offset semantics this file's offset arithmetic is built against.
+// module now shares between stage 2 (<style> location) and stage 3 (comment location) —
+// `62-22-SUMMARY.md` records why one shared scan replaced two independent walks, and
+// `62-21-SUMMARY.md` the parser's exact event/offset semantics this file's offset arithmetic
+// is built against.
 import { Parser } from 'htmlparser2';
 
 // ---------------------------------------------------------------------------
@@ -1262,7 +1263,7 @@ function isZeroValue(text: string, re: RegExp): boolean {
  *    whose text a browser escape-decodes before comparison (CSS Syntax §4.3.7).
  *  - every other token -> emit `source.slice(start, end)` verbatim, clamped with
  *    `Math.min(offset, source.length)` per the characterized css-tree end-offset overrun this
- *    module already accounts for elsewhere (see the file-level "62-17 gap closure" section).
+ *    module already accounts for elsewhere (characterized in `62-17-SUMMARY.md`).
  */
 function hasHidingSignatureFromTokens(source: string): boolean {
   let text = '';
@@ -1586,8 +1587,11 @@ export function stripHiddenContent(text: string): string {
   // inside such a run fails from every start position after consuming the whole remaining
   // tail (O(n^2)). Re-hoisting stage 0's Bound A truncation to run immediately BEFORE the
   // sweep — on THIS, post-deletion string — removes that failing-scan region before
-  // `.replace()` pays for it; see the file-level "62-30 gap closure" doc block above for the
-  // full equivalence argument and the measured growth curve this closes.
+  // `.replace()` pays for it. The full equivalence argument (200+-input corpus, byte-identical
+  // output) and the measured growth curve live in `62-30-SUMMARY.md`; the file-level doc block
+  // above carries only the one-line changelog entry. Cite documents, not doc-block sections —
+  // a section name is a cross-reference the identifier guard below cannot resolve, which is
+  // how this comment came to point at a section 62-31 had already collapsed.
   const lastCloseAngleBeforeSweep = s.lastIndexOf('>');
   const strayAngleBracketBeforeSweep = s.indexOf('<', lastCloseAngleBeforeSweep + 1);
   if (strayAngleBracketBeforeSweep !== -1) s = s.slice(0, strayAngleBracketBeforeSweep);
