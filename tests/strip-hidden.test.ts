@@ -10,7 +10,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
-import { stripHiddenContent, stripInvisibleCodepoints, scanHtml } from '../src/source/strip-hidden';
+import {
+  stripHiddenContent,
+  stripInvisibleCodepoints,
+  scanHtml,
+  NON_CONTENT_TAGS,
+  NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS,
+} from '../src/source/strip-hidden';
 import { Parser } from 'htmlparser2';
 import { liveHidingSelectors } from './support/css-liveness-oracle';
 
@@ -908,9 +914,14 @@ describe('scanHtml — one htmlparser2 pass yielding comment ranges, style-eleme
     expect(html.slice(el.contentStart, el.contentEnd)).toBe('.legal{display:none}');
   });
 
-  it('a self-closing <style/> is excluded from styleElements (WR-03 status quo preserved, out of this plan\'s scope)', () => {
-    const scan = scanHtml('<style/>after');
-    expect(scan.styleElements).toHaveLength(0);
+  it('WR-03 CLOSED (62-29): a self-closing <style/> start tag opens normally and IS included in styleElements', () => {
+    const scan = scanHtml('<style/>.legal{display:none}</style>after');
+    expect(scan.styleElements).toHaveLength(1);
+    const el = scan.styleElements[0]!;
+    expect(scan.styleElements[0]!.contentStart).toBeGreaterThan(0);
+    expect('<style/>.legal{display:none}</style>after'.slice(el.contentStart, el.contentEnd)).toBe(
+      '.legal{display:none}'
+    );
   });
 
   it('startTags carries lowercased name, decoded attrs (CR-07 shape) and the three offsets — class="leg&#97;l" decodes to "legal"', () => {
@@ -1021,12 +1032,18 @@ describe('stripHiddenContent — 62-22 gap closure: CR-10 locked shapes (a <styl
     // constructions across one stripHiddenContent call is a direct, non-invasive proxy for
     // "stage 2 and stage 3 read the SAME scan object" -- two scans would construct two
     // Parsers; zero would mean neither stage is wired to scanHtml at all.
+    // WR-08 (62-REVIEW.md): the spy is restored in a `finally` so a failed expectation
+    // above cannot leave `Parser.prototype.write` patched for every subsequent test in
+    // this file, matching the T-62-22-02 test's own discipline immediately above.
     const spy = vi.spyOn(Parser.prototype, 'write');
-    const callsBefore = spy.mock.calls.length;
-    stripHiddenContent('<!--a--><style>.legal{display:none}</style>ok<span class="legal">X</span>');
-    const callsAfter = spy.mock.calls.length;
-    expect(callsAfter - callsBefore).toBe(1);
-    spy.mockRestore();
+    try {
+      const callsBefore = spy.mock.calls.length;
+      stripHiddenContent('<!--a--><style>.legal{display:none}</style>ok<span class="legal">X</span>');
+      const callsAfter = spy.mock.calls.length;
+      expect(callsAfter - callsBefore).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -1840,7 +1857,15 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
   // stage 6's leftover-tag sweep (`ANY_TAG_RE`) still needs the shared `ATTRS` fragment.
   // This is the guard's floor, not a weakening of it: fewer independently-maintained
   // ATTRS-built literals means fewer opinions that could disagree in the first place.
-  it('the quote-aware alternation is defined exactly once, and used by exactly one compile-once RegExp construction', () => {
+  //
+  // 62-29: the `new RegExp(` line count rises from 1 to 2 — a SECOND, genuinely
+  // independent dynamic construction, `RAWTEXT_CLOSE_SLASH_RE`, built from
+  // `RAWTEXT_ELEMENT_NAMES` (CR-03) rather than restating the eight names in a regex
+  // literal. This is unrelated to the ATTRS-built alternation this test's other two
+  // assertions track (`attrsInterpolationLines` stays at 1 — `RAWTEXT_CLOSE_SLASH_RE` is
+  // not built from `ATTRS`) — the SAME "single source, compile-once" discipline applied a
+  // second time to a different shared array, not a weakening of the ATTRS guard.
+  it('the quote-aware alternation is defined exactly once, and every dynamically-constructed RegExp is a compile-once module-scope const', () => {
     const alternationPrefix = '(?:"[^"]*"|\'[^\']*\'|';
     const alternationCount = COMMENT_STRIPPED_SOURCE.split(alternationPrefix).length - 1;
     expect(alternationCount).toBe(1);
@@ -1849,7 +1874,7 @@ describe('strip-hidden.ts — residual source-text checks for the CR-01/BL-01/BL
     expect(attrsInterpolationLines.length).toBe(1);
 
     const newRegExpLines = SOURCE.split('\n').filter(line => line.includes('new RegExp('));
-    expect(newRegExpLines.length).toBe(1);
+    expect(newRegExpLines.length).toBe(2);
     for (const line of newRegExpLines) {
       expect(line.trimStart().startsWith('const ')).toBe(true);
     }
@@ -2096,4 +2121,131 @@ describe('stripHiddenContent — 62-19 Task 3 divergence triage: REG-01 (locked,
       expect(out).toContain('PAYLOAD'); // FAILS today: production strips it (over-strip, safe direction)
     }
   );
+});
+
+describe('stripHiddenContent — 62-29 gap closure: exact-output leak locks (CR-01/CR-03/WR-01)', () => {
+  // Thirteen exact-output locks: 4 CR-01 shapes + 1 control, 3 CR-03 names, 2 rendered
+  // controls, 2 WR-01 shapes, 1 `head` control — every payload this plan closed, asserting
+  // the EXACT expected output string (never `not.toContain`), quoted verbatim beside its
+  // recorded RED counterpart in 62-29-SUMMARY.md.
+
+  it('CR-01 a: <style/>.legal{display:none}</style>ok<span class="legal">PAYLOAD</span> -> "ok"', () => {
+    const out = stripHiddenContent(
+      '<style/>.legal{display:none}</style>ok<span class="legal">PAYLOAD</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('CR-01 b: <style />.legal{display:none}</style>ok<span class="legal">PAYLOAD</span> -> "ok"', () => {
+    const out = stripHiddenContent(
+      '<style />.legal{display:none}</style>ok<span class="legal">PAYLOAD</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('CR-01 c: <STYLE/>.legal{display:none}</STYLE>ok<span class="legal">PAYLOAD</span> -> "ok" (case-insensitive)', () => {
+    const out = stripHiddenContent(
+      '<STYLE/>.legal{display:none}</STYLE>ok<span class="legal">PAYLOAD</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('CR-01 d: <style type=a/>.legal{display:none}</style>ok<span class="legal">PAYLOAD</span> -> "ok" (any unquoted attribute ending "/")', () => {
+    const out = stripHiddenContent(
+      '<style type=a/>.legal{display:none}</style>ok<span class="legal">PAYLOAD</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('CR-01 control: <style>.legal{display:none}</style>ok<span class="legal">PAYLOAD</span> -> "ok" (unchanged)', () => {
+    const out = stripHiddenContent(
+      '<style>.legal{display:none}</style>ok<span class="legal">PAYLOAD</span>'
+    );
+    expect(out).toBe('ok');
+  });
+
+  it('CR-03 a: <iframe>INJECT_U1</iframe>ok -> "ok"', () => {
+    expect(stripHiddenContent('<iframe>INJECT_U1</iframe>ok')).toBe('ok');
+  });
+
+  it('CR-03 b: <noembed>INJECT_U2</noembed>ok -> "ok"', () => {
+    expect(stripHiddenContent('<noembed>INJECT_U2</noembed>ok')).toBe('ok');
+  });
+
+  it('CR-03 c: <noframes>INJECT_U3</noframes>ok -> "ok"', () => {
+    expect(stripHiddenContent('<noframes>INJECT_U3</noframes>ok')).toBe('ok');
+  });
+
+  it('rendered control 1: <xmp>KEEP_X</xmp>ok -> "KEEP_Xok" (xmp IS rendered, must not be swept up by the CR-03 fix)', () => {
+    expect(stripHiddenContent('<xmp>KEEP_X</xmp>ok')).toBe('KEEP_Xok');
+  });
+
+  it('rendered control 2: <textarea>KEEP_T</textarea>ok -> "KEEP_Tok" (textarea IS rendered)', () => {
+    expect(stripHiddenContent('<textarea>KEEP_T</textarea>ok')).toBe('KEEP_Tok');
+  });
+
+  it('WR-01 a: <iframe><style>.legal{display:none}</style></iframe>ok<span class="legal">VIS</span> -> "okVIS"', () => {
+    const out = stripHiddenContent(
+      '<iframe><style>.legal{display:none}</style></iframe>ok<span class="legal">VIS</span>'
+    );
+    expect(out).toBe('okVIS');
+  });
+
+  it('WR-01 b: <noscript><style>.legal{display:none}</style></noscript>VIS<span class="legal">Q</span> -> "VISQ"', () => {
+    const out = stripHiddenContent(
+      '<noscript><style>.legal{display:none}</style></noscript>VIS<span class="legal">Q</span>'
+    );
+    expect(out).toBe('VISQ');
+  });
+
+  it('head control: <head><style>.legal{display:none}</style></head>ok<span class="legal">P</span> -> "ok" (a head stylesheet IS applied)', () => {
+    const out = stripHiddenContent(
+      '<head><style>.legal{display:none}</style></head>ok<span class="legal">P</span>'
+    );
+    expect(out).toBe('ok');
+  });
+});
+
+describe('strip-hidden.ts — 62-29 T-62-29-04: exact-membership guard over both derived element-name sets', () => {
+  // T-62-29-03's compile-time exhaustiveness check catches a name added to
+  // RAWTEXT_ELEMENT_NAMES without a disposition. It CANNOT catch a disposition FLIPPED
+  // from `false` to `true` (still compiles) — this is the other half: exact SET EQUALITY
+  // (sorted-array comparison, not `has()`/subset) against a literal expected list, so an
+  // added, removed, OR flipped disposition fails with a readable diff.
+  //
+  // Both expected lists are read directly off HTML_ELEMENT_DISPOSITIONS's own table under
+  // the stated derivation rules (rendersText === false / appliesStylesheets === false
+  // respectively), not hand-adjusted. `xmp` belongs in the second (never-applied) set on
+  // its `xmp T/F` disposition even though htmlparser2 already tokenizes `<xmp>` as RAWTEXT
+  // natively (no `styleElement` is ever recorded inside one for the ancestor-containment
+  // predicate to filter) — inert at runtime, not optional in this guard.
+  it('NON_CONTENT_TAGS === {script, style, head, title, template, noscript, svg, iframe, noembed, noframes}', () => {
+    const expected = [
+      'head', 'iframe', 'noembed', 'noframes', 'noscript', 'script', 'style', 'svg', 'template', 'title',
+    ].sort();
+    expect(Array.from(NON_CONTENT_TAGS).sort()).toEqual(expected);
+  });
+
+  it('the never-applied-stylesheet-context set === {script, style, title, template, noscript, iframe, noembed, noframes, textarea, xmp}', () => {
+    const expected = [
+      'iframe', 'noembed', 'noframes', 'noscript', 'script', 'style', 'template', 'textarea', 'title', 'xmp',
+    ].sort();
+    expect(Array.from(NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS).sort()).toEqual(expected);
+  });
+
+  // Non-vacuousness proof (T-62-29-04): flipping a disposition must fail this guard. This
+  // is asserted here as a SELF-CONTAINED simulation (constructing the same derivation this
+  // guard checks against a locally-flipped copy) rather than mutating the shipped module's
+  // frozen `HTML_ELEMENT_DISPOSITIONS` at runtime, which is not exposed as a mutable
+  // export. The actual injected-source-flip run (editing strip-hidden.ts, running this
+  // suite, recording the verbatim failure, and reverting) is recorded verbatim in
+  // 62-29-SUMMARY.md — this local simulation is the permanently-shipped half of the proof.
+  it('the guard above is not vacuous: flipping iframe from rendersText:false to true would remove it from NON_CONTENT_TAGS and fail the exact-equality assertion', () => {
+    const flipped = new Set(NON_CONTENT_TAGS);
+    flipped.delete('iframe');
+    const expected = [
+      'head', 'iframe', 'noembed', 'noframes', 'noscript', 'script', 'style', 'svg', 'template', 'title',
+    ].sort();
+    expect(Array.from(flipped).sort()).not.toEqual(expected);
+  });
 });
