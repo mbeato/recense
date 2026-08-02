@@ -278,10 +278,25 @@ interface NewlyFiledCounters {
   /** NF-05 (open, CSS-tokenizer layer, out of this plan's fix scope): CDO ("<!--")/CDC
    *  ("-->") tokens are not special-cased as ignorable at the stylesheet top level (CSS Syntax
    *  Level 3 §5.4.1), so one poisons the pending prelude's token-shape check for whichever
-   *  rule's "{" is reached next. Detected by `isNf05TopLevelCdoCdc`, a structural
-   *  tokenizer-only check independent of production. Minimal repro: "-->.legal{display:none}". */
+   *  rule's "{" is reached next. Detected by `nf05Counterfactual`, a structural tokenizer-only
+   *  check independent of production. Minimal repro: "-->.legal{display:none}". */
   NF05_topLevelCdoCdc: number;
-  /** NF-SAFE: a residual OVER-strip divergence, not explained by NF-01/03/04/05. WR-11/12/13
+  /** NF-06 (NEW, found live by this plan's WR-02 causal-attribution fix, open — same
+   *  CSS-tokenizer layer, out of this plan's fix scope): a leak where TWO named mechanisms
+   *  co-occur such that solo removal of EITHER ONE leaves the leak in place — the OTHER
+   *  mechanism alone still corrupts the prelude — and only removing BOTH together clears it.
+   *  Every occurrence measured so far pairs NF-05's top-level CDO/CDC with either NF-03's
+   *  comma-list rejection or NF-04's blockless at-rule (minimal repros:
+   *  "@media;<!--.legal{display:none}" and "-->a,.legal{display:none}", both independently
+   *  verified: removing only the at-rule/comma-list leaves the leak because the CDO/CDC alone
+   *  still corrupts the next rule's prelude; removing only the CDO/CDC leaves the leak because
+   *  the at-rule/comma-list alone still does; removing both clears it). This is NOT a predicate
+   *  that absorbs by co-occurrence — attribution is proven by re-running both oracle and
+   *  production against the COMBINED counterfactual, the same causal standard NF-03/04/05
+   *  individually meet; it is a distinct, newly-discovered compound-interaction defect, not a
+   *  loosening of any existing predicate's own solo test. */
+  NF06_compoundCooccurrence: number;
+  /** NF-SAFE: a residual OVER-strip divergence, not explained by NF-01/03/04/05/06. WR-11/12/13
    *  (`62-REVIEW.md`) are out of this plan's fix scope, so this bucket is not narrowed to a
    *  per-mechanism breakdown the way the leak buckets above now are — but per this plan's own
    *  instruction it is no longer absorbed by a magnitude bound either: an exact count per
@@ -296,23 +311,64 @@ function newNewlyFiledCounters(): NewlyFiledCounters {
     NF03_commaList: 0,
     NF04_blocklessAtRule: 0,
     NF05_topLevelCdoCdc: 0,
+    NF06_compoundCooccurrence: 0,
     NFSAFE_overStrip: 0,
   };
 }
 
+/** A single source-text replacement: `css.slice(start, end)` is replaced by `replacement`. */
+interface TextEdit {
+  start: number;
+  end: number;
+  replacement: string;
+}
+
 /**
- * NF-03 (CR-11 gate closure): true when `css` contains a Rule whose prelude is a comma-
- * separated `SelectorList` (more than one `Selector`) where one `Selector` is a BARE class/id
- * equal to `probeName` and at least one OTHER `Selector` in the SAME list is NOT bare. This is
- * exactly the shape production's `preludeToBareSelectors` (`src/source/strip-hidden.ts`)
- * rejects all-or-nothing. Computed independently via css-tree's own parser/walker — the same
- * library the oracle itself is built on, never production's `preludeToBareSelectors`.
+ * A predicate's verdict on `css`: whether its named structural shape is present, and — if so —
+ * the edit(s) that remove it (the counterfactual `attributeLeak` re-runs both oracle and
+ * production against, per WR-02's fix). Exposed as edits rather than a pre-built string so
+ * `attributeLeak` can also apply the UNION of two co-occurring predicates' edits in one pass
+ * (the compound-mechanism case below) without re-deriving either predicate's removal logic.
+ * `edits` is empty when `matches` is false; callers must check `matches` before trusting it.
  */
-function isNf03CommaList(css: string, probeName: string): boolean {
-  let found = false;
-  const ast = parseCss(css, { onParseError: () => {} });
+interface CounterfactualCheck {
+  matches: boolean;
+  edits: TextEdit[];
+}
+
+/** Applies `edits` (in any order) to `css`, replacing each `[start, end)` span in one pass. */
+function applyEdits(css: string, edits: readonly TextEdit[]): string {
+  if (edits.length === 0) return css;
+  const sorted = [...edits].sort((a, b) => a.start - b.start);
+  let result = '';
+  let cursor = 0;
+  for (const edit of sorted) {
+    result += css.slice(cursor, edit.start) + edit.replacement;
+    cursor = edit.end;
+  }
+  result += css.slice(cursor);
+  return result;
+}
+
+/**
+ * NF-03 (CR-11 gate closure; causal as of WR-02 fix): true when `css` contains a Rule whose
+ * prelude is a comma-separated `SelectorList` (more than one `Selector`) where one `Selector`
+ * is a BARE class/id equal to `probeName` and at least one OTHER `Selector` in the SAME list is
+ * NOT bare. This is exactly the shape production's `preludeToBareSelectors`
+ * (`src/source/strip-hidden.ts`) rejects all-or-nothing. Computed independently via css-tree's
+ * own parser/walker — the same library the oracle itself is built on, never production's
+ * `preludeToBareSelectors`. The counterfactual drops every non-bare sibling from each matching
+ * comma list (keeping only its bare selectors, rejoined with `,`) — WR-02's fix: a predicate
+ * that only detects co-occurrence cannot attribute; `attributeLeak` re-runs both
+ * `liveHidingSelectors` and `stripHiddenContent` against this counterfactual before crediting
+ * NF-03 with the leak.
+ */
+function nf03Counterfactual(css: string, probeName: string): CounterfactualCheck {
+  const ast = parseCss(css, { positions: true, onParseError: () => {} });
+  const edits: TextEdit[] = [];
+
   walkCss(ast, (node: any) => {
-    if (found || node.type !== 'Rule' || node.prelude.type !== 'SelectorList') return;
+    if (node.type !== 'Rule' || node.prelude.type !== 'SelectorList') return;
     const selectors = node.prelude.children.toArray();
     if (selectors.length < 2) return;
     let hasProbeBare = false;
@@ -328,91 +384,168 @@ function isNf03CommaList(css: string, probeName: string): boolean {
         hasNonBare = true;
       }
     }
-    if (hasProbeBare && hasNonBare) found = true;
+    if (!(hasProbeBare && hasNonBare)) return;
+
+    const keptSelectors: string[] = [];
+    for (const sel of selectors) {
+      if (sel.type !== 'Selector') continue;
+      const parts = sel.children.toArray();
+      const only = parts.length === 1 ? parts[0] : null;
+      const isBare = only !== null && (only.type === 'ClassSelector' || only.type === 'IdSelector');
+      if (isBare) keptSelectors.push(css.slice(sel.loc.start.offset, sel.loc.end.offset));
+    }
+    edits.push({
+      start: node.prelude.loc.start.offset,
+      end: node.prelude.loc.end.offset,
+      replacement: keptSelectors.join(','),
+    });
   });
-  return found;
+
+  return edits.length === 0 ? { matches: false, edits: [] } : { matches: true, edits };
 }
 
 /**
- * NF-04 (CR-11 gate closure): true when `css` contains a semicolon-terminated at-rule prelude
- * (an `AtKeyword`-first token run, at nesting depth 0, that reaches a `Semicolon` before any
- * `{`/`}`), with no intervening `{`/`}` reset before the NEXT `{`. Production's frame-based
- * walker (`harvestFromStylesheet`) never clears its pending prelude on `;`, only on `{`/`}`,
- * so that `{` gets misread as opening the STALE at-rule's conditional-group body instead of an
- * ordinary declaration block, and the rule it actually belongs to is never evaluated. Minimal
- * repro: "@media;.legal{display:none}". Computed via the shared css-tree tokenizer only, never
- * by calling production's `harvestFromStylesheet`.
+ * NF-04 (CR-11 gate closure; causal as of WR-02 fix): true when `css` contains a semicolon-
+ * terminated at-rule prelude (an `AtKeyword`-first token run, at nesting depth 0, that reaches
+ * a `Semicolon` before any `{`/`}`), with no intervening `{`/`}` reset before the NEXT `{`.
+ * Production's frame-based walker (`harvestFromStylesheet`) never clears its pending prelude
+ * on `;`, only on `{`/`}`, so that `{` gets misread as opening the STALE at-rule's
+ * conditional-group body instead of an ordinary declaration block, and the rule it actually
+ * belongs to is never evaluated. Minimal repro: "@media;.legal{display:none}". Computed via
+ * the shared css-tree tokenizer only, never by calling production's `harvestFromStylesheet`.
+ * The counterfactual removes each matched at-rule prelude (from its `AtKeyword` start through
+ * its terminating `;`) verbatim — WR-02's fix: `attributeLeak` re-runs both
+ * `liveHidingSelectors` and `stripHiddenContent` against this counterfactual before crediting
+ * NF-04 with the leak.
  */
-function isNf04BlocklessAtRule(css: string): boolean {
+function nf04Counterfactual(css: string): CounterfactualCheck {
   let depth = 0;
   let firstTokenSinceReset: number | null = null;
+  let preludeStart = -1;
   let sawSemicolonSinceReset = false;
-  let found = false;
-  tokenize(css, type => {
-    if (found) return;
+  let semicolonEnd = -1;
+  const edits: TextEdit[] = [];
+
+  tokenize(css, (type, start, end) => {
     if (type === tokenTypes.WhiteSpace || type === tokenTypes.Comment) return;
     if (type === tokenTypes.LeftCurlyBracket) {
       if (depth === 0 && firstTokenSinceReset === tokenTypes.AtKeyword && sawSemicolonSinceReset) {
-        found = true;
+        edits.push({ start: preludeStart, end: semicolonEnd, replacement: '' });
       }
       depth += 1;
       firstTokenSinceReset = null;
+      preludeStart = -1;
       sawSemicolonSinceReset = false;
       return;
     }
     if (type === tokenTypes.RightCurlyBracket) {
       depth = Math.max(0, depth - 1);
       firstTokenSinceReset = null;
+      preludeStart = -1;
       sawSemicolonSinceReset = false;
       return;
     }
     if (depth !== 0) return;
-    if (firstTokenSinceReset === null) firstTokenSinceReset = type;
-    if (type === tokenTypes.Semicolon) sawSemicolonSinceReset = true;
+    if (firstTokenSinceReset === null) {
+      firstTokenSinceReset = type;
+      preludeStart = start;
+    }
+    if (type === tokenTypes.Semicolon) {
+      sawSemicolonSinceReset = true;
+      semicolonEnd = end;
+    }
   });
-  return found;
+
+  return edits.length === 0 ? { matches: false, edits: [] } : { matches: true, edits };
 }
 
 /**
- * NF-05 (CR-11 gate closure): true when `css` contains a CDO ("<!--") or CDC ("-->") token at
- * nesting depth 0, before the next `{`. CSS Syntax Level 3 §5.4.1 says such a token MUST be
- * ignored at the stylesheet top level, but production's frame-based walker has no such special
- * case — the token is pushed into the pending prelude like any other, so the prelude's
- * token-shape check (exactly a `Hash`, or `Delim('.')` + `Ident`) fails for whichever rule's
- * `{` is reached next. Minimal repro: "-->.legal{display:none}". Computed via the shared
- * css-tree tokenizer only, never by calling production's `harvestFromStylesheet`.
+ * NF-05 (CR-11 gate closure; causal as of WR-02 fix): true when `css` contains a CDO ("<!--")
+ * or CDC ("-->") token at nesting depth 0, before the next `{`. CSS Syntax Level 3 §5.4.1 says
+ * such a token MUST be ignored at the stylesheet top level, but production's frame-based
+ * walker has no such special case — the token is pushed into the pending prelude like any
+ * other, so the prelude's token-shape check (exactly a `Hash`, or `Delim('.')` + `Ident`) fails
+ * for whichever rule's `{` is reached next. Minimal repro: "-->.legal{display:none}". Computed
+ * via the shared css-tree tokenizer only, never by calling production's
+ * `harvestFromStylesheet`. The counterfactual removes every top-level CDO/CDC token that
+ * preceded a `{` verbatim — WR-02's fix: `attributeLeak` re-runs both `liveHidingSelectors`
+ * and `stripHiddenContent` against this counterfactual before crediting NF-05 with the leak.
  */
-function isNf05TopLevelCdoCdc(css: string): boolean {
+function nf05Counterfactual(css: string): CounterfactualCheck {
   let depth = 0;
-  let sawCdoCdcSinceReset = false;
-  let found = false;
-  tokenize(css, type => {
-    if (found) return;
+  let pendingEdits: TextEdit[] = [];
+  const edits: TextEdit[] = [];
+
+  tokenize(css, (type, start, end) => {
     if (type === tokenTypes.LeftCurlyBracket) {
-      if (depth === 0 && sawCdoCdcSinceReset) found = true;
+      if (depth === 0 && pendingEdits.length > 0) edits.push(...pendingEdits);
       depth += 1;
-      sawCdoCdcSinceReset = false;
+      pendingEdits = [];
       return;
     }
     if (type === tokenTypes.RightCurlyBracket) {
       depth = Math.max(0, depth - 1);
-      sawCdoCdcSinceReset = false;
+      pendingEdits = [];
       return;
     }
     if (depth !== 0) return;
-    if (type === tokenTypes.CDO || type === tokenTypes.CDC) sawCdoCdcSinceReset = true;
+    if (type === tokenTypes.CDO || type === tokenTypes.CDC) pendingEdits.push({ start, end, replacement: '' });
   });
-  return found;
+
+  return edits.length === 0 ? { matches: false, edits: [] } : { matches: true, edits };
 }
 
 /**
- * The gate itself (CR-11 closure): attributes one confirmed leak (`probeName`, `selectorKind`)
- * to the first NAMED mechanism whose structural predicate matches `css`. A leak matching NO
- * named predicate is NOT counted anywhere — it is pushed to `failures` with the generating
- * input, so `throwIfFailures` fails the suite. This is the exact property this differential's
- * three test titles have claimed since 62-19 ("zero unclassified divergences") and, before
- * this plan, never actually had: every leak used to reach `NFDANGER_leak` unconditionally,
- * with no predicate required to enter it.
+ * Re-runs BOTH sides against `edits` applied to `css` (WR-02's fix: an attribution claim is
+ * proven, never asserted, by re-running `liveHidingSelectors` (the oracle) and
+ * `stripHiddenContent` (production) on the resulting counterfactual) and reports whether the
+ * probe both stays live and its marker vanishes from production's output — the two-part test
+ * every named mechanism below must pass before a counter increments.
+ */
+function verifyCounterfactual(
+  css: string,
+  edits: readonly TextEdit[],
+  probeName: string,
+  selectorKind: 'class' | 'id'
+): { attributed: boolean; probeStillLive: boolean; counterfactual: string; counterfactualTruth: LiveHidingSelectors; counterfactualOut: string } {
+  const counterfactual = applyEdits(css, edits);
+  const marker = selectorKind === 'class' ? classMarker(probeName) : idMarker(probeName);
+  const counterfactualTruth = liveHidingSelectors(counterfactual);
+  const counterfactualOut = stripHiddenContent(buildDifferentialHtml(counterfactual, [probeName]));
+  const probeStillLive =
+    selectorKind === 'class' ? counterfactualTruth.classes.has(probeName) : counterfactualTruth.ids.has(probeName);
+  const markerAbsent = !counterfactualOut.includes(marker);
+  return { attributed: probeStillLive && markerAbsent, probeStillLive, counterfactual, counterfactualTruth, counterfactualOut };
+}
+
+/**
+ * The gate itself (CR-11 closure, made causal by WR-02's fix): attributes one confirmed leak
+ * (`probeName`, `selectorKind`) to the NAMED mechanism(s) whose structural shape is present in
+ * `css` AND whose counterfactual — `css` with that shape removed, re-verified by
+ * `verifyCounterfactual` — makes the leak disappear while the probe stays live.
+ *
+ * Checked in priority order NF-03 -> NF-04 -> NF-05, matching the shipped module's own dispatch
+ * order. Two passes:
+ *   1. SOLO — each structurally-matching predicate's OWN counterfactual, alone. The first one
+ *      that attributes wins; this is the common case and covers every leak this differential
+ *      found before the compound cases below.
+ *   2. COMPOUND (NF-06) — if no solo counterfactual attributes but >= 2 predicates matched
+ *      structurally, re-verify the UNION of every matched predicate's edits together. This
+ *      covers a leak that needs BOTH named mechanisms removed at once (found live by this
+ *      fix: solo removal of either one leaves the OTHER mechanism still corrupting the same
+ *      rule's prelude) — still fully causal (proven by the same `verifyCounterfactual` re-run,
+ *      never asserted), and still built entirely from the SAME already-existing predicates'
+ *      edits, not a new co-occurrence-only shape test.
+ *
+ * Before WR-02, each predicate only tested whether `css` CONTAINED the named shape anywhere —
+ * co-occurrence, not causation — so a leak caused by an unnamed mechanism that merely shared an
+ * input with (for example) a top-level CDO/CDC was silently absorbed as NF-05 and never reached
+ * `failures`. A leak matching no named predicate's structural shape, or one whose every
+ * causally-checked combination does not make the leak disappear (a different, unnamed
+ * mechanism) or makes the probe non-live (a vacuous counterfactual, proving nothing), is NOT
+ * counted anywhere — it is pushed to `failures` with the generating input, the counterfactual
+ * input, both oracle verdicts and both outputs verbatim, so `throwIfFailures` fails the suite
+ * with a reproducible, labeled finding rather than silently widening a co-occurrence bucket.
  */
 function attributeLeak(
   css: string,
@@ -421,20 +554,69 @@ function attributeLeak(
   newlyFiled: NewlyFiledCounters,
   failures: string[]
 ): void {
-  if (isNf03CommaList(css, probeName)) {
-    newlyFiled.NF03_commaList += 1;
+  const predicates: ReadonlyArray<{
+    label: string;
+    counter: 'NF03_commaList' | 'NF04_blocklessAtRule' | 'NF05_topLevelCdoCdc';
+    result: CounterfactualCheck;
+  }> = [
+    { label: 'NF-03 (comma-list all-or-nothing rejection)', counter: 'NF03_commaList', result: nf03Counterfactual(css, probeName) },
+    { label: 'NF-04 (blockless semicolon-terminated at-rule)', counter: 'NF04_blocklessAtRule', result: nf04Counterfactual(css) },
+    { label: 'NF-05 (top-level CDO/CDC token)', counter: 'NF05_topLevelCdoCdc', result: nf05Counterfactual(css) },
+  ];
+  const matched = predicates.filter(p => p.result.matches);
+
+  if (matched.length === 0) {
+    failures.push(
+      `UNATTRIBUTED LEAK (matches no named mechanism — NF03/NF04/NF05/NF06) — probe=${probeName} (${selectorKind}) generating input=${JSON.stringify(css)}`
+    );
     return;
   }
-  if (isNf04BlocklessAtRule(css)) {
-    newlyFiled.NF04_blocklessAtRule += 1;
+
+  // Pass 1: solo — first structurally-matching predicate whose OWN counterfactual attributes.
+  for (const predicate of matched) {
+    const verdict = verifyCounterfactual(css, predicate.result.edits, probeName, selectorKind);
+    if (verdict.attributed) {
+      newlyFiled[predicate.counter] += 1;
+      return;
+    }
+  }
+
+  // Pass 2: compound (NF-06) — the union of every matched predicate's edits, still re-verified
+  // causally, never asserted. Only reachable when >= 2 predicates matched structurally.
+  if (matched.length >= 2) {
+    const unionEdits = matched.flatMap(p => p.result.edits);
+    const verdict = verifyCounterfactual(css, unionEdits, probeName, selectorKind);
+    if (verdict.attributed) {
+      newlyFiled.NF06_compoundCooccurrence += 1;
+      return;
+    }
+  }
+
+  // Nothing attributed, solo or combined — report the highest-priority matched predicate's
+  // own solo verdict as the representative, reproducible finding.
+  const first = matched[0]!;
+  const verdict = verifyCounterfactual(css, first.result.edits, probeName, selectorKind);
+  const label = matched.length >= 2 ? `${matched.map(p => p.label).join(' + ')}, solo and combined` : first.label;
+
+  if (!verdict.probeStillLive) {
+    failures.push(
+      `COUNTERFACTUAL VACUOUS (${label}) — removing the named mechanism(s) also removed the probe's own ` +
+        `liveness, so attribution is unproven — probe=${probeName} (${selectorKind}) ` +
+        `generating input=${JSON.stringify(css)} counterfactual input=${JSON.stringify(verdict.counterfactual)} ` +
+        `oracle verdict on generating input=${truthSummary(liveHidingSelectors(css))} ` +
+        `oracle verdict on counterfactual=${truthSummary(verdict.counterfactualTruth)} ` +
+        `counterfactual output=${JSON.stringify(verdict.counterfactualOut)}`
+    );
     return;
   }
-  if (isNf05TopLevelCdoCdc(css)) {
-    newlyFiled.NF05_topLevelCdoCdc += 1;
-    return;
-  }
+
   failures.push(
-    `UNATTRIBUTED LEAK (matches no named mechanism — NF03/NF04/NF05) — probe=${probeName} (${selectorKind}) generating input=${JSON.stringify(css)}`
+    `DIFFERENT MECHANISM (${label} shape present but not causal — the leak survives its own removal) — ` +
+      `probe=${probeName} (${selectorKind}) generating input=${JSON.stringify(css)} ` +
+      `counterfactual input=${JSON.stringify(verdict.counterfactual)} ` +
+      `oracle verdict on generating input=${truthSummary(liveHidingSelectors(css))} ` +
+      `oracle verdict on counterfactual=${truthSummary(verdict.counterfactualTruth)} ` +
+      `counterfactual output=${JSON.stringify(verdict.counterfactualOut)}`
   );
 }
 
@@ -478,6 +660,24 @@ function idMarker(name: string): string {
 }
 
 /**
+ * The ONE wrapper-construction site in this file (WR-02/T-62-27-05 fix): both `runDifferential`
+ * (the main under/over-strip check) and `attributeLeak`'s counterfactual re-run (WR-02) build
+ * their HTML through this exact helper, so a counterfactual document can never drift into a
+ * second, independently-maintained copy of the string concatenation — the two-opinions-about-
+ * one-boundary failure mode this phase has hit repeatedly. Grepping this file for the wrapper's
+ * opening-tag concatenation literal must find exactly this one construction site.
+ */
+function buildDifferentialHtml(css: string, probeNames: readonly string[]): string {
+  return (
+    '<style>' +
+    css +
+    '</style>' +
+    'VISIBLE_SENTENCE' +
+    probeNames.map(name => `<span class="${name}">${classMarker(name)}</span><span id="${name}">${idMarker(name)}</span>`).join('')
+  );
+}
+
+/**
  * The core routine (62-19-PLAN.md Task 1's `<behavior>`): given a generated stylesheet and
  * the probe names to test, asserts both the under-strip and over-strip directions against
  * `liveHidingSelectors`'s verdict, appending any UNCLASSIFIED divergence to `failures` with
@@ -507,12 +707,7 @@ function runDifferential(
     return;
   }
 
-  const html =
-    '<style>' +
-    css +
-    '</style>' +
-    'VISIBLE_SENTENCE' +
-    probeNames.map(name => `<span class="${name}">${classMarker(name)}</span><span id="${name}">${idMarker(name)}</span>`).join('');
+  const html = buildDifferentialHtml(css, probeNames);
 
   // 62-22 gap closure (CR-10) closed NF-01: `scanHtml`'s conformant tokenizer never mistakes
   // a CDO inside `<style>` RAWTEXT for an HTML comment, so stage 3 no longer truncates the
@@ -584,10 +779,14 @@ describe('css-liveness-differential — Generator 1: exhaustive token-boundary a
     // generator's exhaustive k=2 cross product, not a re-derivable formula. A count that moves
     // means the corpus or the shipped module changed; either way it must be re-measured and
     // re-recorded here, not silently absorbed by a bound.
+    // WR-02 fix: none of Generator 1's counts moved. Every leak this exhaustive k=2 cross
+    // product finds is explained by exactly one named mechanism's SOLO counterfactual — no
+    // compound (NF-06) case exists in this alphabet's 2-token combinations.
     expect(newlyFiled.NF01_cdoTruncation).toBe(86);
     expect(newlyFiled.NF03_commaList).toBe(10);
     expect(newlyFiled.NF04_blocklessAtRule).toBe(1);
     expect(newlyFiled.NF05_topLevelCdoCdc).toBe(16);
+    expect(newlyFiled.NF06_compoundCooccurrence).toBe(0);
     expect(newlyFiled.NFSAFE_overStrip).toBe(50);
   });
 }, 30000);
@@ -622,10 +821,22 @@ describe('css-liveness-differential — Generator 2: seeded adjacency k=3..6', (
     expect(counters.AD04).toBe(0);
     // Exact counts (CR-11 gate closure), measured against this LCG seed's own 20,000-input
     // stream — see Generator 1's comment for why a moved count must be re-measured, not bound.
+    // WR-02 fix (62-27): NF03 moved 52 -> 51 and NF04 moved 10 -> 9, both by exactly 1, with
+    // NF06_compoundCooccurrence appearing at exactly 2 — not noise, a real reclassification.
+    // Before this plan, isNf03CommaList/isNf04BlocklessAtRule tested co-occurrence only (did
+    // `css` CONTAIN the shape?), so two inputs where a comma-list/blockless-at-rule shape
+    // co-occurred with an ALSO-present top-level CDO/CDC were silently counted as NF03/NF04
+    // even though solo removal of the comma-list/at-rule shape does NOT clear the leak (the
+    // co-occurring CDO/CDC alone still corrupts the same rule's prelude). The causal
+    // counterfactual now proves this: solo removal of either mechanism leaves the leak; only
+    // removing BOTH together (re-verified against both `liveHidingSelectors` and
+    // `stripHiddenContent`) clears it. Both instances reclassified from NF03/NF04 to the new
+    // NF06 bucket; see "NF-06" below for the two locked minimal reproductions.
     expect(newlyFiled.NF01_cdoTruncation).toBe(1921);
-    expect(newlyFiled.NF03_commaList).toBe(52);
-    expect(newlyFiled.NF04_blocklessAtRule).toBe(10);
+    expect(newlyFiled.NF03_commaList).toBe(51);
+    expect(newlyFiled.NF04_blocklessAtRule).toBe(9);
     expect(newlyFiled.NF05_topLevelCdoCdc).toBe(461);
+    expect(newlyFiled.NF06_compoundCooccurrence).toBe(2);
     expect(newlyFiled.NFSAFE_overStrip).toBe(1768);
   });
 }, 60000);
@@ -721,10 +932,15 @@ describe('css-liveness-differential — Generator 3: structured stylesheets from
     // construct either shape across 5,000 seeded documents — a real absence for THIS seed, not
     // a skip; Generator 1's exhaustive cross product and Generator 2's larger seeded stream
     // both DO exercise NF03/NF04, so neither mechanism is uncovered by the suite as a whole.
+    // WR-02 fix: none of Generator 3's counts moved — RULE_LIBRARY's own rules never form a
+    // comma list or a blockless at-rule adjacent to a top-level CDO/CDC across this seed's
+    // 5,000 documents, so NF06 measures zero here too (a real absence for THIS seed, not a
+    // skip; Generator 2's larger seeded stream already proves NF06 is reachable).
     expect(newlyFiled.NF01_cdoTruncation).toBe(407);
     expect(newlyFiled.NF03_commaList).toBe(0);
     expect(newlyFiled.NF04_blocklessAtRule).toBe(0);
     expect(newlyFiled.NF05_topLevelCdoCdc).toBe(277);
+    expect(newlyFiled.NF06_compoundCooccurrence).toBe(0);
     expect(newlyFiled.NFSAFE_overStrip).toBe(358);
   });
 }, 30000);
@@ -765,17 +981,31 @@ describe('css-liveness-differential — newly discovered defects (found by this 
     expect(out).toContain('VISIBLE_SENTENCE');
   });
 
+  // WR-04 fix (62-27-PLAN.md Task 2): each defect lock below asserts EXACTLY ONE subject
+  // inside its `it.fails` body -- production's output. The oracle ground-truth precondition
+  // that used to live INSIDE the same `it.fails` block is now its own ordinary, PASSING `it`,
+  // named so the pairing with its lock is obvious. `it.fails` passes when ANYTHING in its body
+  // throws, so a precondition assertion sharing the block made an oracle REGRESSION (not just
+  // a defect fix) silently satisfy the lock for the wrong reason: if `liveHidingSelectors`
+  // stopped reporting `.legal` as live, the precondition line would throw first, `it.fails`
+  // would still pass, and the defect could reopen in production with the suite staying green.
+  // Splitting the precondition out means an oracle regression now fails ITS OWN passing test
+  // instead of masquerading as this lock's expected failure -- proven by deliberately breaking
+  // `liveHidingSelectors` and observing the precondition tests fail (recorded in
+  // `62-27-SUMMARY.md`, not merely asserted here).
+
+  it('NF-03 precondition: the oracle reports "legal" live for "a,.legal{display:none}" (a real browser evaluates each selector in a comma-separated list independently)', () => {
+    const truth = liveHidingSelectors('a,.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
   it.fails(
     'NF-03: a comma-separated selector list is rejected all-or-nothing rather than per-selector, letting a bare hiding selector hide behind ANY non-bare sibling in the same list',
     () => {
-      // A real browser evaluates each selector in a comma-separated list independently:
-      // "a, .legal { display:none }" hides BOTH <a> elements AND class="legal" elements.
       // `preludeToBareSelectors` returns null for the WHOLE prelude if ANY comma-separated
       // group fails the bare-selector shape check (matching this module's documented,
       // pre-62-17 `allBare`/`.every()` semantics) -- so `.legal` never gets harvested at
       // all merely because it shares a comma list with a non-bare selector.
-      const truth = liveHidingSelectors('a,.legal{display:none}');
-      expect(truth.classes.has('legal')).toBe(true); // ground truth: a real browser hides it
       const out = stripHiddenContent(
         '<style>a,.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
       );
@@ -783,19 +1013,19 @@ describe('css-liveness-differential — newly discovered defects (found by this 
     }
   );
 
+  it('NF-04 precondition: the oracle reports "legal" live for "@media;.legal{display:none}" (a blockless "@media;" is a complete, independent at-rule; ".legal" that follows is an ordinary, independent, live rule)', () => {
+    const truth = liveHidingSelectors('@media;.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
   it.fails(
     'NF-04: a blockless at-rule ("@media;", no braces) misattributes the NEXT rule\'s block as its own, silently dropping a genuinely-live hiding rule',
     () => {
-      // Per CSS Syntax, an at-rule ends at the first top-level ";" if no block ever
-      // follows -- "@media;" is a complete (if useless) at-rule with NO block, and
-      // ".legal{display:none}" that follows is an ordinary, independent, live rule. But
       // `harvestFromStylesheet`'s `startsWithAtKeyword` check only looks at whether the
       // PENDING prelude starts with an AtKeyword token when the NEXT "{" is reached -- it
       // never accounts for an intervening ";" already having closed the at-rule, so the
       // "{" that should open .legal's OWN block gets consumed as the (bogus) at-rule's
       // block instead, and .legal is never harvested.
-      const truth = liveHidingSelectors('@media;.legal{display:none}');
-      expect(truth.classes.has('legal')).toBe(true); // ground truth: a real browser hides it
       const out = stripHiddenContent(
         '<style>@media;.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
       );
@@ -803,19 +1033,59 @@ describe('css-liveness-differential — newly discovered defects (found by this 
     }
   );
 
+  it('NF-05 precondition: the oracle reports "legal" live for "-->.legal{display:none}" (CSS Syntax §5.4.1: a CDC at the stylesheet top level is simply skipped, never part of any prelude)', () => {
+    const truth = liveHidingSelectors('-->.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
   it.fails(
     'NF-05: CDO/CDC tokens are not treated as ignorable at the stylesheet top level (CSS Syntax §5.4.1), so one before a hiding rule poisons that rule\'s prelude and the rule is never harvested',
     () => {
-      // Per CSS Syntax Level 3 §5.4.1 ("consume a list of rules"), a CDO or CDC token AT
-      // THE TOP LEVEL of a stylesheet is simply skipped -- it never becomes part of any
-      // rule's prelude, matched or not. `harvestFromStylesheet` has no such special case:
-      // a lone "-->" is pushed into the pending prelude like any other token, so the
-      // FOLLOWING rule's prelude no longer matches the bare-selector shape and the rule is
-      // silently dropped.
-      const truth = liveHidingSelectors('-->.legal{display:none}');
-      expect(truth.classes.has('legal')).toBe(true); // ground truth: a real browser hides it
+      // `harvestFromStylesheet` has no special case for a top-level CDO/CDC: a lone "-->"
+      // is pushed into the pending prelude like any other token, so the FOLLOWING rule's
+      // prelude no longer matches the bare-selector shape and the rule is silently dropped.
       const out = stripHiddenContent(
         '<style>-->.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
+      );
+      expect(out).not.toContain('PAYLOAD');
+    }
+  );
+
+  // NF-06 (NEW, found live by this plan's WR-02 causal-attribution fix): a compound leak where
+  // a top-level CDO/CDC (NF-05's own mechanism) co-occurs with EITHER a blockless at-rule
+  // (NF-04) or a comma-list rejection (NF-03) such that solo removal of EITHER construct alone
+  // leaves the leak in place -- the other construct alone still corrupts the same rule's
+  // prelude -- and only removing BOTH together clears it. Independently verified (see
+  // `62-27-SUMMARY.md`): removing only "@media;" from "@media;<!--.legal{display:none}" still
+  // leaks (the leading "<!--" alone still corrupts .legal's prelude); removing only "<!--"
+  // still leaks (the leading "@media;" alone still does); removing both clears it. Same
+  // structure for the comma-list pairing.
+
+  it('NF-06a precondition: the oracle reports "legal" live for "@media;<!--.legal{display:none}"', () => {
+    const truth = liveHidingSelectors('@media;<!--.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
+  it.fails(
+    'NF-06a: a blockless at-rule ("@media;") AND a top-level CDO ("<!--") co-occurring both corrupt the SAME following rule\'s prelude -- solo removal of either one alone still leaks; only removing both clears it',
+    () => {
+      const out = stripHiddenContent(
+        '<style>@media;<!--.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
+      );
+      expect(out).not.toContain('PAYLOAD');
+    }
+  );
+
+  it('NF-06b precondition: the oracle reports "legal" live for "-->a,.legal{display:none}"', () => {
+    const truth = liveHidingSelectors('-->a,.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
+  it.fails(
+    'NF-06b: a top-level CDC ("-->") AND a comma-list rejection co-occurring both corrupt the SAME rule\'s prelude -- solo removal of either one alone still leaks; only removing both clears it',
+    () => {
+      const out = stripHiddenContent(
+        '<style>-->a,.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
       );
       expect(out).not.toContain('PAYLOAD');
     }
