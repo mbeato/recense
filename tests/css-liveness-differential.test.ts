@@ -81,6 +81,7 @@ import { resolve } from 'node:path';
 import { tokenize, tokenTypes } from 'css-tree/tokenizer';
 import { parse as parseCss, walk as walkCss, ident } from 'css-tree';
 import { liveHidingSelectors, type LiveHidingSelectors } from './support/css-liveness-oracle';
+import { classMarker, idMarker, throwIfFailures } from './support/differential-helpers';
 import { stripHiddenContent } from '../src/source/strip-hidden';
 
 // ---------------------------------------------------------------------------
@@ -649,16 +650,6 @@ function truthSummary(truth: LiveHidingSelectors): string {
   return `classes=[${[...truth.classes].join(',')}] ids=[${[...truth.ids].join(',')}] unresolved=[${truth.unresolved.join(',')}]`;
 }
 
-// Delimiter-bounded payload markers so no probe name's marker is ever a substring of
-// another probe name's marker (e.g. "legal" is a prefix of "legalid" — a bare `PL_${name}`
-// scheme would make `PL_legal` a false-positive substring match of `PL_legalid`).
-function classMarker(name: string): string {
-  return `PL[${name}]`;
-}
-function idMarker(name: string): string {
-  return `PLID[${name}]`;
-}
-
 /**
  * The ONE wrapper-construction site in this file (WR-02/T-62-27-05 fix): both `runDifferential`
  * (the main under/over-strip check) and `attributeLeak`'s counterfactual re-run (WR-02) build
@@ -741,15 +732,6 @@ function runDifferential(
     if (idLive && idPresent) attributeLeak(css, name, 'id', newlyFiled, failures);
     if (!idLive && !idPresent) newlyFiled.NFSAFE_overStrip += 1;
   }
-}
-
-function throwIfFailures(failures: string[], contextLabel: string): void {
-  if (failures.length === 0) return;
-  const shown = failures.slice(0, 10);
-  throw new Error(
-    `${contextLabel}: ${failures.length} unclassified divergence(s) found. First ${shown.length}:\n\n` +
-      shown.join('\n---\n')
-  );
 }
 
 // ---------------------------------------------------------------------------
