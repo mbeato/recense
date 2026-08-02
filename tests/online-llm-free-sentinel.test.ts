@@ -287,3 +287,86 @@ describe('CLASSIFY-03: GET /v1/surface is LLM-free', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// 4. Structural scan (Task 2, D-13 non-vacuous variant)
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip `//` line comments and block comments before matching, so a doc comment
+ * mentioning `generate()` cannot create a false positive AND cannot mask a real one.
+ * Deliberately naive (no string-literal awareness) — acceptable for this narrow, closed
+ * scan set (verified generate/judge-free at authoring time; see read_first in 63-03-PLAN.md).
+ */
+function stripComments(text: string): string {
+  const noBlockComments = text.replace(/\/\*[\s\S]*?\*\//g, '');
+  return noBlockComments
+    .split('\n')
+    .map((line) => {
+      const idx = line.indexOf('//');
+      return idx === -1 ? line : line.slice(0, idx);
+    })
+    .join('\n');
+}
+
+/**
+ * Returns file paths whose (comment-stripped) text contains a `.generate(`, `.judge(`, or
+ * `.judgeBatch(` call. Pure predicate — reused identically by the real-scan test and the
+ * non-vacuousness tests below (same code path, per src-import-boundary.test.ts's precedent).
+ */
+export function findOnlineGenerationOffenders(files: Array<{ path: string; text: string }>): string[] {
+  const offenders: string[] = [];
+  const OFFENDER_RE = /\.generate\(|\.judge\(|\.judgeBatch\(/;
+  for (const { path: filePath, text } of files) {
+    if (OFFENDER_RE.test(stripComments(text))) {
+      offenders.push(filePath);
+    }
+  }
+  return offenders;
+}
+
+function collectTsFiles(dir: string): string[] {
+  const result: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      result.push(...collectTsFiles(full));
+    } else if (entry.name.endsWith('.ts')) {
+      result.push(full);
+    }
+  }
+  return result;
+}
+
+describe('CLASSIFY-03 / D-13: structural scan of the online-path source set', () => {
+  it('src/adapter/ambient-recall.ts + all of src/retrieval/*.ts contain zero generation offenders', () => {
+    const scanPaths = [
+      path.join(process.cwd(), 'src', 'adapter', 'ambient-recall.ts'),
+      ...collectTsFiles(path.join(process.cwd(), 'src', 'retrieval')),
+    ];
+    const files = scanPaths.map((p) => ({ path: p, text: fs.readFileSync(p, 'utf8') }));
+    const offenders = findOnlineGenerationOffenders(files);
+    expect(offenders).toEqual([]);
+  });
+
+  it('is non-vacuous: fires on a synthetic file with a real generate() call', () => {
+    const offenders = findOnlineGenerationOffenders([
+      { path: 'src/synthetic-offender.ts', text: "await provider.generate('x');" },
+    ]);
+    expect(offenders.length).toBeGreaterThan(0);
+  });
+
+  it('does not flag comment-only occurrences (// and /* */)', () => {
+    const offenders = findOnlineGenerationOffenders([
+      {
+        path: 'src/synthetic-clean.ts',
+        text: [
+          "// await provider.generate('x'); — historical note, not live code",
+          '/* legacy: this.judgeBatch(items) used to live here */',
+          "const x = 1; // provider.judge('y') mentioned only in a trailing comment",
+        ].join('\n'),
+      },
+    ]);
+    expect(offenders).toEqual([]);
+  });
+});
+
