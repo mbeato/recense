@@ -1296,6 +1296,58 @@ function harvestHidingSelectors(
   return { classes, ids };
 }
 
+/**
+ * 62-29 gap closure (WR-01): filters `styleElements` down to those NOT nested inside an
+ * element in `NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS` — a browser never applies a
+ * stylesheet written as a descendant of e.g. `<iframe>`/`<noscript>`/`<template>`, so
+ * harvesting one anyway deletes visible prose OUTSIDE the container that never should
+ * have been hidden.
+ *
+ * Reuses `collectStartTagRemovalRanges` (stage 4/5's own primitive) to compute the
+ * never-applied ANCESTOR ranges — no second walk, no second notion of an element range.
+ * `style` is EXCLUDED from the predicate here even though
+ * `HTML_ELEMENT_DISPOSITIONS.style.appliesStylesheets` is `false`: that disposition
+ * answers "would a browser apply a `<style>` nested INSIDE another `<style>`" (inert — a
+ * `<style>` element's own body is RAWTEXT, so a genuinely nested `<style>` can never
+ * exist), never "is a `<style>` element its own ancestor container." Without this
+ * exclusion, `collectStartTagRemovalRanges` would push a range for every MATCHING tag
+ * including `<style>` itself, and a plain `<style>` element's own `contentStart` always
+ * lies inside its OWN `[tagStart, elementEnd)` range — every `<style>` element, including
+ * the ordinary top-level control, would spuriously self-exclude from harvest.
+ *
+ * Both `neverAppliedAncestorRanges` (`collectStartTagRemovalRanges`'s own documented
+ * contract) and `styleElements` (pushed by `scanHtml` in document order, and never nested
+ * inside one another — `<style>` is RAWTEXT, so one `<style>` element can never contain
+ * another) are ascending and pairwise non-overlapping, so this is a single O(n+m)
+ * two-pointer sweep, not a nested scan — load-bearing on the online ingest path.
+ */
+function filterStyleElementsOutsideNeverAppliedContext(
+  startTags: readonly HtmlStartTag[],
+  styleElements: readonly HtmlStyleElement[]
+): readonly HtmlStyleElement[] {
+  const neverAppliedAncestorRanges = collectStartTagRemovalRanges(
+    startTags,
+    name => name !== 'style' && NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS.has(name)
+  );
+  if (neverAppliedAncestorRanges.length === 0) return styleElements;
+
+  const kept: HtmlStyleElement[] = [];
+  let i = 0;
+  for (const el of styleElements) {
+    while (
+      i < neverAppliedAncestorRanges.length &&
+      neverAppliedAncestorRanges[i]![1] <= el.contentStart
+    ) {
+      i += 1;
+    }
+    const range = neverAppliedAncestorRanges[i];
+    const insideNeverApplied =
+      range !== undefined && range[0] <= el.contentStart && el.contentStart < range[1];
+    if (!insideNeverApplied) kept.push(el);
+  }
+  return kept;
+}
+
 // ---------------------------------------------------------------------------
 // Stage 3 — comment removal
 // ---------------------------------------------------------------------------
@@ -1674,8 +1726,18 @@ export function stripHiddenContent(text: string): string {
   const scan = scanHtml(s);
 
   // Stage 2: harvest class/id hiding selectors from <style> blocks before they're
-  // discarded in stage 4.
-  const { classes: hiddenClasses, ids: hiddenIds } = harvestHidingSelectors(s, scan.styleElements);
+  // discarded in stage 4. 62-29 gap closure (WR-01): a stylesheet nested inside a
+  // never-applied context (<iframe>/<noscript>/<template>, ...) is filtered OUT before
+  // harvest — a browser never applies it, so harvesting it anyway would delete visible
+  // prose outside the container that never should have been hidden.
+  const harvestableStyleElements = filterStyleElementsOutsideNeverAppliedContext(
+    scan.startTags,
+    scan.styleElements
+  );
+  const { classes: hiddenClasses, ids: hiddenIds } = harvestHidingSelectors(
+    s,
+    harvestableStyleElements
+  );
 
   // Stages 3+4+5 (62-24 gap closure, CR-07): comment ranges (stage 3), non-content-element
   // ranges (stage 4, fixed tag set) and hidden-element ranges (stage 5, hiding-signature
