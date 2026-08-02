@@ -983,9 +983,17 @@ Plans:
 **Plans**: 4 plans (3 waves)
 
 Plans:
+**Wave 1**
+
 - [ ] 64-01-PLAN.md — close 63 WR-01: gate intent-field pickup on episode.source === 'gmail' at the fill sites, three-route regression (wave 1)
 - [ ] 64-02-PLAN.md — standalone EntityResolver: three-channel union generator (exact ∪ BM25 ∪ dense) + confident-or-null floor/margin knobs (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 64-03-PLAN.md — thread claimResolvedEntityId/Descriptor from one branch inside the guarded per-episode loop; sentinels for guard inheritance, source gating, zero net-new provider calls (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 64-04-PLAN.md — D-09 inertness: two-pass whole-DB conservation (resolution on vs off) with payload-aware snapshot; full-suite regression (wave 3)
 
 ### Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix
