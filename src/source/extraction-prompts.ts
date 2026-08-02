@@ -46,7 +46,7 @@ const TRANSCRIPT_SOURCES: ReadonlySet<string> = new Set(['granola', 'otter', 'zo
  * - Sender domain is referenced only as a weak prior in prose (D-03) — no domain-to-verdict
  *   lookup exists anywhere in code, enforced by tests/no-ats-domain-table.test.ts.
  */
-const GMAIL_INTENT_CLASSIFICATION_BLOCK = `This email may also concern the reader's OWN job application to a specific employer or role. When it does, and the email states or clearly implies which of four states that application is now in, emit a claim stating that status change as a fact and attach these three OPTIONAL fields to it — emit all three together or none at all, never a partial set:
+export const GMAIL_INTENT_CLASSIFICATION_BLOCK = `This email may also concern the reader's OWN job application to a specific employer or role. When it does, and the email states or clearly implies which of four states that application is now in, emit a claim stating that status change as a fact and attach these three OPTIONAL fields to it — emit all three together or none at all, never a partial set:
 - "intent_status": one of "applied", "interviewing", "rejected", "offer"
 - "intent_entity": the company and/or role, as the email itself states it — verbatim wording preferred, do not normalize or guess
 - "intent_confidence": one of "high", "medium", "low"

@@ -39,6 +39,8 @@ scripts/eval/results/*
 !scripts/eval/results/gate-latency-run.json
 !scripts/eval/results/gate-injection-run.json
 !scripts/eval/results/46-recon03-ku-bm25on.json
+# Exception: Phase 63 Plan 06 CLASSIFY-01 prompt-prefix token-delta measurement (result of record).
+!scripts/eval/results/63-intent-prompt-token-delta.json
 scripts/eval/*-results.json
 scripts/eval/*-results-*.json
 scripts/eval/judge-eval-set.json
