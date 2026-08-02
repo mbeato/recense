@@ -39,7 +39,7 @@ import type { CandidateRetriever } from '../retrieval/topk';
 import { cosineSimF32, ftsQueryFromText } from '../retrieval/topk';
 import type { JudgeRelation } from '../model/judge';
 import type { ModelProvider } from '../model/provider';
-import type { ExtractedClaim, ActionType } from '../model/claim-extractor';
+import type { ExtractedClaim, ActionType, IntentStatus, IntentConfidence } from '../model/claim-extractor';
 import { extractClaimsWithChunking, parseMergedExtraction, TYPED_EXTRACTION_PROMPT, EXTRACTION_MAX_TOKENS } from '../model/claim-extractor';
 import { parseTriples, type Triple } from '../model/typed-predicates';
 import { promptForSource, isTypedExtractionSource } from '../source/extraction-prompts';
@@ -175,6 +175,19 @@ interface ClaimDecision {
   /** TEMP-02: action type; undefined when claimDueAt is undefined. */
   claimActionType?: ActionType;
   /**
+   * CLASSIFY-02: intent classification, threaded from ExtractedClaim.intent_status.
+   * All three claimIntent* fields present together or all absent (D-05) — mirrors the
+   * all-or-nothing gate already enforced in claim-extractor.ts's parseClaimsFromArray.
+   * INERT this phase (D-08): nothing consumes these fields and no DB row is written from
+   * them. Phase 64 resolves claimIntentEntity against the canonical entity list, Phase 65
+   * maps claimIntentConfidence onto PE magnitude, Phase 66 persists via action_proposal.
+   */
+  claimIntentStatus?: IntentStatus;
+  /** CLASSIFY-02: see claimIntentStatus JSDoc — all-or-nothing with it (D-05). */
+  claimIntentEntity?: string;
+  /** CLASSIFY-02: see claimIntentStatus JSDoc — all-or-nothing with it (D-05). */
+  claimIntentConfidence?: IntentConfidence;
+  /**
    * TEMP-02: Calendar source event id parsed from provenance header (gcal episodes only).
    * null when source !== 'gcal' or the · Event: token is absent.
    */
@@ -202,6 +215,10 @@ interface PendingJudge {
   /** TEMP-02: temporal fields carried through to the ClaimDecision after verdict. */
   claimDueAt?: string;
   claimActionType?: ActionType;
+  /** CLASSIFY-02: intent fields carried through to the ClaimDecision after verdict (D-05). */
+  claimIntentStatus?: IntentStatus;
+  claimIntentEntity?: string;
+  claimIntentConfidence?: IntentConfidence;
 }
 
 // ---------------------------------------------------------------------------
@@ -730,6 +747,12 @@ export class Consolidator {
             c => normalizeValue(this.store.getNode(c.id)?.value ?? '') === normalizeValue(claim.value)
           );
           if (fastPathCandidate) {
+            // CLASSIFY-02 / D-09: this fill site is textually AFTER the origin === 'inferred' ||
+            // echoSourceId !== null || episode.source === 'hitl' hard stop at the top of this
+            // per-episode loop iteration (see the WR-01/CR-01/ACT-03 guard above) — the guard is
+            // inherited by construction, never re-implemented as an independent scan over
+            // episodes (Pitfall 6: this exact defect class shipped twice before, closing the
+            // self-confirmation hole).
             decisionSlots[claimIdx] = {
               claimValue: claim.value,
               claimType: claim.type,
@@ -745,6 +768,9 @@ export class Consolidator {
               claimActionType: claim.action_type, // TEMP-02
               gcalSourceEventId,               // TEMP-02
               gcalRecurrenceRule,              // TEMP-02
+              claimIntentStatus: claim.intent_status,         // CLASSIFY-02
+              claimIntentEntity: claim.intent_entity,         // CLASSIFY-02
+              claimIntentConfidence: claim.intent_confidence, // CLASSIFY-02
             };
           } else {
             // M1: entity-anchored candidate expansion (Phase A sync reads — T-02-ASYNC preserved).
@@ -840,6 +866,9 @@ export class Consolidator {
                 gcalSourceEventId,               // TEMP-02
                 gcalRecurrenceRule,              // TEMP-02
                 claimVec: queryVec,              // DEDUP-01: embed-on-mint
+                claimIntentStatus: claim.intent_status,         // CLASSIFY-02
+                claimIntentEntity: claim.intent_entity,         // CLASSIFY-02
+                claimIntentConfidence: claim.intent_confidence, // CLASSIFY-02
               };
             } else {
               // Phase 46 D-02: extend union — cosine → anchors → BM25 (D-02 ordering).
@@ -863,6 +892,9 @@ export class Consolidator {
                 candidates: judgeCandidates,
                 claimDueAt: claim.due_at,        // TEMP-02
                 claimActionType: claim.action_type, // TEMP-02
+                claimIntentStatus: claim.intent_status,         // CLASSIFY-02
+                claimIntentEntity: claim.intent_entity,         // CLASSIFY-02
+                claimIntentConfidence: claim.intent_confidence, // CLASSIFY-02
               });
             }
           }
@@ -923,6 +955,9 @@ export class Consolidator {
             gcalSourceEventId,                                    // TEMP-02
             gcalRecurrenceRule,                                   // TEMP-02
             claimVec: claimVecs[pendingJudges[i]!.slotIdx] ?? undefined, // DEDUP-01: embed-on-mint
+            claimIntentStatus: pendingJudges[i]!.claimIntentStatus,         // CLASSIFY-02
+            claimIntentEntity: pendingJudges[i]!.claimIntentEntity,         // CLASSIFY-02
+            claimIntentConfidence: pendingJudges[i]!.claimIntentConfidence, // CLASSIFY-02
           };
         }
 
