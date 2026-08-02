@@ -1,0 +1,17 @@
+{
+  "measured": true,
+  "model": "claude-haiku-4-5",
+  "arm_a_input_tokens": 508,
+  "arm_b_input_tokens": 1105,
+  "input_token_delta": 597,
+  "input_token_delta_pct": 117.52,
+  "arm_a_cache_creation_input_tokens": 0,
+  "arm_a_cache_read_input_tokens": 0,
+  "arm_b_cache_creation_input_tokens": 0,
+  "arm_b_cache_read_input_tokens": 0,
+  "arm_a_prefix_chars": 1120,
+  "arm_b_prefix_chars": 3822,
+  "prefix_char_delta": 2702,
+  "prefix_char_delta_pct": 241.25,
+  "measured_at": "2026-08-02T20:56:56.882Z"
+}
