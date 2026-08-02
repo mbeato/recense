@@ -124,6 +124,29 @@ describe('EMAIL-03 — hidden injected content does not survive into NormalizedR
   });
 });
 
+describe(
+  'EMAIL-03 62-29 gap closure — CR-01 (self-closing <style/>) / CR-03 (iframe fallback text) end-to-end, deferred to this plan by 62-29-SUMMARY.md',
+  () => {
+    it('CR-01 a: a self-closing <style/> hiding rule still hides its class-hidden span end-to-end', () => {
+      const raw = makeRaw({
+        bodyText: '<style/>.legal{display:none}</style>ok<span class="legal">PAYLOAD</span>',
+      });
+      const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
+      expect(record.content).not.toContain('PAYLOAD');
+      const afterHeader = record.content.replace(/^From: .* · Re: .* · Acct: default\n?/, '');
+      expect(afterHeader.trim()).toBe('ok');
+    });
+
+    it('CR-03 a: <iframe> fallback content does not survive end-to-end', () => {
+      const raw = makeRaw({ bodyText: '<iframe>INJECT_U1</iframe>ok' });
+      const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
+      expect(record.content).not.toContain('INJECT_U1');
+      const afterHeader = record.content.replace(/^From: .* · Re: .* · Acct: default\n?/, '');
+      expect(afterHeader.trim()).toBe('ok');
+    });
+  }
+);
+
 describe('EMAIL-03 CR-02 — sender-controlled From/Subject headers do not carry invisible codepoints into episode content', () => {
   it('a Unicode Tags-block payload in Subject does not survive into record.content', () => {
     const raw = makeRaw({
@@ -522,6 +545,48 @@ describe(
         'NEW (62-22): many </style foo> truncated-offset RAWTEXT closes repeated (scanHtml\'s own new cost)',
         shapeManyTruncatedStyleCloses,
       ],
+    ] as const)(
+      '%s: end-to-end through normalizeGmailMessage completes under 1000ms at exactly the cap boundary',
+      (_label, makeShape) => {
+        const bodyText = makeShape();
+        expect(bodyText.length).toBe(CAP);
+        const raw = makeRaw({ bodyText });
+        const start = performance.now();
+        const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
+        const elapsed = performance.now() - start;
+        expect(record).toBeDefined();
+        expect(elapsed).toBeLessThan(1000);
+      }
+    );
+  },
+  20000
+);
+
+describe(
+  '62-30 gap closure — CR-02: MAX_STRIP_INPUT_CODE_UNITS cost argument re-derived against the "many `<` + one removable construct" family',
+  () => {
+    // CR-02 (62-REVIEW.md/62-VERIFICATION.md pass 5): stage 6's ANY_TAG_RE sweep is built
+    // from the same `<`-permitting ATTRS fragment every other stage uses, so a run of `<`
+    // with no LATER `>` (exposed by deleting a single element or comment) failed its scan
+    // from every start position -- O(n^2). Neither shape in this family appeared in 62-18's
+    // 25 or 62-22's 29 -- both prior derivations enumerated shapes drawn from history, not
+    // the algorithm's own worst case. See gmail-adapter.ts's MAX_STRIP_INPUT_CODE_UNITS doc
+    // block (section 3) for the re-derivation this block's two rows feed, and
+    // 62-30-SUMMARY.md for the full RED/GREEN growth tables.
+    const CAP = 1048576;
+
+    const shapeElementTrigger = (): string => {
+      const construct = '<div style="display:none">Y</div>';
+      return '<'.repeat(CAP - construct.length) + construct;
+    };
+    const shapeCommentTrigger = (): string => {
+      const construct = '<!--c-->';
+      return '<'.repeat(CAP - construct.length) + construct;
+    };
+
+    it.each([
+      ['T1: many `<` + a display:none div (the element trigger)', shapeElementTrigger],
+      ['T2: many `<` + a trailing HTML comment (the comment trigger)', shapeCommentTrigger],
     ] as const)(
       '%s: end-to-end through normalizeGmailMessage completes under 1000ms at exactly the cap boundary',
       (_label, makeShape) => {

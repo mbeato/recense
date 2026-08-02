@@ -406,6 +406,40 @@ export function parseEmailDate(header: string, nowMs: number): number | null {
  *    resized** — the value did not change, only the argument, again. See `62-22-SUMMARY.md`
  *    for the full 29-row table.
  *
+ *    RE-DERIVED AGAIN IN 62-30 (CR-02, 62-REVIEW.md/62-VERIFICATION.md pass 5) after this cap's
+ *    justification was falsified a SECOND time, the same way T62-91 falsified 62-15's: the
+ *    29-shape set above was drawn from prior waves' shape HISTORY and contained no "many `<`
+ *    plus one removable construct" row — a `<`-run with no later `>`, EXPOSED by stage 3/4/5's
+ *    own deletion of a single comment or element, that stage 6's `ANY_TAG_RE` sweep (built
+ *    from the same `<`-permitting `ATTRS` fragment `strip-hidden.ts` uses everywhere) then
+ *    fail-scanned across at O(n^2). Measured BEFORE this closure, at exactly this constant's
+ *    value: the element trigger (`'<'.repeat(n) + '<div style="display:none">Y</div>'`)
+ *    extrapolated to ~18 minutes from a measured 16x-per-4x curve at 1k/4k/16k/64k/256k code
+ *    units (2.5/20.0/262.1/4164.4/68,243 ms); the comment-only trigger
+ *    (`'<'.repeat(n) + '<!--c-->'`) the same shape of curve. So "Every shape stays over 20x
+ *    under the 1000 ms budget" was, again, a statement about the 29-shape set, not about the
+ *    cap.
+ *
+ *    `strip-hidden.ts`'s stage 6 now re-hoists the same stray-`<` truncation stage 0's Bound A
+ *    already applies, immediately before the sweep (see that file's "62-30 gap closure" doc
+ *    block for the equivalence argument) — the O(n^2) is ELIMINATED, not re-bounded around.
+ *    Re-measured, at exactly 1,048,576 code units, through `stripHiddenContent`: the element
+ *    trigger now completes in ~9.6 ms, the comment trigger in ~10.0 ms — both roughly 5x FASTER
+ *    than the file's own remaining worst-measured shape (the brace-free `a<x ` run inside
+ *    `<style>`, ~47 ms, unchanged by this closure and still the overall worst case across all
+ *    31 shapes now measured). **1 MiB (1,048,576) is KEPT, not resized** — the worst measured
+ *    shape is still that same brace-free run, so the margin stays the SAME >20x 62-18/62-22
+ *    measured, now additionally covering the family that falsified it. See `62-30-SUMMARY.md`
+ *    for the two new rows and the full growth-curve tables.
+ *
+ *    THE LESSON, STATED PLAINLY BECAUSE THIS IS NOW THE THIRD TIME: a cost bound enumerated
+ *    over a shape set is a claim about the shape set; only a bound argued from the algorithm's
+ *    OWN WORST CASE is a claim about the cap. The invariant this constant actually depends on
+ *    is that every stage inside `stripHiddenContent` is linear in aggregate (argued once per
+ *    stage, in that file's own doc comments) — not that some particular shape list is
+ *    exhaustive. Adding a 32nd measured shape the next time one is found would repeat the same
+ *    mistake a fourth time.
+ *
  *    Because every shape clears the budget with wide margin: for legitimate-mail context,
  *    Gmail itself clips message display around 102 KB, and EpisodicStore.capContent (D-58)
  *    keeps only 8 KB of the resulting episode downstream, so a body over 1 MiB is both
