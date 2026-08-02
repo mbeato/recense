@@ -26,10 +26,10 @@
 
 > The sleep pass decides whether an ingested episode implies a status change to a tracked entity. Research established this rides the **existing** per-episode extraction call (the `due_at`/`action_type` TEMP-02 threading pattern), so it costs zero net-new LLM calls — important, because a second per-episode call on the noisiest, highest-volume source would be a real cost regression against the measured ~7.1k tok/turn marginal write.
 
-- [ ] **CLASSIFY-01**: The sleep pass classifies whether a gmail episode implies a status change to a tracked entity, as optional fields on the existing extraction call — **no net-new LLM call per episode**.
-- [ ] **CLASSIFY-02**: Classification runs as a branch inside the existing consolidator per-episode loop, after the existing `source === 'hitl'` hard-stop, so it inherits that guard structurally rather than re-implementing it. A sentinel test proves `hitl` episodes are never classified. (If built as an independent episode scan it would silently *not* inherit the guard that closed D-43 and v9.0's C-2.)
-- [ ] **CLASSIFY-03**: Online paths (SessionStart inject, retrieval, `/v1/surface`, `/v1/proposals`) stay LLM-free — regression-tested. No classification on any hot path.
-- [ ] **CLASSIFY-04**: The status vocabulary stays narrow (the four scoped states), and no ATS sender-domain fingerprint table is introduced — sender domain may be a weak prior into the model's read, never a standalone routing table. (Greenhouse's own docs confirm companies whitelabel to their own verified domains, so a fingerprint table degrades silently.)
+- [x] **CLASSIFY-01**: The sleep pass classifies whether a gmail episode implies a status change to a tracked entity, as optional fields on the existing extraction call — **no net-new LLM call per episode**.
+- [x] **CLASSIFY-02**: Classification runs as a branch inside the existing consolidator per-episode loop, after the existing `source === 'hitl'` hard-stop, so it inherits that guard structurally rather than re-implementing it. A sentinel test proves `hitl` episodes are never classified. (If built as an independent episode scan it would silently *not* inherit the guard that closed D-43 and v9.0's C-2.)
+- [x] **CLASSIFY-03**: Online paths (SessionStart inject, retrieval, `/v1/surface`, `/v1/proposals`) stay LLM-free — regression-tested. No classification on any hot path.
+- [x] **CLASSIFY-04**: The status vocabulary stays narrow (the four scoped states), and no ATS sender-domain fingerprint table is introduced — sender domain may be a weak prior into the model's read, never a standalone routing table. (Greenhouse's own docs confirm companies whitelabel to their own verified domains, so a fingerprint table degrades silently.)
 
 ### RESOLVE — Entity resolution
 
@@ -112,10 +112,10 @@
 | EMAIL-02 | 62 | Satisfied |
 | EMAIL-03 | 62 | Satisfied |
 | EMAIL-04 | 62 | Satisfied |
-| CLASSIFY-01 | 63 | Pending |
-| CLASSIFY-02 | 63 | Pending |
-| CLASSIFY-03 | 63 | Pending |
-| CLASSIFY-04 | 63 | Pending |
+| CLASSIFY-01 | 63 | Complete |
+| CLASSIFY-02 | 63 | Complete |
+| CLASSIFY-03 | 63 | Complete |
+| CLASSIFY-04 | 63 | Complete |
 | RESOLVE-01 | 64 | Pending |
 | RESOLVE-02 | 64 | Pending |
 | RESOLVE-03 | 64 | Pending |

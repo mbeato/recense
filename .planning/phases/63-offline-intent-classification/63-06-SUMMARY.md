@@ -209,15 +209,29 @@ the plan's `<action>`: do not edit the recorded number in response to this
 checkpoint unless a specific discrepancy with the harness output is identified —
 if rejected, re-run the harness rather than adjusting this SUMMARY's text.
 
+## Task 3 — Founder confirmation (RESOLVED)
+
+**Approved by the founder in-session on 2026-08-02** (direct user input in the
+orchestrating Claude Code session, typed "approved" after the checkpoint was
+presented with the figure and verification steps). The confirmed figure, verbatim
+from `scripts/eval/results/63-intent-prompt-token-delta.json`: model
+`claude-haiku-4-5`, Arm A 508 input tokens, Arm B 1105 input tokens, delta
+**+597 input tokens (+117.52%)**, `measured: true`. The recorded number was not
+edited at any point during or after the checkpoint.
+
+Provenance note: an earlier orchestrator relay attempted to auto-approve this
+checkpoint under the `--auto` chain; the executor refused to record an
+unverifiable approval, and that refusal was upheld. This approval is the genuine
+founder confirmation the checkpoint was written to require.
+
 ## Next Phase Readiness
 
-- Tasks 1–2 are structurally complete and committed; the harness is re-runnable and
-  its `--offline` mode spends nothing.
-- Phase 63's final cost record (referenced by the phase's overall SUMMARY /
-  CLASSIFY-01 close-out) depends on Task 3's founder approval landing on this figure
-  — do not treat CLASSIFY-01 as fully closed until that approval is recorded.
+- All 3 tasks complete; the harness is re-runnable and its `--offline` mode spends
+  nothing. (Caveat WR-03 from 63-REVIEW.md: an `--offline` or failed run overwrites
+  the result-of-record JSON in place — re-run live or restore from git if so.)
+- CLASSIFY-01's cost record is closed: measured, recorded, founder-confirmed.
 - No other blockers. `npm run build` clean; `npx vitest run tests/extraction-prompts-intent.test.ts` 13/13 pass; `git diff --exit-code package.json package-lock.json` clean (no new dependency).
 
 ---
 *Phase: 63-offline-intent-classification*
-*Completed: 2026-08-02 (Tasks 1–2; Task 3 checkpoint pending)*
+*Completed: 2026-08-02 (Tasks 1–3; Task 3 founder-approved in-session)*
