@@ -829,7 +829,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
   3. Hidden or invisible content in HTML-only emails (`display:none`, zero-width characters, hidden spans) is deterministically stripped before any content reaches the extractor, verified by a regression fixture containing a hidden injected instruction that must not survive into episode content — EMAIL-03
   4. A fresh account's initial backfill batch is consolidated in chronological order (derived from the email's own `Date:` header), so an older message in the same backfill cannot silently apply over newer state — EMAIL-04
 
-**Plans**: 25 plans in 19 waves (62-06..62-08 gap closure added 2026-07-30; 62-09..62-11 gap closure added 2026-07-30 after re-verification; 62-12 gap closure added 2026-07-30 from `62-REVIEW.md` BL-01/BL-02/BL-03; 62-13..62-15 gap closure added 2026-07-30 from `62-VERIFICATION.md` VF-01/NEW-01/WR-02; **62-16..62-19 gap closure added 2026-07-31** from `62-VERIFICATION.md` FB-01/T62-91 and `62-REVIEW.md` CR-04/WR-09/IN-05 — replaces the hand-rolled CSS scanner with a spec-conformant tokenizer after six independent bypasses of one contract; **62-20..62-25 gap closure added 2026-07-31** from `62-VERIFICATION.md` CR-05..CR-11/WR-10 — extends the same conformant-engine argument to the CSS declaration layer and, per operator decision D-GAP-02, adopts a conformant HTML parser for the comment/`<style>`/attribute layers)
+**Plans**: 31 plans in 24 waves (62-06..62-08 gap closure added 2026-07-30; 62-09..62-11 gap closure added 2026-07-30 after re-verification; 62-12 gap closure added 2026-07-30 from `62-REVIEW.md` BL-01/BL-02/BL-03; 62-13..62-15 gap closure added 2026-07-30 from `62-VERIFICATION.md` VF-01/NEW-01/WR-02; **62-16..62-19 gap closure added 2026-07-31** from `62-VERIFICATION.md` FB-01/T62-91 and `62-REVIEW.md` CR-04/WR-09/IN-05 — replaces the hand-rolled CSS scanner with a spec-conformant tokenizer after six independent bypasses of one contract; **62-20..62-25 gap closure added 2026-07-31** from `62-VERIFICATION.md` CR-05..CR-11/WR-10 — extends the same conformant-engine argument to the CSS declaration layer and, per operator decision D-GAP-02, adopts a conformant HTML parser for the comment/`<style>`/attribute layers; **62-26..62-31 gap closure added 2026-08-01** from `62-VERIFICATION.md` CR-01/CR-02/CR-03/WR-03 and `62-REVIEW.md` WR-01..WR-10 — round 7. The three blockers are two instances of the same two-lists-one-boundary failure mode (CR-01, CR-03) plus the third cost bound derived from an enumerated shape set rather than the algorithm's worst case (CR-02). What makes this round different from the six before it is that the STRUCTURAL gap is sequenced FIRST: the phase's only oracle-driven differential holds the HTML wrapper fixed, so the entire HTML layer three plans rewrote is untested — 62-28 builds an HTML-wrapper generator with ground truth from parse5, a parser production does NOT use, and must independently rediscover CR-01 and CR-03 against the unfixed module before any fix lands)
 
 Plans:
 **Wave 1**
@@ -913,6 +913,27 @@ Plans:
 **Wave 19** *(blocked on Wave 18 — the CR-11 hard gate lands AFTER the leak fixes, per the sequencing decision recorded in 62-25-PLAN.md)*
 
 - [x] 62-25-PLAN.md — Turn the differential's leak counter into a gate (named per-mechanism predicates, exact counts, injection-proved blocking) and derive the oracle's declaration verdict from css-tree's parser instead of a copy of production's regexes (CR-11 + CR-05's oracle half, EMAIL-03, wave 19)
+
+**Wave 20** *(gap closure round 7 — from `62-VERIFICATION.md` CR-01/CR-02/CR-03/WR-03 and `62-REVIEW.md` WR-01..WR-10; both run in parallel, no file overlap: 62-26 owns `package.json`, 62-27 owns the CSS differential + CI + requirements record)*
+
+- [ ] 62-26-PLAN.md — Install `parse5@7.3.0` as an exact-pinned devDependency behind a blocking-human legitimacy gate, so an HTML ground truth can be computed by a parser production does not use; no test and no production code (WR-03 prerequisite, EMAIL-03, wave 20)
+- [ ] 62-27-PLAN.md — Causal leak attribution (a predicate must prove its mechanism by counterfactual, not co-occur with it), oracle preconditions moved out of the `it.fails` bodies, `npm run typecheck` wired into CI, and the inverted EMAIL requirement record corrected (WR-02/WR-04/WR-06 + doc defect, EMAIL-03, wave 20)
+
+**Wave 21** *(blocked on Wave 20 — the structural fix, sequenced BEFORE every point fix so its non-vacuousness is demonstrated rather than argued)*
+
+- [ ] 62-28-PLAN.md — HTML-wrapper differential: 22 named wrapper shapes crossed against a fixed hiding rule, adjudicated by a parse5-derived rendered-text oracle, run against the unfixed module and recorded rediscovering the CR-01 and CR-03 families on its own; hard-gated, injection-proved (WR-03, EMAIL-03, wave 21)
+
+**Wave 22** *(blocked on Wave 21 — sole owner of `strip-hidden.ts` this wave)*
+
+- [ ] 62-29-PLAN.md — One compiler-checked dispositioned element-name source driving deletion, harvest context and the RAWTEXT close-defect regex; the one-sided `selfClosingSyntax` exclusion deleted; thirteen exact-output leak locks (CR-01/CR-03/WR-01/WR-08, EMAIL-03, wave 22)
+
+**Wave 23** *(blocked on Wave 22 — writes `strip-hidden.ts`)*
+
+- [ ] 62-30-PLAN.md — Hoist the stray-`<` truncation ahead of the stage-6 sweep (18 min of ingest CPU at the cap -> milliseconds), re-derive `MAX_STRIP_INPUT_CODE_UNITS` against the shape family that falsified it, and make the cost gates calibration-relative (CR-02/WR-07, EMAIL-03, wave 23)
+
+**Wave 24** *(blocked on Wave 23 — writes `strip-hidden.ts`; phase-closing evidence)*
+
+- [ ] 62-31-PLAN.md — Normalize removal ranges instead of assuming them, make the close-tag boundary quote-aware, collapse the doc block to current state behind a shipped identifier guard, and assemble the round-7 evidence sweep and residual register (WR-05/WR-09/WR-10, EMAIL-03, wave 24)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
