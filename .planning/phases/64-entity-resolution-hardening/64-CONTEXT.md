@@ -69,7 +69,7 @@ Hard prerequisite satisfied: Phase 63 complete (verification 4/4, 2026-08-02) �
 
 ### Upstream phase context (decisions this phase consumes)
 - `.planning/phases/63-offline-intent-classification/63-CONTEXT.md` — D-04 (descriptor is free text, "resolution is Phase 64's job"), D-05 (all-or-nothing precedent), D-07/D-08 (ClaimDecision threading, no-DB-change precedent), D-09 (branch-after-hard-stop discipline)
-- `.planning/phases/63-offline-intent-classification/63-REVIEW.md` — **WR-01** (source-agnostic threading — MUST be closed in this phase per D-10; also WR-02's inertness-snapshot payload gap is context for D-09's conservation test)
+- `.planning/phases/63-offline-intent-classification/63-VERIFICATION.md` (line 77) — the **source-agnostic intent-field threading warning** ("WR-01") that MUST be closed in this phase per D-10. NOTE: this finding originally appeared as WR-01 in 63-REVIEW.md (git `96b23e2`), but that file was overwritten mid-session by commit `975416c` with a later review round whose WR numbering differs — the verification report is the surviving canonical citation. The old review's WR-02 (inertness-snapshot payload gap) informing D-09's conservation test is likewise recoverable from `git show 96b23e2:.planning/phases/63-offline-intent-classification/63-REVIEW.md`
 
 ### Code seams (live source is source of truth)
 - `src/consolidation/consolidator.ts` — Phase 46 union candidate generation (:790-900: cosine ∪ anchors ∪ BM25, dedup, D-06 counters, extend-gate), hitl hard-stops (:106, :643), `ClaimDecision` interface (:151), the four intent-field fill sites (:771-773, :869-871, :895-897, :958-960 per 63-REVIEW)
