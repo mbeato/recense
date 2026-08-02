@@ -264,7 +264,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
 | 62. Multi-Inbox Email Ingest Hardening | v10.0 | 31/31 | Complete   | 2026-08-02 |
 | 63. Offline Intent Classification | v10.0 | 6/6 | Complete    | 2026-08-02 |
-| 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
+| 64. Entity Resolution Hardening | v10.0 | 2/4 | In Progress|  |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
 | 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
@@ -985,8 +985,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 64-01-PLAN.md — close 63 WR-01: gate intent-field pickup on episode.source === 'gmail' at the fill sites, three-route regression (wave 1)
-- [ ] 64-02-PLAN.md — standalone EntityResolver: three-channel union generator (exact ∪ BM25 ∪ dense) + confident-or-null floor/margin knobs (wave 1)
+- [x] 64-01-PLAN.md — close 63 WR-01: gate intent-field pickup on episode.source === 'gmail' at the fill sites, three-route regression (wave 1)
+- [x] 64-02-PLAN.md — standalone EntityResolver: three-channel union generator (exact ∪ BM25 ∪ dense) + confident-or-null floor/margin knobs (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

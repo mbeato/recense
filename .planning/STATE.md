@@ -4,8 +4,8 @@ milestone: v10.0
 milestone_name: Action Proposals
 status: executing
 stopped_at: Phase 64 context gathered
-last_updated: "2026-08-02T23:34:25.608Z"
-last_activity: 2026-08-02 -- Phase 64 planning complete
+last_updated: "2026-08-02T23:35:07.884Z"
+last_activity: 2026-08-02 -- Phase 64 execution started
 progress:
   total_phases: 8
   completed_phases: 2
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Phase 69 — retrieval upgrade entity anchored ambient recall
+**Current focus:** Phase 64 — Entity Resolution Hardening
 
 **v9.0 Key research grounding (June-2026 deep-research pass — historical, still load-bearing for RESOLVE/DRIFT reuse):**
 
@@ -41,10 +41,10 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 
 ## Current Position
 
-Phase: 69
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-08-02 -- Phase 64 planning complete
+Phase: 64 (Entity Resolution Hardening) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 64
+Last activity: 2026-08-02 -- Phase 64 execution started
 
 ## Performance Metrics
 
