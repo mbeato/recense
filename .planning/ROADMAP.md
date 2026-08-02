@@ -263,7 +263,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
 | 62. Multi-Inbox Email Ingest Hardening | v10.0 | 31/31 | Complete   | 2026-08-02 |
-| 63. Offline Intent Classification | v10.0 | 3/6 | In Progress|  |
+| 63. Offline Intent Classification | v10.0 | 5/6 | In Progress|  |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
@@ -962,8 +962,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 63-04-PLAN.md — consolidator threading through ClaimDecision/PendingJudge at all four decision sites + hitl/inferred/echo sentinel + one-generate-call sentinel (wave 2)
-- [ ] 63-06-PLAN.md — honest input-token delta measurement for the enlarged prompt prefix, with founder checkpoint (wave 2)
+- [x] 63-04-PLAN.md — consolidator threading through ClaimDecision/PendingJudge at all four decision sites + hitl/inferred/echo sentinel + one-generate-call sentinel (wave 2)
+- [x] 63-06-PLAN.md — honest input-token delta measurement for the enlarged prompt prefix, with founder checkpoint (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
