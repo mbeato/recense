@@ -14,6 +14,7 @@ import {
   stripHiddenContent,
   stripInvisibleCodepoints,
   scanHtml,
+  applyRemovalRanges,
   NON_CONTENT_TAGS,
   NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS,
 } from '../src/source/strip-hidden';
@@ -1840,6 +1841,91 @@ describe('stripHiddenContent — WR-02 Bound A/B: deterministic fuzz test (total
     // `tests/css-liveness-differential.test.ts`.
     expect(styleScriptExcluded).toBeLessThan(N);
     expect(cdoExcluded).toBeLessThan(N);
+  });
+});
+
+describe('applyRemovalRanges — 62-31 gap closure (WR-09, T-62-31-01): the ascending/non-overlapping precondition is now enforced, not assumed', () => {
+  // Before this closure, every caller argued in PROSE that its own ranges were ascending
+  // and pairwise non-overlapping; nothing in `applyRemovalRanges` itself checked that. A
+  // violated argument moved the cursor BACKWARDS and re-emitted text an earlier range had
+  // already deleted -- the failure mode of a broken containment argument is a leak, in the
+  // one function every stage's output flows through.
+
+  it('unchanged behavior: a single range deletes exactly its own span', () => {
+    expect(applyRemovalRanges('0123456789', [[2, 5]])).toBe('0156789');
+  });
+
+  it('a nested range does NOT re-emit characters the outer range already deleted, in ascending-then-narrower order', () => {
+    // RED (pre-fix algorithm, recorded verbatim): '056789' -- the cursor was reset
+    // backwards from 8 to 5 by the second, nested range, re-emitting characters 5-7 that
+    // the first range [1,8) had already deleted.
+    expect(applyRemovalRanges('0123456789', [[1, 8], [3, 5]])).toBe('089');
+  });
+
+  it('the same nested-range case is order-independent: reversing the input order produces the identical result', () => {
+    // RED (pre-fix algorithm, recorded verbatim): '01289' -- a DIFFERENT wrong output than
+    // the ascending-order case above, demonstrating the pre-fix function was order-dependent
+    // (its correctness depended on the caller happening to hand it ranges in the right
+    // order, an assumption nothing checked).
+    expect(applyRemovalRanges('0123456789', [[3, 5], [1, 8]])).toBe('089');
+  });
+
+  it('duplicate and touching ranges are idempotent', () => {
+    expect(applyRemovalRanges('0123456789', [[2, 5], [2, 5]])).toBe('0156789');
+    expect(applyRemovalRanges('0123456789', [[2, 5], [5, 8]])).toBe('0189');
+  });
+
+  it('property check (500 randomized trials): the output never contains a character covered by any input range', () => {
+    // Each trial builds an input string where character i IS its own position, base-36
+    // encoded (single digit, so n is capped at 36) -- this lets the assertion below recover
+    // each surviving character's ORIGINAL index directly from the character itself, with no
+    // separate bookkeeping array to keep in sync.
+    for (let trial = 0; trial < 500; trial += 1) {
+      const n = 2 + Math.floor(Math.random() * 34); // 2..35
+      const html = Array.from({ length: n }, (_, i) => i.toString(36)).join('');
+      const rangeCount = 1 + Math.floor(Math.random() * 5);
+      const ranges: Array<[number, number]> = [];
+      for (let r = 0; r < rangeCount; r += 1) {
+        const a = Math.floor(Math.random() * (n + 1));
+        const b = Math.floor(Math.random() * (n + 1));
+        const start = Math.min(a, b);
+        const end = Math.max(a, b);
+        if (start === end) continue; // an empty range deletes nothing; skip
+        ranges.push([start, end]);
+      }
+      const result = applyRemovalRanges(html, ranges);
+      for (const ch of result) {
+        const idx = parseInt(ch, 36);
+        for (const [start, end] of ranges) {
+          expect(idx < start || idx >= end).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe('stripHiddenContent — 62-31 gap closure (WR-10, T-62-31-02): the close-tag boundary scan is now quote-aware', () => {
+  it('sender-controlled bytes inside a close tag\'s bogus quoted attribute no longer survive into content', () => {
+    // RED (recorded against the shipped `dist/` build, before this plan's fix): "b\">tail" --
+    // the bare `html.indexOf('>', closeEnd)` found the IN-QUOTE `>` inside `foo="a>b"` first
+    // and stopped there, leaking `b">tail` even though every remaining tag is supposed to be
+    // removed.
+    expect(
+      stripHiddenContent('<div style="display:none">SECRET</div foo="a>b">tail')
+    ).toBe('tail');
+  });
+
+  it('controls: the D-62-21-01 RAWTEXT close-tag recovery is unaffected', () => {
+    expect(
+      stripHiddenContent('<style foo>.x{display:none}</style foo>ok<span class="x">PAYLOAD</span>')
+    ).toBe('ok');
+    expect(
+      stripHiddenContent('<style >.x{display:none}</style >ok<span class="x">PAYLOAD</span>')
+    ).toBe('ok');
+  });
+
+  it('control: a well-formed close tag is unaffected', () => {
+    expect(stripHiddenContent('<div>hi</div>tail')).toBe('hitail');
   });
 });
 

@@ -497,6 +497,34 @@ const INVISIBLE_CODEPOINTS_RE = /[\p{Default_Ignorable_Code_Point}\u2028\u2029]/
 const ATTRS = `(?:"[^"]*"|'[^']*'|[^'">])*`;
 
 /**
+ * The same quoting rule `ATTRS` encodes (a `"..."` or `'...'` run is opaque; anything else,
+ * including `<`, is plain), applied as a hand-written forward scan rather than a second
+ * regex literal — 62-31 gap closure (WR-10, T-62-31-02) requires this, not a regex, so the
+ * module keeps exactly one quoting opinion (`ATTRS` for regex-driven scans, this function
+ * for the one caller — `scanHtml`'s `onclosetag` handler — that needs to walk forward from
+ * an arbitrary offset rather than match a whole tag). Returns the index of the first
+ * UNQUOTED `>` at or after `from`, or -1 if none exists before the end of input (an
+ * unterminated quoted attribute value — residual (c), unbalanced quotes; the caller falls
+ * back to its pre-existing `closeEnd + 1` behavior in that case).
+ */
+function findUnquotedGt(html: string, from: number): number {
+  let quote: '"' | "'" | null = null;
+  for (let i = from; i < html.length; i++) {
+    const ch = html[i];
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '>') return i;
+  }
+  return -1;
+}
+
+/**
  * 62-29 gap closure (CR-01/CR-03/WR-01, T-62-29-01..T-62-29-05) — the ONE source of truth
  * this module holds about which element names are special, and in what way. Before this
  * closure, `NON_CONTENT_TAGS` (stage 4/5's deletion set) and `RAWTEXT_CLOSE_SLASH_RE` (the
@@ -597,12 +625,44 @@ export const NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS: ReadonlySet<string> = new Se
   )
 );
 
-/** Deletes every `[start, end)` range from `html`, preserving everything in between. */
-function applyRemovalRanges(html: string, ranges: Array<[number, number]>): string {
+/**
+ * Deletes every `[start, end)` range from `html`, preserving everything in between.
+ *
+ * 62-31 gap closure (WR-09, T-62-31-01): every documented caller already argues its own
+ * ranges are ascending and pairwise non-overlapping (`collectStartTagRemovalRanges`'s
+ * document-order/child-never-exceeds-parent argument, `mergeCommentAndElementRanges`'s
+ * contained-or-disjoint argument) — but that agreement lived in each caller's OWN prose,
+ * never checked here, in the one function every stage's output flows through. A caller
+ * whose argument is ever wrong (a future stage, a refactor that drops the sort) would
+ * silently walk the cursor BACKWARDS on a nested or out-of-order range: the pre-fix
+ * function did exactly `result += html.slice(cursor, start); cursor = end;` per range with
+ * no ordering check, so a nested range `[[1,8],[3,5]]` moved the cursor from 8 back to 5 and
+ * the trailing `html.slice(cursor)` re-emitted characters 5-7 that the FIRST range had
+ * already deleted — a content leak, not a crash, in the one function this whole module
+ * funnels through.
+ *
+ * The precondition is now ENFORCED, not assumed: sort by start ascending, then by end
+ * descending (a total order, so ties are no longer processing-order-dependent — two ranges
+ * sharing a start are visited widest-first, so the narrower one is always "already
+ * consumed" by the time it is reached); skip any range whose `end` does not exceed the
+ * cursor already reached (fully consumed by a prior range); advance the cursor
+ * monotonically to `Math.max(cursor, end)` otherwise. The cursor can now never move
+ * backwards, so the trailing `html.slice(cursor)` can never re-include a character an
+ * earlier range covered. Exported for `tests/strip-hidden.test.ts`'s WR-09 property
+ * assertions (five fixed cases plus a 500-trial randomized check) to import directly,
+ * matching this file's existing test-only export pattern (`NON_CONTENT_TAGS`, etc.) — not
+ * unused-by-production; do not remove this export as dead code.
+ */
+export function applyRemovalRanges(html: string, ranges: Array<[number, number]>): string {
   if (ranges.length === 0) return html;
+  const sorted = ranges.slice().sort((a, b) => a[0] - b[0] || b[1] - a[1]);
   let result = '';
   let cursor = 0;
-  for (const [start, end] of ranges) {
+  for (const [start, end] of sorted) {
+    if (start < cursor) {
+      if (end > cursor) cursor = end; // partial overlap: extend, emit nothing new
+      continue; // fully consumed by a prior range
+    }
     result += html.slice(cursor, start);
     cursor = end;
   }
@@ -816,7 +876,18 @@ export function scanHtml(html: string): HtmlScan {
           // tag, which is already sitting on its own `>`. `neutralizeRawtextCloseDefect`
           // (called on `parser.write`'s input below) means a `</style/>`-shaped close now
           // ALSO reaches this branch instead of the EOF-implied one.
-          const realGt = html.indexOf('>', closeEnd);
+          //
+          // 62-31 gap closure (WR-10, T-62-31-02): this scan is now QUOTE-AWARE
+          // (`findUnquotedGt`, same rule `ATTRS` encodes), not a bare `html.indexOf('>', ...)`.
+          // htmlparser2 does not itself apply attribute-quoting rules to a close tag's bogus
+          // trailing content, so its OWN reported `closeEnd` can already sit before a
+          // sender-controlled quoted value containing a literal `>` (`</div foo="a>b">tail`);
+          // a bare `indexOf` from that offset finds the IN-QUOTE `>` first and stops there,
+          // leaking `b">tail` into `record.content` even though the module's own "every
+          // remaining tag is removed" contract says that cannot happen. Falls back to the
+          // pre-existing `closeEnd + 1` behavior when no unquoted `>` exists before EOF --
+          // named residual (c) (unbalanced quotes), unchanged by this fix.
+          const realGt = findUnquotedGt(html, closeEnd);
           elementEnd = realGt === -1 ? closeEnd + 1 : realGt + 1;
         } else if (closeStart < record.tagEnd) {
           // Synthetic close ECHOING the open tag's own position (a void element, or a
