@@ -368,7 +368,34 @@ export function parseClaimsFromArray(raw: unknown[]): ExtractedClaim[] {
       typeof rawDueAt === 'string' && rawDueAt.trim() ? rawDueAt.trim() : undefined;
     const action_type = due_at !== undefined ? toActionType(obj['action_type']) : undefined;
 
-    return [{ type: type as NodeType, value: value.trim(), links, due_at, action_type }];
+    // Phase 63 intent gate (D-05): all-or-nothing, cross-field-coupled — the opposite shape
+    // of the TEMP-02 gate above, where each field is computed independently. If ANY of the
+    // three is invalid/missing, ALL THREE are dropped. This prevents a partially-classified
+    // claim (e.g. a status with no entity) from reaching Phase 64/65 as if it were a complete
+    // signal, which would corrupt belief-gated status drift on a single ambiguous email.
+    let intent_status = toIntentStatus(obj['intent_status']);
+    let intent_confidence = toIntentConfidence(obj['intent_confidence']);
+    const rawIntentEntity = obj['intent_entity'];
+    let intent_entity =
+      typeof rawIntentEntity === 'string' && rawIntentEntity.trim()
+        ? rawIntentEntity.trim()
+        : undefined;
+    if (intent_status === undefined || intent_entity === undefined || intent_confidence === undefined) {
+      intent_status = undefined;
+      intent_entity = undefined;
+      intent_confidence = undefined;
+    }
+
+    return [{
+      type: type as NodeType,
+      value: value.trim(),
+      links,
+      due_at,
+      action_type,
+      intent_status,
+      intent_entity,
+      intent_confidence,
+    }];
   });
 }
 
