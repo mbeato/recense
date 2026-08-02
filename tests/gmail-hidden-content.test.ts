@@ -39,6 +39,27 @@ function makeRaw(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage {
   };
 }
 
+/**
+ * WR-07 (62-REVIEW.md) — same-process calibration baseline for the cost-bound assertions
+ * below. An absolute wall-clock threshold is the same construction as the already-known-flaky
+ * WR-02 growth-ratio assertion: measured locally at ~0.3-1.4x the reference workload (see
+ * 62-30-SUMMARY.md), the documented budget carries >20x headroom on a quiet machine but a
+ * loaded shared CI runner (ubuntu-22.04 + macos-15 matrix) can regularly exceed that margin on
+ * a single-threaded 1 MiB workload. This measures a BENIGN reference body of the SAME size,
+ * through the SAME entry point (`normalizeGmailMessage`), in the SAME test invocation as the
+ * adversarial shape it is compared against — so both share whatever JIT/GC/runner variance is
+ * in effect at that moment, and the assertion becomes "this shape costs at most N times an
+ * ordinary body of the same size" rather than "this shape costs at most K wall-clock ms".
+ */
+function e2eReferenceElapsedMs(byteLength: number): number {
+  const unit = '<p>text</p>';
+  const referenceBody = unit.repeat(Math.ceil(byteLength / unit.length) + 1).slice(0, byteLength);
+  const raw = makeRaw({ bodyText: referenceBody });
+  const start = performance.now();
+  normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
+  return performance.now() - start;
+}
+
 describe('EMAIL-03 — hidden injected content does not survive into NormalizedRecord.content', () => {
   it('does not contain the display:none payload', () => {
     const record = normalizeGmailMessage(makeRaw(), 'default', TEST_CONFIG, NOW);
@@ -428,6 +449,15 @@ describe(
       expect(record.content).not.toContain('PAYLOAD_TAIL_RULE');
     });
 
+    // WR-07 (62-REVIEW.md): left ABSOLUTE, not calibration-relative, by explicit design —
+    // measured locally, Shape T at 4 MiB and a 4 MiB benign reference body both complete in
+    // well under 1 ms (0.00-0.01 ms either side; see 62-30-SUMMARY.md), so a ratio of two
+    // sub-millisecond, timer-resolution-noise-dominated measurements would be a coin flip, not
+    // a gate — exactly the "cannot pick a defensible multiple" case the plan calls out. The
+    // 500 ms absolute budget still carries the same >20x headroom it always did; the shape it
+    // guards is a pre-62-18 quadratic (STYLE_BLOCK_RE, deleted) whose reintroduction would push
+    // this well past even a loaded CI runner's threshold, so the flakiness risk WR-07 names
+    // does not apply here the way it does to the near-1x-ratio shapes below.
     it('end-to-end cost bound: a 4 MiB Shape T body (the worst-ranked shape in 62-14s set) completes in under 500ms', () => {
       const bodyText = shapeT(4 * 1024 * 1024);
       const raw = makeRaw({ bodyText });
@@ -477,7 +507,14 @@ describe(
     ];
 
     it.each(worst3Shapes)(
-      '%s: end-to-end through normalizeGmailMessage completes under 1000ms at exactly the cap boundary',
+      // WR-07 (62-REVIEW.md): calibration-relative, not absolute. DOCUMENTED budget: 1000 ms
+      // (>20x the ~44-48 ms locally measured worst case, per 62-18-SUMMARY.md). Ratio bound:
+      // 10x a same-size benign reference body through the same entry point — locally measured
+      // ratios for these three shapes are ~0.8-1.4x (62-30-SUMMARY.md), so 10x carries ~7x
+      // headroom over the highest observed ratio while staying within one order of magnitude
+      // of it (not a bound "so loose it cannot fail" — a real O(n^2) regression pushes the
+      // adversarial side into the thousands of ms, a >100x ratio).
+      '%s: end-to-end through normalizeGmailMessage costs at most 10x a same-size benign body (documented budget: 1000ms) at exactly the cap boundary',
       (_label, makeShape) => {
         const bodyText = makeShape();
         expect(bodyText.length).toBe(CAP_FOR_WORST3);
@@ -486,7 +523,8 @@ describe(
         const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
         const elapsed = performance.now() - start;
         expect(record).toBeDefined();
-        expect(elapsed).toBeLessThan(1000);
+        const referenceElapsed = e2eReferenceElapsedMs(CAP_FOR_WORST3);
+        expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
       }
     );
 
@@ -546,7 +584,13 @@ describe(
         shapeManyTruncatedStyleCloses,
       ],
     ] as const)(
-      '%s: end-to-end through normalizeGmailMessage completes under 1000ms at exactly the cap boundary',
+      // WR-07 (62-REVIEW.md): calibration-relative, not absolute. DOCUMENTED budget: 1000 ms
+      // (>20x the ~31-47 ms locally measured worst case, per 62-22-SUMMARY.md). Ratio bound:
+      // 10x a same-size benign reference body through the same entry point — locally measured
+      // ratios for these two shapes are ~0.8-1.4x (62-30-SUMMARY.md), the same band as the
+      // worst3Shapes block above, so the same 10x bound applies with the same headroom
+      // argument.
+      '%s: end-to-end through normalizeGmailMessage costs at most 10x a same-size benign body (documented budget: 1000ms) at exactly the cap boundary',
       (_label, makeShape) => {
         const bodyText = makeShape();
         expect(bodyText.length).toBe(CAP);
@@ -555,7 +599,8 @@ describe(
         const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
         const elapsed = performance.now() - start;
         expect(record).toBeDefined();
-        expect(elapsed).toBeLessThan(1000);
+        const referenceElapsed = e2eReferenceElapsedMs(CAP);
+        expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
       }
     );
   },
@@ -588,7 +633,13 @@ describe(
       ['T1: many `<` + a display:none div (the element trigger)', shapeElementTrigger],
       ['T2: many `<` + a trailing HTML comment (the comment trigger)', shapeCommentTrigger],
     ] as const)(
-      '%s: end-to-end through normalizeGmailMessage completes under 1000ms at exactly the cap boundary',
+      // WR-07 (62-REVIEW.md): calibration-relative, not absolute. DOCUMENTED budget: 1000 ms
+      // (~100x headroom over the ~9.6-10.0 ms locally measured post-fix cost, per
+      // 62-30-SUMMARY.md). Ratio bound: 10x a same-size benign reference body through the same
+      // entry point — locally measured ratios for T1/T2 are ~0.35-0.46x, well under the
+      // worst3Shapes/62-22 blocks' ~1.4x, so the same 10x bound carries even more headroom
+      // here.
+      '%s: end-to-end through normalizeGmailMessage costs at most 10x a same-size benign body (documented budget: 1000ms) at exactly the cap boundary',
       (_label, makeShape) => {
         const bodyText = makeShape();
         expect(bodyText.length).toBe(CAP);
@@ -597,7 +648,8 @@ describe(
         const record = normalizeGmailMessage(raw, 'default', TEST_CONFIG, NOW);
         const elapsed = performance.now() - start;
         expect(record).toBeDefined();
-        expect(elapsed).toBeLessThan(1000);
+        const referenceElapsed = e2eReferenceElapsedMs(CAP);
+        expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
       }
     );
   },
