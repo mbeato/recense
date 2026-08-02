@@ -227,9 +227,11 @@
  * There is now only one opinion about a `<style>` element's boundary, not two that happen to
  * agree.
  *
- * `<style/>` (self-closing) is unaffected by this closure — the outer walk below skips any
- * match `SELF_CLOSING_SUFFIX_RE` reports as self-closing, leaving WR-03 (62-REVIEW.md, still
- * open) exactly as it was, not attempting to fix it here.
+ * `<style/>` (self-closing) was UNAFFECTED by this closure at the time it landed — the outer
+ * walk skipped any match its own self-closing check reported, leaving WR-03 (62-REVIEW.md)
+ * open. WR-03 is CLOSED by 62-29 (CR-01): a self-closing `<style/>` start tag is a
+ * spec-correct no-op on a non-void element (HTML §13.2.5) and is now harvested like any other
+ * `<style>` — see `HTML_ELEMENT_DISPOSITIONS` and `scanHtml`'s `onclosetag` handler below.
  *
  * 62-20 gap closure (CR-05/CR-06/CR-08/CR-09, 62-REVIEW.md/62-VERIFICATION.md) — migrates the
  * one part of the CSS layer 62-17 left on raw text: the DECLARATION side. `hasHidingSignature`
@@ -459,9 +461,106 @@ const INVISIBLE_CODEPOINTS_RE = /[\p{Default_Ignorable_Code_Point}\u2028\u2029]/
  */
 const ATTRS = `(?:"[^"]*"|'[^']*'|[^'">])*`;
 
-/** True when a matched tag's raw text ends with a self-closing `/>` — used by `scanHtml`
- *  to exclude a self-closing `<style/>` from `styleElements` (WR-03, still open). */
-const SELF_CLOSING_SUFFIX_RE = /\/\s*>$/;
+/**
+ * 62-29 gap closure (CR-01/CR-03/WR-01, T-62-29-01..T-62-29-05) — the ONE source of truth
+ * this module holds about which element names are special, and in what way. Before this
+ * closure, `NON_CONTENT_TAGS` (stage 4/5's deletion set) and `RAWTEXT_CLOSE_SLASH_RE` (the
+ * RAWTEXT close-slash defect guard) were two independently hand-maintained lists of raw-text
+ * names, and a self-closing `<style/>` was excluded from harvest by a check stage 4/5 had no
+ * matching opinion on — two parts of the module holding different opinions about one
+ * boundary, with the argument that they agreed living only in a comment (CR-01's and CR-03's
+ * shared root cause, named six times across this phase's verification passes). Every
+ * consumer below derives from `HTML_ELEMENT_DISPOSITIONS`; none restates its own copy.
+ *
+ * Two independent facts about how a browser treats an element, each load-bearing on its own:
+ *  - `rendersText`: does a human ever see text placed directly inside this element? False
+ *    means stage 4/5 deletes the element and its contents outright (`NON_CONTENT_TAGS`,
+ *    derived below).
+ *  - `appliesStylesheets`: would a browser apply a `<style>` written as a DESCENDANT of this
+ *    element to the rest of the document? False means a `<style>` found inside this
+ *    element's subtree must not be harvested by stage 2
+ *    (`NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS`, derived below) — WR-01.
+ */
+interface ElementDisposition {
+  readonly rendersText: boolean;
+  readonly appliesStylesheets: boolean;
+}
+
+/**
+ * The single dispositioned source. `head` and `svg` deliberately keep
+ * `appliesStylesheets: true` — a browser DOES apply `<head><style>` and an inline SVG's own
+ * `<style>` (SVG shares the host document's CSSOM, unlike `<iframe>`/`<noscript>`/
+ * `<template>`, which do not) — both confirmed against `tests/support/html-render-oracle.ts`.
+ * `style` itself keeps `appliesStylesheets: false`: the question ("would a browser apply a
+ * `<style>` nested inside this element") is inert for `style` at runtime (its own body is
+ * RAWTEXT, so a genuinely nested `<style>` element can never exist inside it), the same
+ * "inert, not optional" reasoning that applies to `xmp` below — but it is still read off the
+ * table honestly rather than special-cased away, and `harvestHidingSelectors`'s own
+ * ancestor-containment check (Task 2) is the one place that must NOT treat a `<style>` tag as
+ * its own ancestor container (see that function's doc comment for why).
+ */
+const HTML_ELEMENT_DISPOSITIONS = {
+  script: { rendersText: false, appliesStylesheets: false },
+  style: { rendersText: false, appliesStylesheets: false },
+  head: { rendersText: false, appliesStylesheets: true },
+  title: { rendersText: false, appliesStylesheets: false },
+  template: { rendersText: false, appliesStylesheets: false },
+  noscript: { rendersText: false, appliesStylesheets: false },
+  svg: { rendersText: false, appliesStylesheets: true },
+  iframe: { rendersText: false, appliesStylesheets: false },
+  noembed: { rendersText: false, appliesStylesheets: false },
+  noframes: { rendersText: false, appliesStylesheets: false },
+  textarea: { rendersText: true, appliesStylesheets: false },
+  xmp: { rendersText: true, appliesStylesheets: false },
+} as const satisfies Record<string, ElementDisposition>;
+
+/**
+ * `</` + one of these 8 names + `/` is a real htmlparser2 defect (see `RAWTEXT_CLOSE_SLASH_RE`
+ * below). The eight names appear as a literal list exactly ONCE, here; `RAWTEXT_CLOSE_SLASH_RE`
+ * is BUILT from this array rather than restating them in a regex literal.
+ */
+const RAWTEXT_ELEMENT_NAMES = [
+  'script', 'style', 'title', 'textarea', 'iframe', 'noembed', 'noframes', 'xmp',
+] as const;
+
+type RawtextName = (typeof RAWTEXT_ELEMENT_NAMES)[number];
+
+/**
+ * T-62-29-03 — compile-time exhaustiveness check: a name added to `RAWTEXT_ELEMENT_NAMES`
+ * without a matching entry in `HTML_ELEMENT_DISPOSITIONS` fails THIS assignment to compile (a
+ * required property would be missing from the right-hand side's type). Proven non-vacuous in
+ * `62-29-SUMMARY.md` by adding a ninth name with no disposition and recording the verbatim
+ * `tsc` error, then reverting. This check CANNOT catch a disposition flipped from `false` to
+ * `true` (still compiles) — `tests/strip-hidden.test.ts`'s exact-membership guard (T-62-29-04)
+ * is the other half; see that test for the injected-flip proof.
+ */
+const RAWTEXT_DISPOSITIONS_EXHAUSTIVE_CHECK: Record<RawtextName, ElementDisposition> =
+  HTML_ELEMENT_DISPOSITIONS;
+
+/**
+ * Derives the fixed tag set stage 4/5 deletes contents for (`rendersText === false`).
+ * Exported for `tests/strip-hidden.test.ts`'s exact-set-equality membership guard
+ * (T-62-29-04) to import and compare against a literal expected list — NOT
+ * unused-by-production; do not remove this export as dead code.
+ */
+export const NON_CONTENT_TAGS: ReadonlySet<string> = new Set(
+  (Object.keys(HTML_ELEMENT_DISPOSITIONS) as Array<keyof typeof HTML_ELEMENT_DISPOSITIONS>).filter(
+    name => !HTML_ELEMENT_DISPOSITIONS[name].rendersText
+  )
+);
+
+/**
+ * Derives the set of element names inside which a browser never applies a descendant
+ * `<style>` (`appliesStylesheets === false`) — WR-01's fix, consumed by
+ * `harvestHidingSelectors`'s ancestor-containment filter (Task 2). Exported for the SAME
+ * reason as `NON_CONTENT_TAGS` above: `tests/strip-hidden.test.ts`'s exact-set-equality
+ * membership guard (T-62-29-04) imports this, not a second hand-copied list.
+ */
+export const NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS: ReadonlySet<string> = new Set(
+  (Object.keys(HTML_ELEMENT_DISPOSITIONS) as Array<keyof typeof HTML_ELEMENT_DISPOSITIONS>).filter(
+    name => !HTML_ELEMENT_DISPOSITIONS[name].appliesStylesheets
+  )
+);
 
 /** Deletes every `[start, end)` range from `html`, preserving everything in between. */
 function applyRemovalRanges(html: string, ranges: Array<[number, number]>): string {
@@ -589,8 +688,14 @@ export interface HtmlScan {
  * hidden behind a missed close must still be found), where the identical residual would both
  * delete real, visible prose after a `</style/>`-shaped close (a regression of the BL-02 lock,
  * 62-13) AND make a genuinely hidden element behind it invisible to `scan.startTags` entirely.
+ *
+ * 62-29 gap closure (CR-03, T-62-29-02/T-62-29-03): BUILT from `RAWTEXT_ELEMENT_NAMES` above
+ * rather than restating the eight names in a second regex literal — `NON_CONTENT_TAGS` used to
+ * be a DIFFERENT hand-maintained seven that omitted `iframe`/`noembed`/`noframes` (CR-03); both
+ * now derive from the same `HTML_ELEMENT_DISPOSITIONS` source, so they cannot silently diverge
+ * again.
  */
-const RAWTEXT_CLOSE_SLASH_RE = /<\/(script|style|title|textarea|iframe|noembed|noframes|xmp)\//gi;
+const RAWTEXT_CLOSE_SLASH_RE = new RegExp(`</(${RAWTEXT_ELEMENT_NAMES.join('|')})/`, 'gi');
 
 /**
  * SAME-LENGTH, pre-parse neutralization of `RAWTEXT_CLOSE_SLASH_RE`'s trigger: replaces the
@@ -639,11 +744,12 @@ export function scanHtml(html: string): HtmlScan {
   const styleElements: HtmlStyleElement[] = [];
   const startTags: HtmlStartTag[] = [];
 
-  interface OpenFrame {
-    readonly record: HtmlStartTag;
-    readonly selfClosingSyntax: boolean;
-  }
-  const stack: OpenFrame[] = [];
+  // 62-29 gap closure (CR-01): the stack now holds `HtmlStartTag` records directly, not a
+  // wrapper frame carrying a self-closing flag. A self-closing `<style/>` start tag no
+  // longer gets a divergent, stage-2-only opinion about whether the element exists --
+  // stage 2 and stage 4/5 now agree BY CONSTRUCTION because neither has a self-closing
+  // exception left to hold.
+  const stack: HtmlStartTag[] = [];
 
   const recordComment = (start: number, end: number): void => {
     comments.push({ start, end: Math.min(end, html.length) });
@@ -660,13 +766,12 @@ export function scanHtml(html: string): HtmlScan {
           attrs.set(key.toLowerCase(), attribs[key]!);
         }
         const record: HtmlStartTag = { name, attrs, tagStart, tagEnd, elementEnd: tagEnd };
-        const selfClosingSyntax = SELF_CLOSING_SUFFIX_RE.test(html.slice(tagStart, tagEnd));
         startTags.push(record); // document order -- pushed at OPEN, mutated at CLOSE below
-        stack.push({ record, selfClosingSyntax });
+        stack.push(record);
       },
       onclosetag(_name: string, isImplied: boolean): void {
-        const frame = stack.pop();
-        if (!frame) return; // defensive; htmlparser2's own tree construction keeps this balanced
+        const record = stack.pop();
+        if (!record) return; // defensive; htmlparser2's own tree construction keeps this balanced
         const closeStart = parser.startIndex;
         const closeEnd = parser.endIndex;
         let elementEnd: number;
@@ -678,26 +783,28 @@ export function scanHtml(html: string): HtmlScan {
           // ALSO reaches this branch instead of the EOF-implied one.
           const realGt = html.indexOf('>', closeEnd);
           elementEnd = realGt === -1 ? closeEnd + 1 : realGt + 1;
-        } else if (closeStart < frame.record.tagEnd) {
+        } else if (closeStart < record.tagEnd) {
           // Synthetic close ECHOING the open tag's own position (a void element, or a
           // self-closing void like `<br/>`) -- there is no separate close location; the
           // element's range is exactly its own open tag.
-          elementEnd = frame.record.tagEnd;
+          elementEnd = record.tagEnd;
         } else {
           // EOF-implied, or an ancestor's close tag triggered an implied close: the element's
           // content runs up to (never including) the position the synthetic close was
           // recognized at -- `html.length` for EOF, or the ancestor's own close-tag start.
           elementEnd = closeStart;
         }
-        frame.record.elementEnd = elementEnd;
+        record.elementEnd = elementEnd;
 
-        if (frame.record.name === 'style' && !frame.selfClosingSyntax) {
-          // WR-03 (62-REVIEW.md, still open) — a self-closing `<style/>` is deliberately
-          // excluded here, preserving stage 4's `NON_CONTENT_TAGS` removal's own treatment
-          // of it (`SELF_CLOSING_SUFFIX_RE`, above) — stage 2 must not silently start
-          // harvesting a shape stage 4/5 still treats as self-closing.
+        if (record.name === 'style') {
+          // 62-29 gap closure (CR-01): a self-closing `<style/>` start tag is a spec-correct
+          // no-op on a non-void element (HTML §13.2.5, tests/html-parser-conformance.test.ts:283)
+          // -- it opens the element normally, so it is harvested here exactly like any other
+          // `<style>`, closing the one-sided exclusion that let stage 4/5 delete the element
+          // while stage 2 refused to harvest it (the stylesheet vanished; the elements it hid
+          // did not).
           styleElements.push({
-            contentStart: frame.record.tagEnd,
+            contentStart: record.tagEnd,
             contentEnd: Math.min(closeStart, html.length),
             elementEnd: Math.min(elementEnd, html.length),
           });
@@ -727,11 +834,11 @@ export function scanHtml(html: string): HtmlScan {
   // element (verified directly -- a multiply-nested unclosed input drains the whole stack at
   // EOF, one isImplied close per frame), so this loop is not expected to run. Kept so a future
   // htmlparser2 behavior change cannot silently leave `elementEnd` at its `tagEnd` placeholder.
-  for (const frame of stack) {
-    frame.record.elementEnd = html.length;
-    if (frame.record.name === 'style' && !frame.selfClosingSyntax) {
+  for (const record of stack) {
+    record.elementEnd = html.length;
+    if (record.name === 'style') {
       styleElements.push({
-        contentStart: frame.record.tagEnd,
+        contentStart: record.tagEnd,
         contentEnd: html.length,
         elementEnd: html.length,
       });
@@ -1150,8 +1257,9 @@ function harvestFromStylesheet(css: string, classes: Set<string>, ids: Set<strin
  * closes the T-62-43 cross-stage boundary bug class for `<style>` specifically (BL-01 and
  * BL-02 were both instances of that class).
  *
- * `<style/>` (self-closing) is skipped by the outer walk, unchanged from before this closure —
- * WR-03 (62-REVIEW.md, still open) is not addressed here.
+ * `<style/>` (self-closing) was skipped by the outer walk, unchanged from before this closure,
+ * at the time it landed — WR-03 (62-REVIEW.md) was open. WR-03 is CLOSED by 62-29: see
+ * `HTML_ELEMENT_DISPOSITIONS` and `scanHtml`'s `onclosetag` handler.
  *
  * On an UNTERMINATED `<style>` (no matching `</style...>` anywhere at or after the open tag),
  * this walk harvests the element's content to end of input, per HTML §13.2.5. This is a
@@ -1170,8 +1278,8 @@ function harvestFromStylesheet(css: string, classes: Set<string>, ids: Set<strin
  * BOTH `comments` and `styleElements` at once — there is no second, independently-maintained
  * regex left to disagree with it. Two decisions this inherits from `scanHtml` rather than
  * re-deriving here:
- *  - A self-closing `<style/>` is excluded from `styleElements` (WR-03, 62-REVIEW.md, still
- *    open, untouched by this plan) — see `scanHtml`'s own comment on why.
+ *  - A self-closing `<style/>` used to be excluded from `styleElements` (WR-03, 62-REVIEW.md);
+ *    CLOSED by 62-29 — see `scanHtml`'s own `onclosetag` comment.
  *  - An unterminated `<style>`'s content runs to `html.length` (`contentEnd === elementEnd`),
  *    the SAME 62-18 behavior this doc block's paragraph above describes, now produced by the
  *    parser directly instead of `findRawtextCloseBounds`'s forward-only-cursor break.
@@ -1186,6 +1294,58 @@ function harvestHidingSelectors(
     harvestFromStylesheet(html.slice(el.contentStart, el.contentEnd), classes, ids);
   }
   return { classes, ids };
+}
+
+/**
+ * 62-29 gap closure (WR-01): filters `styleElements` down to those NOT nested inside an
+ * element in `NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS` — a browser never applies a
+ * stylesheet written as a descendant of e.g. `<iframe>`/`<noscript>`/`<template>`, so
+ * harvesting one anyway deletes visible prose OUTSIDE the container that never should
+ * have been hidden.
+ *
+ * Reuses `collectStartTagRemovalRanges` (stage 4/5's own primitive) to compute the
+ * never-applied ANCESTOR ranges — no second walk, no second notion of an element range.
+ * `style` is EXCLUDED from the predicate here even though
+ * `HTML_ELEMENT_DISPOSITIONS.style.appliesStylesheets` is `false`: that disposition
+ * answers "would a browser apply a `<style>` nested INSIDE another `<style>`" (inert — a
+ * `<style>` element's own body is RAWTEXT, so a genuinely nested `<style>` can never
+ * exist), never "is a `<style>` element its own ancestor container." Without this
+ * exclusion, `collectStartTagRemovalRanges` would push a range for every MATCHING tag
+ * including `<style>` itself, and a plain `<style>` element's own `contentStart` always
+ * lies inside its OWN `[tagStart, elementEnd)` range — every `<style>` element, including
+ * the ordinary top-level control, would spuriously self-exclude from harvest.
+ *
+ * Both `neverAppliedAncestorRanges` (`collectStartTagRemovalRanges`'s own documented
+ * contract) and `styleElements` (pushed by `scanHtml` in document order, and never nested
+ * inside one another — `<style>` is RAWTEXT, so one `<style>` element can never contain
+ * another) are ascending and pairwise non-overlapping, so this is a single O(n+m)
+ * two-pointer sweep, not a nested scan — load-bearing on the online ingest path.
+ */
+function filterStyleElementsOutsideNeverAppliedContext(
+  startTags: readonly HtmlStartTag[],
+  styleElements: readonly HtmlStyleElement[]
+): readonly HtmlStyleElement[] {
+  const neverAppliedAncestorRanges = collectStartTagRemovalRanges(
+    startTags,
+    name => name !== 'style' && NEVER_APPLIED_STYLESHEET_CONTEXT_TAGS.has(name)
+  );
+  if (neverAppliedAncestorRanges.length === 0) return styleElements;
+
+  const kept: HtmlStyleElement[] = [];
+  let i = 0;
+  for (const el of styleElements) {
+    while (
+      i < neverAppliedAncestorRanges.length &&
+      neverAppliedAncestorRanges[i]![1] <= el.contentStart
+    ) {
+      i += 1;
+    }
+    const range = neverAppliedAncestorRanges[i];
+    const insideNeverApplied =
+      range !== undefined && range[0] <= el.contentStart && el.contentStart < range[1];
+    if (!insideNeverApplied) kept.push(el);
+  }
+  return kept;
 }
 
 // ---------------------------------------------------------------------------
@@ -1222,9 +1382,12 @@ function harvestHidingSelectors(
 // Stage 4 — non-content element removal (fixed tag set)
 // ---------------------------------------------------------------------------
 
-const NON_CONTENT_TAGS = new Set([
-  'script', 'style', 'head', 'title', 'template', 'noscript', 'svg',
-]);
+// 62-29 gap closure (CR-03): `NON_CONTENT_TAGS` is now derived from
+// `HTML_ELEMENT_DISPOSITIONS` (defined in the "Shared tag-matching primitives" section,
+// above `scanHtml`) rather than a second hand-maintained literal. The literal this replaced
+// was a DIFFERENT seven names that omitted `iframe`/`noembed`/`noframes` — their fallback
+// text, rendered by no browser and stripped by Gmail, was emitted verbatim into
+// `record.content`.
 
 // ---------------------------------------------------------------------------
 // Stage 5 — hidden element removal (hiding-signature registry, compiled once)
@@ -1563,8 +1726,18 @@ export function stripHiddenContent(text: string): string {
   const scan = scanHtml(s);
 
   // Stage 2: harvest class/id hiding selectors from <style> blocks before they're
-  // discarded in stage 4.
-  const { classes: hiddenClasses, ids: hiddenIds } = harvestHidingSelectors(s, scan.styleElements);
+  // discarded in stage 4. 62-29 gap closure (WR-01): a stylesheet nested inside a
+  // never-applied context (<iframe>/<noscript>/<template>, ...) is filtered OUT before
+  // harvest — a browser never applies it, so harvesting it anyway would delete visible
+  // prose outside the container that never should have been hidden.
+  const harvestableStyleElements = filterStyleElementsOutsideNeverAppliedContext(
+    scan.startTags,
+    scan.styleElements
+  );
+  const { classes: hiddenClasses, ids: hiddenIds } = harvestHidingSelectors(
+    s,
+    harvestableStyleElements
+  );
 
   // Stages 3+4+5 (62-24 gap closure, CR-07): comment ranges (stage 3), non-content-element
   // ranges (stage 4, fixed tag set) and hidden-element ranges (stage 5, hiding-signature

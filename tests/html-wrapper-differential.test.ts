@@ -30,23 +30,29 @@
  * divergences elsewhere in the 88-case run. The verbatim pre-fix report is quoted in full in
  * `62-28-SUMMARY.md`.
  *
- * THE THREE NAMED MECHANISMS BELOW (`HF-01`/`HF-02`/`HF-03`) ARE TEMPORARY, EACH SAYS SO IN
- * ITS OWN DOC COMMENT, AND EACH NAMES `62-29` AS ITS OWNER: `62-29` fixes CR-01 (HF-01) and
- * CR-03 (HF-02) in production and is REQUIRED to delete both predicates and their locks,
- * replacing each `it.fails` with a passing assertion. `62-30` fixes WR-01 (HF-03) and owns
- * its removal. A predicate that outlives its fix is a tolerance — the CR-11 defect wearing a
- * different hat (`62-REVIEW.md`) — which is exactly what this file's hard gate below exists
- * to prevent for every OTHER, unnamed divergence: only these three named shapes are excused;
- * anything else fails the suite outright.
+ * RETIRED (62-29): this file originally shipped THREE named, temporary, excused divergence
+ * predicates (one per family above — CR-01/shapes 2-5, CR-03/shapes 10-12, WR-01/shapes
+ * 16-17), each with its own `it.fails` lock; their exact names and shipped counts are
+ * recorded verbatim in `62-28-SUMMARY.md`. 62-29 fixed all three families in production
+ * (CR-01/CR-03 in `src/source/strip-hidden.ts` Task 1, WR-01 in Task 2) and, per its own
+ * removal obligation, deleted all three predicates and their locks, replacing them with a
+ * positive assertion that every shape now agrees with the oracle — a predicate that outlives
+ * its fix is a tolerance, the CR-11 defect wearing a different hat (`62-REVIEW.md`).
  *
- * SHIPPED COUNTS (exact, asserted below, never an upper-magnitude tolerance — this file
- * contains no "less-than" bound of any kind): `HF01_selfClosingStyleExcludedFromHarvest` = 8,
- * `HF02_rawtextFallbackEmittedVerbatim` = 6, `HF03_neverAppliedStylesheetStillHarvested` = 4.
+ * OWNERSHIP CORRECTION (62-29): this file's ORIGINAL header (62-28) named `62-30` as the
+ * owner of the third (WR-01) predicate. That was WRONG. WR-01 (a stylesheet in a
+ * never-applied context, e.g. `<iframe>`/`<noscript>`, is harvested and deletes visible
+ * prose) is fixed by 62-29 Task 2 (`62-29-PLAN.md:58`, with both WR-01 repro rows and their
+ * exact GREEN outputs given at `:239-244`) — 62-30 only ever mentioned WR-01 in passing, as
+ * payloads it separately locks against regression. `62-29-SUMMARY.md` records this
+ * correction so a future verifier does not need to reconstruct why the ownership here
+ * differs from what 62-28 originally wrote.
  *
- * WHAT THIS FILE DOES NOT CLAIM: closing WR-03's detection gap is not the same as closing
- * CR-01/CR-03/WR-01 themselves — this plan fixes no leak. It also does not claim the HTML
- * layer is now exhaustively covered; it names which 22 shapes are in this alphabet and which
- * three families are still open, and nothing wider.
+ * The hard gate below is now UNCONDITIONAL: with no named, temporary exemption left, ANY
+ * HTML-layer divergence — not just an unnamed one — fails the suite outright.
+ *
+ * WHAT THIS FILE DOES NOT CLAIM: it names which 22 shapes are in this alphabet; it does not
+ * claim the HTML layer is now exhaustively covered beyond that alphabet.
  */
 import { describe, it, expect } from 'vitest';
 import { renderedText } from './support/html-render-oracle';
@@ -400,58 +406,11 @@ describe('html-render-oracle — 62-28 Task 1: eight asserted behaviors', () => 
 });
 
 // ---------------------------------------------------------------------------
-// Named mechanisms (Task 3, CR-11 gate discipline: exact counts, never an upper-magnitude
-// tolerance — this file contains no "less-than" bound of any kind). Each predicate keys on
-// the SHAPE ID, not on any substring of the generating input, and is TEMPORARY — see the
-// file-level doc comment and each interface field's own doc comment for the owning plan.
+// 62-29 gap closure: the three temporary predicates (see the file-level doc comment) are
+// retired. With CR-01, CR-03 and WR-01 all closed in production, this differential has NO
+// named, temporary exemption left — every case is checked against the ordinary agreement
+// path, and ANY divergence (not just an unnamed one) fails the suite outright.
 // ---------------------------------------------------------------------------
-interface WrapperFiledCounters {
-  /** HF-01 (TEMPORARY, owner: 62-29/CR-01): self-closing start-tag syntax on `style`
-   *  (shapes 2/3/4/5) excludes it from the hiding-selector harvest while stage 4/5 deletes the
-   *  element anyway — the stylesheet vanishes, the elements it hides do not. UNDER-STRIP. */
-  HF01_selfClosingStyleExcludedFromHarvest: number;
-  /** HF-02 (TEMPORARY, owner: 62-29/CR-03): `iframe`/`noembed`/`noframes` fallback content
-   *  (shapes 10/11/12) is emitted verbatim, though no modern browser renders it. UNDER-STRIP. */
-  HF02_rawtextFallbackEmittedVerbatim: number;
-  /** HF-03 (TEMPORARY, owner: 62-30/WR-01): a stylesheet inside a never-applied context
-   *  (shapes 16/17: `noscript`/`iframe`) is harvested anyway and deletes visible prose OUTSIDE
-   *  the container that never should have been hidden. OVER-STRIP. */
-  HF03_neverAppliedStylesheetStillHarvested: number;
-}
-
-function newWrapperFiledCounters(): WrapperFiledCounters {
-  return {
-    HF01_selfClosingStyleExcludedFromHarvest: 0,
-    HF02_rawtextFallbackEmittedVerbatim: 0,
-    HF03_neverAppliedStylesheetStillHarvested: 0,
-  };
-}
-
-type Direction = 'UNDER-STRIP' | 'OVER-STRIP';
-
-/**
- * Attributes one confirmed divergence to a named, temporary mechanism keyed on `shapeId` (never
- * on a substring of the generating input) and its `direction` — or, if it matches none of the
- * three, pushes the full reproducible detail to `failures`, which `throwIfFailures` turns into a
- * hard suite failure. This is the entire gate: an HTML-layer divergence with no name fails the
- * suite, demonstrated live by the injection proof recorded in `62-28-SUMMARY.md`.
- */
-function classifyDivergence(shapeId: number, direction: Direction, detail: string, filed: WrapperFiledCounters, failures: string[]): void {
-  if (direction === 'UNDER-STRIP' && (shapeId === 2 || shapeId === 3 || shapeId === 4 || shapeId === 5)) {
-    filed.HF01_selfClosingStyleExcludedFromHarvest += 1;
-    return;
-  }
-  if (direction === 'UNDER-STRIP' && (shapeId === 10 || shapeId === 11 || shapeId === 12)) {
-    filed.HF02_rawtextFallbackEmittedVerbatim += 1;
-    return;
-  }
-  if (direction === 'OVER-STRIP' && (shapeId === 16 || shapeId === 17)) {
-    filed.HF03_neverAppliedStylesheetStillHarvested += 1;
-    return;
-  }
-  failures.push(detail);
-}
-
 interface RunCounters {
   oracleUnavailable: number;
 }
@@ -462,12 +421,11 @@ function newRunCounters(): RunCounters {
 
 /**
  * The generator (62-28-PLAN.md Task 2's `<behavior>`): every shape x {class,id} x
- * {inside,after} case, oracle vs production. VISIBLE_SENTENCE-loss divergences always go
- * straight to `failures` (none of the three named mechanisms concern sentence loss — only
- * probe-marker under/over-strip). Probe-marker divergences are routed through
- * `classifyDivergence`, so only the three named, temporary shapes are excused.
+ * {inside,after} case, oracle vs production. Every divergence — VISIBLE_SENTENCE loss or a
+ * probe-marker under/over-strip — is pushed straight to `failures`; `throwIfFailures` turns
+ * a non-empty `failures` into a hard suite failure. No shape is excused.
  */
-function runWrapperDifferential(failures: string[], counters: RunCounters, filed: WrapperFiledCounters): number {
+function runWrapperDifferential(failures: string[], counters: RunCounters): number {
   let caseCount = 0;
   const probeKinds: readonly ProbeKind[] = ['class', 'id'];
   const placements: readonly Placement[] = ['inside', 'after'];
@@ -499,24 +457,16 @@ function runWrapperDifferential(failures: string[], counters: RunCounters, filed
         const productionRendersMarker = out.includes(marker);
 
         if (!oracleRendersMarker && productionRendersMarker) {
-          classifyDivergence(
-            shape.id,
-            'UNDER-STRIP',
+          failures.push(
             `UNDER-STRIP — shape=${shape.id} (${shape.reason}) probe=${probeKind} placement=${placement} ` +
               `generating html=${JSON.stringify(html)} oracle text=${JSON.stringify(truth.text)} ` +
-              `observed output=${JSON.stringify(out)}`,
-            filed,
-            failures
+              `observed output=${JSON.stringify(out)}`
           );
         } else if (oracleRendersMarker && !productionRendersMarker) {
-          classifyDivergence(
-            shape.id,
-            'OVER-STRIP',
+          failures.push(
             `OVER-STRIP — shape=${shape.id} (${shape.reason}) probe=${probeKind} placement=${placement} ` +
               `generating html=${JSON.stringify(html)} oracle text=${JSON.stringify(truth.text)} ` +
-              `observed output=${JSON.stringify(out)}`,
-            filed,
-            failures
+              `observed output=${JSON.stringify(out)}`
           );
         }
       }
@@ -527,75 +477,39 @@ function runWrapperDifferential(failures: string[], counters: RunCounters, filed
 }
 
 describe('html-wrapper-differential — HTML-wrapper generator vs a fixed hiding rule', () => {
-  it('every shape x {class,id} x {inside,after} case: only the three named, temporary mechanisms diverge, with exact shipped counts', () => {
+  it('every shape x {class,id} x {inside,after} case agrees with the oracle — no divergence is excused', () => {
     const failures: string[] = [];
     const counters = newRunCounters();
-    const filed = newWrapperFiledCounters();
-    const caseCount = runWrapperDifferential(failures, counters, filed);
+    const caseCount = runWrapperDifferential(failures, counters);
 
     expect(caseCount).toBe(WRAPPER_SHAPES.length * 2 * 2);
     expect(counters.oracleUnavailable).toBe(0);
-    // Exact counts (never a magnitude bound) — measured against this file's own 22-shape
-    // alphabet's full {class,id}x{inside,after} cross product. A count that moves means the
-    // alphabet or the shipped module changed; either way it must be re-measured and
-    // re-recorded here, not silently absorbed.
-    expect(filed.HF01_selfClosingStyleExcludedFromHarvest).toBe(8);
-    expect(filed.HF02_rawtextFallbackEmittedVerbatim).toBe(6);
-    expect(filed.HF03_neverAppliedStylesheetStillHarvested).toBe(4);
     throwIfFailures(failures, 'html-wrapper-differential');
   });
 });
 
 // ---------------------------------------------------------------------------
-// Named, temporary, minimal locks (Task 3). Per WR-04's lesson (`62-REVIEW.md`), each
-// `it.fails` body asserts EXACTLY ONE subject — production's output — never sharing its body
-// with the oracle ground-truth precondition, which lives in its own passing `it` immediately
-// above it. Both plans named as owners (62-29 for HF-01/HF-02, 62-30 for HF-03) are REQUIRED
-// to delete the predicate, this describe block's two `it`s, and flip the `it.fails` to a
-// passing assertion when they land their fix — a predicate that outlives its fix is a
-// tolerance (CR-11 wearing a different hat).
+// 62-29 gap closure: the three shapes that used to feed the retired temporary predicates
+// (see the file-level doc comment) now assert a positive agreement with the oracle
+// directly, replacing the retired `it.fails` locks.
 // ---------------------------------------------------------------------------
-describe('html-wrapper-differential — open families (HF-01/HF-02/HF-03), TEMPORARY locks', () => {
-  it('HF-01 precondition: the oracle hides the class-probed span for shape 2 (<style/>) exactly like the shape-1 control', () => {
-    const { text } = renderedText('<style/>.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PL[legal]</span>');
-    expect(text).toBe('VISIBLE_SENTENCE');
+describe('html-wrapper-differential — CR-01/CR-03/WR-01 CLOSED: positive agreement locks', () => {
+  it('CR-01 CLOSED: <style/> (self-closing) hides the class-probed span exactly like the plain <style> control', () => {
+    const out = stripHiddenContent(
+      '<style/>.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PL[legal]</span>'
+    );
+    expect(out).toBe('VISIBLE_SENTENCE');
   });
 
-  it.fails(
-    'HF-01 (TEMPORARY, owner: 62-29/CR-01): self-closing start-tag syntax on style excludes it from the hiding-selector harvest while stage 4/5 deletes the element anyway, leaking the elements it should have hidden',
-    () => {
-      const out = stripHiddenContent('<style/>.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PL[legal]</span>');
-      expect(out).not.toContain('PL[legal]');
-    }
-  );
-
-  it('HF-02 precondition: the oracle never renders iframe fallback content', () => {
-    const { text } = renderedText('<iframe>PL[legal]</iframe>VISIBLE_SENTENCE');
-    expect(text).toBe('VISIBLE_SENTENCE');
+  it('CR-03 CLOSED: <iframe> fallback content is deleted along with the rest of the element', () => {
+    const out = stripHiddenContent('<iframe>PL[legal]</iframe>VISIBLE_SENTENCE');
+    expect(out).toBe('VISIBLE_SENTENCE');
   });
 
-  it.fails(
-    'HF-02 (TEMPORARY, owner: 62-29/CR-03): iframe/noembed/noframes fallback content is emitted verbatim, though no modern browser renders it',
-    () => {
-      const out = stripHiddenContent('<iframe>PL[legal]</iframe>VISIBLE_SENTENCE');
-      expect(out).not.toContain('PL[legal]');
-    }
-  );
-
-  it('HF-03 precondition: the oracle renders the probe span, because a stylesheet inside a never-rendered <noscript> is never applied to elements outside it', () => {
-    const { text } = renderedText(
+  it('WR-01 CLOSED: a stylesheet inside a never-rendered <noscript> is not applied to elements outside it', () => {
+    const out = stripHiddenContent(
       '<noscript><style>.legal{display:none}</style></noscript>VISIBLE_SENTENCE<span class="legal">PL[legal]</span>'
     );
-    expect(text).toBe('VISIBLE_SENTENCEPL[legal]');
+    expect(out).toBe('VISIBLE_SENTENCEPL[legal]');
   });
-
-  it.fails(
-    'HF-03 (TEMPORARY, owner: 62-30/WR-01): a stylesheet inside a never-applied context (noscript/iframe) is harvested anyway and deletes visible prose OUTSIDE the container',
-    () => {
-      const out = stripHiddenContent(
-        '<noscript><style>.legal{display:none}</style></noscript>VISIBLE_SENTENCE<span class="legal">PL[legal]</span>'
-      );
-      expect(out).toContain('PL[legal]');
-    }
-  );
 });
