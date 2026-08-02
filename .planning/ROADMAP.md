@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 30/31 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 31/31 | Complete   | 2026-08-02 |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -933,7 +933,7 @@ Plans:
 
 **Wave 24** *(blocked on Wave 23 — writes `strip-hidden.ts`; phase-closing evidence)*
 
-- [ ] 62-31-PLAN.md — Normalize removal ranges instead of assuming them, make the close-tag boundary quote-aware, collapse the doc block to current state behind a shipped identifier guard, and assemble the round-7 evidence sweep and residual register (WR-05/WR-09/WR-10, EMAIL-03, wave 24)
+- [x] 62-31-PLAN.md — Normalize removal ranges instead of assuming them, make the close-tag boundary quote-aware, collapse the doc block to current state behind a shipped identifier guard, and assemble the round-7 evidence sweep and residual register (WR-05/WR-09/WR-10, EMAIL-03, wave 24)
 
 **Planning note:** research Pitfall 5 proposed sorting a backfill batch by `Date:` header *before appending*. That fix would be dead code here — `listUnconsolidated()` is `ORDER BY hard_keep DESC, salience DESC`, so append order is discarded. Plan 62-05 corrects this and lands the ordering at the consolidation seam without modifying the SQL replay-priority order.
 
