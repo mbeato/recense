@@ -258,6 +258,31 @@ export interface EngineConfig {
   bm25CandidateK: number;
 
   /**
+   * Phase 64 (D-05): confident-or-null resolution floor for `EntityResolver.resolve`.
+   * The top candidate's combined score — `max(lexicalDice, denseCosine)` in `[0, 1]` — must be
+   * >= this value or resolution abstains. 0.75 means the descriptor and the node value must
+   * share three quarters of their tokens harmonically (Dice): "Acme Corp" vs "Acme Consulting"
+   * scores 0.5 and is correctly rejected, while an exact normalized match scores 1.0. Err toward
+   * abstention per D-05: a missed resolution costs nothing (no proposal), a wrong one silently
+   * corrupts an external system of record recense cannot fix (research Pitfall 4).
+   * Dark isolation switch: any value greater than 1.0 (use `2`) is unreachable because scores
+   * are clamped to [0, 1], so it makes every resolution abstain and reproduces pre-Phase-64
+   * behavior exactly.
+   */
+  entityResolutionFloor: number;
+
+  /**
+   * Phase 64 (D-05): confident-or-null top-2 margin for `EntityResolver.resolve`.
+   * `top1.score - top2.score` must be >= this value or resolution abstains as too-close-to-call,
+   * even when top1 clears entityResolutionFloor. This is the second half of research Pitfall 4's
+   * confident-or-null prescription and is what stops near-duplicate cross-attribution when both
+   * duplicates score above the floor.
+   * Setting it to 0 disables the margin check and is NOT recommended — it re-opens near-duplicate
+   * cross-attribution (Pitfall 4 failure mode 1).
+   */
+  entityResolutionMargin: number;
+
+  /**
    * Salience below which a non-hard-keep episode is skipped in consolidation replay (CONSOL-01).
    * 0.2 means episodes with <20% salience are skipped unless force-kept.
    * Calibrate against real transcript cadence — too low wastes LLM budget on noise.
@@ -806,6 +831,8 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   candidateK: 5,
   entityAnchorK: 5,
   bm25CandidateK: 5,   // Phase 46 D-03: default ON; set 0 to reproduce pre-46 behavior (D-07)
+  entityResolutionFloor: 0.75,   // Phase 64 D-05: conservative confident-or-null score floor
+  entityResolutionMargin: 0.15,  // Phase 64 D-05: conservative confident-or-null top-2 margin
   consolSkipThreshold: 0.2,
   consolSkipThresholdAssistant: 0.5,
   unrelatedSimilarityThreshold: 0.3,
