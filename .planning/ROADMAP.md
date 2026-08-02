@@ -816,6 +816,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
 - [ ] **Phase 66: Domain-Neutral Proposal Emit Seam** — `ActionProposalSink` + `action_proposal` table + `/v1/proposals` routes; a named "D-43-for-proposals" sentinel test closes the milestone's largest correctness risk structurally.
 - [ ] **Phase 67: Reference Consumer Adapter** — In-repo `clients/proposal-reference/` proves the contract end-to-end with its own import-boundary test.
 - [ ] **Phase 68: Telegram HITL Belief-Kind Extension** — Second `kind:'belief'` on the existing StoredProposal union; batching + hold-exclusion bound approval fatigue.
+- [ ] **Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall** — Entity-anchored candidate generation (reusing Phase 64's union generator), same-project rank treatment, 1-hop relations in the injected block, cited-evidence recall mode. Gated on a 58-prompt eval set from real sessions. Seed: SEED-005.
 
 ### Phase 62: Multi-Inbox Email Ingest Hardening
 
@@ -1021,6 +1022,24 @@ Plans:
   2. Belief-kind proposals are a `kind` discriminator on the existing `StoredProposal` union that bypasses the client-side LLM tool-mapping step while reusing the existing expiry and rate-cap machinery — zero changes to `proposal-engine.ts` or `proposal-store.ts` — APPROVE-02
   3. Same-entity same-day proposals are batched into one prompt, and held (non-decisive) updates are never surfaced to the user — APPROVE-03
   4. Raw numeric confidence is never shown to the user and is never a programmatic approval gate — the PE gate is the only gate — APPROVE-04
+
+**Plans**: TBD
+
+### Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall
+
+**Goal**: A memory-shaped prompt in any Claude Code session surfaces the facts that actually answer it — including facts reachable only by name rather than by topic similarity — instead of the five most cosine-similar nodes, and the agent can verify what it was given rather than falling back to grep.
+**Depends on**: Phase 64 (reuses that phase's broadened candidate generator — exact/entity-keyed ∪ BM25 ∪ dense union over the RECON machinery — rather than building a second, divergent one for the recall path)
+**Requirements**: TBD (derive from SEED-005 during discuss/plan)
+**Seed**: `.planning/seeds/SEED-005-retrieval-upgrade-recall-audit.md` — findings F1–F5 from a 1,942-turn / 302-session live transcript audit (`scripts/eval/recall-audit.py`)
+**Success Criteria** (what must be TRUE):
+
+  1. Ambient recall reaches facts anchored by a proper noun in the prompt, not only by blended-prompt topic similarity — the audit's "contract with vtx" class (asked twice, whiffed twice, facts present in the graph) resolves, via LLM-free indexed entity lookup on the hot path
+  2. Cross-project recall is preserved (resume sessions legitimately pull VTX/recense facts), but a foreign-project deep-dive document no longer outranks own-project facts — the audit measured 49% of scoped injected lines as foreign, scoring *higher* than own-project (0.541 vs 0.530)
+  3. The injected block carries each fact's 1-hop relations — the edges `buildHonestOneHopTrace` already computes for the viz trace and currently discards before injection — within the existing token budget
+  4. `recense recall` can return cited evidence (node ids + traversed edges) instead of only an LLM-composed prose inference, so a caller can verify a claim without grepping
+  5. Every change is gated on the 58-prompt memory-shaped eval set extracted from real sessions (`scripts/eval/recall-audit-evalset.py`): no regression on the 42 currently-hit prompts, and the injected-line relevance improves on the whiffs
+
+**Explicit decision reversal**: criterion 2 contradicts **D-S1** ("scope is provenance, not a retrieval signal"). This must be recorded as a deliberate reversal in the phase CONTEXT with its rationale, not slipped in as an implementation detail.
 
 **Plans**: TBD
 
