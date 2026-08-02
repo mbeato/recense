@@ -954,11 +954,19 @@ Plans:
 **Plans**: 6 plans (3 waves)
 
 Plans:
+**Wave 1**
+
 - [ ] 63-01-PLAN.md — ExtractedClaim intent contract: 4-state/3-level closed vocabularies, drop-on-mismatch coercers, JSON schema, all-or-nothing parse gate (wave 1)
 - [ ] 63-02-PLAN.md — gmail intent-classification prompt block shared across both gmail prompt variants + CLASSIFY-04 no-fingerprint-table structural guard (wave 1)
 - [ ] 63-03-PLAN.md — CLASSIFY-03 online LLM-free regression sentinel across SessionStart inject, retrieval, and GET /v1/surface (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 63-04-PLAN.md — consolidator threading through ClaimDecision/PendingJudge at all four decision sites + hitl/inferred/echo sentinel + one-generate-call sentinel (wave 2)
 - [ ] 63-06-PLAN.md — honest input-token delta measurement for the enlarged prompt prefix, with founder checkpoint (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 63-05-PLAN.md — cross-stage conservation: vocabulary parity prompt/schema/parser/decision + zero-DB-delta inertness proof (wave 3)
 
 ### Phase 64: Entity Resolution Hardening
@@ -1094,6 +1102,7 @@ _B-01 (Email ingest → domain-neutral action proposals) was promoted to the v10
 **Why run it anyway:** it is the emerging third-party evaluation frame in this space. Better to own the number than to have an interviewer or a competitor produce it first. A poor contradiction-detection score is defensible if it is a stated design tradeoff; it is not defensible as a surprise.
 
 **Explicitly NOT recommended** (evaluated and declined 2026-07-30):
+
 - **Belnap four-valued rewrite** — architectural rewrite of the write path; collides with the engine-faithfulness constraint in CLAUDE.md.
 - **AGM/TMS formalization** — Kumiho's staked ground ([paper](https://kumiho.io/pdfs/kumiho_AI_cognitive_memory_paper.pdf), PDF did not parse, unread). PE-gated reconsolidation is a defensible alternative foundation, not a weaker version of AGM.
 - **Deterministic freshness signals** — already shipped. [arXiv 2606.01435](https://arxiv.org/pdf/2606.01435) argues LLMs must not judge recency (inconsistent temporal reasoning, hallucinated timestamps, context-dependent reversals) and prescribes explicit timestamps → insertion order → deterministic tiebreak. Phase 62 shipped exactly that (`event_ts` + `orderEpisodesForConsolidation`), and `JudgeVerdict` carries no freshness field — the judge decides only `relation` + `magnitude`. Keep as a talking point, no work needed.
