@@ -980,7 +980,13 @@ Plans:
   2. When no candidate clears the confidence floor, resolution abstains and no proposal is produced from that episode, rather than emitting a best-available guess — RESOLVE-02
   3. A resolved entity is exposed as recense's own stable node reference plus a human-readable descriptor; recense never mirrors, imports, or queries a consumer's canonical ID space — the consumer's own adapter owns the match into its IDs — RESOLVE-03
 
-**Plans**: TBD
+**Plans**: 4 plans (3 waves)
+
+Plans:
+- [ ] 64-01-PLAN.md — close 63 WR-01: gate intent-field pickup on episode.source === 'gmail' at the fill sites, three-route regression (wave 1)
+- [ ] 64-02-PLAN.md — standalone EntityResolver: three-channel union generator (exact ∪ BM25 ∪ dense) + confident-or-null floor/margin knobs (wave 1)
+- [ ] 64-03-PLAN.md — thread claimResolvedEntityId/Descriptor from one branch inside the guarded per-episode loop; sentinels for guard inheritance, source gating, zero net-new provider calls (wave 2)
+- [ ] 64-04-PLAN.md — D-09 inertness: two-pass whole-DB conservation (resolution on vs off) with payload-aware snapshot; full-suite regression (wave 3)
 
 ### Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix
 
