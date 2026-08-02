@@ -243,8 +243,8 @@ import { Parser } from 'htmlparser2';
  * indirect-prompt-injection research), the Variation Selectors (U+FE00-U+FE0F) and
  * Variation Selectors Supplement (U+E0100-U+E01EF — the 2025 arbitrary-byte smuggling
  * carrier), bidi embed/override/isolate controls, LRM/RLM/ALM, the combining grapheme
- * joiner, deprecated format chars, and Hangul fillers — see the file-level doc block's
- * "62-12 gap closure" note for the full rationale, including why the reviewer's `\p{Cf}`
+ * joiner, deprecated format chars, and Hangul fillers — see `62-12-SUMMARY.md` for the full
+ * rationale, including why the reviewer's `\p{Cf}`
  * proposal was rejected (31-codepoint narrowing) and the two accepted behavior changes on
  * legitimate RTL mail and VS16-suffixed emoji. `U+2028`/`U+2029` (line/paragraph
  * separator) are added explicitly — they are NOT Default_Ignorable but are a named

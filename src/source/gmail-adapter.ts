@@ -370,7 +370,7 @@ export function parseEmailDate(header: string, nowMs: number): number | null {
  *    parametrization of a shape family for the family's worst case.
  *
  *    62-18 (T62-91) closed the root cause by DELETING `STYLE_BLOCK_RE` outright (see
- *    `strip-hidden.ts`'s file-level "62-18 gap closure" section) rather than re-sizing this
+ *    `62-18-SUMMARY.md`) rather than re-sizing this
  *    cap around it, then re-measured the FULL corrected shape set — 62-14's twelve ranked
  *    shapes, T62-91's three reported parametrizations, the newly-discovered
  *    `<style ` -with-no-`>` shape, and the nine adversarial CSS shapes from 62-16's
@@ -421,8 +421,8 @@ export function parseEmailDate(header: string, nowMs: number): number | null {
  *    cap.
  *
  *    `strip-hidden.ts`'s stage 6 now re-hoists the same stray-`<` truncation stage 0's Bound A
- *    already applies, immediately before the sweep (see that file's "62-30 gap closure" doc
- *    block for the equivalence argument) — the O(n^2) is ELIMINATED, not re-bounded around.
+ *    already applies, immediately before the sweep (see `62-30-SUMMARY.md` for the equivalence
+ *    argument) — the O(n^2) is ELIMINATED, not re-bounded around.
  *    Re-measured, at exactly 1,048,576 code units, through `stripHiddenContent`: the element
  *    trigger now completes in ~9.6 ms, the comment trigger in ~10.0 ms — both roughly 5x FASTER
  *    than the file's own remaining worst-measured shape (the brace-free `a<x ` run inside
