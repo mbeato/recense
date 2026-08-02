@@ -981,17 +981,31 @@ describe('css-liveness-differential — newly discovered defects (found by this 
     expect(out).toContain('VISIBLE_SENTENCE');
   });
 
+  // WR-04 fix (62-27-PLAN.md Task 2): each defect lock below asserts EXACTLY ONE subject
+  // inside its `it.fails` body -- production's output. The oracle ground-truth precondition
+  // that used to live INSIDE the same `it.fails` block is now its own ordinary, PASSING `it`,
+  // named so the pairing with its lock is obvious. `it.fails` passes when ANYTHING in its body
+  // throws, so a precondition assertion sharing the block made an oracle REGRESSION (not just
+  // a defect fix) silently satisfy the lock for the wrong reason: if `liveHidingSelectors`
+  // stopped reporting `.legal` as live, the precondition line would throw first, `it.fails`
+  // would still pass, and the defect could reopen in production with the suite staying green.
+  // Splitting the precondition out means an oracle regression now fails ITS OWN passing test
+  // instead of masquerading as this lock's expected failure -- proven by deliberately breaking
+  // `liveHidingSelectors` and observing the precondition tests fail (recorded in
+  // `62-27-SUMMARY.md`, not merely asserted here).
+
+  it('NF-03 precondition: the oracle reports "legal" live for "a,.legal{display:none}" (a real browser evaluates each selector in a comma-separated list independently)', () => {
+    const truth = liveHidingSelectors('a,.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
   it.fails(
     'NF-03: a comma-separated selector list is rejected all-or-nothing rather than per-selector, letting a bare hiding selector hide behind ANY non-bare sibling in the same list',
     () => {
-      // A real browser evaluates each selector in a comma-separated list independently:
-      // "a, .legal { display:none }" hides BOTH <a> elements AND class="legal" elements.
       // `preludeToBareSelectors` returns null for the WHOLE prelude if ANY comma-separated
       // group fails the bare-selector shape check (matching this module's documented,
       // pre-62-17 `allBare`/`.every()` semantics) -- so `.legal` never gets harvested at
       // all merely because it shares a comma list with a non-bare selector.
-      const truth = liveHidingSelectors('a,.legal{display:none}');
-      expect(truth.classes.has('legal')).toBe(true); // ground truth: a real browser hides it
       const out = stripHiddenContent(
         '<style>a,.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
       );
@@ -999,19 +1013,19 @@ describe('css-liveness-differential — newly discovered defects (found by this 
     }
   );
 
+  it('NF-04 precondition: the oracle reports "legal" live for "@media;.legal{display:none}" (a blockless "@media;" is a complete, independent at-rule; ".legal" that follows is an ordinary, independent, live rule)', () => {
+    const truth = liveHidingSelectors('@media;.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
   it.fails(
     'NF-04: a blockless at-rule ("@media;", no braces) misattributes the NEXT rule\'s block as its own, silently dropping a genuinely-live hiding rule',
     () => {
-      // Per CSS Syntax, an at-rule ends at the first top-level ";" if no block ever
-      // follows -- "@media;" is a complete (if useless) at-rule with NO block, and
-      // ".legal{display:none}" that follows is an ordinary, independent, live rule. But
       // `harvestFromStylesheet`'s `startsWithAtKeyword` check only looks at whether the
       // PENDING prelude starts with an AtKeyword token when the NEXT "{" is reached -- it
       // never accounts for an intervening ";" already having closed the at-rule, so the
       // "{" that should open .legal's OWN block gets consumed as the (bogus) at-rule's
       // block instead, and .legal is never harvested.
-      const truth = liveHidingSelectors('@media;.legal{display:none}');
-      expect(truth.classes.has('legal')).toBe(true); // ground truth: a real browser hides it
       const out = stripHiddenContent(
         '<style>@media;.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
       );
@@ -1019,17 +1033,17 @@ describe('css-liveness-differential — newly discovered defects (found by this 
     }
   );
 
+  it('NF-05 precondition: the oracle reports "legal" live for "-->.legal{display:none}" (CSS Syntax §5.4.1: a CDC at the stylesheet top level is simply skipped, never part of any prelude)', () => {
+    const truth = liveHidingSelectors('-->.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
   it.fails(
     'NF-05: CDO/CDC tokens are not treated as ignorable at the stylesheet top level (CSS Syntax §5.4.1), so one before a hiding rule poisons that rule\'s prelude and the rule is never harvested',
     () => {
-      // Per CSS Syntax Level 3 §5.4.1 ("consume a list of rules"), a CDO or CDC token AT
-      // THE TOP LEVEL of a stylesheet is simply skipped -- it never becomes part of any
-      // rule's prelude, matched or not. `harvestFromStylesheet` has no such special case:
-      // a lone "-->" is pushed into the pending prelude like any other token, so the
-      // FOLLOWING rule's prelude no longer matches the bare-selector shape and the rule is
-      // silently dropped.
-      const truth = liveHidingSelectors('-->.legal{display:none}');
-      expect(truth.classes.has('legal')).toBe(true); // ground truth: a real browser hides it
+      // `harvestFromStylesheet` has no special case for a top-level CDO/CDC: a lone "-->"
+      // is pushed into the pending prelude like any other token, so the FOLLOWING rule's
+      // prelude no longer matches the bare-selector shape and the rule is silently dropped.
       const out = stripHiddenContent(
         '<style>-->.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
       );
@@ -1047,11 +1061,14 @@ describe('css-liveness-differential — newly discovered defects (found by this 
   // still leaks (the leading "@media;" alone still does); removing both clears it. Same
   // structure for the comma-list pairing.
 
+  it('NF-06a precondition: the oracle reports "legal" live for "@media;<!--.legal{display:none}"', () => {
+    const truth = liveHidingSelectors('@media;<!--.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
   it.fails(
     'NF-06a: a blockless at-rule ("@media;") AND a top-level CDO ("<!--") co-occurring both corrupt the SAME following rule\'s prelude -- solo removal of either one alone still leaks; only removing both clears it',
     () => {
-      const truth = liveHidingSelectors('@media;<!--.legal{display:none}');
-      expect(truth.classes.has('legal')).toBe(true); // ground truth: a real browser hides it
       const out = stripHiddenContent(
         '<style>@media;<!--.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
       );
@@ -1059,11 +1076,14 @@ describe('css-liveness-differential — newly discovered defects (found by this 
     }
   );
 
+  it('NF-06b precondition: the oracle reports "legal" live for "-->a,.legal{display:none}"', () => {
+    const truth = liveHidingSelectors('-->a,.legal{display:none}');
+    expect(truth.classes.has('legal')).toBe(true);
+  });
+
   it.fails(
     'NF-06b: a top-level CDC ("-->") AND a comma-list rejection co-occurring both corrupt the SAME rule\'s prelude -- solo removal of either one alone still leaks; only removing both clears it',
     () => {
-      const truth = liveHidingSelectors('-->a,.legal{display:none}');
-      expect(truth.classes.has('legal')).toBe(true); // ground truth: a real browser hides it
       const out = stripHiddenContent(
         '<style>-->a,.legal{display:none}</style>VISIBLE_SENTENCE<span class="legal">PAYLOAD</span>'
       );
