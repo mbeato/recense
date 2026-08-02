@@ -262,7 +262,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 59. HUD Integration | v9.0 | 7/7 | Complete | 2026-07-08 |
 | 60. Settings + Stats Depth | v9.0 | 11/11 | Complete | 2026-07-14 |
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
-| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 29/31 | In Progress|  |
+| 62. Multi-Inbox Email Ingest Hardening | v10.0 | 30/31 | In Progress|  |
 | 63. Offline Intent Classification | v10.0 | 0/0 | Not started | — |
 | 64. Entity Resolution Hardening | v10.0 | 0/0 | Not started | — |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
@@ -929,7 +929,7 @@ Plans:
 
 **Wave 23** *(blocked on Wave 22 — writes `strip-hidden.ts`)*
 
-- [ ] 62-30-PLAN.md — Hoist the stray-`<` truncation ahead of the stage-6 sweep (18 min of ingest CPU at the cap -> milliseconds), re-derive `MAX_STRIP_INPUT_CODE_UNITS` against the shape family that falsified it, and make the cost gates calibration-relative (CR-02/WR-07, EMAIL-03, wave 23)
+- [x] 62-30-PLAN.md — Hoist the stray-`<` truncation ahead of the stage-6 sweep (18 min of ingest CPU at the cap -> milliseconds), re-derive `MAX_STRIP_INPUT_CODE_UNITS` against the shape family that falsified it, and make the cost gates calibration-relative (CR-02/WR-07, EMAIL-03, wave 23)
 
 **Wave 24** *(blocked on Wave 23 — writes `strip-hidden.ts`; phase-closing evidence)*
 
