@@ -119,6 +119,17 @@ None - no external service configuration required.
 - The `RecallEvidence` shape documented above is stable for 69-06's eval-gate methodology note to reference if it needs to distinguish verifiable-evidence runs from prose runs.
 - No blockers for 69-06 or any other wave-1/2 plan; this plan's files (`src/recall/index.ts`, `src/adapter/recall-cli.ts`, `tests/recall-evidence.test.ts`) are exclusive to 69-05 per the parallel-execution file ownership list.
 
+## Self-Check: PASSED
+
+- FOUND: `src/recall/index.ts`
+- FOUND: `src/adapter/recall-cli.ts`
+- FOUND: `tests/recall-evidence.test.ts`
+- FOUND: `.planning/phases/69-retrieval-upgrade-entity-anchored-ambient-recall/69-05-SUMMARY.md`
+- FOUND commit `e71f232` (Task 1)
+- FOUND commit `e8b5ca4` (Task 2)
+- FOUND commit `57b549c` (Task 3)
+- FOUND commit `98ea26b` (this summary)
+
 ---
 *Phase: 69-retrieval-upgrade-entity-anchored-ambient-recall*
 *Completed: 2026-08-03*
