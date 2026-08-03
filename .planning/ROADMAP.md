@@ -266,7 +266,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 63. Offline Intent Classification | v10.0 | 6/6 | Complete    | 2026-08-02 |
 | 64. Entity Resolution Hardening | v10.0 | 4/4 | Complete    | 2026-08-03 |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 11/11 | Complete    | 2026-08-03 |
-| 66. Domain-Neutral Proposal Emit Seam | v10.0 | 1/5 | In Progress|  |
+| 66. Domain-Neutral Proposal Emit Seam | v10.0 | 3/5 | In Progress|  |
 | 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
 | 68. Telegram HITL Belief-Kind Extension | v10.0 | 0/0 | Not started | — |
 
@@ -1068,8 +1068,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 66-02-PLAN.md — `ActionProposalSink` triad (interface / Noop default / SQLite) + deterministic content-hash `proposalId` + `actionProposalSinkEnabled` dark knob (EMIT-01, EMIT-04, EMIT-06, wave 2)
-- [ ] 66-03-PLAN.md — HTTP surface: `GET /v1/proposals` lock-free read + `POST /v1/proposals/:id/approve|reject` per-call lock, typed 404/409/503 mapping, EMIT-07 staleness refusal with durable terminal status (EMIT-03, EMIT-05, EMIT-07, wave 2)
+- [x] 66-02-PLAN.md — `ActionProposalSink` triad (interface / Noop default / SQLite) + deterministic content-hash `proposalId` + `actionProposalSinkEnabled` dark knob (EMIT-01, EMIT-04, EMIT-06, wave 2)
+- [x] 66-03-PLAN.md — HTTP surface: `GET /v1/proposals` lock-free read + `POST /v1/proposals/:id/approve|reject` per-call lock, typed 404/409/503 mapping, EMIT-07 staleness refusal with durable terminal status (EMIT-03, EMIT-05, EMIT-07, wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
