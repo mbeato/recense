@@ -1013,14 +1013,31 @@ Plans:
 **Plans**: 10 plans in 6 waves
 
 Plans:
+**Wave 1**
+
 - [ ] 65-01-PLAN.md — session_id blast-radius audit (D-02 research gate) + consumer structural lock
 - [ ] 65-02-PLAN.md — strip-quoted.ts: LLM-free quoted/forwarded detector + residual-emptiness judge (D-06/D-07)
 - [ ] 65-03-PLAN.md — six Phase 65 dark config knobs, all defaulting to pre-phase behavior (D-09/D-11/D-14/D-16)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 65-04-PLAN.md — provenance-key.ts: sender-domain + thread-lineage key composition, D-07 locked pair at key level
 - [ ] 65-05-PLAN.md — status-drift.ts: confidence damping, event_ts staleness guard, emission-eligibility predicate (D-09/D-11b/D-13)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 65-06-PLAN.md — Gmail threadId capture, NormalizedRecord.provenance_key threading, backfill chronological ordering (D-04/D-11a)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 65-07-PLAN.md — wire the LOCKED placement shape + D-07 locked pair on countDistinctProvenance + DRIFT-01 machinery/schema pin
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 65-08-PLAN.md — consolidator wiring: drift layer before both routeContradiction sites, per-source contradictionN, counters
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 65-09-PLAN.md — end-to-end DRIFT-02/DRIFT-04 proofs + D-13 hold-never-emits sentinel
 - [ ] 65-10-PLAN.md — DRIFT-05 dry-run harness + honest measurement + blocking enablement checkpoint
 
