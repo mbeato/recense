@@ -511,8 +511,10 @@ export interface EngineConfig {
    * Phase 69 RECALL-02 (D-01/D-05): ordering-only same-project rank nudge applied to ambient
    * candidates whose scope matches the caller's cwd-derived project. Ordering-only, by
    * construction: this weight never enters the cosine floor gate and never changes a displayed
-   * score (69-03 implements that constraint; this comment is the contract). Dark default `0`
-   * reproduces pre-phase ambient ranking exactly. This is the D-S1 partial reversal recorded in
+   * score (69-03 implements that constraint; this comment is the contract). Ships at `0.05`
+   * since the 69-06 D-08 gate (2026-08-03) — the SEED's recommended starting magnitude, ~1/4
+   * the 0.45-0.65 ambient score spread; `0` disables the nudge and reproduces pre-phase
+   * ambient ranking exactly (the off-switch). This is the D-S1 partial reversal recorded in
    * CONTEXT.md D-01: scope becomes a rank signal on the ambient path ONLY — every other caller
    * (`recense recall --scope`, etc.) keeps the original filter-never semantics. Un-gated by the
    * 69-06 eval gate (RECALL-05), not by a code merge (D-09).
@@ -524,9 +526,14 @@ export interface EngineConfig {
    * `type='doc'` candidates on the ambient path (F1: 49% of scoped injected lines were
    * foreign-project and outscored own-project lines pre-phase). Ordering-only, by construction:
    * never enters the cosine floor gate, never changes a displayed score (enforced in 69-03).
-   * Dark default `0` reproduces pre-phase ambient ranking exactly. Same D-S1 partial-reversal
-   * boundary as `sameProjectRankNudge` — a rank nudge on the ambient path only, never a filter.
-   * Un-gated by the 69-06 eval gate (RECALL-05), not by a code merge (D-09).
+   * Ships at `0.10` since the 69-06 D-08 gate (2026-08-03, paired sweep with
+   * sameProjectRankNudge); `0` disables the demotion and reproduces pre-phase ambient ranking
+   * exactly (the off-switch). NOTE a live default-behavior consequence: "foreign" is defined
+   * independently of whether the CALLER's scope is known, so an unknown-cwd caller
+   * (currentScope = GLOBAL_SCOPE) still demotes EVERY scoped doc — only global-scope docs are
+   * exempt. Same D-S1 partial-reversal boundary as `sameProjectRankNudge` — a rank nudge on
+   * the ambient path only, never a filter. Un-gated by the 69-06 eval gate (RECALL-05), not by
+   * a code merge (D-09).
    */
   foreignDocDemotion: number;
 
@@ -1034,7 +1041,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   rankWeightR: 0.0,
   rankStrengthWeight: 0,  // D-04: dark default — ships w=0; no behavior change at merge
   bm25FusionWeight: 0,  // Phase 47 D-05: w* = 0 (held-out LoCoMo sweep null result — R@5 max at w=0, no positive weight passes per-category no-regression gate); set 0 to use pure cosine
-  sameProjectRankNudge: 0.05,  // Phase 69 RECALL-02 D-01/D-05: dark default — ordering-only, un-gated by 69-06 eval
+  sameProjectRankNudge: 0.05,  // Phase 69 D-08 gate 2026-08-03: SHIPPED at 0.05 — ordering-only (see gate annotation below; 0 = off-switch)
   // Phase 69 D-08 gate 2026-08-03: enabled at 0.05 — G1/G2/G3/G4 all pass on the 58-prompt eval
   // set (G1 4/4 contract-class rows unaffected, G2 0/53 regressions — byte-identical mean
   // relevance to the dark baseline since this is ordering-only and did not move any row's
@@ -1044,7 +1051,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   // exercised a rank-boundary case where the nudge changed selection), so the SEED's recommended
   // starting magnitude (0.05, ~1/4 the 0.45-0.65 score spread) ships per the tie-break-toward-
   // smaller-perturbation rule (D-08/Task 3 step 3).
-  foreignDocDemotion: 0.10,  // Phase 69 RECALL-02 D-01/D-05: dark default — ordering-only, un-gated by 69-06 eval
+  foreignDocDemotion: 0.10,  // Phase 69 D-08 gate 2026-08-03: SHIPPED at 0.10 — ordering-only (see gate annotation below; 0 = off-switch)
   // Phase 69 D-08 gate 2026-08-03: enabled at 0.10 — same gate result as sameProjectRankNudge
   // above (paired sweep, same eval run); see that comment for the full G1-G4 detail.
   // Phase 37: min cosine for query→predicate confident match (D-07, RESEARCH §2).
