@@ -14,8 +14,9 @@
  * exact contract `isExpired()` already reads.
  */
 
-import type { StoredProposal, StoredBeliefProposal } from './types';
-import { tryReserveProposalSlot, putProposal, getProposal, removeProposal } from './proposal-store';
+import { appendFileSync } from 'fs';
+import type { StoredProposal, StoredBeliefProposal, ProposalAction } from './types';
+import { tryReserveProposalSlot, putProposal, getProposal, removeProposal, loadExecutable } from './proposal-store';
 import {
   type BeliefProposalClient,
   type ActionProposalRecord as ClientActionProposalRecord,
@@ -23,9 +24,26 @@ import {
   PROPOSAL_SCHEMA_VERSION,
   ProposalHttpError,
 } from './belief-proposal-client';
-import { renderBeliefDecisionMessage, beliefKeyboard } from './belief-render';
+import { renderBeliefDecisionMessage, beliefKeyboard, asDisplayText } from './belief-render';
 import { readBeliefPromptLedger, writeBeliefPromptLedger } from './state';
 import type { TelegramTransport } from './transport';
+import type { MemoryClient } from './memory-client';
+
+// ---------------------------------------------------------------------------
+// Log helper — mirrors index.ts's own append-only file log (never stdout,
+// T-13-05); duplicated locally rather than imported so this module keeps its
+// own self-contained dependency surface (handleBeliefProposalAction's param
+// list is deliberately config/log-free per the plan, so tests can drive it
+// directly without wiring a log sink).
+// ---------------------------------------------------------------------------
+
+const LOG_PATH = '/tmp/recense-telegram-client.log';
+
+function log68(msg: string): void {
+  try {
+    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] telegram-client (belief-bridge): ${msg}\n`);
+  } catch { /* best-effort — logging must never throw */ }
+}
 
 // ---------------------------------------------------------------------------
 // Locally-declared wire vocabulary (CONSUME-02: transcribed by hand, mirrors
@@ -322,5 +340,144 @@ export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void>
 
     ledgerCounts[group.entityDescriptor] = (ledgerCounts[group.entityDescriptor] ?? 0) + 1;
     writeBeliefPromptLedger(statePath, { date: today, counts: ledgerCounts });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The belief decision handler (Plan 03 Task 1 — APPROVE-01/02, D-02/D-04)
+// ---------------------------------------------------------------------------
+
+/** Field cap (characters) for the confirmation line — mirrors belief-render.ts's TRANSITION_CAP. */
+const CONFIRM_TRANSITION_CAP = 60;
+
+/** Render the confirmation line naming the transition that was applied. */
+function renderTransitionConfirmation(verb: string, row: StoredBeliefProposal): string {
+  const from = row.changeFrom === null ? '(unset)' : asDisplayText(row.changeFrom, CONFIRM_TRANSITION_CAP);
+  const to = asDisplayText(row.changeTo, CONFIRM_TRANSITION_CAP);
+  return `${verb}: ${asDisplayText(row.changeField, CONFIRM_TRANSITION_CAP)}: ${from} → ${to}`;
+}
+
+/**
+ * Handle a '3|' belief decision callback_query action: approve / reject / edit / snooze.
+ *
+ * Order (D-02): the belief path is decided before anything engine/LLM-adjacent can
+ * run. Loads the row via loadExecutable (missing/expired short-circuit with no HTTP
+ * call), asserts it is belief-kind (T-68-13 — the mirror of Plan 01's T-68-01
+ * tool-path guard, closing the other direction: a forged '3|{id}|a' naming a TOOL
+ * row must not act on it), short-circuits an already-terminal row (idempotent
+ * double-tap, T-68-17 — Telegram redelivers taps), then branches on action.
+ *
+ * edit/snooze reply with a fixed sentence and audit belief-edit-refused. Editing a
+ * belief proposal is consumer-side belief authoring, which Phase 66 forbids by
+ * design — this is not a missing feature, it is the boundary. Critically: this
+ * branch (and this whole function) never imports or calls anything from the LLM
+ * tool-mapping module (proposal-engine.ts) or the MCP execution module
+ * (mcp-client.ts) — there is no tool to map, the action is a fixed HTTP
+ * approve/reject.
+ *
+ * approve/reject call the belief client with row.serverProposalId (the client
+ * re-validates the 64-hex shape and builds no request on a malformed id). On
+ * success the row is kept (not removed) and written back terminal — the derived
+ * local id is also the dedup key, so a removed row would let the next poll pass
+ * re-prompt a decided proposal. The confirmation names the applied transition via
+ * the same asDisplayText sanitizer the card uses. The audit episode carries the
+ * decision field ONLY (T-68-14) — never the entity descriptor, change text, or
+ * evidence quote, so email-derived text cannot re-enter memory through the audit
+ * path. hitl episodes are source:'hitl' and structurally excluded from
+ * consolidation, so this audit cannot strengthen the very belief it records
+ * (D-43 lineage).
+ *
+ * Any ProposalHttpError propagates to a single catch here that logs the numeric
+ * status, leaves the row pending, and replies with a neutral message — Plan 03
+ * Task 2 replaces this catch with the full refusal-status mapping (503 defers,
+ * 400/404/409 terminal-refused, 401 neutral-pending).
+ *
+ * Does NOT call answerCallbackQuery — the outer callback drain calls it
+ * unconditionally on every branch (Pitfall #1, mirrors handleProposalAction).
+ *
+ * Parameters only, no config reads — both the unit tests and the repo-level e2e
+ * can drive this directly.
+ */
+export async function handleBeliefProposalAction(
+  transport: TelegramTransport,
+  memoryClient: MemoryClient,
+  client: BeliefProposalClient,
+  storePath: string,
+  statePath: string,
+  chatId: number,
+  decoded: { localId: string; action: ProposalAction },
+  nowMs: number,
+): Promise<void> {
+  void statePath; // reserved for Task 2's approval-rate self-report (D-09)
+  const { localId, action } = decoded;
+
+  const loaded = loadExecutable(localId, storePath, nowMs);
+  if (loaded.status !== 'ok') {
+    const text = loaded.status === 'expired'
+      ? 'that proposal lapsed — re-pull if still needed'
+      : 'that proposal is no longer available';
+    try { await transport.sendMessage(chatId, text); } catch (e) { log68('send error (belief-' + loaded.status + '): ' + String(e)); }
+    return;
+  }
+
+  const row = loaded.proposal;
+
+  // T-68-13: a forged '3|{localId}|a' naming a TOOL row must not act on it — the
+  // mirror of Plan 01's T-68-01 tool-path guard, closing the other direction.
+  if (!isBeliefProposal(row)) {
+    log68('handleBeliefProposalAction: refusing tool-kind proposal on belief-decision path (T-68-13)');
+    try { await transport.sendMessage(chatId, 'that decision is handled by the tool approval flow'); }
+    catch (e) { log68('send error (tool-refusal): ' + String(e)); }
+    return;
+  }
+
+  // T-68-17: an already-terminal row short-circuits before any POST — a replayed
+  // button (Telegram redelivers taps) issues zero further state changes.
+  if (row.localStatus === 'terminal') {
+    try { await transport.sendMessage(chatId, 'that decision was already recorded'); }
+    catch (e) { log68('send error (already-terminal): ' + String(e)); }
+    return;
+  }
+
+  if (action === 'edit' || action === 'snooze') {
+    // D-02: consumer-side belief authoring is Phase-66-forbidden by design — this
+    // is not a missing feature, it is the boundary.
+    try { await transport.sendMessage(chatId, 'belief proposals can only be approved or rejected'); }
+    catch (e) { log68('send error (edit-refused): ' + String(e)); }
+    try { await memoryClient.hitlEpisode({ decision: 'belief-edit-refused' }); }
+    catch (e) { log68('hitlEpisode error (belief-edit-refused): ' + String(e)); }
+    return;
+  }
+
+  // approve/reject: fixed HTTP POST against the frozen contract (D-02 — there is
+  // no tool to map).
+  try {
+    if (action === 'approve') {
+      await client.approve(row.serverProposalId);
+    } else {
+      await client.reject(row.serverProposalId);
+    }
+
+    // Keep the row (not remove it) — see function doc above.
+    putProposal({ ...row, localStatus: 'terminal' }, storePath);
+
+    const verb = action === 'approve' ? 'approved' : 'rejected';
+    try { await transport.sendMessage(chatId, renderTransitionConfirmation(verb, row)); }
+    catch (e) { log68('send error (belief-' + action + ' confirmation): ' + String(e)); }
+
+    // T-68-14: decision field ONLY (see function doc above).
+    try {
+      await memoryClient.hitlEpisode({ decision: action === 'approve' ? 'belief-approve' : 'belief-reject' });
+    } catch (e) { log68('hitlEpisode error (belief-' + action + '): ' + String(e)); }
+  } catch (err) {
+    // Placeholder mapping (Task 1) — Task 2 replaces this with the full
+    // refusal-status mapping (503 defers, 400/404/409 terminal, 401 neutral).
+    if (err instanceof ProposalHttpError) {
+      log68('belief decision: HTTP ' + String(err.status) + ' for ' + row.serverProposalId);
+    } else {
+      log68('belief decision: unexpected error: ' + String(err));
+    }
+    try { await transport.sendMessage(chatId, 'could not record that decision — try again in a moment'); }
+    catch (e) { log68('send error (belief-decision-failed): ' + String(e)); }
   }
 }

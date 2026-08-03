@@ -5,7 +5,7 @@ import { readStateCursor, writeStateCursor } from './state';
 import { DefaultTelegramTransport, type TelegramTransport, type InlineKeyboardMarkup } from './transport';
 import { type FetchResult, type InboundMessage, type CollectedCallbackQuery, type McpServerConfig, type StoredProposal, type StoredToolProposal, type ProposalAction } from './types';
 import { createMemoryClient, type MemoryClient, type SurfaceItem } from './memory-client';
-import { encodeCallbackData, decodeCallbackData, encodeProposalCallbackData, decodeProposalCallbackData } from './push-codec';
+import { encodeCallbackData, decodeCallbackData, encodeProposalCallbackData, decodeProposalCallbackData, decodeBeliefCallbackData } from './push-codec';
 import { putProposal, tryReserveProposalSlot, loadExecutable, removeProposal, getProposal } from './proposal-store';
 import {
   filterAllowlisted,
@@ -18,7 +18,7 @@ import {
   type FetchImpl,
 } from './proposal-engine';
 import { listServerTools, callServerTool, extractToolOutput, defaultConnectionFactory, type McpConnectionFactory } from './mcp-client';
-import { isBeliefProposal, runBeliefBridgePass } from './belief-bridge';
+import { isBeliefProposal, runBeliefBridgePass, handleBeliefProposalAction } from './belief-bridge';
 import { createBeliefProposalClient, type BeliefProposalClient } from './belief-proposal-client';
 
 // ---------------------------------------------------------------------------
@@ -309,6 +309,16 @@ export async function runClientTick(
       }
       return _approvalMcpConfigs;
     };
+    // Phase 68 Plan 03: lazy getter mirroring the two above — the belief client and
+    // its state path are only resolved when a '3|' callback actually arrives.
+    let _beliefClient: BeliefProposalClient | undefined;
+    const getBeliefClient = (): BeliefProposalClient => {
+      if (_beliefClient === undefined) {
+        _beliefClient = approvalHooks?.beliefClient ?? createBeliefProposalClient(config.serveUrl, config.serveToken);
+      }
+      return _beliefClient;
+    };
+    const getBeliefStatePath = (): string => approvalHooks?.statePath ?? config.statePath;
 
     // ── 6–7. Respond loop ───────────────────────────────────────────────────
     for (const m of filtered) {
@@ -428,6 +438,30 @@ export async function runClientTick(
         }
 
         const data = cq.data ?? '';
+
+        // ── v3 belief-decision callback (Phase 68 Plan 03) ────────────────
+        // Checked BEFORE '2|' so a belief callback is decided before anything
+        // engine/LLM-adjacent can run (D-02). Version prefix is checked before
+        // passing to any other decoder, so v1/v2/v3 never cross-decode.
+        if (data.startsWith('3|')) {
+          const decodedBelief = decodeBeliefCallbackData(data);
+          if (decodedBelief) {
+            try {
+              await handleBeliefProposalAction(
+                transport, memoryClient, getBeliefClient(),
+                getApprovalStorePath(), getBeliefStatePath(),
+                cq.fromId, decodedBelief, Date.now(),
+              );
+            } catch (err) {
+              log('handleBeliefProposalAction error: ' + String(err));
+            }
+          } else {
+            log('callback_query: v3 malformed belief data — skipping');
+          }
+          // MUST answer on every v3 branch — unconditional spinner clear (Pitfall 1)
+          try { await transport.answerCallbackQuery(cq.id); } catch (e) { log('answerCallbackQuery error (v3): ' + String(e)); }
+          continue;
+        }
 
         // ── v2 proposal callback (Phase 23) ───────────────────────────────
         // Check version prefix before passing to decodeCallbackData, so the v1
@@ -643,6 +677,10 @@ export interface ApprovalTestHooks {
   mcpConfigs?: McpServerConfig[];
   /** Override the MCP connection factory (injectable McpConnection per mcp-client.ts). */
   connectionFactory?: McpConnectionFactory;
+  /** Override createBeliefProposalClient(...) for the '3|' belief-decision branch (Phase 68 Plan 03). */
+  beliefClient?: BeliefProposalClient;
+  /** Override config.statePath for the belief-decision branch (Phase 68 Plan 03). */
+  statePath?: string;
 }
 
 /**
