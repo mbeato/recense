@@ -19,7 +19,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { syncProposals } from '../index';
 import { createProposalClient, PROPOSAL_SCHEMA_VERSION } from '../proposal-client';
-import { listLocalRows } from '../local-store';
+import { listLocalRows, newLocalId, putLocalRow } from '../local-store';
 
 const TEST_TOKEN = 'test-bearer-token-67-02';
 
@@ -211,6 +211,9 @@ describe('syncProposals — stub-server behavioral proof (D-02/D-03/D-07)', () =
 
     const report = await syncProposals(client(), storePath, noopLog);
     expect(report.refused).toBe(1);
+    // Fresh first attempt (no resumed pending row) — the 409 is an honest
+    // terminal refusal, not the WR-01 ambiguous crash-resume case.
+    expect(report.needsReconciliation).toBe(0);
     const firstPostCount = postCalls().length;
 
     let row = listLocalRows(storePath).find(r => r.proposalId === pid('p5'));
@@ -224,6 +227,50 @@ describe('syncProposals — stub-server behavioral proof (D-02/D-03/D-07)', () =
 
     row = listLocalRows(storePath).find(r => r.proposalId === pid('p5'));
     expect(row?.localStatus).toBe('refused');
+  });
+
+  it('crash-window resume (WR-01): 409 on a resumed pending row is marked needs_reconciliation, never refused', async () => {
+    const id = pid('p14');
+    records = [makeRecord({ id, confidence: 'high' })];
+    // Simulate a prior sync that crashed AFTER the server's 200 but BEFORE
+    // the local row was marked applied: a pending row is already on disk,
+    // and the server — proposal now terminal — answers the re-POST with 409.
+    putLocalRow(
+      {
+        localId: newLocalId(),
+        proposalId: id,
+        entityDescriptor: 'entity for ' + id,
+        changeField: 'status',
+        changeTo: 'interviewing',
+        localStatus: 'pending',
+        refusalReason: null,
+        updatedAtMs: Date.now(),
+      },
+      storePath,
+    );
+    actionResponses.set(id, {
+      status: 409,
+      body: { error: 'conflict', detail: 'proposal is not pending' },
+    });
+
+    const report = await syncProposals(client(), storePath, noopLog);
+
+    // The prior attempt may already have applied the change — recording
+    // `refused` would invert the truth. The honest ambiguous state wins.
+    expect(report.needsReconciliation).toBe(1);
+    expect(report.refused).toBe(0);
+    const row = listLocalRows(storePath).find(r => r.proposalId === id);
+    expect(row?.localStatus).toBe('needs_reconciliation');
+    expect(row?.refusalReason).toBeNull();
+
+    // Terminal for the loop: a later sync skips it and never re-POSTs.
+    const postCount = postCalls().length;
+    const report2 = await syncProposals(client(), storePath, noopLog);
+    expect(postCalls().length).toBe(postCount);
+    expect(report2.skipped).toBe(1);
+    expect(listLocalRows(storePath).find(r => r.proposalId === id)?.localStatus).toBe(
+      'needs_reconciliation',
+    );
   });
 
   it('503 is not terminal: local row stays pending and a second sync retries', async () => {

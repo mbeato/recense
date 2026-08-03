@@ -47,6 +47,8 @@ export interface SyncReport {
   skipped: number;
   refused: number;
   deferred: number;
+  /** 409 on a resumed pending row — settled server-side, local outcome unknown (WR-01). */
+  needsReconciliation: number;
 }
 
 /**
@@ -72,7 +74,14 @@ export async function syncProposals(
   storePath: string,
   log: (msg: string) => void,
 ): Promise<SyncReport> {
-  const report: SyncReport = { listed: 0, applied: 0, skipped: 0, refused: 0, deferred: 0 };
+  const report: SyncReport = {
+    listed: 0,
+    applied: 0,
+    skipped: 0,
+    refused: 0,
+    deferred: 0,
+    needsReconciliation: 0,
+  };
 
   const records = await client.listProposals();
   report.listed = records.length;
@@ -93,6 +102,10 @@ export async function syncProposals(
     // row is set once this record's local row exists on disk, so the catch
     // block below can update it on a refusal without re-deriving it.
     let row: LocalRow | undefined;
+    // resumed is true when a prior sync already held a pending row for this
+    // proposal — meaning a prior attempt may already have fired its HTTP call
+    // before crashing. The catch block needs this bit to disambiguate a 409.
+    let resumed = false;
     try {
       // Unknown kind skips this record only (D-07) — the loop keeps going.
       if (record.kind !== 'belief') {
@@ -108,6 +121,7 @@ export async function syncProposals(
         report.skipped++;
         continue;
       }
+      resumed = existing !== undefined;
 
       // Map onto the adapter's own vocabulary. entityDescriptor is the
       // semantic key this consumer resolves on — node ids are deliberately
@@ -146,6 +160,31 @@ export async function syncProposals(
           if (err.status === 503) {
             // Not terminal — leave the row pending, retry on a later sync.
             report.deferred++;
+            continue;
+          }
+          if (err.status === 409 && resumed) {
+            // Ambiguous crash-resume outcome (WR-01): the pending row was left
+            // by a PRIOR sync, so that sync's HTTP call may already have
+            // succeeded before it crashed — this 409 may be the server
+            // refusing OUR OWN earlier, successful application. Recording
+            // `refused` here would durably invert the truth. Record the
+            // honest ambiguous state instead; it is terminal for the loop
+            // (never re-POSTed) and a human/consumer reconciles it against
+            // the server's proposal status.
+            putLocalRow(
+              {
+                ...row,
+                localStatus: 'needs_reconciliation',
+                refusalReason: null,
+                updatedAtMs: Date.now(),
+              },
+              storePath,
+            );
+            report.needsReconciliation++;
+            log(
+              `proposal ${record.id} — 409 on a resumed pending row; settled server-side but ` +
+                'local outcome unknown; marked needs_reconciliation (not refused)',
+            );
             continue;
           }
           const refusalReason = refusalReasonForStatus(err.status);
@@ -215,7 +254,8 @@ export async function main(): Promise<void> {
     log(
       `sync complete — listed=${String(report.listed)} applied=${String(report.applied)} ` +
         `skipped=${String(report.skipped)} refused=${String(report.refused)} ` +
-        `deferred=${String(report.deferred)}`,
+        `deferred=${String(report.deferred)} ` +
+        `needs_reconciliation=${String(report.needsReconciliation)}`,
     );
     return;
   }

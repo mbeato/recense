@@ -24,7 +24,16 @@ import { randomUUID } from 'node:crypto';
 // Local vocabulary
 // ---------------------------------------------------------------------------
 
-export type LocalStatus = 'pending' | 'applied' | 'refused' | 'skipped';
+/**
+ * `needs_reconciliation` marks the ambiguous crash-resume outcome (WR-01): a
+ * resumed pending row drew a 409 on its re-POST, so the proposal is settled
+ * server-side but this adapter cannot know whether its OWN earlier call was
+ * the one that settled it (all 409 subtypes share `error: 'conflict'`, and
+ * `detail` is non-contract). It is terminal for the sync loop — never
+ * re-POSTed — but honest: a human or the consumer's own reconciliation job
+ * resolves it to applied/refused by consulting the server's proposal status.
+ */
+export type LocalStatus = 'pending' | 'applied' | 'refused' | 'skipped' | 'needs_reconciliation';
 
 export interface LocalRow {
   /** This adapter's OWN id (randomUUID) — its vocabulary, not recense's. */
@@ -53,7 +62,8 @@ function isLocalRow(v: unknown): v is LocalRow {
     typeof r['changeField'] === 'string' &&
     typeof r['changeTo'] === 'string' &&
     (r['localStatus'] === 'pending' || r['localStatus'] === 'applied' ||
-      r['localStatus'] === 'refused' || r['localStatus'] === 'skipped') &&
+      r['localStatus'] === 'refused' || r['localStatus'] === 'skipped' ||
+      r['localStatus'] === 'needs_reconciliation') &&
     (r['refusalReason'] === null || typeof r['refusalReason'] === 'string') &&
     typeof r['updatedAtMs'] === 'number'
   );

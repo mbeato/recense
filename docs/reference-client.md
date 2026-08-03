@@ -182,6 +182,20 @@ clients/proposal-reference/
    (400/404/409) the local row is marked `'refused'` with a `refusalReason`
    and is never retried. On `503` the row is left `'pending'` and retried on
    a later sync — the only retryable outcome.
+7. **Crash-resume disambiguation (`needs_reconciliation`).** One 409 case is
+   special: when the pending row being processed was left by a *prior* sync
+   (a resumed row), that prior sync's HTTP call may already have succeeded
+   before it crashed — so a 409 on the re-POST may be the server refusing the
+   adapter's OWN earlier, successful application. All four 409 subtypes share
+   `error: 'conflict'` and `detail` is non-contract, so the adapter cannot
+   tell them apart. Recording `'refused'` would durably invert the truth;
+   instead the row is marked `'needs_reconciliation'` (with `refusalReason:
+   null`). This state is terminal for the sync loop — it is never re-POSTed —
+   but it is an honest "settled server-side, local outcome unknown" marker: a
+   human operator (or the consumer's own reconciliation job) resolves it to
+   applied/refused by checking the proposal's status on the server side. A
+   409 on a *first* attempt (no resumed row) is still recorded as a plain
+   terminal `'refused'`.
 
 The local row keys on `entityDescriptor` (the semantic key, not a node id) and
 carries the consumer's OWN id (`localId`), never recense's. recense never
@@ -319,6 +333,12 @@ consumer must not branch on its exact text:
 re-delivery is expected and a consumer must be idempotent on the proposal id.
 Approve/reject on an already-terminal proposal is a no-op refusal (409
 `conflict` / `"proposal is not pending"`), never a second application.
+**Caveat for resuming consumers:** if the consumer is re-POSTing because its
+*own* prior attempt may have completed before a crash (it holds a local
+pending marker from an earlier run), this 409 may be refusing the consumer's
+own successful call — do **not** record it as a terminal refusal. Record a
+distinct ambiguous state and reconcile it out-of-band (the reference adapter
+uses `needs_reconciliation`; see "How it works" step 7).
 
 **Retry policy.** Of every response above, only `503` is retryable. `400`,
 `404`, and `409` are all terminal — mark the proposal refused locally and
