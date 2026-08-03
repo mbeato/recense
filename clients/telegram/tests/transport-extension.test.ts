@@ -64,27 +64,25 @@ describe('TelegramUpdate — callback_query field', () => {
 describe('MockTelegramTransport — answeredCallbacks', () => {
   it('starts with empty answeredCallbacks array', () => {
     const t = new MockTelegramTransport();
-    // @ts-expect-error — property does not exist until implemented
+    // Phase 22 TDD RED note: these `@ts-expect-error` markers dated back to when
+    // answeredCallbacks/answerCallbackQuery did not yet exist on MockTelegramTransport.
+    // Both are now long implemented, so the markers are removed (GREEN) — the first
+    // repo-wide typecheck of this test directory (Phase 68 Plan 03 Task 3) surfaced
+    // them as stale/unused directives.
     expect(t.answeredCallbacks).toEqual([]);
   });
 
   it('answerCallbackQuery appends id to answeredCallbacks', async () => {
     const t = new MockTelegramTransport();
-    // @ts-expect-error — method does not exist until implemented
     await t.answerCallbackQuery('cq-123');
-    // @ts-expect-error
     expect(t.answeredCallbacks).toHaveLength(1);
-    // @ts-expect-error
     expect(t.answeredCallbacks[0]).toBe('cq-123');
   });
 
   it('multiple answerCallbackQuery calls accumulate in order', async () => {
     const t = new MockTelegramTransport();
-    // @ts-expect-error
     await t.answerCallbackQuery('cq-a');
-    // @ts-expect-error
     await t.answerCallbackQuery('cq-b');
-    // @ts-expect-error
     expect(t.answeredCallbacks).toEqual(['cq-a', 'cq-b']);
   });
 });
