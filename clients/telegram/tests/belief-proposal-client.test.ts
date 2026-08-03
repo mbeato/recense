@@ -178,6 +178,19 @@ describe('createBeliefProposalClient — stub-server behavioral proof', () => {
     expect(isInspectableProposalRecord(makeRecord(pid('full')))).toBe(true);
   });
 
+  it('(WR-05) isInspectableProposalRecord() validates value types, not just key presence', () => {
+    // Wrong types for fields the bridge consumes → false.
+    expect(isInspectableProposalRecord(makeRecord(pid('t-desc'), { entity_descriptor: 42 }))).toBe(false);
+    expect(isInspectableProposalRecord(makeRecord(pid('t-id'), { id: 12345 }))).toBe(false);
+    expect(isInspectableProposalRecord(makeRecord(pid('t-hex'), { id: 'not-a-64-hex-id' }))).toBe(false);
+    expect(isInspectableProposalRecord(makeRecord(pid('t-quote'), { evidence_quote: ['array'] }))).toBe(false);
+    expect(isInspectableProposalRecord(makeRecord(pid('t-created'), { created_at: 'yesterday' }))).toBe(false);
+    expect(isInspectableProposalRecord(makeRecord(pid('t-from'), { change_from: 7 }))).toBe(false);
+    expect(isInspectableProposalRecord(makeRecord(pid('t-conf'), { confidence: 'certain' }))).toBe(false);
+    // change_from: null is part of the contract → true.
+    expect(isInspectableProposalRecord(makeRecord(pid('t-null'), { change_from: null }))).toBe(true);
+  });
+
   it('the serve token appears in no thrown Error message and in no value the module returns', async () => {
     const id = pid('token-leak-check');
     actionStatus.set(id, 500);

@@ -173,6 +173,25 @@ describe('runBeliefBridgePass — gates, dedup, batching, cap, rollback', () => 
     expect(transport.sent).toHaveLength(0);
   });
 
+  it('(WR-05) a record with a non-string entity_descriptor stops the whole pass with zero rows written', async () => {
+    const badId = pid('type-bad');
+    const goodId = pid('type-good');
+    listBody = { items: [makeRecord(badId, { entity_descriptor: 42 }), makeRecord(goodId)] };
+    const transport = new MockTelegramTransport();
+    const storePath = tmpPath('type-gate-store');
+    await runBeliefBridgePass({
+      client: makeClient(), transport, chatIds: [111],
+      storePath, statePath: tmpPath('type-gate-state'),
+      dailyCap: 10, log: () => {}, nowMs: Date.now(),
+    });
+    // Whole pass stopped BEFORE any putProposal — nothing sent, no store file,
+    // no row persisted for either record.
+    expect(transport.sent).toHaveLength(0);
+    expect(fs.existsSync(storePath)).toBe(false);
+    expect(getProposal(badId.slice(0, 32), storePath)).toBeNull();
+    expect(getProposal(goodId.slice(0, 32), storePath)).toBeNull();
+  });
+
   it('a record whose schema_version is 18 stops the pass with nothing sent', async () => {
     listBody = { items: [makeRecord(pid('schema-1'), { schema_version: 18 })] };
     const transport = new MockTelegramTransport();

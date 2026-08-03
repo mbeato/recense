@@ -52,35 +52,42 @@ export interface ActionProposalRecord {
   expires_at: number;
 }
 
-/** The full key set of ActionProposalRecord — the wire-shape gate before any per-item work. */
-const REQUIRED_RECORD_KEYS = [
-  'id',
-  'kind',
-  'entity_node_id',
-  'entity_descriptor',
-  'belief_node_id',
-  'change_field',
-  'change_from',
-  'change_to',
-  'evidence_episode',
-  'evidence_quote',
-  'confidence',
-  'schema_version',
-  'status',
-  'created_at',
-  'updated_at',
-  'expires_at',
-] as const;
-
 /**
  * Returns true only when `v` is a non-null object carrying every key
- * `ActionProposalRecord` requires. Does NOT validate value types — that is the
- * caller's job once the shape gate passes.
+ * `ActionProposalRecord` requires WITH the value type the consumer reads
+ * (WR-05): strings where strings are read (`id` additionally matching the
+ * 64-hex sha256 shape it is later interpolated from), `string | null` for
+ * `change_from`, numbers for the timestamps and `schema_version`, and the
+ * closed categorical enum for `confidence` (it is rendered as plain text, so
+ * free text there could carry structure into the decision card). `kind` and
+ * `status` are checked as strings only — unknown vocabulary there is a
+ * per-record SKIP decision for the caller (bridge step 4), not a
+ * stop-the-pass malformation.
+ *
+ * A false return is a stop condition for the whole pass: nothing may be
+ * persisted or rendered from a list response containing a malformed item.
  */
 export function isInspectableProposalRecord(v: unknown): boolean {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
-  return REQUIRED_RECORD_KEYS.every(k => k in r);
+  return (
+    typeof r['id'] === 'string' && PROPOSAL_ID_RE.test(r['id']) &&
+    typeof r['kind'] === 'string' &&
+    typeof r['entity_node_id'] === 'string' &&
+    typeof r['entity_descriptor'] === 'string' &&
+    typeof r['belief_node_id'] === 'string' &&
+    typeof r['change_field'] === 'string' &&
+    (r['change_from'] === null || typeof r['change_from'] === 'string') &&
+    typeof r['change_to'] === 'string' &&
+    typeof r['evidence_episode'] === 'string' &&
+    typeof r['evidence_quote'] === 'string' &&
+    (r['confidence'] === 'high' || r['confidence'] === 'medium' || r['confidence'] === 'low') &&
+    typeof r['schema_version'] === 'number' &&
+    typeof r['status'] === 'string' &&
+    typeof r['created_at'] === 'number' &&
+    typeof r['updated_at'] === 'number' &&
+    typeof r['expires_at'] === 'number'
+  );
 }
 
 /**
