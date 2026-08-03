@@ -1090,7 +1090,20 @@ Plans:
   2. The reference adapter imports zero engine modules — enforced by its own `tsconfig.json` boundary (no `paths` into `src/`) and its own import-boundary test, a sibling copy of `clients/telegram/tests/import-boundary.test.ts`'s guard rather than a reuse of it (the existing test only scans `clients/telegram/`) — CONSUME-02
   3. `docs/reference-client.md` documents the proposal contract well enough that a third-party consumer could be written against it, following the existing adopter-template pattern — CONSUME-03
 
-**Plans**: TBD
+**Plans**: 3 plans in 3 waves
+
+Plans:
+**Wave 1**
+
+- [ ] 67-01-PLAN.md — Adapter scaffold: compile boundary, sibling import-boundary guard wired into `npm test`, fail-closed config, HTTP proposal client, and the adapter-owned local row store (CONSUME-01, CONSUME-02, wave 1)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 67-02-PLAN.md — The D-03 outcome loop (list to map to apply to approve/reject to terminal refusal) plus its stub-server behavioral proof: replay idempotency, 409-terminal, schema-stop, kind-skip (CONSUME-01, wave 2)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 67-03-PLAN.md — Repo-level end-to-end proof through the adapter's public entry against the real served contract incl. the 409 refusal round-trip, and the `docs/reference-client.md` proposal-consumer section with both mandatory carry-forwards (CONSUME-01, CONSUME-02, CONSUME-03, wave 3)
 
 ### Phase 68: Telegram HITL Belief-Kind Extension
 
