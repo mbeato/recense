@@ -25,7 +25,8 @@ findings:
   warning: 6
   info: 4
   total: 12
-status: issues_found
+status: fixed
+fixed_at: 2026-08-03
 ---
 
 # Phase 69: Code Review Report
@@ -147,6 +148,22 @@ if (!node || node.tombstoned === 1 || node.type === 'entity') continue;
 
 ---
 
+## Fixes Applied (2026-08-03)
+
+All 2 Critical + 6 Warning findings fixed on `main`, one atomic commit each. Info findings intentionally out of fix scope. Full suite green after fixes: `npm run typecheck` clean; `npm test` 4014 passed / 6 expected-fail / 3 skipped (242 files) — no flakes triggered.
+
+| Finding | Commit | Fix |
+|---------|--------|-----|
+| CR-01 | `a688203` | `ambientHopInjectionEnabled` literal flipped to `true` per its own D-08 gate annotation and the ship record; interface docstring now states shipped-true with `false` as the off-switch. Pin tests f/f2 already anticipated the lit default (f2 constructs its dark config explicitly). |
+| CR-02 | `d209b47` | Evidence-mode typed path re-derives real `(anchor, matchedPredicate, dst)` pairs by scanning each pool anchor's actual out-edges; only edge-contributing anchors are cited; degenerate zero-edge case returns the evidence-shaped safe-null. Multi-anchor regression test (Test 1b) verifies every emitted triple against the edge table and pins that an edge-less bestMatch decoy is never cited as src. |
+| WR-01 | `7895ed1` | Anchor tokens strip non-alphanumeric edges before the length/numeric/stopword filters. Regression tests: `vtx?`/`vtx.`/`vtx,`, punctuated stopwords, and the F2 class end-to-end with a punctuated prompt. Also strips edge-position `%`/`_`, narrowing IN-04. |
+| WR-02 | `0051ac0` | Edge channel skips `type='entity'` neighbours before the slot is consumed, so a real fact behind an entity→entity edge still takes the slot. Regression test pins both halves. |
+| WR-03 | `d1e8dde` | New opt-in `generateCandidates` `skipExactChannel` flag (default false — offline consolidation callers unchanged) drops `resolveEntityByName`'s unindexed node-table scans from the anchor hot path; BM25 (FTS-indexed) + Dice re-score carries exact names over the floor. Both false "indexed-lookup-only" comments corrected. No schema change; `entityAnchoringEnabled` stays dark — hardening for a future re-gate. |
+| WR-04 | `ad0e070` | Scope marker now counts INSIDE the `MAX_VALUE_CHARS` per-line cap (marker + value/title ≤ 200), making the facts-always-render floor budget-safe by construction — renderer counted content can never exceed `AMBIENT_BLOCK_CHAR_BUDGET`, the exact invariant G4 asserts. Regression test p2. |
+| WR-05 | `b49a9eb` | `hopCollector` payload filtered to hops whose `src` is an actually-returned row before hand-off; viz sink's wider `emitSeeds` filter unchanged. Regression test 6b pins a viz-lit, edged, never-returned seed out of the payload. |
+| WR-06 | `f7f954f` | Both knob docstrings and value-line comments state the shipped 0.05/0.10 magnitudes and gate date, keep "0 disables" as off-switch documentation, and record the unknown-cwd consequence (GLOBAL_SCOPE callers demote every scoped doc). |
+
 _Reviewed: 2026-08-03_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
+_Fixed: 2026-08-03 — 8/8 in-scope findings applied_
