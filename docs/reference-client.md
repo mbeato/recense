@@ -160,9 +160,11 @@ clients/proposal-reference/
 1. `main()` calls `loadAdapterConfig()`. If `enabled` is false (no
    `RECENSE_SERVE_TOKEN`), it logs the reason and makes no network call —
    fail-closed, mirroring the Telegram client's runtime gate.
-2. `syncProposals()` calls `GET /v1/proposals` and checks every returned
-   record's `schema_version` before touching any of them. An unknown
-   `schema_version` stops the whole sync — nothing is applied.
+2. `syncProposals()` calls `GET /v1/proposals` and validates the response
+   shape before touching any item: every item must be an object carrying the
+   record key set, and every record's `schema_version` must match. A
+   malformed item or an unknown `schema_version` stops the whole sync —
+   nothing is applied (graceful fail-closed stop, never a raw TypeError).
 3. For each record, an unrecognised `kind` is skipped (the loop keeps going);
    a recognised `kind: 'belief'` record is checked against the local store via
    `findByProposalId` — a proposal id already present with a non-`'pending'`

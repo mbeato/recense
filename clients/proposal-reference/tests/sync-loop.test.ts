@@ -308,6 +308,29 @@ describe('syncProposals — stub-server behavioral proof (D-02/D-03/D-07)', () =
     expect(listLocalRows(storePath).length).toBe(0);
   });
 
+  it('malformed list item (WR-03): a non-object item stops the sync gracefully — no TypeError, zero POSTs, zero rows', async () => {
+    records = [makeRecord({ id: pid('p16'), confidence: 'high' }), null as unknown as Fixture];
+
+    const report = await syncProposals(client(), storePath, noopLog);
+
+    expect(report.listed).toBe(2);
+    expect(report.applied).toBe(0);
+    expect(postCalls().length).toBe(0);
+    expect(listLocalRows(storePath).length).toBe(0);
+  });
+
+  it('malformed list item (WR-03): a string item or an object missing the record key set stops the sync', async () => {
+    records = ['not-a-record' as unknown as Fixture];
+    await syncProposals(client(), storePath, noopLog);
+    expect(postCalls().length).toBe(0);
+    expect(listLocalRows(storePath).length).toBe(0);
+
+    records = [{ id: pid('p17') } as Fixture]; // object, but missing the required key set
+    await syncProposals(client(), storePath, noopLog);
+    expect(postCalls().length).toBe(0);
+    expect(listLocalRows(storePath).length).toBe(0);
+  });
+
   it('unknown kind skips just that record (D-07): one POST, one local row', async () => {
     records = [
       makeRecord({ id: pid('p9'), kind: 'unknown-kind', confidence: 'high' }),

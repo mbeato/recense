@@ -64,6 +64,29 @@ function refusalReasonForStatus(status: number): 'bad_request' | 'not_found' | '
 }
 
 /**
+ * The keys the sync loop reads off a listed record. The list response is an
+ * unchecked cast at a trust boundary (plain-HTTP transport), so before the
+ * loop touches any item, every item must be an object carrying this key set —
+ * a malformed item produces the documented graceful stop (WR-03), never a raw
+ * TypeError escaping syncProposals.
+ */
+const REQUIRED_RECORD_KEYS = [
+  'id',
+  'kind',
+  'entity_descriptor',
+  'change_field',
+  'change_to',
+  'confidence',
+  'schema_version',
+] as const;
+
+function isInspectableRecord(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return REQUIRED_RECORD_KEYS.every(k => k in r);
+}
+
+/**
  * Run one full outcome-loop pass: list → map onto local rows → approve/reject
  * → refusal handling. Takes client/storePath/log as parameters rather than
  * reading config internally, so a repo-level e2e can drive it against a live
@@ -85,6 +108,18 @@ export async function syncProposals(
 
   const records = await client.listProposals();
   report.listed = records.length;
+
+  // Wire-shape gate before anything else (WR-03): a non-object item or one
+  // missing the required key set means the response is not the contract this
+  // adapter was written against — stop, apply nothing (same discipline as the
+  // schema gate below).
+  if ((records as unknown[]).some(r => !isInspectableRecord(r))) {
+    log(
+      'malformed item in list response — not an object carrying the record key set; ' +
+        'stopping sync, applying nothing',
+    );
+    return report;
+  }
 
   // Schema gate first, before any per-item work (D-07): unknown schema means
   // stop, not coerce and not partial-apply.
