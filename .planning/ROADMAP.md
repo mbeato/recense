@@ -264,7 +264,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 61. Corpus Chrome — Index Column | v9.0 | 18/18 | Complete | 2026-07-17 |
 | 62. Multi-Inbox Email Ingest Hardening | v10.0 | 31/31 | Complete   | 2026-08-02 |
 | 63. Offline Intent Classification | v10.0 | 6/6 | Complete    | 2026-08-02 |
-| 64. Entity Resolution Hardening | v10.0 | 3/4 | In Progress|  |
+| 64. Entity Resolution Hardening | v10.0 | 4/4 | Complete   | 2026-08-03 |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
 | 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
@@ -811,7 +811,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
 
 - [x] **Phase 62: Multi-Inbox Email Ingest Hardening** — Guided account-N onboarding, per-account query scoping (backfill-only, honestly documented), HTML/hidden-content stripping, chronological backfill ordering. (8/8 plans executed 2026-07-30 incl. gap closure 62-06..62-08; **RE-VERIFICATION status: gaps_found, 3/4 must-haves (2026-07-30, third pass)** — see `62-VERIFICATION.md` + `62-REVIEW.md`. Round-1 gaps: 62-06 CLOSED (e2e test now wiring-discriminating, RED observed), 62-08 CLOSED (dead `idx_episode_event_ts` dropped), 62-07 PARTIAL. NOT complete — 3 blockers, each reproduced against the built `dist/`: (1) `STYLE_BLOCK_RE` (`strip-hidden.ts:201`) was left out of 62-07's quote-aware fix — there are FOUR attribute-scanning regexes, the plan enumerated three — so a quoted `>` in a `<style>` open tag still leaks class-hidden text; (2) `normalizeGmailMessage` (`gmail-adapter.ts:329-333`) builds the provenance header from raw `Subject:`/`From:` with zero stripping, so Unicode Tags-block codepoints reach `record.content` verbatim — EMAIL-03 falsified twice over; (3) `parseEmailDate`'s 48h future-skew window is unclamped, so a forged `Date: now+47h` is guaranteed to sort last and override genuine same-batch state — undermines EMAIL-04. All 2883 tests pass with all three present; none is covered. Round-2 and round-3 gaps CLOSED by 62-09..62-12. Round-4 (2026-07-30 re-verification): EMAIL-01/02/04 SATISFIED (zero-diff regression check); EMAIL-03 still FAILED — VF-01 (blocker: a CSS comment adjacent to a hiding selector defeats `harvestHidingSelectors`, class-hidden payload reaches `record.content` end-to-end), NEW-01 (62-12 regression: `<letter` inside a RAWTEXT body deletes to EOF), WR-02 (escalated: 126 s of ingest CPU for one crafted 512 KB body, no input cap). Planned as 62-13..62-15, waves 9-11.) (completed 2026-07-30)
 - [x] **Phase 63: Offline Intent Classification** — Sleep pass classifies status-relevant gmail episodes inside the existing extraction call; zero net-new LLM calls; hitl guard inherited structurally, not re-implemented. (completed 2026-08-02)
-- [ ] **Phase 64: Entity Resolution Hardening** — Broadened candidate generation + confident-or-null resolution against recense's own graph; descriptor-only, never a consumer ID.
+- [x] **Phase 64: Entity Resolution Hardening** — Broadened candidate generation + confident-or-null resolution against recense's own graph; descriptor-only, never a consumer ID. (completed 2026-08-03)
 - [ ] **Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix** — Status lifecycle rides the existing PE-gate/`supersedes` machinery unmodified; redesigned provenance-distinctness key makes `countDistinctProvenance` reachable on email evidence without becoming farmable.
 - [ ] **Phase 66: Domain-Neutral Proposal Emit Seam** — `ActionProposalSink` + `action_proposal` table + `/v1/proposals` routes; a named "D-43-for-proposals" sentinel test closes the milestone's largest correctness risk structurally.
 - [ ] **Phase 67: Reference Consumer Adapter** — In-repo `clients/proposal-reference/` proves the contract end-to-end with its own import-boundary test.
@@ -994,7 +994,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 64-04-PLAN.md — D-09 inertness: two-pass whole-DB conservation (resolution on vs off) with payload-aware snapshot; full-suite regression (wave 3)
+- [x] 64-04-PLAN.md — D-09 inertness: two-pass whole-DB conservation (resolution on vs off) with payload-aware snapshot; full-suite regression (wave 3)
 
 ### Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix
 
