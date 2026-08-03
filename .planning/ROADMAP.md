@@ -266,7 +266,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 63. Offline Intent Classification | v10.0 | 6/6 | Complete    | 2026-08-02 |
 | 64. Entity Resolution Hardening | v10.0 | 4/4 | Complete    | 2026-08-03 |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 11/11 | Complete    | 2026-08-03 |
-| 66. Domain-Neutral Proposal Emit Seam | v10.0 | 3/5 | In Progress|  |
+| 66. Domain-Neutral Proposal Emit Seam | v10.0 | 4/5 | In Progress|  |
 | 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
 | 68. Telegram HITL Belief-Kind Extension | v10.0 | 0/0 | Not started | — |
 
@@ -1073,7 +1073,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 66-04-PLAN.md — Consolidator emission wiring at the nine decisive `applyDecision` sites gated on the imported `isEmissionEligible`, verbatim evidence quote, sleep-pass injection behind the dark knob, doctor dimension 10, and Phase 65's hold sentinel extended to the real sink (EMIT-01, EMIT-06, wave 3)
+- [x] 66-04-PLAN.md — Consolidator emission wiring at the nine decisive `applyDecision` sites gated on the imported `isEmissionEligible`, verbatim evidence quote, sleep-pass injection behind the dark knob, doctor dimension 10, and Phase 65's hold sentinel extended to the real sink (EMIT-01, EMIT-06, wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
