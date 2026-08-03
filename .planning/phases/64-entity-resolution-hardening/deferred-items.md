@@ -50,3 +50,28 @@ The plan-level verification set specified in 64-02-PLAN.md (`tests/entity-resolu
 `tests/consolidation.test.ts`, `tests/entity-dedup.test.ts`, `tests/topk-index.test.ts`,
 `tests/topk-simd.test.ts`, `tests/runtime-config.test.ts`) all pass (108/108) — no collateral
 regression from the config additions.
+
+## Plan 64-03: pre-existing, out-of-scope test failures
+
+Full-suite run (`npx vitest run`) at the close of 64-03 shows 24 failures across 7 files, same
+CLI-subprocess/timing family as 64-01/64-02, none touching `src/consolidation/consolidator.ts`'s
+resolution branch or `src/consolidation/entity-resolution.ts`:
+
+- `tests/adapter-capture.test.ts` (8 failures)
+- `tests/adapter-inject.test.ts` (5 failures)
+- `tests/episodic-dryrun-gate.test.ts` (1 failure)
+- `tests/eval-harness-smoke.test.ts` (3 failures)
+- `tests/locomo-harness.test.ts` (2 failures)
+- `tests/locomo-latency-curve.test.ts` (1 failure)
+- `tests/locomo-scorer.test.ts` (3 failures) — plus a fourth intermittent case
+  (`meta.sut_config has all 15 D-10 v7.0 knob keys`) observed once in this run's tally
+
+Additionally, `tests/viz-stats-routes.test.ts` showed one failure
+(`node_growth.points.length` expected 4, got 3) in the full-suite parallel run but **passed
+14/14 in isolation** (`npx vitest run tests/viz-stats-routes.test.ts`) — a day-boundary/clock
+timing flake under parallel execution, not a regression from this plan's changes (this plan
+never touches viz routes, stats aggregation, or node-growth derivation).
+
+Per the executor's scope-boundary rule, none of the above are fixed in this plan — logged here
+instead. The plan's own required verification set (typecheck + the 9 named
+consolidation/intent/resolution test files, 118 tests) all pass green; see `64-03-SUMMARY.md`.
