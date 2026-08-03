@@ -265,7 +265,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 62. Multi-Inbox Email Ingest Hardening | v10.0 | 31/31 | Complete   | 2026-08-02 |
 | 63. Offline Intent Classification | v10.0 | 6/6 | Complete    | 2026-08-02 |
 | 64. Entity Resolution Hardening | v10.0 | 4/4 | Complete    | 2026-08-03 |
-| 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 6/10 | In Progress|  |
+| 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 7/10 | In Progress|  |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
 | 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
 | 68. Telegram HITL Belief-Kind Extension | v10.0 | 0/0 | Not started | — |
@@ -1030,7 +1030,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 65-07-PLAN.md — wire the LOCKED placement shape + D-07 locked pair on countDistinctProvenance + DRIFT-01 machinery/schema pin
+- [x] 65-07-PLAN.md — wire the LOCKED placement shape + D-07 locked pair on countDistinctProvenance + DRIFT-01 machinery/schema pin
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
