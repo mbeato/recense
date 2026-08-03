@@ -268,7 +268,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 11/11 | Complete    | 2026-08-03 |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 5/5 | Complete    | 2026-08-03 |
 | 67. Reference Consumer Adapter | v10.0 | 3/3 | Complete    | 2026-08-03 |
-| 68. Telegram HITL Belief-Kind Extension | v10.0 | 1/3 | In Progress|  |
+| 68. Telegram HITL Belief-Kind Extension | v10.0 | 2/3 | In Progress|  |
 
 ### Phase 28: Schema-Anchored Corpus
 
@@ -1127,7 +1127,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 68-02-PLAN.md — The v3 callback codec and the structured decision surface (from → to on the tap targets), and the poll pass that batches same-entity same-day proposals into one prompt behind a default-OFF gate (APPROVE-01, APPROVE-03, APPROVE-04, wave 2)
+- [x] 68-02-PLAN.md — The v3 callback codec and the structured decision surface (from → to on the tap targets), and the poll pass that batches same-entity same-day proposals into one prompt behind a default-OFF gate (APPROVE-01, APPROVE-03, APPROVE-04, wave 2)
 
 **Wave 3** *(blocked on Wave 2)*
 
