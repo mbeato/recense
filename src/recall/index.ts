@@ -164,11 +164,11 @@ export class RecallEngine {
    * skipped in evidence mode (RECALL-04/D-07: zero generates, zero writes).
    *
    * `opts.evidence` (RECALL-04/D-07): when true, every resolution branch short-circuits
-   * BEFORE its provider.generate call and returns `evidence: { path, nodes, edges }`
-   * describing the traversal already assembled in memory instead of composed prose.
-   * `inference` is always null and `episodeId` is always null in this mode — there is
-   * no LLM call and no episode write. Prose mode (the default, `opts` omitted) is
-   * byte-identical to pre-phase behavior for every existing caller.
+   * before its LLM-compose call and returns the traversal payload (path/nodes/edges)
+   * already assembled in memory instead of composed prose. `inference` is always null
+   * and `episodeId` is always null in this mode — there is no LLM call and no episode
+   * write. Prose mode (the default, `opts` omitted) is byte-identical to pre-phase
+   * behavior for every existing caller.
    */
   async recall(
     query: string,
