@@ -139,3 +139,13 @@ None — no external service configuration required.
 ---
 *Phase: 65-belief-gated-status-drift-provenance-distinctness-fix*
 *Completed: 2026-08-02*
+
+## Self-Check: PASSED
+
+- FOUND: src/adapter/ingest-cli.ts
+- FOUND: tests/update-decision.test.ts
+- FOUND: tests/ingest-cli.test.ts
+- FOUND: tests/pe-machinery-lock.test.ts
+- FOUND commit 824812c (feat: wire PRIMARY sessionId mint)
+- FOUND commit 2fae0fc (test: D-07 locked pair + e2e proof)
+- FOUND commit 11a0f0c (test: DRIFT-01 machinery lock)
