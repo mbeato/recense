@@ -266,7 +266,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 63. Offline Intent Classification | v10.0 | 6/6 | Complete    | 2026-08-02 |
 | 64. Entity Resolution Hardening | v10.0 | 4/4 | Complete    | 2026-08-03 |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 11/11 | Complete    | 2026-08-03 |
-| 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
+| 66. Domain-Neutral Proposal Emit Seam | v10.0 | 1/5 | In Progress|  |
 | 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
 | 68. Telegram HITL Belief-Kind Extension | v10.0 | 0/0 | Not started | — |
 
@@ -1064,7 +1064,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 66-01-PLAN.md — Frozen contract foundation: additive schema-v17 `action_proposal` table + `ActionProposalStore` + pure staleness classifier + three-way frozen-key-set lock (EMIT-02, EMIT-04, EMIT-07, wave 1)
+- [x] 66-01-PLAN.md — Frozen contract foundation: additive schema-v17 `action_proposal` table + `ActionProposalStore` + pure staleness classifier + three-way frozen-key-set lock (EMIT-02, EMIT-04, EMIT-07, wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

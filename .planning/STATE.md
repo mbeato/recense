@@ -4,8 +4,8 @@ milestone: v10.0
 milestone_name: Action Proposals
 status: executing
 stopped_at: Phase 66 context gathered
-last_updated: "2026-08-03T06:07:12.510Z"
-last_activity: 2026-08-03 -- Phase 66 planning complete
+last_updated: "2026-08-03T06:08:06.171Z"
+last_activity: 2026-08-03 -- Phase 66 execution started
 progress:
   total_phases: 8
   completed_phases: 4
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Phase 69 — retrieval upgrade entity anchored ambient recall
+**Current focus:** Phase 66 — Domain-Neutral Proposal Emit Seam
 
 **v9.0 Key research grounding (June-2026 deep-research pass — historical, still load-bearing for RESOLVE/DRIFT reuse):**
 
@@ -41,10 +41,10 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 
 ## Current Position
 
-Phase: 69
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-08-03 -- Phase 66 planning complete
+Phase: 66 (Domain-Neutral Proposal Emit Seam) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 66
+Last activity: 2026-08-03 -- Phase 66 execution started
 
 ## Performance Metrics
 
