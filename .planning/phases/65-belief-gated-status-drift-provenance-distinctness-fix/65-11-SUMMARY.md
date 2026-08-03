@@ -203,6 +203,16 @@ None — no external service configuration required.
   3. WR-03's quote-stripper idempotence defect review (pending the same Task 3 checkpoint)
 - No blockers for Phase 66. This plan closes the single BLOCKER `65-VERIFICATION.md` raised; re-running phase verification should now score DRIFT-04 as fully verified.
 
+## Self-Check: PASSED
+
+- FOUND: `src/consolidation/status-drift.ts`
+- FOUND: `tests/status-drift.test.ts`
+- FOUND: `tests/drift-belief-correction-e2e.test.ts`
+- FOUND: `.planning/phases/65-belief-gated-status-drift-provenance-distinctness-fix/65-11-SUMMARY.md`
+- FOUND commit `2150c80` (test(65-11): RED)
+- FOUND commit `d10ca0d` (fix(65-11): GREEN)
+- FOUND commit `1b03628` (test(65-11): e2e regression)
+
 ---
 *Phase: 65-belief-gated-status-drift-provenance-distinctness-fix*
 *Completed: 2026-08-03*
