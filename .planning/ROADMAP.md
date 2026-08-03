@@ -265,7 +265,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 62. Multi-Inbox Email Ingest Hardening | v10.0 | 31/31 | Complete   | 2026-08-02 |
 | 63. Offline Intent Classification | v10.0 | 6/6 | Complete    | 2026-08-02 |
 | 64. Entity Resolution Hardening | v10.0 | 4/4 | Complete    | 2026-08-03 |
-| 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 10/10 | Complete   | 2026-08-03 |
+| 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 11/11 | Complete   | 2026-08-03 |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
 | 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
 | 68. Telegram HITL Belief-Kind Extension | v10.0 | 0/0 | Not started | — |
@@ -1043,7 +1043,7 @@ Plans:
 
 **Wave 7** *(gap closure — 65-VERIFICATION.md DRIFT-04 blocker)*
 
-- [ ] 65-11-PLAN.md — SUPPORTING_EVENT_TYPES counts the cold-start `'unrelated'` mint as founding evidence, so the event_ts staleness guard protects a brand-new entity's first status email (DRIFT-04)
+- [x] 65-11-PLAN.md — SUPPORTING_EVENT_TYPES counts the cold-start `'unrelated'` mint as founding evidence, so the event_ts staleness guard protects a brand-new entity's first status email (DRIFT-04)
 
 ### Phase 66: Domain-Neutral Proposal Emit Seam
 
