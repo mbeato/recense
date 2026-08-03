@@ -39,7 +39,7 @@ import { encodeProposalCallbackData } from '../push-codec';
 import type { ClientConfig } from '../config';
 import type { MemoryClient, HitlEpisodeEntry, SurfaceSeenParams } from '../memory-client';
 import type { McpConnectionFactory, McpToolResult } from '../mcp-client';
-import type { McpServerConfig, StoredProposal } from '../types';
+import type { McpServerConfig, StoredToolProposal } from '../types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -80,9 +80,10 @@ function makeConfig(statePath: string): ClientConfig {
 /** Base proposal factory — builds a valid non-expired non-destructive proposal. */
 function makeProposal(
   storePath: string,
-  overrides: Partial<StoredProposal> = {},
-): StoredProposal {
-  const proposal: StoredProposal = {
+  overrides: Partial<StoredToolProposal> = {},
+): StoredToolProposal {
+  const proposal: StoredToolProposal = {
+    kind: 'tool',
     id: `prop-${++_counter}`,
     serverName: 'test-server',
     tool: 'read_file',

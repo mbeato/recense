@@ -31,7 +31,7 @@ import { encodeProposalCallbackData } from '../push-codec';
 import type { ClientConfig } from '../config';
 import type { MemoryClient, HitlEpisodeEntry } from '../memory-client';
 import type { McpConnectionFactory, McpToolResult } from '../mcp-client';
-import type { McpServerConfig, StoredProposal } from '../types';
+import type { McpServerConfig, StoredToolProposal } from '../types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -70,8 +70,9 @@ function makeConfig(statePath: string): ClientConfig {
 }
 
 /** A proposal that is destructive (requires typed confirmation). */
-function makeDestructiveProposal(storePath: string): StoredProposal {
-  const proposal: StoredProposal = {
+function makeDestructiveProposal(storePath: string): StoredToolProposal {
+  const proposal: StoredToolProposal = {
+    kind: 'tool',
     id: 'prop-destructive-001',
     serverName: 'test-server',
     tool: 'delete_file',
@@ -88,8 +89,9 @@ function makeDestructiveProposal(storePath: string): StoredProposal {
 }
 
 /** A proposal that is NON-destructive (no typed confirmation). */
-function makeNonDestructiveProposal(storePath: string): StoredProposal {
-  const proposal: StoredProposal = {
+function makeNonDestructiveProposal(storePath: string): StoredToolProposal {
+  const proposal: StoredToolProposal = {
+    kind: 'tool',
     id: 'prop-safe-001',
     serverName: 'test-server',
     tool: 'list_files',

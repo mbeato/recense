@@ -31,7 +31,7 @@ import {
   tryReserveProposalSlot,
   getCapState,
 } from '../proposal-store';
-import type { StoredProposal } from '../types';
+import type { StoredToolProposal } from '../types';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -51,8 +51,9 @@ afterEach(() => {
 
 const BASE_NOW = Date.now();
 
-function makeProposal(overrides?: Partial<StoredProposal>): StoredProposal {
+function makeProposal(overrides?: Partial<StoredToolProposal>): StoredToolProposal {
   return {
+    kind: 'tool',
     id: 'test-id-1',
     serverName: 'test-server',
     tool: 'send_email',
