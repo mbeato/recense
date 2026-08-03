@@ -192,13 +192,13 @@ export async function ambientRecall(
   });
   if (results.length === 0) return '';
 
-  // D-S6 provenance surfacing: batch-read scopes over ALL rows retrieveRanked returned,
-  // BEFORE any slicing/selection — one read serves both the pre-existing `[slug]` display
-  // marker AND (Phase 69 D-01) the ordering-only same-project rank nudge below. For every
-  // OTHER caller (`RecallEngine.recall --scope`, corpus, viz) this read remains
-  // display-only and never influences selection/order (D-S1); on THIS path only, Phase 69
-  // D-01 partially reverses that for ordering (never existence) — see the bounded carve-out
-  // recorded at `SemanticStore.getNodeScopes`.
+  // D-S6 provenance surfacing: ONE batch scope read over ALL rows retrieveRanked returned,
+  // BEFORE any slicing/selection — this single read serves both the pre-existing `[slug]`
+  // display marker AND (Phase 69 D-01) the ordering-only same-project rank nudge below. For
+  // every OTHER caller (`RecallEngine.recall --scope`, corpus, viz) the underlying store
+  // method remains display-only and never influences selection/order (D-S1); on THIS path
+  // only, Phase 69 D-01 partially reverses that for ordering (never existence) — see the
+  // bounded carve-out recorded at the store method's own doc comment.
   const scopes = store.getNodeScopes(results.map(r => r.id));
 
   // One indexed getNode per distinct id, cached — shared by the foreign-doc check below
