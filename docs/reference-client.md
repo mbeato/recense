@@ -207,6 +207,15 @@ clients/proposal-reference/
    `applied`/`refused` marker and re-POSTing previously-applied proposals.
    The operator inspects or restores the file, then re-runs sync. A missing
    file (first run) still reads as empty.
+9. **Single-flight sync.** The idempotency check is check-then-act over a
+   shared file, so overlapping sync invocations (cron overlap, a manual run
+   beside a scheduled one) could each POST the same proposal. `syncProposals`
+   therefore takes a cross-process O_EXCL lock file (`<store path>.lock`,
+   created with `flag: 'wx'`, removed in a `finally`) before doing anything;
+   a second concurrent invocation refuses with a typed `SyncLockHeldError`
+   and makes **no request**. A lock file older than 15 minutes (left by a
+   hard-killed run that never reached its `finally`) is treated as stale,
+   reclaimed, and acquisition retried once.
 
 The local row keys on `entityDescriptor` (the semantic key, not a node id) and
 carries the consumer's OWN id (`localId`), never recense's. recense never

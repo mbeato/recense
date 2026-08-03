@@ -13,13 +13,19 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as http from 'node:http';
-import { readFileSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { syncProposals } from '../index';
 import { createProposalClient, PROPOSAL_SCHEMA_VERSION } from '../proposal-client';
-import { listLocalRows, LocalStoreCorruptError, newLocalId, putLocalRow } from '../local-store';
+import {
+  listLocalRows,
+  LocalStoreCorruptError,
+  newLocalId,
+  putLocalRow,
+  SyncLockHeldError,
+} from '../local-store';
 
 const TEST_TOKEN = 'test-bearer-token-67-02';
 
@@ -143,6 +149,7 @@ describe('syncProposals — stub-server behavioral proof (D-02/D-03/D-07)', () =
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (existsSync(storePath)) unlinkSync(storePath);
+    if (existsSync(storePath + '.lock')) unlinkSync(storePath + '.lock');
   });
 
   function client() {
@@ -358,6 +365,43 @@ describe('syncProposals — stub-server behavioral proof (D-02/D-03/D-07)', () =
 
     const rows = listLocalRows(storePath);
     expect(rows.every(r => r.localStatus !== 'applied')).toBe(true);
+  });
+
+  it('single-flight (WR-06): a second concurrent sync refuses with SyncLockHeldError and never double-POSTs', async () => {
+    records = [makeRecord({ id: pid('p19'), confidence: 'high' })];
+
+    // First sync acquires the lock synchronously before its first await;
+    // the overlapping second invocation must refuse, not race.
+    const first = syncProposals(client(), storePath, noopLog);
+    const second = syncProposals(client(), storePath, noopLog);
+    await expect(second).rejects.toThrow(SyncLockHeldError);
+
+    const report = await first;
+    expect(report.applied).toBe(1);
+    expect(postCalls().length).toBe(1); // exactly one POST — never doubled
+
+    // The lock is released after the first sync completes.
+    expect(existsSync(storePath + '.lock')).toBe(false);
+  });
+
+  it('single-flight (WR-06): a fresh lock file held by another process makes sync refuse with zero requests', async () => {
+    records = [makeRecord({ id: pid('p20'), confidence: 'high' })];
+    writeFileSync(storePath + '.lock', '12345', { flag: 'wx' });
+
+    await expect(syncProposals(client(), storePath, noopLog)).rejects.toThrow(SyncLockHeldError);
+    expect(requests.length).toBe(0); // not even the GET list happened
+  });
+
+  it('single-flight (WR-06): a stale lock file (older than the staleness window) is reclaimed and sync proceeds', async () => {
+    records = [makeRecord({ id: pid('p21'), confidence: 'high' })];
+    const lockPath = storePath + '.lock';
+    writeFileSync(lockPath, '12345', { flag: 'wx' });
+    const twentyMinAgo = (Date.now() - 20 * 60_000) / 1000;
+    utimesSync(lockPath, twentyMinAgo, twentyMinAgo);
+
+    const report = await syncProposals(client(), storePath, noopLog);
+    expect(report.applied).toBe(1);
+    expect(existsSync(lockPath)).toBe(false);
   });
 
   it('quote is data: an instruction-shaped evidence_quote never influences decideOutcome or the persisted store', async () => {

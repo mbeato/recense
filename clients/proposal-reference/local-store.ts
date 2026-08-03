@@ -16,7 +16,16 @@
  * belief-correction (tombstone-and-mint). `entityDescriptor` is the semantic
  * key the adapter resolves on instead.
  */
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -167,4 +176,76 @@ export function putLocalRow(row: LocalRow, storePath: string): void {
 /** Generate this adapter's own local id — its vocabulary, not recense's. */
 export function newLocalId(): string {
   return randomUUID();
+}
+
+// ---------------------------------------------------------------------------
+// Single-flight sync lock (WR-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when another sync already holds the lock. The idempotency mechanism
+ * is check-then-act over a shared file, so two overlapping sync invocations
+ * (cron overlap, a manual run beside a scheduled one) would each see no
+ * existing row, each mint a localId, and each POST — a duplicate HTTP action.
+ * The second invocation must refuse instead.
+ */
+export class SyncLockHeldError extends Error {
+  constructor(lockPath: string) {
+    super(
+      `sync lock ${lockPath} is held — another sync appears to be running; refusing to overlap`,
+    );
+    this.name = 'SyncLockHeldError';
+  }
+}
+
+/** A lock file older than this is treated as left behind by a crashed run. */
+const LOCK_STALE_MS = 15 * 60_000;
+
+/**
+ * Acquire the cross-process single-flight lock for a store: an O_EXCL
+ * (`flag: 'wx'`) lock file beside the store file. Returns a release function
+ * the caller MUST invoke in a `finally`. Throws SyncLockHeldError if another
+ * sync holds the lock. Minimal staleness handling: a lock file older than
+ * LOCK_STALE_MS (a hard-killed prior run never reaches its `finally`) is
+ * removed and acquisition retried once.
+ */
+export function acquireSyncLock(storePath: string): () => void {
+  mkdirSync(dirname(storePath), { recursive: true });
+  const lockPath = storePath + '.lock';
+
+  const tryAcquire = (): boolean => {
+    try {
+      writeFileSync(lockPath, String(process.pid), { flag: 'wx', mode: 0o600 });
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw err;
+    }
+  };
+
+  if (!tryAcquire()) {
+    let stale = false;
+    try {
+      stale = Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS;
+    } catch {
+      // lock vanished between the failed acquire and the stat — retry below
+      stale = true;
+    }
+    if (stale) {
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        // already removed by someone else — fine, retry below
+      }
+    }
+    if (!stale || !tryAcquire()) throw new SyncLockHeldError(lockPath);
+  }
+
+  return () => {
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // already gone — releasing must never throw
+    }
+  };
 }

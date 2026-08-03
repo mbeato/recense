@@ -18,10 +18,12 @@ import {
   type ActionProposalRecord,
 } from './proposal-client';
 import {
+  acquireSyncLock,
   findByProposalId,
   putLocalRow,
   newLocalId,
   LocalStoreCorruptError,
+  SyncLockHeldError,
   type LocalRow,
 } from './local-store';
 
@@ -99,6 +101,23 @@ function isInspectableRecord(v: unknown): boolean {
  * test server.
  */
 export async function syncProposals(
+  client: ProposalClient,
+  storePath: string,
+  log: (msg: string) => void,
+): Promise<SyncReport> {
+  // Single-flight guard (WR-06): the idempotency check is check-then-act over
+  // a shared file, so overlapping sync invocations could each POST the same
+  // proposal. Cross-process O_EXCL lock file, released in finally; a second
+  // concurrent invocation throws SyncLockHeldError and does nothing.
+  const releaseLock = acquireSyncLock(storePath);
+  try {
+    return await runSyncPass(client, storePath, log);
+  } finally {
+    releaseLock();
+  }
+}
+
+async function runSyncPass(
   client: ProposalClient,
   storePath: string,
   log: (msg: string) => void,
@@ -297,7 +316,18 @@ export async function main(): Promise<void> {
   const command = process.argv[2] ?? 'sync';
 
   if (command === 'sync') {
-    const report = await syncProposals(client, config.localStorePath, log);
+    let report: SyncReport;
+    try {
+      report = await syncProposals(client, config.localStorePath, log);
+    } catch (err) {
+      if (err instanceof SyncLockHeldError) {
+        // Another sync is running — refusing to overlap is the correct
+        // outcome, not a crash (WR-06). No request was made.
+        log(err.message);
+        return;
+      }
+      throw err;
+    }
     log(
       `sync complete — listed=${String(report.listed)} applied=${String(report.applied)} ` +
         `skipped=${String(report.skipped)} refused=${String(report.refused)} ` +
