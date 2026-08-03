@@ -142,6 +142,13 @@ None - no external service configuration required.
 ## Next Phase Readiness
 `action_proposal` (schema v17) and `ActionProposalStore` are ready for 66-02 (the `ActionProposalSink` + emission wiring inside `applyDecision`) and 66-03/66-04 (the `/v1/proposals` routes). `classifyProposalStaleness` is ready for 66-04's approve-time D-10 refusal check. No blockers.
 
+## Self-Check: PASSED
+
+- FOUND: src/db/action-proposal-store.ts
+- FOUND: tests/action-proposal-contract.test.ts
+- FOUND: .planning/phases/66-domain-neutral-proposal-emit-seam/66-01-SUMMARY.md
+- FOUND: d1423b0, f1116c0, 663007d, 1ea184a (all task/deviation commits present in git log)
+
 ---
 *Phase: 66-domain-neutral-proposal-emit-seam*
 *Completed: 2026-08-03*
