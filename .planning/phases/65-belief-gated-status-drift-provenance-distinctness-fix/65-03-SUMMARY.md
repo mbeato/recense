@@ -103,6 +103,15 @@ None - no external service configuration required.
 - `routeContradiction`'s `low:0 → 'hold'` proof in this plan's test suite is directly reusable evidence for Plan 65-05's drift-layer implementation and its own verification.
 - No blockers.
 
+## Self-Check: PASSED
+
+- FOUND: src/lib/config.ts
+- FOUND: tests/runtime-config.test.ts
+- FOUND: .planning/phases/65-belief-gated-status-drift-provenance-distinctness-fix/65-03-SUMMARY.md
+- FOUND: commit 2bfc0b0 (Task 1)
+- FOUND: commit ba5e550 (Task 2)
+- FOUND: commit 45e8833 (this SUMMARY)
+
 ---
 *Phase: 65-belief-gated-status-drift-provenance-distinctness-fix*
 *Completed: 2026-08-03*
