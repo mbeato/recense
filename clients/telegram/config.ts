@@ -43,6 +43,15 @@ export interface ClientConfig {
   digestHour: number;
   /** RECENSE_SNOOZE_DURATION_MS — snooze offset in ms. Default: 86400000 (24h = D-09 fixed +1 day). */
   snoozeDurationMs: number;
+  /**
+   * RECENSE_BELIEF_BRIDGE_ENABLED — default false (Phase 68, mirrors D-11's
+   * default-OFF proactive gate). Only the literal string "true" (case-insensitive)
+   * starts the belief poll timer. A new outbound loop on a live client ships dark
+   * until deliberately switched on.
+   */
+  beliefBridgeEnabled: boolean;
+  /** RECENSE_BELIEF_POLL_MS — belief poll interval in ms. Default: 300000 (5 min), floor: 60000. */
+  beliefPollMs: number;
 }
 
 /**
@@ -80,9 +89,17 @@ export function loadClientConfig(): ClientConfig {
   const digestHour      = parseInt(process.env['RECENSE_DIGEST_HOUR']       ?? '8',  10);
   const snoozeDurationMs = parseInt(process.env['RECENSE_SNOOZE_DURATION_MS'] ?? '86400000', 10) || 86400000;
 
+  // Phase 68: default-OFF belief-bridge gate — mirrors D-11's proactiveEnabled pattern.
+  const beliefBridgeEnabled = (process.env['RECENSE_BELIEF_BRIDGE_ENABLED'] ?? '').toLowerCase() === 'true';
+  const beliefPollMs = Math.max(
+    parseInt(process.env['RECENSE_BELIEF_POLL_MS'] ?? '300000', 10) || 300000,
+    60_000, // floor: 60s minimum to prevent accidental flooding
+  );
+
   return {
     telegramToken, serveUrl, serveToken, allowlist, pollIntervalMs, statePath, enabled,
     proactiveEnabled, pushPollMs, quietHoursStart, quietHoursEnd, digestHour, snoozeDurationMs,
+    beliefBridgeEnabled, beliefPollMs,
   };
 }
 

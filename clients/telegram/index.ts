@@ -18,7 +18,8 @@ import {
   type FetchImpl,
 } from './proposal-engine';
 import { listServerTools, callServerTool, extractToolOutput, defaultConnectionFactory, type McpConnectionFactory } from './mcp-client';
-import { isBeliefProposal } from './belief-bridge';
+import { isBeliefProposal, runBeliefBridgePass } from './belief-bridge';
+import { createBeliefProposalClient, type BeliefProposalClient } from './belief-proposal-client';
 
 // ---------------------------------------------------------------------------
 // Log helper — append-only file log; never stdout (background process, T-13-05)
@@ -40,10 +41,15 @@ const log = (msg: string): void =>
 //
 // pushInFlight: Independent guard for runPushTick — the push timer and the reactive
 //   tick run on separate setIntervals and must each have their own guard. Never share.
+//
+// beliefPollInFlight: Independent guard for runBeliefPollTick (Phase 68) — the belief
+//   poll timer is a THIRD, separate setInterval from both of the above and must have
+//   its own guard, same discipline. Never share.
 // ---------------------------------------------------------------------------
 
 let tickInFlight = false;
 let pushInFlight = false;
+let beliefPollInFlight = false;
 
 // ---------------------------------------------------------------------------
 // Typed-confirm state machine — module-level pending map (D-09 / ACT-03)
@@ -1351,6 +1357,75 @@ export async function runPushTick(
 }
 
 // ---------------------------------------------------------------------------
+// Belief poll tick (Phase 68 — APPROVE-01/03)
+// ---------------------------------------------------------------------------
+
+/** Test-injectable overrides for runBeliefPollTick's own sub-path. */
+export interface BeliefPollTestHooks {
+  /** Override the proposal store path (defaults to loadActionConfig().proposalStorePath — the SAME store tool-proposals use, since belief prompts count toward the same daily cap, D-03). */
+  storePath?: string;
+  /** Override the daily cap (defaults to loadActionConfig().proposalDailyCap). */
+  dailyCap?: number;
+  /** Override the state path (defaults to config.statePath). */
+  statePath?: string;
+  /** Override epoch ms at pass time — injectable for deterministic tests. */
+  nowMs?: number;
+}
+
+/**
+ * Belief poll tick: poll GET /v1/proposals via the belief bridge and send at most
+ * one batched Telegram prompt per entity per local day (D-07).
+ *
+ * Never calls getUpdates and never calls surface() — a THIRD, separate timer from
+ * both runClientTick and runPushTick (D-03's "own tick" requirement).
+ *
+ * Gate: if config.beliefBridgeEnabled is not true (Phase 68 default-OFF gate,
+ * mirroring D-11), this function returns immediately without doing anything —
+ * neither listProposals nor sendMessage is ever called.
+ *
+ * Never throws — every error path inside runBeliefBridgePass logs and
+ * returns/continues; this wrapper's own try/catch is belt-and-suspenders.
+ */
+export async function runBeliefPollTick(
+  config: ClientConfig,
+  transport: TelegramTransport,
+  beliefClient: BeliefProposalClient,
+  testHooks?: BeliefPollTestHooks,
+): Promise<void> {
+  if (!config.beliefBridgeEnabled) return;
+
+  if (beliefPollInFlight) {
+    log('belief poll already in flight — skipping');
+    return;
+  }
+  beliefPollInFlight = true;
+
+  try {
+    const actionCfg = loadActionConfig();
+    const storePath = testHooks?.storePath ?? actionCfg.proposalStorePath;
+    const dailyCap = testHooks?.dailyCap ?? actionCfg.proposalDailyCap;
+    const statePath = testHooks?.statePath ?? config.statePath;
+    const nowMs = testHooks?.nowMs ?? Date.now();
+
+    await runBeliefBridgePass({
+      client: beliefClient,
+      transport,
+      chatIds: config.allowlist.map(Number),
+      storePath,
+      statePath,
+      dailyCap,
+      log,
+      nowMs,
+    });
+  } catch (err) {
+    // Belt-and-suspenders — runBeliefBridgePass itself never rejects.
+    log('belief poll tick error: ' + String(err));
+  } finally {
+    beliefPollInFlight = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -1411,6 +1486,18 @@ export async function main(): Promise<void> {
       );
     }, config.pushPollMs);
     log('push timer started (pushPollMs=' + String(config.pushPollMs) + 'ms)');
+  }
+
+  // Phase 68: a THIRD, separate belief-poll timer — never calls getUpdates or
+  // surface(); guarded by its own default-OFF gate (config.beliefBridgeEnabled).
+  if (config.beliefBridgeEnabled) {
+    const beliefClient = createBeliefProposalClient(config.serveUrl, config.serveToken);
+    setInterval(() => {
+      runBeliefPollTick(config, transport, beliefClient).catch(err =>
+        log('runBeliefPollTick rejected: ' + String(err)),
+      );
+    }, config.beliefPollMs);
+    log('belief poll timer started (beliefPollMs=' + String(config.beliefPollMs) + 'ms)');
   }
 
   // Hold the event loop indefinitely — the setInterval handle is the keep-alive.

@@ -29,6 +29,22 @@
  *   v1 and v2 are mutually exclusive by version prefix: decodeCallbackData rejects a v2
  *   string (requires version '1') and decodeProposalCallbackData rejects a v1 string.
  *
+ * Version-3 belief format (Phase 68 — APPROVE-01/02): `3|{localId}|{code}`
+ *   - Version prefix `3` distinguishes belief-proposal callbacks from v1/v2
+ *   - localId: 32-hex local store key (beliefLocalId(serverProposalId) — the server's
+ *     64-hex sha256 id truncated, see belief-bridge.ts). The truncation exists BECAUSE
+ *     the full 64-hex server id would push the payload to 68 bytes and silently fail
+ *     Telegram's callback_data limit — 32 hex chars is the largest id that fits.
+ *   - code: a=approve, e=edit, r=reject, s=snooze (same closed vocabulary as v2)
+ *   Total: 36 bytes (1 version digit + 32 id chars + 1 code char + 2 pipe
+ *   separators) — inside the 64-byte limit. (The local id is a 32-hex truncation
+ *   of the server's 64-hex sha256 id specifically because the full id would push
+ *   this to 68 bytes and silently overflow Telegram's 64-byte callback_data cap.)
+ *   decodeBeliefCallbackData mirrors v2's strictness and adds one check v2 lacks: the id
+ *   is validated against ^[0-9a-f]{32}$ before being returned, because callback_data is
+ *   attacker-influenceable and the id is used directly as a store lookup key. v1, v2, and
+ *   v3 are mutually exclusive by version prefix and part count — no cross-decoding.
+ *
  * Zero src/ imports — CLIENT-01 invariant maintained.
  * Zero new npm dependencies — net-zero runtime deps.
  */
@@ -166,4 +182,75 @@ export function decodeProposalCallbackData(
   if (!action) return null;
 
   return { proposalId, action };
+}
+
+// ---------------------------------------------------------------------------
+// Version-3 belief-proposal codec (Phase 68 — APPROVE-01/02)
+// ---------------------------------------------------------------------------
+
+/** Single-character action codes carried in v3 callback_data (same closed set as v2). */
+type BeliefCode = 'a' | 'e' | 'r' | 's';
+
+const BELIEF_DECODE: Record<BeliefCode, ProposalAction> = {
+  a: 'approve',
+  e: 'edit',
+  r: 'reject',
+  s: 'snooze',
+};
+
+/**
+ * The local store key shape: 32 lowercase hex characters (beliefLocalId's truncation
+ * of the server's 64-hex sha256 id — see belief-bridge.ts). callback_data is
+ * attacker-influenceable and this id is used directly as a store lookup key, so it is
+ * validated here before being returned — a check v2's decodeProposalCallbackData does
+ * not need because v2's UUID ids are never used to construct a filesystem/HTTP path
+ * the way a malformed belief id could steer a lookup.
+ */
+const BELIEF_ID_RE = /^[0-9a-f]{32}$/;
+
+/**
+ * Encode (localId, action code) into a v3 callback_data string: `3|{localId}|{code}`.
+ *
+ * @param localId The 32-hex local store key (beliefLocalId(serverProposalId)).
+ * @param action  Short action code — 'a'=approve, 'e'=edit, 'r'=reject, 's'=snooze
+ */
+export function encodeBeliefCallbackData(localId: string, action: BeliefCode): string {
+  return `3|${localId}|${action}`;
+}
+
+/**
+ * Decode a v3 belief callback_data string back into { localId, action }.
+ *
+ * Mirrors v2's strictness (T-22-02) and adds the id-shape check v2 lacks: requires
+ * exactly 3 pipe-delimited parts, version === '3', a localId matching
+ * `^[0-9a-f]{32}$`, and a code in the closed set. Any malformed input returns null.
+ * A v1 or v2 string returns null here (wrong part count or version), and a v3 string
+ * returns null from decodeCallbackData / decodeProposalCallbackData — the three
+ * versions never cross-decode.
+ *
+ * @param data Raw callback_data from Telegram (attacker-influenceable — never trust)
+ */
+export function decodeBeliefCallbackData(
+  data: string,
+): { localId: string; action: ProposalAction } | null {
+  if (!data) return null;
+
+  const parts = data.split('|');
+  if (parts.length !== 3) return null;
+
+  const [version, localId, code] = parts as [string, string, string];
+
+  // Version check — only v3; a v1/v2 (or any other) string is rejected.
+  if (version !== '3') return null;
+
+  // Field presence + id shape (callback_data is attacker-influenceable — the id
+  // is used as a store lookup key, so it is validated before being returned).
+  if (!localId || !code) return null;
+  if (!BELIEF_ID_RE.test(localId)) return null;
+
+  // Action code mapping (closed set — any unknown code → null)
+  const action = BELIEF_DECODE[code as BeliefCode] ?? null;
+  if (!action) return null;
+
+  return { localId, action };
 }
