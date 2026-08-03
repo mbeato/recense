@@ -71,6 +71,15 @@ import { stripHiddenContent, stripInvisibleCodepoints } from './strip-hidden';
 export interface RawGmailMessage {
   /** Gmail API message id (immutable, used as external_id — D-59). */
   id: string;
+  /**
+   * Gmail's server-assigned thread id (from `resp.data.threadId` on the `messages.get`
+   * response the fetcher already makes — no new API call). Used as the thread-lineage
+   * component of the DRIFT-03 provenance-distinctness key (see provenance-key.ts). Lineage
+   * must NEVER be reconstructed from the `References` or `In-Reply-To` headers instead —
+   * those are sender-controlled and forgeable, while `threadId` is assigned by Gmail's own
+   * servers and is the one component of the key not under the sender's control (D-04).
+   */
+  threadId: string;
   headers: {
     /** RFC 2822 From: value, e.g. '"Alice Smith" <alice@acme.com>' */
     from: string;
@@ -251,7 +260,13 @@ class RealGmailFetcher implements GmailFetcher {
       const from = headers.find(h => h.name?.toLowerCase() === 'from')?.value ?? '';
       const subject = headers.find(h => h.name?.toLowerCase() === 'subject')?.value ?? '(no subject)';
       const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value ?? '';
-      messages.push({ id, headers: { from, subject, date }, bodyText: extractBodyText(payload) });
+      // D-04/DRIFT-03: threadId is already present on this same messages.get response —
+      // zero new API calls, no quota change, no new scope. Fall back to '' when absent;
+      // deriveGmailProvenanceKey treats an empty thread id as unparseable and falls back
+      // to the collapsed key, so an absent field just degrades to pre-Phase-65 behavior
+      // for that one message.
+      const threadId = resp.data.threadId ?? '';
+      messages.push({ id, threadId, headers: { from, subject, date }, bodyText: extractBodyText(payload) });
     }
 
     return { messages, newHistoryId };

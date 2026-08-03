@@ -29,6 +29,7 @@ const FIXTURE_HTML = readFileSync(FIXTURE_PATH, 'utf8');
 function makeRaw(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage {
   return {
     id: 'msg-injection-001',
+    threadId: 'thread-injection-001',
     headers: {
       from: 'ats@recruiting-system.example.com',
       subject: 'Your application',

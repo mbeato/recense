@@ -63,6 +63,7 @@ const farFuture72h = new Date(NOW + 72 * HOUR_MS).toUTCString();
 function makeRaw(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage {
   return {
     id: 'msg-001',
+    threadId: 'thread-001',
     headers: {
       from: 'alice@acme.com',
       subject: 'Re: pricing discussion',

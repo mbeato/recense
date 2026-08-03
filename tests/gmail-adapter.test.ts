@@ -35,6 +35,7 @@ const NOW = Date.UTC(2026, 5, 9);
 function makeRaw(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage {
   return {
     id: 'msg-001',
+    threadId: 'thread-001',
     headers: {
       from: 'alice@acme.com',
       subject: 'Re: pricing discussion',
