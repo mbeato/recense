@@ -1010,7 +1010,19 @@ Plans:
   4. Out-of-order evidence (e.g. a rejection processed after an offer during backfill) does not silently revert a newer status — DRIFT-04
   5. Belief-correction accuracy on real multi-inbox traffic is measured and recorded honestly against recense's own harness — with no external accuracy bar cited, since none exists for this feature class — before Phase 66 wires any consumer live — DRIFT-05
 
-**Plans**: TBD
+**Plans**: 10 plans in 6 waves
+
+Plans:
+- [ ] 65-01-PLAN.md — session_id blast-radius audit (D-02 research gate) + consumer structural lock
+- [ ] 65-02-PLAN.md — strip-quoted.ts: LLM-free quoted/forwarded detector + residual-emptiness judge (D-06/D-07)
+- [ ] 65-03-PLAN.md — six Phase 65 dark config knobs, all defaulting to pre-phase behavior (D-09/D-11/D-14/D-16)
+- [ ] 65-04-PLAN.md — provenance-key.ts: sender-domain + thread-lineage key composition, D-07 locked pair at key level
+- [ ] 65-05-PLAN.md — status-drift.ts: confidence damping, event_ts staleness guard, emission-eligibility predicate (D-09/D-11b/D-13)
+- [ ] 65-06-PLAN.md — Gmail threadId capture, NormalizedRecord.provenance_key threading, backfill chronological ordering (D-04/D-11a)
+- [ ] 65-07-PLAN.md — wire the LOCKED placement shape + D-07 locked pair on countDistinctProvenance + DRIFT-01 machinery/schema pin
+- [ ] 65-08-PLAN.md — consolidator wiring: drift layer before both routeContradiction sites, per-source contradictionN, counters
+- [ ] 65-09-PLAN.md — end-to-end DRIFT-02/DRIFT-04 proofs + D-13 hold-never-emits sentinel
+- [ ] 65-10-PLAN.md — DRIFT-05 dry-run harness + honest measurement + blocking enablement checkpoint
 
 ### Phase 66: Domain-Neutral Proposal Emit Seam
 
