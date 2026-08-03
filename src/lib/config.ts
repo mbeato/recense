@@ -190,6 +190,24 @@ export interface EngineConfig {
   statusDriftEventTsGuard: boolean;
 
   /**
+   * Phase 66 / EMIT-01: master switch for whether the sleep pass emits real
+   * `action_proposal` rows at all. This knob IS the "a consumer is configured" signal
+   * EMIT-01 names — with it `false`, `run-sleep-pass` injects `NoopActionProposalSink`, no
+   * `action_proposal` row is ever written, and the install pays literally zero cost, which is
+   * the requirement's own wording, not an interpretation of it.
+   * With it `true`, `run-sleep-pass` injects `SQLiteActionProposalSink`, and decisive
+   * gmail-sourced status transitions carrying a resolved entity write one row each inside the
+   * transaction that already commits the graph write.
+   * Unlike `statusDriftEnabled` (Phase 65, defaults ON because the drift layer IS that
+   * phase's guarantee), this knob defaults OFF, because here the zero-cost-when-unconfigured
+   * behavior IS the guarantee. The phase's own success criteria are demonstrated by tests
+   * that set it `true` explicitly, not by shipping it hot on every install.
+   * Reversibility: `false` is pre-Phase-66 behavior exactly — the Consolidator's constructor
+   * default is also `NoopActionProposalSink`, so the sink is Noop by two independent means.
+   */
+  actionProposalSinkEnabled: boolean;
+
+  /**
    * effective_s threshold for eviction candidacy (AND-gated with c + tombstoned).
    * 0.05 means a node has decayed to <5% of its peak strength.
    */
@@ -914,6 +932,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   statusDriftEnabled: true, // Phase 65: non-amplifying drift layer defaults ON (closes DRIFT-02/04)
   statusDriftConfidenceDamping: { high: 1, medium: 0.6, low: 0 }, // Phase 65 D-09: lower-only clamp domain
   statusDriftEventTsGuard: true, // Phase 65 D-11b: stale backfilled contradictions dropped, not held
+  actionProposalSinkEnabled: false, // Phase 66 EMIT-01: Noop until a consumer is configured
   evictionSThreshold: 0.05,
   evictionCThreshold: 0.15,
   trainingConfidenceThreshold: 0.6,
