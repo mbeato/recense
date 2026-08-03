@@ -22,7 +22,7 @@ import {
   type BeliefProposalClient,
 } from '../belief-proposal-client';
 import { MockTelegramTransport, type TelegramTransport, type TelegramUpdate } from '../transport';
-import { getProposal } from '../proposal-store';
+import { getProposal, getCapState } from '../proposal-store';
 import { readStateCursor, writeStateCursor, readBeliefPromptLedger, writeBeliefPromptLedger } from '../state';
 import { runBeliefPollTick } from '../index';
 import type { ClientConfig } from '../config';
@@ -349,7 +349,7 @@ describe('runBeliefBridgePass — gates, dedup, batching, cap, rollback', () => 
     expect(transport.sent).toHaveLength(1);
   });
 
-  it('when tryReserveProposalSlot returns false, nothing is sent and no rows are written', async () => {
+  it('when the daily cap is already exhausted, nothing is sent and no rows are written', async () => {
     const id = pid('cap-exhausted');
     listBody = { items: [makeRecord(id)] };
     const transport = new MockTelegramTransport();
@@ -361,6 +361,26 @@ describe('runBeliefBridgePass — gates, dedup, batching, cap, rollback', () => 
     });
     expect(transport.sent).toHaveLength(0);
     expect(getProposal(id.slice(0, 32), storePath)).toBeNull();
+  });
+
+  it('(WR-06) a failed send consumes no daily-cap slot; the slot is reserved only on delivery', async () => {
+    const id = pid('cap-burn-1');
+    listBody = { items: [makeRecord(id)] };
+    const storePath = tmpPath('capburn-store');
+    const statePath = tmpPath('capburn-state');
+    const deps = { client: makeClient(), chatIds: [111], storePath, statePath, dailyCap: 2, log: () => {} };
+
+    // Pass 1: total send failure — rows rolled back AND the shared cap untouched
+    // (previously each failed retry pass burned a slot forever, so a Telegram
+    // outage drained the cap shared with tool proposals with zero prompts sent).
+    await runBeliefBridgePass({ ...deps, transport: new ThrowingTransport(), nowMs: Date.now() });
+    expect(getCapState(storePath).count).toBe(0);
+
+    // Pass 2: delivery succeeds — exactly one slot consumed.
+    const transport = new MockTelegramTransport();
+    await runBeliefBridgePass({ ...deps, transport, nowMs: Date.now() });
+    expect(transport.sent).toHaveLength(1);
+    expect(getCapState(storePath).count).toBe(1);
   });
 
   it('when sendMessage throws, the rows written for that group are removed again so the next pass can retry (every constituent)', async () => {

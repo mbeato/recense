@@ -16,7 +16,7 @@
 
 import { appendFileSync } from 'fs';
 import type { StoredProposal, StoredBeliefProposal, ProposalAction } from './types';
-import { tryReserveProposalSlot, putProposal, getProposal, removeProposal, loadExecutable } from './proposal-store';
+import { tryReserveProposalSlot, getCapState, putProposal, getProposal, removeProposal, loadExecutable } from './proposal-store';
 import {
   type BeliefProposalClient,
   type ActionProposalRecord as ClientActionProposalRecord,
@@ -241,9 +241,14 @@ export interface BeliefBridgeDeps {
  *      non-zero count in today's ledger (D-07's one-prompt-per-entity-per-day invariant
  *      — this is what makes Pitfall 7's ">5 prompts/day for one entity" structurally
  *      unreachable);
- *   7. per group, earliest-dueAt-first: reserve one cap slot (one slot per PROMPT, not
- *      per constituent, since fatigue is measured in prompts) — on false, log and stop
- *      bridging for the WHOLE pass;
+ *   7. per group, earliest-dueAt-first: check the shared daily cap read-only
+ *      (getCapState) — when full, log and stop bridging for the WHOLE pass. The slot
+ *      itself is reserved (tryReserveProposalSlot) only AFTER at least one chat
+ *      actually received the prompt (WR-06): fatigue on this path is measured in
+ *      DELIVERED prompts (one slot per prompt, not per constituent), and there is no
+ *      LLM-call cost to account for at build time — so a failed send must never
+ *      consume a slot, or a transient Telegram outage would drain the cap shared
+ *      with tool proposals while delivering nothing;
  *   8. store-first (putProposal every constituent BEFORE sending — no dangling button
  *      tap possible), then one sendMessage per allowlisted chat carrying the rendered
  *      message and keyboard, each in its own try (WR-04). Only when ZERO chats
@@ -319,6 +324,16 @@ export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void>
   });
 
   for (const group of orderedGroups) {
+    // Read-only cap check (WR-06) — enforcement without consumption. The slot
+    // is reserved only after a successful delivery below, so a failed send can
+    // never burn a slot of the daily cap shared with the tool-proposal path.
+    const capState = getCapState(storePath);
+    const usedToday = capState.date === today ? capState.count : 0;
+    if (usedToday >= dailyCap) {
+      log('belief bridge: daily cap reached — stopping pass');
+      return;
+    }
+
     // Cap constituents at MAX_GROUP_CONSTITUENTS, choosing the earliest-expiring
     // ones, then shrink further until the rendered message fits Telegram's hard
     // 4096-char sendMessage limit (CR-01). An oversized message is refused with
@@ -341,12 +356,6 @@ export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void>
       // a message Telegram is guaranteed to refuse.
       log('belief bridge: rendered message exceeds Telegram limit even at one constituent — skipping group');
       continue;
-    }
-
-    const reserved = tryReserveProposalSlot(dailyCap, storePath, new Date(nowMs));
-    if (!reserved) {
-      log('belief bridge: daily cap reached — stopping pass');
-      return;
     }
 
     // Store-first (step 8) — no button can ever reference a missing row.
@@ -375,6 +384,13 @@ export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void>
       for (const row of capped) removeProposal(row.id, storePath);
       log('belief bridge: send failed for entity group on every chat, rolled back');
       continue;
+    }
+
+    // Reserve the slot only now that at least one chat received the prompt
+    // (WR-06) — the read-only check above makes a false return here a pure
+    // race artifact (another writer on the same store), worth logging only.
+    if (!tryReserveProposalSlot(dailyCap, storePath, new Date(nowMs))) {
+      log('belief bridge: cap slot reservation failed after delivery — counter raced');
     }
 
     ledgerCounts[group.entityDescriptor] = (ledgerCounts[group.entityDescriptor] ?? 0) + 1;
