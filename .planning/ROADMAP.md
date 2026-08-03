@@ -265,7 +265,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 62. Multi-Inbox Email Ingest Hardening | v10.0 | 31/31 | Complete   | 2026-08-02 |
 | 63. Offline Intent Classification | v10.0 | 6/6 | Complete    | 2026-08-02 |
 | 64. Entity Resolution Hardening | v10.0 | 4/4 | Complete    | 2026-08-03 |
-| 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 3/10 | In Progress|  |
+| 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 5/10 | In Progress|  |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
 | 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
 | 68. Telegram HITL Belief-Kind Extension | v10.0 | 0/0 | Not started | — |
@@ -1021,8 +1021,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 65-04-PLAN.md — provenance-key.ts: sender-domain + thread-lineage key composition, D-07 locked pair at key level
-- [ ] 65-05-PLAN.md — status-drift.ts: confidence damping, event_ts staleness guard, emission-eligibility predicate (D-09/D-11b/D-13)
+- [x] 65-04-PLAN.md — provenance-key.ts: sender-domain + thread-lineage key composition, D-07 locked pair at key level
+- [x] 65-05-PLAN.md — status-drift.ts: confidence damping, event_ts staleness guard, emission-eligibility predicate (D-09/D-11b/D-13)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
