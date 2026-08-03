@@ -43,6 +43,8 @@ import { acquireLockWithRetry, releaseLock } from './lockfile';
 import { resolveDirtySentinelPath } from './runtime-config';
 import { SurfaceStore } from '../db/surface-store';
 import type { SurfaceItem, SurfaceOpts } from '../db/surface-store';
+import { ActionProposalStore, classifyProposalStaleness } from '../db/action-proposal-store';
+import type { ActionProposalRecord, ProposalStatus, StalenessVerdict } from '../db/action-proposal-store';
 
 const LOG_PATH = '/tmp/recense-ops.log';
 
@@ -132,6 +134,42 @@ export class SurfaceTargetNotFoundError extends Error {
 }
 
 /**
+ * Thrown by approveProposal()/rejectProposal() when the referenced proposal id does not
+ * exist in the action_proposal table. Callers map this to 404 not_found.
+ */
+export class ProposalNotFoundError extends Error {
+  constructor(id: string) {
+    super(`proposal '${id}' does not exist`);
+    this.name = 'ProposalNotFoundError';
+  }
+}
+
+/**
+ * Thrown by approveProposal()/rejectProposal() when the proposal's status is not
+ * 'pending' — a re-delivered approve/reject on an already-terminal proposal is a no-op,
+ * not a second application (EMIT-04's consumer-side half).
+ */
+export class ProposalNotPendingError extends Error {
+  constructor(id: string, public readonly current: ProposalStatus) {
+    super(`proposal '${id}' is not pending (status: ${current})`);
+    this.name = 'ProposalNotPendingError';
+  }
+}
+
+/**
+ * Thrown by approveProposal() when classifyProposalStaleness returns a non-'ok' verdict
+ * (D-10, EMIT-07). The terminal status is written to the store BEFORE this throws, so a
+ * refused proposal cannot be resurrected by re-delivery. `reason` lets the route layer
+ * map to a fixed detail literal without string-parsing the message.
+ */
+export class ProposalStaleError extends Error {
+  constructor(id: string, public readonly reason: Exclude<StalenessVerdict, 'ok'>) {
+    super(`proposal '${id}' refused: ${reason}`);
+    this.name = 'ProposalStaleError';
+  }
+}
+
+/**
  * Parameters for surfaceSeen() — record an outcome against a specific (node, occurrence) pair.
  * The idempotency key is (node_id, occurrence_due_at); second call with same key overwrites
  * outcome/snooze_until/updated_at but leaves created_at immutable (D-05).
@@ -201,6 +239,33 @@ export interface MemoryOps {
    * node_id does not exist in the node table. NEVER writes to node.s or node.c (D-43).
    */
   surfaceSeen(params: SurfaceSeenParams): Promise<{ status: string }>;
+  /**
+   * LLM-free read path: ActionProposalStore.listPending() via the read-only-handle-backed
+   * store when one exists. NO lock acquisition — mirrors surface() (D-95).
+   */
+  listProposals(): Promise<ActionProposalRecord[]>;
+  /**
+   * Approve a pending proposal. Per-call lock (T-12-02).
+   *
+   * D-43-for-proposals: the ONLY write this can reach is the proposal store's single
+   * status-transition write (status + updated_at) — never node, never edge. Throws ProposalNotFoundError (missing
+   * id), ProposalNotPendingError (already terminal — re-delivery is a no-op, EMIT-04), or
+   * ProposalStaleError (EMIT-07: the belief moved on, the entity was retired, or the
+   * proposal is past its TTL — classifyProposalStaleness runs before the lock; a non-'ok'
+   * verdict writes a durable terminal status BEFORE throwing so re-delivery cannot
+   * resurrect a refused proposal, D-10).
+   */
+  approveProposal(id: string): Promise<{ status: string }>;
+  /**
+   * Reject a pending proposal. Per-call lock (T-12-02).
+   *
+   * D-43-for-proposals: the ONLY write this can reach is the proposal store's single
+   * status-transition write. Deliberately NO staleness gate (D-08 / EMIT-05, founder decision 2026-07-29): a
+   * rejection leaves recense's belief untouched — ordinary reconsolidation corrects the
+   * belief when better evidence arrives, and rejecting a stale proposal is harmless (the
+   * alternative, refusing it, would leave a dead row pending forever).
+   */
+  rejectProposal(id: string): Promise<{ status: string }>;
 }
 
 export interface WireMemoryEngineOpts {
@@ -255,6 +320,7 @@ export function wireMemoryEngine(
   let searchRetriever: CandidateRetriever;
   let searchStore: SemanticStore;
   let surfaceStore: SurfaceStore;
+  let proposalReadStore: ActionProposalStore;
 
   if (opts.separateReadHandle) {
     readDb = new Database(opts.dbPath, { readonly: true });
@@ -263,6 +329,8 @@ export function wireMemoryEngine(
     searchStore = new SemanticStore(readDb, realClock, readConfig);
     // D-95: surface ranking reads through the same read-only handle as search.
     surfaceStore = new SurfaceStore(readDb, realClock);
+    // D-95: the pending-list read goes through the read-only handle when one exists.
+    proposalReadStore = new ActionProposalStore(readDb, realClock);
   }
 
   // ── 3. Wire the full collaborator graph against the writable handle ───────
@@ -309,6 +377,8 @@ export function wireMemoryEngine(
     searchStore = store;
     // rank() is read-only (D-43) — safe to construct against writeDb fallback.
     surfaceStore = new SurfaceStore(writeDb, realClock);
+    // D-95: the pending-list read goes through the read-only handle when one exists.
+    proposalReadStore = new ActionProposalStore(writeDb, realClock);
   }
 
   // ── Write-side prepared statements for surfaceSeen() ─────────────────────
@@ -325,6 +395,8 @@ export function wireMemoryEngine(
   // T-21-08: node existence check before upsert — prevents orphan rows for unknown node_ids.
   // Uses writeDb (not readDb) so it sees the latest committed node rows.
   const stmtNodeExists = writeDb.prepare('SELECT 1 FROM node WHERE id = ?');
+  // Uses writeDb so it sees the latest committed rows for the approve/reject write path.
+  const proposalWriteStore = new ActionProposalStore(writeDb, realClock);
 
   // ── 4. Plain-data operation functions ────────────────────────────────────
 
@@ -483,6 +555,90 @@ export function wireMemoryEngine(
     }
   }
 
+  // ── 4c. Proposal ops ──────────────────────────────────────────────────────
+
+  /**
+   * LLM-free read path: ActionProposalStore.listPending() via the read-only handle
+   * (or writeDb fallback when separateReadHandle is false).
+   *
+   * D-43: listProposals() never writes. ActionProposalStore.listPending() is read-only
+   * by construction.
+   */
+  async function listProposals(): Promise<ActionProposalRecord[]> {
+    return proposalReadStore!.listPending();
+  }
+
+  // D-43-for-proposals: NEVER writes node or edge. Only action_proposal.status
+  // (+ updated_at) is touched.
+  async function approveProposal(id: string): Promise<{ status: string }> {
+    // Fast-fail BEFORE the lock (mirrors T-21-08): a missing id never takes the lock.
+    const proposal = proposalWriteStore.getById(id);
+    if (!proposal) {
+      throw new ProposalNotFoundError(id);
+    }
+    // A re-delivered approve on an already-terminal proposal is a no-op, not a second
+    // application (EMIT-04's consumer-side half).
+    if (proposal.status !== 'pending') {
+      throw new ProposalNotPendingError(id, proposal.status);
+    }
+
+    // EMIT-07 staleness gate — still before the lock, because it is a pure read.
+    const inputs = proposalWriteStore.getStalenessInputs(id);
+    // Cannot be null here: getById() above already proved the row exists.
+    const verdict = classifyProposalStaleness({ ...inputs!, nowMs: realClock.nowMs() });
+    if (verdict !== 'ok') {
+      // D-10: a refused proposal cannot be resurrected by re-delivery, so the refusal
+      // must be durable — write the terminal status BEFORE throwing, not just a response code.
+      const terminalStatus = verdict === 'expired' ? 'expired' : 'superseded';
+      if (!(await acquireLockWithRetry())) {
+        throw new MemoryBusyError();
+      }
+      try {
+        proposalWriteStore.updateStatus(id, terminalStatus, realClock.nowMs());
+      } finally {
+        releaseLock();
+      }
+      throw new ProposalStaleError(id, verdict);
+    }
+
+    if (!(await acquireLockWithRetry())) {
+      throw new MemoryBusyError();
+    }
+    try {
+      proposalWriteStore.updateStatus(id, 'approved', realClock.nowMs());
+      return { status: 'approved' };
+    } finally {
+      releaseLock();
+    }
+  }
+
+  // D-43-for-proposals: NEVER writes node or edge. Only action_proposal.status
+  // (+ updated_at) is touched.
+  //
+  // Deliberately NO staleness gate here (D-08 / EMIT-05): a rejection leaves recense's
+  // belief untouched — ordinary reconsolidation corrects the belief when better evidence
+  // arrives. Refusing a stale reject would leave a dead row pending forever, so a stale
+  // proposal being rejected is accepted as harmless rather than treated as an omission.
+  async function rejectProposal(id: string): Promise<{ status: string }> {
+    const proposal = proposalWriteStore.getById(id);
+    if (!proposal) {
+      throw new ProposalNotFoundError(id);
+    }
+    if (proposal.status !== 'pending') {
+      throw new ProposalNotPendingError(id, proposal.status);
+    }
+
+    if (!(await acquireLockWithRetry())) {
+      throw new MemoryBusyError();
+    }
+    try {
+      proposalWriteStore.updateStatus(id, 'rejected', realClock.nowMs());
+      return { status: 'rejected' };
+    } finally {
+      releaseLock();
+    }
+  }
+
   // ── 5. close() ───────────────────────────────────────────────────────────
   function close(): void {
     if (readDb) {
@@ -491,7 +647,10 @@ export function wireMemoryEngine(
     try { writeDb.close(); } catch { /* best-effort */ }
   }
 
-  return Promise.resolve({ ops: { sessionId, search, add, ask, surface, surfaceSeen }, close });
+  return Promise.resolve({
+    ops: { sessionId, search, add, ask, surface, surfaceSeen, listProposals, approveProposal, rejectProposal },
+    close,
+  });
 }
 
 // ---------------------------------------------------------------------------
