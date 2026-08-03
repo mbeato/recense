@@ -426,6 +426,38 @@ describe('runBeliefBridgePass — gates, dedup, batching, cap, rollback', () => 
     expect(sent!.text).toContain(`${String(10 - numberedBlocks)} more not shown`);
   });
 
+  it('(WR-04) a partial multi-chat send failure keeps the rows the delivered message references and does not re-prompt on the next pass', async () => {
+    /** Delivers to every chat except `failChatId` — models a partial outage. */
+    class PartialFailTransport extends MockTelegramTransport {
+      constructor(private readonly failChatId: number) { super(); }
+      override async sendMessage(chatId: number, text: string, replyMarkup?: Parameters<MockTelegramTransport['sendMessage']>[2]): Promise<void> {
+        if (chatId === this.failChatId) throw new Error('chat unreachable');
+        await super.sendMessage(chatId, text, replyMarkup);
+      }
+    }
+
+    const id = pid('partial-send-1');
+    listBody = { items: [makeRecord(id)] };
+    const transport = new PartialFailTransport(222);
+    const storePath = tmpPath('partial-store');
+    const statePath = tmpPath('partial-state');
+    const deps = {
+      client: makeClient(), transport, chatIds: [111, 222],
+      storePath, statePath, dailyCap: 10, log: () => {},
+    };
+
+    await runBeliefBridgePass({ ...deps, nowMs: Date.now() });
+
+    // Chat 111 got the prompt; the rows its keyboard references MUST survive.
+    expect(transport.sent).toHaveLength(1);
+    expect(transport.sent[0]?.chatId).toBe(111);
+    expect(getProposal(id.slice(0, 32), storePath)).not.toBeNull();
+
+    // Next pass: no duplicate prompt for the delivered chat.
+    await runBeliefBridgePass({ ...deps, nowMs: Date.now() });
+    expect(transport.sent).toHaveLength(1);
+  });
+
   it('a pass whose listProposals throws logs and resolves — it never rejects', async () => {
     listBody = 500; // stub server returns 500 → ProposalHttpError
     const transport = new MockTelegramTransport();

@@ -245,10 +245,12 @@ export interface BeliefBridgeDeps {
  *      per constituent, since fatigue is measured in prompts) — on false, log and stop
  *      bridging for the WHOLE pass;
  *   8. store-first (putProposal every constituent BEFORE sending — no dangling button
- *      tap possible), then one sendMessage per group carrying the rendered message and
- *      keyboard. On a send failure, roll back (removeProposal every row just written)
- *      so the next pass retries, and leave the ledger untouched (T-68-11). On success,
- *      increment the entity's ledger count for today.
+ *      tap possible), then one sendMessage per allowlisted chat carrying the rendered
+ *      message and keyboard, each in its own try (WR-04). Only when ZERO chats
+ *      received the message: roll back (removeProposal every row just written) so the
+ *      next pass retries, and leave the ledger untouched (T-68-11) — a partial
+ *      failure keeps the rows, because a delivered keyboard already references them.
+ *      On any delivery, increment the entity's ledger count for today.
  */
 export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void> {
   const { client, transport, chatIds, storePath, statePath, dailyCap, log, nowMs } = deps;
@@ -352,15 +354,26 @@ export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void>
 
     const keyboard = beliefKeyboard(capped);
 
-    try {
-      for (const chatId of chatIds) {
+    // Per-chat delivery tracking (WR-04): a partial multi-chat failure must NOT
+    // roll back rows a delivered message already references — that would leave a
+    // live keyboard whose buttons name deleted rows (violating the store-first
+    // invariant above) and re-prompt the delivered chat on the next pass. Roll
+    // back only when ZERO chats received the message; any delivered copy makes
+    // the group's rows load-bearing.
+    let delivered = 0;
+    for (const chatId of chatIds) {
+      try {
         await transport.sendMessage(chatId, text, keyboard);
+        delivered++;
+      } catch (err) {
+        log('belief bridge: send failed for chat ' + String(chatId) + ': ' + String(err));
       }
-    } catch (err) {
+    }
+    if (delivered === 0) {
       // Roll back so the next pass retries — a lost message must never become a
       // permanently suppressed proposal (T-68-11). Ledger is left untouched.
       for (const row of capped) removeProposal(row.id, storePath);
-      log('belief bridge: send failed for entity group, rolled back: ' + String(err));
+      log('belief bridge: send failed for entity group on every chat, rolled back');
       continue;
     }
 
