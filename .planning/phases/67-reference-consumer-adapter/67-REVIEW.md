@@ -19,7 +19,8 @@ findings:
   warning: 6
   info: 6
   total: 12
-status: issues_found
+status: fixed
+fixed_at: 2026-08-03T05:25:00Z
 ---
 
 # Phase 67: Code Review Report
@@ -27,7 +28,31 @@ status: issues_found
 **Reviewed:** 2026-08-03T05:10:00Z
 **Depth:** standard
 **Files Reviewed:** 10
-**Status:** issues_found
+**Status:** fixed
+
+## Fixes Applied
+
+All 6 Warning findings fixed; Info findings skipped per fix scope, except the
+two trivial docs omissions (IN-02, IN-03 docs-half) fixed while
+`docs/reference-client.md` was open for the Warning fixes. Verified after all
+fixes: `npm run typecheck` clean (root + tests + adapter tsconfig), full
+`npm test` green — 230 test files passed / 1 skipped, 3854 tests passed /
+6 expected-fail / 3 skipped.
+
+| Finding | Fix | Commit |
+|---|---|---|
+| WR-01 | 409 on a resumed pending row now records the distinct ambiguous `needs_reconciliation` status (terminal for the loop, reconciled by human/consumer) instead of inverting truth with `refused`; crash-window regression test added; docs explain the state + resuming-consumer caveat | `adcd26a` |
+| WR-02 | Boundary-guard regex matches `src` with/without trailing slash and covers `from`/`require()`/dynamic `import()`; walk includes `.mts`/`.cts`/`.tsx`; named scanned-file-count floor; planted-offender + lawful-import cases; telegram sibling hardened in lockstep (identical shape) | `3a0d0f0` |
+| WR-03 | Wire-shape gate before the loop: every list item must be an object carrying the record key set, else the documented graceful stop (no raw TypeError escapes `syncProposals`) | `97ec466` |
+| WR-04 | `approve`/`reject` enforce `^[0-9a-f]{64}$` before building the POST path — non-conforming id fails closed with no request; sync-loop fixtures converted to sha256-hex ids; path-traversal regression test | `0e5f736` |
+| WR-05 | Corrupt store file (invalid JSON / non-array / row failing shape validation) throws typed `LocalStoreCorruptError`; sync aborts with operator-facing message; store never overwritten; missing file still reads empty | `3d66e00` |
+| WR-06 | Cross-process single-flight via O_EXCL lock file (`<store>.lock`, unlinked in `finally`, 15-min staleness reclaim); second concurrent sync refuses with typed `SyncLockHeldError` and makes no request | `9573ac8` |
+| IN-02 / IN-03 (docs) | Env table documents `RECENSE_REFERENCE_LOG_PATH`; error list documents `500 internal_error`; retry-policy paragraph states unmapped statuses are retried (row left `pending`) | `cfa541b` |
+
+Skipped (Info, out of fix scope): IN-01 dead `'skipped'` vocabulary, IN-03
+adapter-side status-map closure, IN-04 log-line control-character
+sanitization, IN-05 trailing-slash serve URL normalization, IN-06 CI
+build/typecheck coverage for the client trees.
 
 ## Summary
 
