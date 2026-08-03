@@ -1,0 +1,366 @@
+[
+  {
+    "case_id": "hold-1",
+    "scenario": "hold-single-ambiguous",
+    "requirement": "DRIFT-02",
+    "initial_status_fact": "Application to Acme Corp is in status: applied",
+    "messages": [
+      {
+        "from": "recruiter@acme-corp.example",
+        "thread_id": "thread-acme-001",
+        "date": "2026-06-10T09:00:00Z",
+        "body": "Hi, just checking in - we're still reviewing candidates for the role. Nothing new to report yet, thanks for your patience while the panel finishes its rounds.",
+        "intent_confidence": "low"
+      }
+    ],
+    "expected_outcome": "hold",
+    "expected_distinct_provenance": 1,
+    "rationale": "A single low-confidence status-adjacent email must not flip an established belief (DRIFT-02)."
+  },
+  {
+    "case_id": "hold-2",
+    "scenario": "hold-single-ambiguous",
+    "requirement": "DRIFT-02",
+    "initial_status_fact": "Application to Beta Inc is in status: applied",
+    "messages": [
+      {
+        "from": "hr@beta-inc.test",
+        "thread_id": "thread-beta-777",
+        "date": "2026-06-11T14:30:00Z",
+        "body": "Thanks for your patience, the hiring team is still finalizing next steps internally before anyone reaches back out to candidates.",
+        "intent_confidence": "low"
+      }
+    ],
+    "expected_outcome": "hold",
+    "expected_distinct_provenance": 1,
+    "rationale": "Second hold-single-ambiguous instance on a different domain, exercising the same low-confidence damping-to-zero path (D-09)."
+  },
+  {
+    "case_id": "release-1",
+    "scenario": "release-three-independent",
+    "requirement": "DRIFT-03",
+    "initial_status_fact": "Application to Gamma Labs is in status: applied",
+    "messages": [
+      {
+        "from": "recruiter@gamma-labs.example",
+        "thread_id": "thread-gamma-001",
+        "date": "2026-06-01T10:00:00Z",
+        "body": "Update: your application has moved to the interviewing stage with our engineering team, a scheduling link will follow shortly from our coordinator.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "careers@delta-partners.example",
+        "thread_id": "thread-delta-002",
+        "date": "2026-06-03T10:00:00Z",
+        "body": "As Gamma Labs' hiring partner, we're confirming you have advanced to interviewing and forwarding our congratulations on reaching this stage.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "notifications@epsilon-search.example",
+        "thread_id": "thread-epsilon-003",
+        "date": "2026-06-05T10:00:00Z",
+        "body": "Our records show your Gamma Labs application status changed to interviewing this week - reach out if you have any questions about the process.",
+        "intent_confidence": "medium"
+      }
+    ],
+    "expected_outcome": "corrected",
+    "expected_distinct_provenance": 3,
+    "rationale": "Three genuinely independent corroborating emails (distinct sender domains and threads) earn confidence through consolidation volume and force-destabilize the held belief - the DRIFT-03 differentiator."
+  },
+  {
+    "case_id": "release-2",
+    "scenario": "release-three-independent",
+    "requirement": "DRIFT-03",
+    "initial_status_fact": "Application to Zeta Systems is in status: applied",
+    "messages": [
+      {
+        "from": "hiring@zeta-systems.example",
+        "thread_id": "thread-zeta-01",
+        "date": "2026-06-02T08:00:00Z",
+        "body": "We regret to inform you that we have decided to move forward with other candidates for the role at this time, but we'll keep your resume on file.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "notifications@zeta-ats.test",
+        "thread_id": "thread-zeta-02",
+        "date": "2026-06-04T08:00:00Z",
+        "body": "This is an automated notice from our applicant tracking system: your application status for Zeta Systems has been updated to not selected.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "referrer@friend-co.example",
+        "thread_id": "thread-zeta-03",
+        "date": "2026-06-06T08:00:00Z",
+        "body": "Heard back from my contact at Zeta Systems - unfortunately they went with other candidates for the position you applied to, sorry to be the bearer of bad news.",
+        "intent_confidence": "medium"
+      }
+    ],
+    "expected_outcome": "corrected",
+    "expected_distinct_provenance": 3,
+    "rationale": "Second release-three-independent instance, this time on a rejection signal, showing the volume mechanism is symmetric across status directions."
+  },
+  {
+    "case_id": "forward-1",
+    "scenario": "forward-farm",
+    "requirement": "DRIFT-03",
+    "initial_status_fact": "Application to Acme Corp is in status: applied",
+    "messages": [
+      {
+        "from": "friend-one@acme-corp.example",
+        "thread_id": "thread-acme-fwd-a",
+        "date": "2026-06-12T09:00:00Z",
+        "body": "---------- Forwarded message ---------\nFrom: hr@acme-corp.example\n> We regret to inform you the position has been filled internally.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "friend-two@delta-partners.example",
+        "thread_id": "thread-acme-fwd-b",
+        "date": "2026-06-13T09:00:00Z",
+        "body": "---------- Forwarded message ---------\nFrom: hr@acme-corp.example\n> We regret to inform you the position has been filled internally.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "friend-three@epsilon-search.example",
+        "thread_id": "thread-acme-fwd-c",
+        "date": "2026-06-14T09:00:00Z",
+        "body": "---------- Forwarded message ---------\nFrom: hr@acme-corp.example\n> We regret to inform you the position has been filled internally.",
+        "intent_confidence": "medium"
+      }
+    ],
+    "expected_outcome": "hold",
+    "expected_distinct_provenance": 1,
+    "rationale": "Three forwards of one underlying thread, from three DIFFERENT sender domains and threads - the D-07 residual gate must collapse all three to one provenance key so farming can never manufacture false independence, even after volume that would otherwise clear contradictionN."
+  },
+  {
+    "case_id": "forward-2",
+    "scenario": "forward-farm",
+    "requirement": "DRIFT-03",
+    "initial_status_fact": "Application to Nova Robotics is in status: applied",
+    "messages": [
+      {
+        "from": "colleague-a@nova-robotics.example",
+        "thread_id": "thread-nova-fwd-a",
+        "date": "2026-06-16T09:00:00Z",
+        "body": "-----Original Message-----\nFrom: talent@nova-robotics.example\n> Your application has been declined after final review.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "colleague-b@friend-co.example",
+        "thread_id": "thread-nova-fwd-b",
+        "date": "2026-06-17T09:00:00Z",
+        "body": "-----Original Message-----\nFrom: talent@nova-robotics.example\n> Your application has been declined after final review.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "colleague-c@zeta-ats.test",
+        "thread_id": "thread-nova-fwd-c",
+        "date": "2026-06-18T09:00:00Z",
+        "body": "-----Original Message-----\nFrom: talent@nova-robotics.example\n> Your application has been declined after final review.",
+        "intent_confidence": "medium"
+      }
+    ],
+    "expected_outcome": "hold",
+    "expected_distinct_provenance": 1,
+    "rationale": "Second forward-farm instance using the -----Original Message----- banner variant, confirming the residual gate collapses both recognized forward-boundary forms identically."
+  },
+  {
+    "case_id": "quote-1",
+    "scenario": "quote-farm",
+    "requirement": "DRIFT-03",
+    "initial_status_fact": "Application to Orion Analytics is in status: applied",
+    "messages": [
+      {
+        "from": "sender-a@orion-analytics.example",
+        "thread_id": "thread-orion-q-a",
+        "date": "2026-06-20T09:00:00Z",
+        "body": "> Thanks for reaching out.\n> We'll keep you posted on next steps.\n> Best,\n> HR Team",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "sender-b@friend-co.example",
+        "thread_id": "thread-orion-q-b",
+        "date": "2026-06-21T09:00:00Z",
+        "body": "> Thanks for reaching out.\n> We'll keep you posted on next steps.\n> Best,\n> HR Team",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "sender-c@zeta-ats.test",
+        "thread_id": "thread-orion-q-c",
+        "date": "2026-06-22T09:00:00Z",
+        "body": "> Thanks for reaching out.\n> We'll keep you posted on next steps.\n> Best,\n> HR Team",
+        "intent_confidence": "medium"
+      }
+    ],
+    "expected_outcome": "hold",
+    "expected_distinct_provenance": 1,
+    "rationale": "Three pure quote-reply duplicates from three different senders/threads - every line is quote-prefixed so the residual is empty and all three collapse to the shared fail-closed key."
+  },
+  {
+    "case_id": "quote-2",
+    "scenario": "quote-farm",
+    "requirement": "DRIFT-03",
+    "initial_status_fact": "Application to Pinecone Systems is in status: applied",
+    "messages": [
+      {
+        "from": "sender-d@pinecone-systems.test",
+        "thread_id": "thread-pine-q-a",
+        "date": "2026-06-23T09:00:00Z",
+        "body": "> No update yet, still in the queue.\n> Talk soon.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "sender-e@acme-corp.example",
+        "thread_id": "thread-pine-q-b",
+        "date": "2026-06-24T09:00:00Z",
+        "body": "> No update yet, still in the queue.\n> Talk soon.",
+        "intent_confidence": "medium"
+      },
+      {
+        "from": "sender-f@gamma-labs.example",
+        "thread_id": "thread-pine-q-c",
+        "date": "2026-06-25T09:00:00Z",
+        "body": "> No update yet, still in the queue.\n> Talk soon.",
+        "intent_confidence": "medium"
+      }
+    ],
+    "expected_outcome": "hold",
+    "expected_distinct_provenance": 1,
+    "rationale": "Second quote-farm instance with shorter quoted content, confirming the residual gate is content-length-independent - any fully-quoted body collapses regardless of size."
+  },
+  {
+    "case_id": "outoforder-1",
+    "scenario": "out-of-order",
+    "requirement": "DRIFT-04",
+    "initial_status_fact": "Application to Acme Corp is in status: applied",
+    "messages": [
+      {
+        "from": "hr@acme-corp.example",
+        "thread_id": "thread-acme-201",
+        "date": "2026-06-15T09:00:00Z",
+        "body": "We regret to inform you that we have decided to move forward with other candidates for this role after the final interview round.",
+        "intent_confidence": "high"
+      },
+      {
+        "from": "hr@acme-corp.example",
+        "thread_id": "thread-acme-200",
+        "date": "2026-06-01T09:00:00Z",
+        "body": "Good news - we'd like to schedule a follow-up interview with the engineering team next week, please let us know your availability.",
+        "intent_confidence": "high"
+      }
+    ],
+    "expected_outcome": "corrected",
+    "expected_distinct_provenance": 2,
+    "rationale": "Processed in backfill (ingestion) order: a newer decisive rejection lands first, then an older backfilled interview-scheduling email arrives second. The D-11b event_ts guard must drop the stale second message rather than let it revert the already-correct rejection."
+  },
+  {
+    "case_id": "outoforder-2",
+    "scenario": "out-of-order",
+    "requirement": "DRIFT-04",
+    "initial_status_fact": "Application to Nova Robotics is in status: applied",
+    "messages": [
+      {
+        "from": "talent@nova-robotics.example",
+        "thread_id": "thread-nova-301",
+        "date": "2026-06-19T09:00:00Z",
+        "body": "We're excited to offer you the position at Nova Robotics - please see the attached offer letter for full details and next steps.",
+        "intent_confidence": "high"
+      },
+      {
+        "from": "talent@nova-robotics.example",
+        "thread_id": "thread-nova-300",
+        "date": "2026-06-05T09:00:00Z",
+        "body": "Just confirming we received your application and it is currently under initial review by the hiring team, no decision has been made yet.",
+        "intent_confidence": "high"
+      }
+    ],
+    "expected_outcome": "corrected",
+    "expected_distinct_provenance": 2,
+    "rationale": "Second out-of-order instance on an offer signal: a newer offer email is processed first, then an older still-under-review backfill arrives second and must be dropped as stale rather than reverting the offer."
+  },
+  {
+    "case_id": "chrono-1",
+    "scenario": "chronological-control",
+    "requirement": "DRIFT-04",
+    "initial_status_fact": "Application to Acme Corp is in status: applied",
+    "messages": [
+      {
+        "from": "hr@acme-corp.example",
+        "thread_id": "thread-acme-200",
+        "date": "2026-06-01T09:00:00Z",
+        "body": "Good news - we'd like to schedule a follow-up interview with the engineering team next week, please let us know your availability.",
+        "intent_confidence": "high"
+      },
+      {
+        "from": "hr@acme-corp.example",
+        "thread_id": "thread-acme-201",
+        "date": "2026-06-15T09:00:00Z",
+        "body": "We regret to inform you that we have decided to move forward with other candidates for this role after the final interview round.",
+        "intent_confidence": "high"
+      }
+    ],
+    "expected_outcome": "corrected",
+    "expected_distinct_provenance": 2,
+    "rationale": "Control pairing with outoforder-1: the EXACT same two messages, but processed in true chronological order (older first). Both apply cleanly with no drop, reaching the same final rejected state honestly rather than via a guard rescue."
+  },
+  {
+    "case_id": "chrono-2",
+    "scenario": "chronological-control",
+    "requirement": "DRIFT-04",
+    "initial_status_fact": "Application to Nova Robotics is in status: applied",
+    "messages": [
+      {
+        "from": "talent@nova-robotics.example",
+        "thread_id": "thread-nova-300",
+        "date": "2026-06-05T09:00:00Z",
+        "body": "Just confirming we received your application and it is currently under initial review by the hiring team, no decision has been made yet.",
+        "intent_confidence": "high"
+      },
+      {
+        "from": "talent@nova-robotics.example",
+        "thread_id": "thread-nova-301",
+        "date": "2026-06-19T09:00:00Z",
+        "body": "We're excited to offer you the position at Nova Robotics - please see the attached offer letter for full details and next steps.",
+        "intent_confidence": "high"
+      }
+    ],
+    "expected_outcome": "corrected",
+    "expected_distinct_provenance": 2,
+    "rationale": "Control pairing with outoforder-2: the EXACT same two messages in true chronological order (older first), reaching the same final offer state with zero drops - the pair isolates what the event_ts guard alone contributes."
+  },
+  {
+    "case_id": "undated-1",
+    "scenario": "undated",
+    "requirement": "DRIFT-04",
+    "initial_status_fact": "Application to Gamma Labs is in status: applied",
+    "messages": [
+      {
+        "from": "talent@gamma-labs.example",
+        "thread_id": "thread-gamma-undated-a",
+        "date": "",
+        "body": "We're excited to offer you the position at Gamma Labs - please see the attached offer details and let us know if you have questions.",
+        "intent_confidence": "high"
+      }
+    ],
+    "expected_outcome": "corrected",
+    "expected_distinct_provenance": 1,
+    "rationale": "Undated evidence (date: '') exercises the documented D-11(b) fallback: the staleness guard abstains (unknown-claim-ts) rather than silently blocking a legitimate high-confidence update."
+  },
+  {
+    "case_id": "undated-2",
+    "scenario": "undated",
+    "requirement": "DRIFT-04",
+    "initial_status_fact": "Application to Pinecone Systems is in status: applied",
+    "messages": [
+      {
+        "from": "hr@pinecone-systems.test",
+        "thread_id": "thread-pine-undated-b",
+        "date": "",
+        "body": "Just a quick note - still reviewing your application internally, nothing has been decided either way at this point.",
+        "intent_confidence": "low"
+      }
+    ],
+    "expected_outcome": "hold",
+    "expected_distinct_provenance": 1,
+    "rationale": "Undated plus low-confidence: the guard abstains on staleness (unknown-claim-ts) but the D-09 confidence damper still holds the claim regardless of timestamp status - the two guards are independent."
+  }
+]

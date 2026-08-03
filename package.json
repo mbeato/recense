@@ -46,6 +46,8 @@
     "eval:judge": "node scripts/eval/judge-eval-runner.cjs --eval scripts/eval/judge-eval-set.json",
     "eval:correctness": "npm run build && node scripts/eval/correctness-harness.cjs",
     "eval:correctness:dry": "npm run build && node scripts/eval/correctness-harness.cjs --dry-run",
+    "eval:drift05": "npm run build && node scripts/eval/drift-05-dry-run.cjs",
+    "eval:drift05:dry": "npm run build && node scripts/eval/drift-05-dry-run.cjs --dry-run",
     "eval:longmemeval": "npm run build && node scripts/eval/longmemeval-harness.cjs",
     "eval:longmemeval:probe": "npm run build && node scripts/eval/longmemeval-harness.cjs --probe",
     "eval:longmemeval:dry": "npm run build && node scripts/eval/longmemeval-harness.cjs --dry-run",
