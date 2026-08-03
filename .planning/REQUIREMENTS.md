@@ -78,6 +78,20 @@
 - [x] **APPROVE-03**: Same-entity same-day proposals are batched, and held (non-decisive) updates are never surfaced — bounding approval fatigue, which compounds at multi-inbox volume and makes rubber-stamping the path of least resistance.
 - [x] **APPROVE-04**: Raw numeric confidence is **not** shown to the user, and confidence is never the programmatic gate — the PE gate is. (arXiv 2402.07632: miscalibrated model confidence is undetectable by users and increases inappropriate reliance.)
 
+### RECALL — Entity-anchored ambient recall
+
+> Derived from `SEED-005`'s 1,942-turn live audit of real Claude Code sessions (findings F1–F5,
+> `scripts/eval/recall-audit.py`), not from intuition. Phase 69 sits outside the v10.0
+> EMAIL→APPROVE chain — it is a retrieval-track phase promoted directly from the seed via the
+> roadmap, not one of the milestone's 30 producer/consumer requirements. Tracked here separately
+> so the v10.0 coverage table below stays exact.
+
+- [ ] **RECALL-01**: Ambient recall reaches facts anchored by a proper noun in the prompt via **LLM-free indexed entity lookup on the hot path** — distinctive prompt tokens alias/exact-matched to entity nodes, their facts unioned with cosine top-k before ranking. The audit's "contract with vtx" class (asked twice, whiffed twice, facts present) resolves. (F2; SC1)
+- [ ] **RECALL-02**: Cross-project recall is PRESERVED (resume sessions legitimately pull VTX/recense facts) but a foreign-project deep-dive doc no longer outranks own-project facts — a same-project rank NUDGE plus doc-type demotion/re-rendering (title + `recense://` link, not a truncated 200-char body), never a hard scope filter. (F1+F4; SC2; carries the D-S1 reversal)
+- [ ] **RECALL-03**: The injected block carries each fact's 1-hop relations — the edges `buildHonestOneHopTrace` already computes (AMBIENT_HOP_TOPN=6) and currently discards to the viz sink — within the existing token budget (~5 lines × 200 chars unless explicitly re-budgeted). (SC3)
+- [ ] **RECALL-04**: `recense recall` gains an **evidence mode**: cited node ids + traversed edges instead of only LLM-composed prose, read-only, so a caller can verify a claim without grepping. (SC4)
+- [ ] **RECALL-05**: Every change is gated on the 58-prompt eval set: no regression on the 42 currently-hit prompts; injected-line relevance improves on the whiffs (the "contract with vtx" class must surface contract facts); ambient block token budget held. `ambient_hit` labels are outcome observations, NOT ground truth — grading is by injected-line relevance. (SC5)
+
 ---
 
 ## Future Requirements (deferred)
@@ -138,6 +152,11 @@
 | APPROVE-02 | 68 | Complete |
 | APPROVE-03 | 68 | Complete |
 | APPROVE-04 | 68 | Complete |
+| RECALL-01 | 69 | Planned |
+| RECALL-02 | 69 | Planned |
+| RECALL-03 | 69 | Planned |
+| RECALL-04 | 69 | Planned |
+| RECALL-05 | 69 | Planned |
 
 _Source of truth for the EMAIL-01..04 rows above: `62-VERIFICATION.md` (pass 6, 2026-08-02,
 status `passed`) — future rounds must update the verification report and this table together,
@@ -147,6 +166,7 @@ not one without the other._
 - v10.0 requirements: 30 total
 - Mapped to phases: 30 ✓ (100%)
 - Unmapped: 0
+- Phase-69 RECALL requirements (RECALL-01..05): tracked separately, outside the v10.0 count above — promoted from `SEED-005` via the roadmap, not one of the milestone's 30 producer/consumer requirements.
 
 **Note on phase 66:** research's proposed standalone "Proposal Schema & Sink Foundation" phase (the `action_proposal` table + `ActionProposalSink`) was folded into Phase 66 rather than kept separate — it owns no REQ-IDs of its own (its deliverables are exactly EMIT-01/EMIT-02), and neither Phase 63 (CLASSIFY) nor Phase 64 (RESOLVE) touches that table. See `ROADMAP.md`'s "Phase Details — v10.0 Action Proposals" preamble for the full rationale.
 
