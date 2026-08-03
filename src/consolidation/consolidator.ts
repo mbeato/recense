@@ -47,13 +47,18 @@ import type { Origin, PendingContradiction, EpisodeRow, EpisodeRole } from '../l
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
 import { EntityResolver } from './entity-resolution';
-import { StatusDrift } from './status-drift';
+import { StatusDrift, isEmissionEligible } from './status-drift';
 import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
 import { orderEpisodesForConsolidation } from './episode-order';
 import type { SchemaInducer } from './schema-induction';
 import { NoopSchemaRelationDeriver } from './schema-relations';
 import type { SchemaRelationDeriver } from './schema-relations';
-import { NoopConsolidationSink, type ConsolidationSink } from './sink';
+import { NoopConsolidationSink, type ConsolidationSink, type ConsolidationEventType } from './sink';
+import {
+  BELIEF_CHANGE_FIELD_STATUS,
+  NoopActionProposalSink,
+  type ActionProposalSink,
+} from './action-proposal-sink';
 import { NoopCorpusPromoter } from './corpus-promoter';
 import type { CorpusPromoter } from './corpus-promoter';
 import { NoopInsightReflector } from './insight-reflector';
@@ -286,6 +291,10 @@ export class Consolidator {
   private readonly config: EngineConfig;
   private readonly clock: Clock;
   private readonly sink: ConsolidationSink;
+  // EMIT-01 (Phase 66): domain-neutral proposal emit seam. Defaults to Noop — two independent
+  // barriers with actionProposalSinkEnabled (T-66-12): even if this param IS injected as a real
+  // sink, maybeEmitProposal's own isEmissionEligible + all-or-nothing gates still apply.
+  private readonly proposalSink: ActionProposalSink;
   private readonly log: (msg: string) => void;
   // RESOLVE-01/02/03 (Phase 64): standalone, LLM-free entity resolver. Constructed once here
   // (not per episode) — mirrors why entity-resolution.ts prepares its own statements in its
@@ -305,6 +314,9 @@ export class Consolidator {
   private driftDamped = 0;
   private driftStaleDropped = 0;
   private driftEventTsUnknown = 0;
+  // EMIT-66 (Phase 66): count of proposals actually emitted this pass (observability only,
+  // mirrors the DRIFT-05 counter precedent above — never gates behavior).
+  private proposalsEmitted = 0;
 
   // M1: prepared statements for entity-anchored candidate expansion (T-01-SQL).
   // Compiled once in the constructor; sync reads only (T-02-ASYNC — no await, never inside
@@ -341,6 +353,9 @@ export class Consolidator {
     // D-11/D-20 (Phase 39.2): DocGraphDeriver — sole owner of doc_reference + doc_containment edges.
     // Defaulted to Noop so existing Consolidator constructions (tests) are unaffected.
     docGraphDeriver: DocGraphDeriver | NoopDocGraphDeriver = new NoopDocGraphDeriver(),
+    // EMIT-01 (Phase 66): trailing param, Noop default — the ~10 existing
+    // `new Consolidator(...)` call sites across tests keep compiling unchanged.
+    proposalSink: ActionProposalSink = new NoopActionProposalSink(),
   ) {
     this.db = db;
     this.episodes = episodes;
@@ -356,6 +371,7 @@ export class Consolidator {
     this.config = config;
     this.clock = clock;
     this.sink = sink;
+    this.proposalSink = proposalSink;
     this.log = log;
     // RESOLVE-01/02/03 (Phase 64, D-04): constructed with (db, store, config) — no
     // ModelProvider — the type-level guarantee that resolution can never call an LLM.
@@ -612,6 +628,7 @@ export class Consolidator {
     this.driftDamped = 0;
     this.driftStaleDropped = 0;
     this.driftEventTsUnknown = 0;
+    this.proposalsEmitted = 0;
 
     // ── Phase A prefix: Re-embed dirty nodes so nomination is meaningful ────
     // (seeded/newly-appended nodes start with embedded_hash IS NULL)
@@ -1142,7 +1159,7 @@ export class Consolidator {
         }
         this.db.transaction(() => {
           for (const decision of decisions) {
-            this.applyDecision(decision, episodeId);
+            this.applyDecision(decision, episodeId, episode.content);
           }
           // D-02 (Phase 37): mint typed edges from pre-resolved triples.
           // Triple-upsert is AFTER the line-462 hard skip guard (T-37-05 / Pitfall 6).
@@ -1183,6 +1200,9 @@ export class Consolidator {
     this.log(
       `DRIFT-65 evaluations=${this.driftEvaluations} damped=${this.driftDamped} staleDropped=${this.driftStaleDropped} eventTsUnknown=${this.driftEventTsUnknown}`
     );
+    // EMIT-66 (Phase 66): observable proposal-emission count for this pass — the data any
+    // future emission calibration will read, mirroring the RESOLVE-64/DRIFT-65 precedents.
+    this.log(`EMIT-66 proposals=${this.proposalsEmitted}`);
 
     // ── Phase C: Re-embed nodes dirtied by this pass, then eviction sweep ──
     await this.reembedDirty();
@@ -1271,9 +1291,72 @@ export class Consolidator {
     });
   }
 
+  // ── Private: emit a domain-neutral action proposal for a decisive change (Phase 66) ──────
+
+  /**
+   * D-06: called synchronously inside the per-episode `db.transaction` already open around
+   * `applyDecision` — the proposal row and the graph mutation it describes commit or roll
+   * back together. No `await` may ever be introduced here — T-02-ASYNC's discipline extends
+   * to this seam.
+   *
+   * D-05: the gate is `isEmissionEligible`, imported from `./status-drift` — never a locally
+   * re-derived event-type set. A non-eligible event type (confirm/extend/unrelated/oscillation/
+   * hold) returns immediately with no emission.
+   *
+   * All-or-nothing (Phase 63's D-05 / Phase 64's D-07): a partial claimIntent-family /
+   * claimResolvedEntity-family field set means the classifier or the resolver abstained — this
+   * emits nothing rather than a partial or guessed proposal (research Pitfall 4).
+   *
+   * `change_from`/`change_to` asymmetry is intentional, not a bug: `change_from` is recense's
+   * PRIOR belief TEXT verbatim (human-readable, often a full sentence) while `change_to` is a
+   * token from recense's own closed `IntentStatus` vocabulary. A consumer maps on `change_to`;
+   * `change_from` exists so an approver sees what recense believed before. Never "normalise"
+   * either side by paraphrasing — paraphrase is exactly the confused-deputy surface Pitfall 2
+   * forbids.
+   */
+  private maybeEmitProposal(
+    eventType: ConsolidationEventType,
+    decision: ClaimDecision,
+    episodeId: string,
+    episodeContent: string,
+    beliefNodeId: string,
+    changeFrom: string | null,
+  ): void {
+    if (!isEmissionEligible(eventType)) return;
+
+    const {
+      claimResolvedEntityId,
+      claimResolvedEntityDescriptor,
+      claimIntentStatus,
+      claimIntentConfidence,
+    } = decision;
+    if (
+      claimResolvedEntityId === undefined ||
+      claimResolvedEntityDescriptor === undefined ||
+      claimIntentStatus === undefined ||
+      claimIntentConfidence === undefined
+    ) {
+      return;
+    }
+
+    this.proposalSink.emit({
+      kind: 'belief',
+      entity_node_id: claimResolvedEntityId,
+      entity_descriptor: claimResolvedEntityDescriptor,
+      belief_node_id: beliefNodeId,
+      change_field: BELIEF_CHANGE_FIELD_STATUS,
+      change_from: changeFrom,
+      change_to: claimIntentStatus,
+      evidence_episode: episodeId,
+      evidence_quote: episodeContent,
+      confidence: claimIntentConfidence,
+    });
+    this.proposalsEmitted++;
+  }
+
   // ── Private: apply a single claim decision within a transaction ──────────
 
-  private applyDecision(decision: ClaimDecision, episodeId: string): void {
+  private applyDecision(decision: ClaimDecision, episodeId: string, episodeContent: string): void {
     switch (decision.relation) {
       case 'confirm': {
         if (decision.bestCandidateId) {
@@ -1296,6 +1379,7 @@ export class Consolidator {
             origin: decision.claimOrigin,
             magnitude: decision.magnitude,
           });
+          this.maybeEmitProposal('confirm', decision, episodeId, episodeContent, decision.bestCandidateId, null);
         }
         break;
       }
@@ -1328,6 +1412,7 @@ export class Consolidator {
             origin: decision.claimOrigin,
             magnitude: decision.magnitude,
           });
+          this.maybeEmitProposal('extend', decision, episodeId, episodeContent, newId_, null);
         } else {
           // extend with no candidate → treat as standalone (defensive)
           const standaloneId = newId();
@@ -1349,6 +1434,7 @@ export class Consolidator {
             origin: decision.claimOrigin,
             magnitude: decision.magnitude,
           });
+          this.maybeEmitProposal('extend', decision, episodeId, episodeContent, standaloneId, null);
         }
         break;
       }
@@ -1373,6 +1459,7 @@ export class Consolidator {
           origin: decision.claimOrigin,
           magnitude: decision.magnitude,
         });
+        this.maybeEmitProposal('unrelated', decision, episodeId, episodeContent, unrelatedId, null);
         break;
       }
 
@@ -1474,6 +1561,7 @@ export class Consolidator {
               origin: decision.claimOrigin,
               magnitude: decision.magnitude,
             });
+            this.maybeEmitProposal('contradict_oscillation', decision, episodeId, episodeContent, oscId, node.value);
           } else {
             // Mid-band reconcile (UPDATE-04 tombstone-always, no in-place rewrite):
             //   1. Tombstone the superseded node.
@@ -1503,6 +1591,7 @@ export class Consolidator {
               origin: decision.claimOrigin,
               magnitude: decision.magnitude,
             });
+            this.maybeEmitProposal('contradict_reconcile', decision, episodeId, episodeContent, reconciledId, node.value);
           }
         } else if (action === 'append-new') {
           // Extreme / categorical: genuine divergence — both values coexist (no tombstone)
@@ -1525,6 +1614,7 @@ export class Consolidator {
             origin: decision.claimOrigin,
             magnitude: decision.magnitude,
           });
+          this.maybeEmitProposal('contradict_append_new', decision, episodeId, episodeContent, appendNewId, node.value);
         } else {
           // action === 'hold'
           // D-19: record ONLY if the episode is provenance-eligible.
@@ -1580,6 +1670,7 @@ export class Consolidator {
                     origin: decision.claimOrigin,
                     magnitude: decision.magnitude,
                   });
+                  this.maybeEmitProposal('contradict_force_destabilize', decision, episodeId, episodeContent, fdOscId, updatedNode.value);
                 } else {
                   // Force-reconcile: tombstone old + set new current carrying prev_value (D-20)
                   this.store.tombstone(decision.bestCandidateId);
@@ -1603,6 +1694,7 @@ export class Consolidator {
                     origin: decision.claimOrigin,
                     magnitude: decision.magnitude,
                   });
+                  this.maybeEmitProposal('contradict_force_destabilize', decision, episodeId, episodeContent, fdId, updatedNode.value);
                 }
               } else {
                 // Hold only (distinctCount < contradictionN) → 'contradict_hold'
