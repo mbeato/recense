@@ -62,3 +62,13 @@ missing build artifact, not a code regression. None of these test files referenc
 out of scope per the Scope Boundary rule (only auto-fix issues directly caused by the current
 task's changes). Not fixed here — flagging for the orchestrator / a build step ahead of the
 next verification pass.
+
+## 69-03: same pre-existing dist/-dependent failures recur (out of scope, not touched)
+
+`npx vitest run` (full suite) after 69-03's three tasks shows the identical 24 failures across
+the same 8 files listed above (`dist/` still absent in this worktree — unchanged root cause).
+None of the 8 files reference `src/adapter/ambient-recall.ts`, `src/adapter/turn-capture-cli.ts`,
+or `src/db/semantic-store.ts` (69-03's touched files). `npm run typecheck` is clean;
+`npx vitest run tests/ambient-recall.test.ts tests/recall-scope.test.ts tests/entity-anchor.test.ts
+tests/retrieval-anchor-union.test.ts tests/honest-trace.test.ts` — 46/46 passed. Not fixed here,
+per the same Scope Boundary rule 69-01/69-02 already invoked.
