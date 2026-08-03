@@ -22,6 +22,12 @@
  *  - Keys from process.env via SDK defaults — never literals, never logged (T-04-03-K, T-05-KEY).
  *  - Query is treated as data (embedded + placed in prompt as content), never executed
  *    or shell-interpolated (T-04-03-I).
+ *  - Evidence mode (`opts.evidence`, RECALL-04/D-07): short-circuits BEFORE the branch's
+ *    provider.generate call and returns the traversal already assembled in memory instead
+ *    of composed prose. Evidence mode performs ZERO provider.generate calls and ZERO writes
+ *    — including no episode append and no activation_trace emit — because there is no
+ *    inference to log. D-43's write-nothing guarantee (never a graph fact, never reinforced)
+ *    is therefore strictly stronger in this mode: there is nothing produced to reinforce.
  *
  * Threat mitigations:
  *  - T-04-03-I: query length-bounded (MAX_QUERY_BYTES); never shell-interpolated.
@@ -35,6 +41,7 @@
 import Database from 'better-sqlite3';
 import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
+import type { NodeType } from '../lib/types';
 import type { ModelProvider } from '../model/provider';
 import { CandidateRetriever } from '../retrieval/topk';
 import { SemanticStore } from '../db/semantic-store';
@@ -51,6 +58,18 @@ import { matchPredicate, typedReach } from './typed-traversal';
 // T-04-03-I: bound query length to cap compose prompt size (4 KB is generous)
 const MAX_QUERY_BYTES = 4_000;
 
+/**
+ * RECALL-04/D-07: verifiable evidence payload — cited node ids + the edges actually
+ * traversed, reported from the SAME traversal structures the prose path already builds
+ * (never a re-derivation). `path` records which resolution branch produced the payload;
+ * 'none' means nothing resolved (empty arrays, not an omitted field).
+ */
+export interface RecallEvidence {
+  path: 'typed' | 'neighborhood' | 'none';
+  nodes: Array<{ id: string; cite: string; type: NodeType; value: string; scope?: string }>;
+  edges: Array<{ src: string; rel: string; dst: string; kind: string }>;
+}
+
 export interface RecallResult {
   /** The ephemeral schema-prior inference. null if no schema found or compose failed. */
   inference: string | null;
@@ -58,9 +77,16 @@ export interface RecallResult {
   episodeId: string | null;
   /** Tagged 'inferred' — callers must treat this as ephemeral, never write it to the graph. */
   origin: 'inferred';
+  /** RECALL-04/D-07: present only when the caller passed `opts.evidence: true`. */
+  evidence?: RecallEvidence;
 }
 
 const NULL_RESULT: RecallResult = { inference: null, episodeId: null, origin: 'inferred' };
+/** Evidence-shaped safe-null: every evidence-mode null-resolution path returns this. */
+const NULL_EVIDENCE_RESULT: RecallResult = {
+  ...NULL_RESULT,
+  evidence: { path: 'none', nodes: [], edges: [] },
+};
 
 export class RecallEngine {
   private readonly clock: Clock;
@@ -134,15 +160,29 @@ export class RecallEngine {
    * empty, NULL_RESULT is returned without an LLM compose call (D-05 discretion).
    *
    * NEVER calls store.upsertNode/upsertEdge/tombstone or strength.strengthen.
-   * The ONLY write is episodes.append({ origin:'inferred', ... }).
+   * The ONLY write is episodes.append({ origin:'inferred', ... }) — and even that is
+   * skipped in evidence mode (RECALL-04/D-07: zero generates, zero writes).
+   *
+   * `opts.evidence` (RECALL-04/D-07): when true, every resolution branch short-circuits
+   * BEFORE its provider.generate call and returns `evidence: { path, nodes, edges }`
+   * describing the traversal already assembled in memory instead of composed prose.
+   * `inference` is always null and `episodeId` is always null in this mode — there is
+   * no LLM call and no episode write. Prose mode (the default, `opts` omitted) is
+   * byte-identical to pre-phase behavior for every existing caller.
    */
-  async recall(query: string, sessionId: string, scope?: string): Promise<RecallResult> {
+  async recall(
+    query: string,
+    sessionId: string,
+    scope?: string,
+    opts?: { evidence?: boolean },
+  ): Promise<RecallResult> {
+    const evidenceMode = opts?.evidence === true;
     // T-04-03-I: length-bound the query before use in the compose prompt
     const boundedQuery = query.slice(0, MAX_QUERY_BYTES);
 
     // ── (1) Online cue embed — the ONLY permitted online embed in Phase 4 (D-41) ──
     const [cueVec] = await this.provider.embed([boundedQuery]);
-    if (!cueVec) return NULL_RESULT;
+    if (!cueVec) return evidenceMode ? NULL_EVIDENCE_RESULT : NULL_RESULT;
 
     // ── (2) Top match via CandidateRetriever ──────────────────────────────────
     // Fetch ONE candidate list sized for both consumers: the neighborhood path needs
@@ -154,7 +194,7 @@ export class RecallEngine {
       Math.max(this.config.candidateK, this.config.typedAnchorPoolK),
     );
     const bestMatch = topHits[0];
-    if (!bestMatch) return NULL_RESULT;
+    if (!bestMatch) return evidenceMode ? NULL_EVIDENCE_RESULT : NULL_RESULT;
 
     // ── (D-06 / D-07): Typed-path branch — LLM-free 12-way cosine on pre-loaded glosses ──
     //
@@ -197,12 +237,13 @@ export class RecallEngine {
       );
 
       if (typedFrontier.length > 0) {
-        // Resolve node values for the typed frontier
-        const typedNodes: Array<{ id: string; value: string }> = [];
+        // Resolve node values for the typed frontier (type captured alongside value so
+        // evidence mode can cite each node without a second store read — RECALL-04).
+        const typedNodes: Array<{ id: string; value: string; type: NodeType }> = [];
         for (const nodeId of typedFrontier) {
           const n = this.store.getNode(nodeId);
           if (!n || n.tombstoned === 1) continue;
-          typedNodes.push({ id: n.id, value: n.value });
+          typedNodes.push({ id: n.id, value: n.value, type: n.type });
         }
 
         if (typedNodes.length > 0) {
@@ -210,6 +251,42 @@ export class RecallEngine {
           // D-08: NEVER calls upsertNode/upsertEdge/strengthen/tombstone
           const anchorNode = this.store.getNode(bestMatch.id);
           const anchorLabel = anchorNode ? anchorNode.value : bestMatch.id;
+
+          // ── RECALL-04/D-07: evidence short-circuit — BEFORE the compose call below ──
+          // The typed-path payload (anchor + frontier + the predicate edges that produced
+          // it) already exists in memory; report it directly instead of composing prose.
+          // If anchorNode failed to resolve (degenerate: bestMatch.id no longer live),
+          // there is nothing citable — fall back to the evidence-shaped safe-null rather
+          // than fabricate a citation for a non-existent node.
+          if (evidenceMode) {
+            if (!anchorNode) return NULL_EVIDENCE_RESULT;
+            const evidenceIds = [anchorNode.id, ...typedNodes.map(n => n.id)];
+            const scopeMap = this.store.getNodeScopes(evidenceIds);
+            const nodes: RecallEvidence['nodes'] = [
+              {
+                id: anchorNode.id,
+                cite: `recense://${anchorNode.type}/${anchorNode.id}`,
+                type: anchorNode.type,
+                value: anchorNode.value,
+                scope: scopeMap.get(anchorNode.id),
+              },
+              ...typedNodes.map(n => ({
+                id: n.id,
+                cite: `recense://${n.type}/${n.id}`,
+                type: n.type,
+                value: n.value,
+                scope: scopeMap.get(n.id),
+              })),
+            ];
+            const edges: RecallEvidence['edges'] = typedNodes.map(n => ({
+              src: anchorNode.id,
+              rel: matchedPredicate,
+              dst: n.id,
+              kind: 'relation',
+            }));
+            return { inference: null, episodeId: null, origin: 'inferred', evidence: { path: 'typed', nodes, edges } };
+          }
+
           const tripleLines = typedNodes
             .map(n => `- ${anchorLabel} ${matchedPredicate} ${n.value}`)
             .join('\n');
@@ -267,7 +344,7 @@ export class RecallEngine {
     // (i.e. the schema's members) regardless of which case resolved it, so
     // context is consistent and complete whether the query hit the schema or a member.
     const bestMatchNode = this.store.getNode(bestMatch.id);
-    if (!bestMatchNode || bestMatchNode.tombstoned === 1) return NULL_RESULT;
+    if (!bestMatchNode || bestMatchNode.tombstoned === 1) return evidenceMode ? NULL_EVIDENCE_RESULT : NULL_RESULT;
 
     let schemaNode: { id: string; value: string } | null = null;
 
@@ -290,7 +367,7 @@ export class RecallEngine {
     }
 
     // No schema reachable → no fabricated inference (D-42)
-    if (!schemaNode) return NULL_RESULT;
+    if (!schemaNode) return evidenceMode ? NULL_EVIDENCE_RESULT : NULL_RESULT;
 
     // ── (REFLECT-02 / D-05): Insight surfacing branch — gated by insightSurfacingEnabled ──
     //
@@ -315,7 +392,12 @@ export class RecallEngine {
     //   The ONLY write is the existing inferred-episode append at the end.
     //   Insights are origin='inferred' → strengthen() already no-ops on them.
     //   Surfacing an insight never reinforces the insight or its members.
-    if (this.config.insightSurfacingEnabled) {
+    //
+    // RECALL-04/D-07: SKIPPED ENTIRELY in evidence mode — this branch is a compose-token
+    // optimisation (single precomputed insight string vs ~K members), not a traversal;
+    // there is nothing here to cite. Evidence mode falls straight through to the
+    // neighborhood assembly below, which IS a real traversal.
+    if (this.config.insightSurfacingEnabled && !evidenceMode) {
       // Walk INCOMING derived_from edges on the resolved schema to find the dependent insight.
       // Mirror of Case-B reverse-abstracts lookup above (L270-278): same in-edge walk pattern.
       const schemaInEdges = this.store.getInEdges(schemaNode.id);
@@ -422,6 +504,12 @@ export class RecallEngine {
     const edges = this.store.getOutEdges(schemaNode.id);
     let nodeCount = 0;
 
+    // RECALL-04/D-07: evidence-only bookkeeping, populated alongside the assembly below
+    // from the SAME traversal (never re-read/re-derived). Cheap when evidenceMode=false
+    // (both start empty and are only ever pushed into inside `if (evidenceMode)` guards).
+    const evidenceNodeType = new Map<string, NodeType>();
+    const evidenceEdges: RecallEvidence['edges'] = [];
+
     for (const edge of edges) {
       if (nodeCount >= this.config.recallNeighborhoodBudget) break;
       // Primary neighborhood is the schema's MEMBERS only (schema→member = 'abstracts').
@@ -432,6 +520,12 @@ export class RecallEngine {
       if (!neighbor || neighbor.tombstoned === 1) continue;
 
       neighborhood.push({ id: neighbor.id, value: neighbor.value });
+      if (evidenceMode) {
+        evidenceNodeType.set(neighbor.id, neighbor.type);
+        // rel === kind for 'abstracts' edges by construction (schema-induction.ts) — reuse
+        // the already-fetched edge.kind rather than a second getOutEdgesWithRel read.
+        evidenceEdges.push({ src: schemaNode.id, rel: edge.kind, dst: neighbor.id, kind: edge.kind });
+      }
       nodeCount++;
     }
 
@@ -467,6 +561,12 @@ export class RecallEngine {
         const relatedSchema = this.store.getNode(relEdge.relatedId);
         if (!relatedSchema || relatedSchema.tombstoned === 1) continue;
 
+        if (evidenceMode) {
+          // The sideways hop itself (schema_rel is stored undirected — see comment above;
+          // schemaNode → relatedSchema is a consistent citation framing either way).
+          evidenceEdges.push({ src: schemaNode.id, rel: 'schema_rel', dst: relatedSchema.id, kind: 'schema_rel' });
+        }
+
         // Walk this related schema's 'abstracts' members only — no schema_rel recursion.
         const memberEdges = this.store.getOutEdges(relatedSchema.id)
           .filter(e => e.kind === 'abstracts');
@@ -477,6 +577,10 @@ export class RecallEngine {
           if (!member || member.tombstoned === 1) continue;
           seen.add(memberEdge.dst);
           neighborhood.push({ id: member.id, value: member.value });
+          if (evidenceMode) {
+            evidenceNodeType.set(member.id, member.type);
+            evidenceEdges.push({ src: relatedSchema.id, rel: memberEdge.kind, dst: member.id, kind: memberEdge.kind });
+          }
           nodeCount++;
         }
       }
@@ -505,7 +609,35 @@ export class RecallEngine {
       for (const n of kept) neighborhood.push(n);
       // D-05 discretion: if the scope filter empties the neighborhood entirely,
       // return NULL_RESULT without an LLM compose call (no in-scope memory to reason over).
-      if (neighborhood.length === 0) return NULL_RESULT;
+      if (neighborhood.length === 0) return evidenceMode ? NULL_EVIDENCE_RESULT : NULL_RESULT;
+    }
+
+    // ── RECALL-04/D-07: evidence short-circuit — BEFORE trace emission AND compose ──
+    // Must precede trace emission below: evidence mode makes ZERO writes, and the trace
+    // sink write (activation_trace) is itself a write this mode must never perform.
+    // Filter evidenceEdges' abstracts edges to members that survived the scope filter
+    // above (schema_rel hop edges are structural traversal and always kept).
+    if (evidenceMode) {
+      const survivingIds = new Set(neighborhood.map(n => n.id));
+      const survivingEdges = evidenceEdges.filter(e => e.kind !== 'abstracts' || survivingIds.has(e.dst));
+      const scopeMap = this.store.getNodeScopes([schemaNode.id, ...neighborhood.map(n => n.id)]);
+      const nodes: RecallEvidence['nodes'] = [
+        {
+          id: schemaNode.id,
+          cite: `recense://schema/${schemaNode.id}`,
+          type: 'schema',
+          value: schemaNode.value,
+          scope: scopeMap.get(schemaNode.id),
+        },
+        ...neighborhood.map(n => ({
+          id: n.id,
+          cite: `recense://${evidenceNodeType.get(n.id)!}/${n.id}`,
+          type: evidenceNodeType.get(n.id)!,
+          value: n.value,
+          scope: scopeMap.get(n.id),
+        })),
+      ];
+      return { inference: null, episodeId: null, origin: 'inferred', evidence: { path: 'neighborhood', nodes, edges: survivingEdges } };
     }
 
     // ── Trace emission (D-97 guarded): zero work on the Noop path ────────────
