@@ -66,6 +66,8 @@ function makeConfig(statePath: string): ClientConfig {
     quietHoursEnd: 7,
     digestHour: 8,
     snoozeDurationMs: 86_400_000,
+    beliefBridgeEnabled: false,
+    beliefPollMs: 300_000,
   };
 }
 

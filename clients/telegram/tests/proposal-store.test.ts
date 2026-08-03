@@ -51,6 +51,17 @@ afterEach(() => {
 
 const BASE_NOW = Date.now();
 
+/**
+ * This file only ever stores/reads tool-kind proposals — getProposal's return
+ * type is the Phase 68 StoredProposal union (StoredToolProposal |
+ * StoredBeliefProposal), so a thin cast wrapper keeps every existing
+ * tool-only assertion (`.tool`, `.args`, `.serverName`) narrowed without
+ * touching proposal-store.ts itself (APPROVE-02 zero-diff).
+ */
+function getToolProposal(id: string, storePath: string): StoredToolProposal | null {
+  return getProposal(id, storePath) as StoredToolProposal | null;
+}
+
 function makeProposal(overrides?: Partial<StoredToolProposal>): StoredToolProposal {
   return {
     kind: 'tool',
@@ -76,7 +87,7 @@ describe('putProposal / getProposal', () => {
   it('put then get returns deep-equal args', () => {
     const p = makeProposal();
     putProposal(p, storePath);
-    const found = getProposal('test-id-1', storePath);
+    const found = getToolProposal('test-id-1', storePath);
     expect(found).not.toBeNull();
     expect(found!.args).toEqual(p.args);
     expect(found!.tool).toBe('send_email');
@@ -97,8 +108,8 @@ describe('putProposal / getProposal', () => {
     const p2 = makeProposal({ id: 'id-2', tool: 'tool_b' });
     putProposal(p1, storePath);
     putProposal(p2, storePath);
-    expect(getProposal('id-1', storePath)!.tool).toBe('tool_a');
-    expect(getProposal('id-2', storePath)!.tool).toBe('tool_b');
+    expect(getToolProposal('id-1', storePath)!.tool).toBe('tool_a');
+    expect(getToolProposal('id-2', storePath)!.tool).toBe('tool_b');
   });
 });
 
@@ -111,14 +122,14 @@ describe('immutability', () => {
     const p = makeProposal({ args: { to: 'alice@example.com' } });
     putProposal(p, storePath);
 
-    const returned = getProposal('test-id-1', storePath);
+    const returned = getToolProposal('test-id-1', storePath);
     expect(returned).not.toBeNull();
     // Mutate the returned object
     (returned!.args as Record<string, unknown>)['to'] = 'evil@attacker.com';
     returned!.tool = 'hacked';
 
     // Re-read from disk — must be unchanged
-    const reread = getProposal('test-id-1', storePath);
+    const reread = getToolProposal('test-id-1', storePath);
     expect(reread!.args['to']).toBe('alice@example.com');
     expect(reread!.tool).toBe('send_email');
   });
@@ -174,7 +185,7 @@ describe('loadExecutable', () => {
     const result = loadExecutable('test-id-1', storePath, BASE_NOW);
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
-      expect(result.proposal.args).toEqual(p.args);
+      expect((result.proposal as StoredToolProposal).args).toEqual(p.args);
     }
   });
 

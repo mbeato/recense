@@ -39,7 +39,7 @@ import { MockTelegramTransport } from '../transport';
 import { getProposal } from '../proposal-store';
 import type { MemoryClient, SurfaceItem, HitlEpisodeEntry } from '../memory-client';
 import type { ClientConfig, ActionConfig } from '../config';
-import type { McpServerConfig } from '../types';
+import type { McpServerConfig, StoredToolProposal } from '../types';
 import type { McpConnection, McpConnectionFactory, McpToolDescriptor } from '../mcp-client';
 import type { FetchImpl } from '../proposal-engine';
 
@@ -166,6 +166,8 @@ function makeClientConfig(overrides: Partial<ClientConfig> = {}): ClientConfig {
     quietHoursEnd: 0, // no quiet hours
     digestHour: 99,   // impossible digest hour → digest never fires
     snoozeDurationMs: 86_400_000,
+    beliefBridgeEnabled: false,
+    beliefPollMs: 300_000,
     ...overrides,
   };
 }
@@ -395,8 +397,9 @@ describe('proposal-push: runPushTick proposal path vs. D-02 fallback', () => {
     expect(parts[0]).toBe('2');
     const proposalId = parts[1]!;
 
-    // Read the proposal back from the store
-    const stored = getProposal(proposalId, storePath);
+    // Read the proposal back from the store — this test always deals with a
+    // tool-kind proposal (Phase 68 introduced the belief-kind sibling).
+    const stored = getProposal(proposalId, storePath) as StoredToolProposal | null;
     expect(stored).not.toBeNull();
     expect(stored!.tool).toBe('send_email');
     expect(stored!.args).toMatchObject(CONFIDENT_ARGS);

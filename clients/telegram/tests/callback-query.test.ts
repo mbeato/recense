@@ -75,6 +75,8 @@ function makeConfig(opts: {
     quietHoursEnd: 7,
     digestHour: 8,
     snoozeDurationMs: opts.snoozeDurationMs ?? 86_400_000,
+    beliefBridgeEnabled: false,
+    beliefPollMs: 300_000,
   };
 }
 

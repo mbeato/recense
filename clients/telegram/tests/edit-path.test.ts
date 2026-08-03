@@ -71,6 +71,8 @@ function makeConfig(statePath: string): ClientConfig {
     quietHoursEnd: 7,
     digestHour: 8,
     snoozeDurationMs: 86_400_000,
+    beliefBridgeEnabled: false,
+    beliefPollMs: 300_000,
   };
 }
 
@@ -321,15 +323,6 @@ describe('edit-path D-06 state machine', () => {
 
     // Zero callTool during edit itself (D-06 — execution only via Approve gate)
     expect(callLog.calls).toHaveLength(0);
-
-    // New proposal stored with a DIFFERENT id (D-06: fresh proposal)
-    const newProposal = getProposal
-      ? ((): StoredProposal | null => {
-          // check something was stored — we need to find the new proposal
-          // Scan for it differently: the new one must not be the original id
-          return null; // will check via hitl
-        })()
-      : null;
 
     // edit-applied episode written (confirms new proposal was stored successfully)
     expect(hitlCalls.some(h => h.decision === 'edit-applied')).toBe(true);
