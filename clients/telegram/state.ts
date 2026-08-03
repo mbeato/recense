@@ -17,13 +17,28 @@ export interface BeliefPromptLedger {
 const EMPTY_LEDGER: BeliefPromptLedger = { date: '', counts: {} };
 
 /**
+ * The belief-decision approval-rate counters (Phase 68 Plan 03 — D-09): tracks
+ * how many belief-proposal decisions have landed as approved/rejected/refused,
+ * so a periodic self-report can make a ~100% approval rate visible to the human
+ * instead of invisible (Pitfall 7). Persisted across restarts.
+ */
+export interface BeliefStats {
+  approved: number;
+  rejected: number;
+  refused: number;
+}
+
+const EMPTY_STATS: BeliefStats = { approved: 0, rejected: 0, refused: 0 };
+
+/**
  * The full persisted state document. `cursor` is the Telegram getUpdates cursor
- * (pre-Phase-68 shape); `beliefPromptLedger` is optional so an old document with no
- * ledger field still reads cleanly.
+ * (pre-Phase-68 shape); `beliefPromptLedger` and `beliefStats` are optional so an
+ * old document with no such field still reads cleanly.
  */
 interface StateDocument {
   cursor: string | null;
   beliefPromptLedger?: BeliefPromptLedger;
+  beliefStats?: BeliefStats;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +76,20 @@ function readDoc(statePath: string): StateDocument {
       doc.beliefPromptLedger = {
         date: (rawLedger as Record<string, unknown>)['date'] as string,
         counts: (rawLedger as Record<string, unknown>)['counts'] as Record<string, number>,
+      };
+    }
+
+    const rawStats = obj['beliefStats'];
+    if (
+      typeof rawStats === 'object' && rawStats !== null &&
+      typeof (rawStats as Record<string, unknown>)['approved'] === 'number' &&
+      typeof (rawStats as Record<string, unknown>)['rejected'] === 'number' &&
+      typeof (rawStats as Record<string, unknown>)['refused'] === 'number'
+    ) {
+      doc.beliefStats = {
+        approved: (rawStats as Record<string, unknown>)['approved'] as number,
+        rejected: (rawStats as Record<string, unknown>)['rejected'] as number,
+        refused: (rawStats as Record<string, unknown>)['refused'] as number,
       };
     }
 
@@ -136,5 +165,31 @@ export function readBeliefPromptLedger(statePath: string): BeliefPromptLedger {
 export function writeBeliefPromptLedger(statePath: string, ledger: BeliefPromptLedger): void {
   const doc = readDoc(statePath);
   doc.beliefPromptLedger = ledger;
+  writeDoc(statePath, doc);
+}
+
+// ---------------------------------------------------------------------------
+// Public API — belief decision approval-rate stats (Phase 68 Plan 03 — D-09)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the belief-decision approval-rate counters, preserving every other field
+ * already in the document.
+ *
+ * A corrupt or missing document, or a document with no stats field yet, reads as
+ * all-zero ({ approved: 0, rejected: 0, refused: 0 }) — never throws.
+ */
+export function readBeliefStats(statePath: string): BeliefStats {
+  return readDoc(statePath).beliefStats ?? { ...EMPTY_STATS };
+}
+
+/**
+ * Atomically write the belief-decision approval-rate counters, preserving every
+ * other field already in the document (same read-modify-write discipline as
+ * writeStateCursor/writeBeliefPromptLedger above).
+ */
+export function writeBeliefStats(statePath: string, stats: BeliefStats): void {
+  const doc = readDoc(statePath);
+  doc.beliefStats = stats;
   writeDoc(statePath, doc);
 }

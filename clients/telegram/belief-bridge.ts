@@ -25,7 +25,7 @@ import {
   ProposalHttpError,
 } from './belief-proposal-client';
 import { renderBeliefDecisionMessage, beliefKeyboard, asDisplayText } from './belief-render';
-import { readBeliefPromptLedger, writeBeliefPromptLedger } from './state';
+import { readBeliefPromptLedger, writeBeliefPromptLedger, readBeliefStats, writeBeliefStats, type BeliefStats } from './state';
 import type { TelegramTransport } from './transport';
 import type { MemoryClient } from './memory-client';
 
@@ -344,7 +344,7 @@ export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// The belief decision handler (Plan 03 Task 1 — APPROVE-01/02, D-02/D-04)
+// The belief decision handler (Plan 03 — APPROVE-01/02/04, D-02/D-04/D-09)
 // ---------------------------------------------------------------------------
 
 /** Field cap (characters) for the confirmation line — mirrors belief-render.ts's TRANSITION_CAP. */
@@ -355,6 +355,27 @@ function renderTransitionConfirmation(verb: string, row: StoredBeliefProposal): 
   const from = row.changeFrom === null ? '(unset)' : asDisplayText(row.changeFrom, CONFIRM_TRANSITION_CAP);
   const to = asDisplayText(row.changeTo, CONFIRM_TRANSITION_CAP);
   return `${verb}: ${asDisplayText(row.changeField, CONFIRM_TRANSITION_CAP)}: ${from} → ${to}`;
+}
+
+/**
+ * Every 10th terminal belief decision, a self-report line naming the running
+ * approved/rejected/refused counts is appended to that decision's own reply
+ * (D-09 / Pitfall 7). Cadence is discretionary; the counter and its periodic
+ * surfacing are not — a long window sitting near-100% approved is the visible
+ * signature of a human who stopped reading, and this line is what makes that
+ * drift observable to the person doing the approving.
+ */
+const SELF_REPORT_INTERVAL = 10;
+
+/** Append the approval-rate self-report line to `baseText` on every Nth terminal decision. */
+function maybeAppendSelfReport(baseText: string, stats: BeliefStats): string {
+  const total = stats.approved + stats.rejected + stats.refused;
+  if (total === 0 || total % SELF_REPORT_INTERVAL !== 0) return baseText;
+  return (
+    baseText +
+    `\n\nbelief decisions so far: ${String(stats.approved)} approved / ` +
+    `${String(stats.rejected)} rejected / ${String(stats.refused)} refused`
+  );
 }
 
 /**
@@ -380,17 +401,27 @@ function renderTransitionConfirmation(verb: string, row: StoredBeliefProposal): 
  * success the row is kept (not removed) and written back terminal — the derived
  * local id is also the dedup key, so a removed row would let the next poll pass
  * re-prompt a decided proposal. The confirmation names the applied transition via
- * the same asDisplayText sanitizer the card uses. The audit episode carries the
- * decision field ONLY (T-68-14) — never the entity descriptor, change text, or
- * evidence quote, so email-derived text cannot re-enter memory through the audit
- * path. hitl episodes are source:'hitl' and structurally excluded from
- * consolidation, so this audit cannot strengthen the very belief it records
- * (D-43 lineage).
+ * the same asDisplayText sanitizer the card uses. Every audit episode this
+ * function writes carries the decision field ONLY (T-68-14) — never the entity
+ * descriptor, change text, or evidence quote, so email-derived text cannot
+ * re-enter memory through the audit path. hitl episodes are source:'hitl' and
+ * structurally excluded from consolidation, so this audit cannot strengthen the
+ * very belief it records (D-43 lineage).
  *
- * Any ProposalHttpError propagates to a single catch here that logs the numeric
- * status, leaves the row pending, and replies with a neutral message — Plan 03
- * Task 2 replaces this catch with the full refusal-status mapping (503 defers,
- * 400/404/409 terminal-refused, 401 neutral-pending).
+ * A thrown ProposalHttpError is mapped by numeric status only — this function
+ * never parses or echoes the serve `detail` string and never mentions tokens or
+ * auth specifics in a user-facing message (T-68-16):
+ *   503  — not terminal. Row stays pending, reply says memory is busy and the
+ *          tap can be repeated, no counter is touched.
+ *   400/404/409 — terminal. Row is written back terminal, reply says the belief
+ *          moved on and nothing was applied, `refused` increments, a
+ *          belief-refused audit episode is written, never retried.
+ *   401  — not terminal. Row stays pending, neutral reply, no counter touched.
+ *   anything else (incl. a network error) — not terminal, same neutral reply.
+ * Unlike Phase 67's unattended sync, this POST is a foreground reaction to a
+ * human tap with the local row loaded in the same call — there is no
+ * crash-resumed pending row whose earlier POST might already have succeeded, so
+ * a 409 here is unambiguous and needs no `needs_reconciliation` third state.
  *
  * Does NOT call answerCallbackQuery — the outer callback drain calls it
  * unconditionally on every branch (Pitfall #1, mirrors handleProposalAction).
@@ -408,7 +439,6 @@ export async function handleBeliefProposalAction(
   decoded: { localId: string; action: ProposalAction },
   nowMs: number,
 ): Promise<void> {
-  void statePath; // reserved for Task 2's approval-rate self-report (D-09)
   const { localId, action } = decoded;
 
   const loaded = loadExecutable(localId, storePath, nowMs);
@@ -461,8 +491,13 @@ export async function handleBeliefProposalAction(
     // Keep the row (not remove it) — see function doc above.
     putProposal({ ...row, localStatus: 'terminal' }, storePath);
 
+    const stats = readBeliefStats(statePath);
+    if (action === 'approve') stats.approved++; else stats.rejected++;
+    writeBeliefStats(statePath, stats);
+
     const verb = action === 'approve' ? 'approved' : 'rejected';
-    try { await transport.sendMessage(chatId, renderTransitionConfirmation(verb, row)); }
+    const confirmation = maybeAppendSelfReport(renderTransitionConfirmation(verb, row), stats);
+    try { await transport.sendMessage(chatId, confirmation); }
     catch (e) { log68('send error (belief-' + action + ' confirmation): ' + String(e)); }
 
     // T-68-14: decision field ONLY (see function doc above).
@@ -470,12 +505,40 @@ export async function handleBeliefProposalAction(
       await memoryClient.hitlEpisode({ decision: action === 'approve' ? 'belief-approve' : 'belief-reject' });
     } catch (e) { log68('hitlEpisode error (belief-' + action + '): ' + String(e)); }
   } catch (err) {
-    // Placeholder mapping (Task 1) — Task 2 replaces this with the full
-    // refusal-status mapping (503 defers, 400/404/409 terminal, 401 neutral).
+    // Status-only mapping (T-68-16) — never parse or echo the serve `detail`
+    // string, never mention tokens/auth specifics in a reply (see function doc).
     if (err instanceof ProposalHttpError) {
-      log68('belief decision: HTTP ' + String(err.status) + ' for ' + row.serverProposalId);
+      const status = err.status;
+
+      if (status === 503) {
+        // Not terminal — leave pending, no counter change (see function doc).
+        log68('belief decision: HTTP 503 (memory busy) for ' + row.serverProposalId + ' — left pending');
+        try { await transport.sendMessage(chatId, 'memory is busy — try again in a moment'); }
+        catch (e) { log68('send error (belief-503): ' + String(e)); }
+        return;
+      }
+
+      if (status === 400 || status === 404 || status === 409) {
+        // Terminal refusal — write the row back terminal, count it, audit it,
+        // never retry (see function doc's 409-unambiguity note).
+        putProposal({ ...row, localStatus: 'terminal' }, storePath);
+        const stats = readBeliefStats(statePath);
+        stats.refused++;
+        writeBeliefStats(statePath, stats);
+
+        const refusalText = maybeAppendSelfReport('that belief moved on — nothing was applied', stats);
+        try { await transport.sendMessage(chatId, refusalText); }
+        catch (e) { log68('send error (belief-refused-' + String(status) + '): ' + String(e)); }
+        try { await memoryClient.hitlEpisode({ decision: 'belief-refused' }); }
+        catch (e) { log68('hitlEpisode error (belief-refused): ' + String(e)); }
+        return;
+      }
+
+      // 401 (and any other unmapped status): not terminal, neutral reply,
+      // never leak that a token exists (T-68-16).
+      log68('belief decision: HTTP ' + String(status) + ' for ' + row.serverProposalId + ' — left pending');
     } else {
-      log68('belief decision: unexpected error: ' + String(err));
+      log68('belief decision: unexpected error for ' + row.serverProposalId + ' — left pending');
     }
     try { await transport.sendMessage(chatId, 'could not record that decision — try again in a moment'); }
     catch (e) { log68('send error (belief-decision-failed): ' + String(e)); }
