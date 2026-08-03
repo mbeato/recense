@@ -237,6 +237,31 @@ describe('retrieveRanked anchored union (RECALL-01/03)', () => {
     }
   });
 
+  it('Test 6b (WR-05 regression): with vizFloor set, the collector never receives hops for a viz-lit seed that was not returned', () => {
+    addEmbeddedNode('node-a', 'fact alpha', VEC_A);                       // above floor: returned
+    addEmbeddedNode('node-vizonly', 'fact viz only', VEC_BELOW_FLOOR);    // ~0.3: viz-lit, NOT returned
+    addEmbeddedNode('node-a-nbr', 'alpha neighbour', VEC_ORTHOGONAL);
+    addEmbeddedNode('node-viz-nbr', 'viz-only neighbour', VEC_ORTHOGONAL);
+    store.upsertEdge({ src: 'node-a', dst: 'node-a-nbr', rel: 'uses', w: 0.9, kind: 'relation' });
+    // The trap edge: the never-returned viz-lit seed HAS a hop — pre-fix it reached the collector.
+    store.upsertEdge({ src: 'node-vizonly', dst: 'node-viz-nbr', rel: 'uses', w: 0.9, kind: 'relation' });
+
+    const engine = makeEngine();
+    let collectedHops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }> = [];
+    const result = engine.retrieveRanked(QUERY_VEC, 5, 0.45, undefined, {
+      vizFloor: 0.25,
+      hopCollector: hops => { collectedHops = hops; },
+    });
+
+    const resultIds = new Set(result.map(r => r.id));
+    expect(resultIds.has('node-vizonly')).toBe(false); // below floor — never returned
+    expect(collectedHops.length).toBeGreaterThan(0);   // the returned row's hop still arrives
+    for (const hop of collectedHops) {
+      expect(resultIds.has(hop.src)).toBe(true);       // contract: src is ALWAYS a returned row
+    }
+    expect(collectedHops.some(h => h.src === 'node-vizonly')).toBe(false);
+  });
+
   it('Test 7: single-pass hop hand-off — getOutEdgesWithRel is never called twice for the same seed, even with both the viz sink AND a hopCollector active', () => {
     addEmbeddedNode('node-a', 'fact alpha', VEC_A);
     addEmbeddedNode('node-nbr', 'fact neighbor', VEC_B);

@@ -426,9 +426,12 @@ export class RetrievalEngine {
    * RECALL-03 (Phase 69, D-06): `opts.hopCollector` receives the FULL 1-hop trace (each hop
    * carrying `rel`) for every returned row — cosine AND anchored — computed via the SAME single
    * `buildAmbientTracePayload` pass this method already runs for the viz trace sink, never a
-   * second edge-read pass. The sink itself keeps receiving exactly the hops it received
-   * pre-phase (filtered back down to the viz-lit seed set, projected to the pre-phase 4-key
-   * shape) — `hopCollector` is strictly additive.
+   * second edge-read pass. WR-05: the collector payload is filtered to hops whose `src` is an
+   * actually-RETURNED row before hand-off — viz-lit below-floor seeds (present when `vizFloor`
+   * is set) never reach the collector, so the payload matches this contract exactly. The sink
+   * itself keeps receiving exactly the hops it received pre-phase (filtered back down to the
+   * viz-lit seed set, projected to the pre-phase 4-key shape) — `hopCollector` is strictly
+   * additive.
    */
   retrieveRanked(
     queryVec: Float32Array,
@@ -635,7 +638,16 @@ export class RetrievalEngine {
           seedsForHopPass.push({ node_id: r.id, score: r.score });
         }
         const { hops } = this.buildAmbientTracePayload(seedsForHopPass);
-        if (opts?.hopCollector != null) opts.hopCollector(hops);
+        if (opts?.hopCollector != null) {
+          // WR-05: the collector's documented contract is "hops for every RETURNED row —
+          // cosine AND anchored". With vizFloor set, seedsForHopPass ALSO contains viz-lit
+          // below-floor seeds the caller never sees; hand the collector only hops whose src
+          // is an actually-returned row so a consumer trusting the contract can never render
+          // a hop attributed to a fact that was never surfaced. The sink's own emitSeeds
+          // filter below is unchanged (viz lighting deliberately covers the wider set).
+          const finalResultIds = new Set(finalResults.map(r => r.id));
+          opts.hopCollector(hops.filter(h => finalResultIds.has(h.src)));
+        }
         if (this.traceEnabled && emitSeeds.length > 0) {
           const emitSeedIdSet = new Set(emitSeeds.map(s => s.node_id));
           const sinkHops = hops.filter(h => emitSeedIdSet.has(h.src));
