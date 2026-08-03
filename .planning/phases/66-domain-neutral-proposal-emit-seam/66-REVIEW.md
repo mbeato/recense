@@ -25,7 +25,7 @@ findings:
   warning: 4
   info: 3
   total: 8
-status: issues_found
+status: fixed
 ---
 
 # Phase 66: Code Review Report
@@ -154,6 +154,27 @@ Alternatively use `LEFT JOIN` and treat a missing node as `tombstoned = true`.
 
 ---
 
+## Fixes Applied
+
+Fixed 2026-08-03. All Critical + Warning findings resolved; `npm run typecheck` and the full
+`npm test` suite green after each fix (final: 226 files passed / 1 skipped, 3815 tests passed /
+6 expected-fail / 3 skipped). `routeContradiction`/`countDistinctProvenance`/`update-decision.ts`
+byte-unchanged; both D-43-for-proposals sentinel layers and the narrowed Half B sentinel stay
+green and non-vacuous; the frozen 16-column contract is untouched.
+
+| Finding | Fix | Commit |
+|---------|-----|--------|
+| CR-01 | approve/reject re-run every decisive check (getById, pending, EMIT-07 staleness) UNDER `acquireLockWithRetry()`; `updateStatus` replaced by `transitionFromPending` CAS (`UPDATE ... WHERE id=@id AND status='pending'`, `.changes === 1`) — terminal statuses can never be overwritten, a lost race surfaces as `ProposalNotPendingError`, never a false 200. Regression tests in `tests/proposal-settle-race.test.ts` + store-level CAS tests in the contract suite. | 761e95a |
+| WR-01 | Null staleness inputs (inner-join miss — node row hard-deleted) now classify as `entity_gone` refusal with a durable `superseded` terminal write, never `'ok'`; false "cannot be null" comment corrected. Test: FK-off hard-delete of the entity node → refusal, not approval. | 41869a6 |
+| WR-02 | Eviction sweep child-wipe extended with `DELETE FROM action_proposal WHERE status != 'pending' AND (entity_node_id = ? OR belief_node_id = ?)` before `DELETE FROM node` (option a, terminal-only variant — settled proposals are operational outbox rows, not evidence; a PENDING proposal deliberately keeps pinning its nodes until settled). schema.ts DDL safety comment corrected to name the eviction path; store ownership comment names the exception. No schema/column change. | 2a97258 |
+| WR-03 | `listPending` read-filter: `WHERE status = 'pending' AND expires_at > @now` (boundary matches `classifyProposalStaleness`); preserves the lock-free read-only property, durable `expired` transition stays approve-time-only (D-10). Test: 101 expired + 1 fresh → exactly the fresh one returned. | 0ea29b7 |
+| WR-04 | `'actionProposalSinkEnabled'` added to the `SettingsFile.overrides` `Pick`; false `isSettingsFileShape` passthrough comment corrected; test drives a typed (cast-free) `SettingsFile` literal through `writeSettingsFile` → `loadMergedConfig` → `actionProposalSinkEnabled === true`. | 7c252f2 |
+
+Info findings (IN-01/IN-02/IN-03) were out of scope for this fix pass and remain open, with one
+side effect: WR-03 now reads `this.clock` in `listPending`, so half of IN-01's dead-field claim
+(the `clock` field) no longer applies.
+
 _Reviewed: 2026-08-03T07:36:25Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
+_Fixes applied: 2026-08-03 (commits 761e95a, 41869a6, 2a97258, 0ea29b7, 7c252f2)_
