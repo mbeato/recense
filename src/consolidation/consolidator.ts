@@ -46,6 +46,7 @@ import { promptForSource, isTypedExtractionSource } from '../source/extraction-p
 import type { Origin, PendingContradiction, EpisodeRow, EpisodeRole } from '../lib/types';
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
+import { EntityResolver } from './entity-resolution';
 import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
 import { orderEpisodesForConsolidation } from './episode-order';
 import type { SchemaInducer } from './schema-induction';
@@ -192,6 +193,28 @@ interface ClaimDecision {
   /** CLASSIFY-02: see claimIntentStatus JSDoc — all-or-nothing with it (D-05). */
   claimIntentConfidence?: IntentConfidence;
   /**
+   * RESOLVE-03 (Phase 64): the recense graph node id this decision's `claimIntentEntity`
+   * descriptor resolved to, via `EntityResolver.resolve` (src/consolidation/entity-resolution.ts).
+   * All-or-nothing with `claimResolvedEntityDescriptor` (D-07): both present together or both
+   * absent — absence means the resolver abstained (no-candidates / below-floor / margin-too-close)
+   * or the decision never carried a `claimIntentEntity` to resolve in the first place. This id is
+   * recense-INTERNAL lineage only — it is NOT a stable foreign key across belief correction
+   * (tombstone-and-mint-new can retire the node this id points at); Phase 66's contract docs own
+   * stating that caveat to consumers. The raw `claimIntentEntity` above stays untouched beside
+   * this field — it is the resolution INPUT, never overwritten by the output. INERT this phase
+   * (D-09): nothing consumes this field and no DB row is written from it — Phase 65 is the first
+   * consumer.
+   */
+  claimResolvedEntityId?: string;
+  /**
+   * RESOLVE-03 (Phase 64): the resolved node's own canonical `value` string, verbatim, in
+   * recense's vocabulary (D-08) — NEVER a consumer id and never a normalized/prettified form;
+   * recense has zero knowledge of any consumer's schema. All-or-nothing with
+   * `claimResolvedEntityId` (D-07); see that field's JSDoc for the shared contract. INERT this
+   * phase (D-09).
+   */
+  claimResolvedEntityDescriptor?: string;
+  /**
    * TEMP-02: Calendar source event id parsed from provenance header (gcal episodes only).
    * null when source !== 'gcal' or the · Event: token is absent.
    */
@@ -245,6 +268,10 @@ export class Consolidator {
   private readonly clock: Clock;
   private readonly sink: ConsolidationSink;
   private readonly log: (msg: string) => void;
+  // RESOLVE-01/02/03 (Phase 64): standalone, LLM-free entity resolver. Constructed once here
+  // (not per episode) — mirrors why entity-resolution.ts prepares its own statements in its
+  // constructor rather than per resolve() call.
+  private readonly entityResolver: EntityResolver;
 
   // M1: prepared statements for entity-anchored candidate expansion (T-01-SQL).
   // Compiled once in the constructor; sync reads only (T-02-ASYNC — no await, never inside
@@ -297,6 +324,9 @@ export class Consolidator {
     this.clock = clock;
     this.sink = sink;
     this.log = log;
+    // RESOLVE-01/02/03 (Phase 64, D-04): constructed with (db, store, config) — no
+    // ModelProvider — the type-level guarantee that resolution can never call an LLM.
+    this.entityResolver = new EntityResolver(db, store, config);
 
     // M1: compile prepared statements once (T-01-SQL).
     // stmtProvenanceSiblingFacts: given an entity node id, return DISTINCT live fact siblings
@@ -602,6 +632,18 @@ export class Consolidator {
     let anchorCandidateTotal = 0;
     let bm25CandidateTotal = 0;
     let judgeFiredContradiction = 0;
+
+    // RESOLVE-03 / D-06 (Phase 64): resolution attempt/hit/abstain + per-channel candidate
+    // counters. Declared at consolidate() METHOD scope (same discipline as the Phase 46
+    // counters above) so they accumulate across all chunks and episodes — this is the data
+    // Phase 65's DRIFT-05 honest-measurement pass depends on (observable abstention, never
+    // silent — T-64-08).
+    let resolutionAttempts = 0;
+    let resolutionHits = 0;
+    let resolutionAbstains = 0;
+    let resolutionExactTotal = 0;
+    let resolutionBm25Total = 0;
+    let resolutionDenseTotal = 0;
 
     // Process unconsolidated in chunks. Each chunk: prefetch → per-episode loop → next chunk.
     for (let chunkStart = 0; chunkStart < unconsolidated.length; chunkStart += prefetchBatchSize) {
@@ -975,6 +1017,43 @@ export class Consolidator {
           };
         }
 
+        // ── RESOLVE-01/02/03 (Phase 64): entity resolution branch ───────────
+        // Textually AFTER the WR-01/CR-01/ACT-03 hard stop above (inferred/echo/hitl episodes
+        // already `continue`d out of this iteration) and after ALL FOUR intent fill sites
+        // (fast-path confirm, auto-unrelated, and both pendingJudges/post-judge-fill sites), so
+        // one branch here covers every decision route instead of a fourth copy per route. This
+        // is NOT an independent scan over episodes — it runs later in the same per-episode
+        // iteration as the hard stop and inherits that guard by construction (Pitfall 6 / D-03;
+        // this exact defect class — an independent scan silently failing to inherit the guard —
+        // has shipped twice before in this codebase).
+        for (let i = 0; i < decisionSlots.length; i++) {
+          const slot = decisionSlots[i];
+          // D-03: zero resolution cost for episodes/claims without intent fields.
+          // `slot == null` covers both the array's `null` sentinel and the `undefined` that
+          // TS's noUncheckedIndexedAccess adds to every index access.
+          if (slot == null || slot.claimIntentEntity === undefined) continue;
+          resolutionAttempts++;
+          // Index alignment: claimVecs[i] is the embedding of decisionSlots[i]'s claim (see
+          // the "Index alignment (load-bearing)" note in the plan interfaces) — the dense
+          // channel is free here, no new embed call (D-04).
+          const resolution = this.entityResolver.resolve({
+            descriptor: slot.claimIntentEntity,
+            vec: claimVecs[i],
+          });
+          resolutionExactTotal += resolution.channelCounts.exact;
+          resolutionBm25Total += resolution.channelCounts.bm25;
+          resolutionDenseTotal += resolution.channelCounts.dense;
+          if (resolution.resolved) {
+            // D-07: all-or-nothing — both fields assigned together, at this single write point.
+            slot.claimResolvedEntityId = resolution.nodeId;
+            slot.claimResolvedEntityDescriptor = resolution.descriptor;
+            resolutionHits++;
+          } else {
+            // Never assign one field without the other — abstained means both stay undefined.
+            resolutionAbstains++;
+          }
+        }
+
         // Filter null slots (claims skipped due to missing queryVec)
         const decisions: ClaimDecision[] = decisionSlots.filter((d): d is ClaimDecision => d !== null);
 
@@ -1042,6 +1121,12 @@ export class Consolidator {
     // Phase 46 D-06: emit accumulated candidate-source counters after all chunks complete.
     this.log(
       `RECON-03 candidates: cosine=${cosineCandidateTotal} anchors=${anchorCandidateTotal} bm25=${bm25CandidateTotal} | judgeFiredContradiction=${judgeFiredContradiction}`
+    );
+    // RESOLVE-03 / D-06 (Phase 64): observable resolution attempt/hit/abstain counts, emitted
+    // once per pass after all chunks complete — this is the data Phase 65's DRIFT-05 honest-
+    // measurement pass depends on.
+    this.log(
+      `RESOLVE-64 attempts=${resolutionAttempts} hits=${resolutionHits} abstains=${resolutionAbstains} | exact=${resolutionExactTotal} bm25=${resolutionBm25Total} dense=${resolutionDenseTotal}`
     );
 
     // ── Phase C: Re-embed nodes dirtied by this pass, then eviction sweep ──
