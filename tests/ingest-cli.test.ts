@@ -304,3 +304,127 @@ describe('runPullPhase — deferred cursor commit (M-6)', () => {
     expect(adapter.committed).toBe(false);
   });
 });
+
+// ─── (e) runPullPhase — DRIFT-03 provenance_key mint, end to end ─────────────
+
+describe('runPullPhase — provenance_key mint end to end (DRIFT-03, D-02 PRIMARY)', () => {
+  let db: Database.Database;
+  let store: EpisodicStore;
+  let pipeline: IngestionPipeline;
+  const logs: string[] = [];
+  const capLog = (msg: string) => { logs.push(msg); };
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initSchema(db);
+    const clock = new FakeClock(4_000_000);
+    store = new EpisodicStore(db, clock, TEST_CONFIG);
+    const gate = new AllocationGate(TEST_CONFIG);
+    pipeline = new IngestionPipeline(gate, store);
+    logs.length = 0;
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Three Gmail records with distinct provenance_key values (enabled path). */
+  function threeIndependentGmailRecords(): NormalizedRecord[] {
+    return [
+      {
+        content: 'From: recruiter@acme.com\n\nWe would like to schedule an interview.',
+        source: 'gmail',
+        external_id: 'gmail-msg-1',
+        origin: 'observed',
+        role: 'user',
+        provenance_key: 'ingest:gmail:acme.com:thread-1',
+      },
+      {
+        content: 'From: no-reply@bigco.example\n\nYour application status has been updated.',
+        source: 'gmail',
+        external_id: 'gmail-msg-2',
+        origin: 'observed',
+        role: 'user',
+        provenance_key: 'ingest:gmail:bigco.example:thread-2',
+      },
+      {
+        content: 'From: hiring@thirdco.test\n\nWe are moving forward with other candidates.',
+        source: 'gmail',
+        external_id: 'gmail-msg-3',
+        origin: 'observed',
+        role: 'user',
+        provenance_key: 'ingest:gmail:thirdco.test:thread-3',
+      },
+    ];
+  }
+
+  it('enabled: three independent Gmail records append with three distinct session_id values in the DB', async () => {
+    const adapter = new MockSourceAdapter('gmail', threeIndependentGmailRecords());
+
+    await runPullPhase([adapter], pipeline, db, capLog);
+
+    const rows = store.listUnconsolidated();
+    expect(rows).toHaveLength(3);
+    const distinctSessionIds = new Set(rows.map((r) => r.session_id));
+    expect(distinctSessionIds.size).toBe(3);
+  });
+
+  it('disabled: three records sharing the collapsed provenance_key produce one counted session_id, byte-equal to \'ingest:gmail\'', async () => {
+    const records = threeIndependentGmailRecords().map((r) => ({
+      ...r,
+      provenance_key: 'ingest:gmail', // dark switch off — adapter emits the collapsed literal
+    }));
+    const adapter = new MockSourceAdapter('gmail', records);
+
+    await runPullPhase([adapter], pipeline, db, capLog);
+
+    const rows = store.listUnconsolidated();
+    expect(rows).toHaveLength(3);
+    const distinctSessionIds = new Set(rows.map((r) => r.session_id));
+    expect(distinctSessionIds.size).toBe(1);
+    expect([...distinctSessionIds][0]).toBe('ingest:gmail');
+  });
+
+  it('non-gmail: an adapter with no provenance_key still appends session_id === \'ingest:granola\'', async () => {
+    const adapter = new MockSourceAdapter('granola', [makeRecord(30)]);
+
+    await runPullPhase([adapter], pipeline, db, capLog);
+
+    const rows = store.listUnconsolidated();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.session_id).toBe('ingest:granola');
+  });
+
+  it('the dark switch affects provenance only: enabled and disabled runs produce identical episode.content for the same input record', async () => {
+    const sharedContent = 'From: recruiter@acme.com\n\nWe would like to schedule an interview.';
+    const enabledRecord: NormalizedRecord = {
+      content: sharedContent,
+      source: 'gmail',
+      external_id: 'gmail-msg-enabled',
+      origin: 'observed',
+      role: 'user',
+      provenance_key: 'ingest:gmail:acme.com:thread-1',
+    };
+    const disabledRecord: NormalizedRecord = {
+      content: sharedContent,
+      source: 'gmail',
+      external_id: 'gmail-msg-disabled',
+      origin: 'observed',
+      role: 'user',
+      provenance_key: 'ingest:gmail', // collapsed — dark switch off
+    };
+
+    const enabledAdapter = new MockSourceAdapter('gmail', [enabledRecord]);
+    await runPullPhase([enabledAdapter], pipeline, db, capLog);
+
+    const disabledAdapter = new MockSourceAdapter('gmail', [disabledRecord]);
+    await runPullPhase([disabledAdapter], pipeline, db, capLog);
+
+    const rows = store.listUnconsolidated();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.content).toBe(rows[1]!.content);
+    expect(rows[0]!.content).toBe(sharedContent);
+    // ...but the session_id (provenance) differs between enabled and disabled
+    expect(rows[0]!.session_id).not.toBe(rows[1]!.session_id);
+  });
+});
