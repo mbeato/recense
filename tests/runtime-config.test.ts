@@ -17,6 +17,9 @@ import {
   hydrateRuntimeEnv,
   resolveEnabledSources,
 } from '../src/adapter/runtime-config';
+import { DEFAULT_CONFIG } from '../src/lib/config';
+import { INTENT_CONFIDENCES } from '../src/model/claim-extractor';
+import { routeContradiction } from '../src/consolidation/update-decision';
 
 describe('defaultDbPath', () => {
   it('is ~/.config/recense/recense.db (the one init seeds)', () => {
@@ -156,5 +159,48 @@ describe('resolveEnabledSources', () => {
 
   it('drops empty segments from comma-separated values', () => {
     expect(resolveEnabledSources({ RECENSE_ENABLED_SOURCES: 'gmail,,gcal' })).toEqual(['gmail', 'gcal']);
+  });
+});
+
+describe('Phase 65 dark knobs — stock defaults reproduce pre-phase behavior', () => {
+  const testConfig = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
+
+  it('provenance-distinctness stays dark: disabled, no per-source override, global N unchanged', () => {
+    expect(DEFAULT_CONFIG.provenanceDistinctnessEnabled).toBe(false);
+    expect(DEFAULT_CONFIG.contradictionNBySource).toEqual({});
+    expect(DEFAULT_CONFIG.contradictionN).toBe(3);
+  });
+
+  it('status-drift layer defaults ON with the event_ts staleness guard armed', () => {
+    expect(DEFAULT_CONFIG.statusDriftEnabled).toBe(true);
+    expect(DEFAULT_CONFIG.statusDriftEventTsGuard).toBe(true);
+  });
+
+  it('damping key-set is parity-guarded against the live IntentConfidence enum', () => {
+    expect(Object.keys(DEFAULT_CONFIG.statusDriftConfidenceDamping).sort())
+      .toEqual([...INTENT_CONFIDENCES].sort());
+  });
+
+  it('every damping factor sits inside the non-amplification domain [0, 1]', () => {
+    for (const factor of Object.values(DEFAULT_CONFIG.statusDriftConfidenceDamping)) {
+      expect(factor).toBeGreaterThanOrEqual(0);
+      expect(factor).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('the low:0 mechanism, proven not asserted: magnitude 0 always routes to hold via the real routeContradiction', () => {
+    // Empirical basis for the low:0 gate-to-hold design (D-09). If peReconcileBandLow is ever
+    // lowered to 0, this test is the tripwire — magnitude 0 / resistance would then land exactly
+    // on the band boundary instead of strictly below it.
+    const resistances = [0.1 * 0.5, 0.9 * 0.9, 0];
+    for (const resistance of resistances) {
+      expect(routeContradiction(0, resistance, testConfig)).toBe('hold');
+    }
+  });
+
+  it('provenanceMinResidualChars is a positive integer defaulting to 20', () => {
+    expect(DEFAULT_CONFIG.provenanceMinResidualChars).toBe(20);
+    expect(Number.isInteger(DEFAULT_CONFIG.provenanceMinResidualChars)).toBe(true);
+    expect(DEFAULT_CONFIG.provenanceMinResidualChars).toBeGreaterThan(0);
   });
 });
