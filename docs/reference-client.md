@@ -173,7 +173,11 @@ clients/proposal-reference/
    leaves a resumable row rather than an invisible applied change.
 5. `decideOutcome()` (a small, pure, confidence-only policy — never reads
    `evidence_quote`) picks approve or reject; the corresponding endpoint is
-   called.
+   called. Before the POST path is built, the proposal id is validated against
+   `^[0-9a-f]{64}$` (ids are sha256 hex by construction) — a non-conforming id
+   from a list response fails closed with **no request issued**, so a malformed
+   id can never steer the authenticated POST onto another route via URL
+   dot-segment normalization.
 6. On success the local row is marked `'applied'`. On a terminal refusal
    (400/404/409) the local row is marked `'refused'` with a `refusalReason`
    and is never retried. On `503` the row is left `'pending'` and retried on

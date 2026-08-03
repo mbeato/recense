@@ -56,6 +56,17 @@ export interface ActionProposalRecord {
   expires_at: number;
 }
 
+/**
+ * Proposal ids are sha256 hex by construction (docs/reference-client.md) and the
+ * server enforces this shape inbound. Enforce the same shape client-side before
+ * interpolating an id into a request path: WHATWG URL normalization in `fetch`
+ * collapses dot segments, so an id containing `/`, `..`, `?`, or `#` from a
+ * malformed list response would steer the authenticated POST onto a route the
+ * adapter never intended to call. Fail-closed: a non-conforming id builds no
+ * request at all.
+ */
+const PROPOSAL_ID_RE = /^[0-9a-f]{64}$/;
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -136,13 +147,25 @@ export function createProposalClient(serveUrl: string, serveToken: string): Prop
       return Array.isArray(body.items) ? body.items as ActionProposalRecord[] : [];
     },
 
-    /** POST /v1/proposals/:id/approve. Throws ProposalHttpError on non-2xx. */
+    /**
+     * POST /v1/proposals/:id/approve. Throws ProposalHttpError on non-2xx, and a
+     * plain Error (before any request is made) on a malformed proposal id.
+     */
     async approve(id: string): Promise<void> {
+      if (!PROPOSAL_ID_RE.test(id)) {
+        throw new Error('malformed proposal id in list response — refusing to build request path');
+      }
       await postAction('/v1/proposals/' + id + '/approve');
     },
 
-    /** POST /v1/proposals/:id/reject. Throws ProposalHttpError on non-2xx. */
+    /**
+     * POST /v1/proposals/:id/reject. Throws ProposalHttpError on non-2xx, and a
+     * plain Error (before any request is made) on a malformed proposal id.
+     */
     async reject(id: string): Promise<void> {
+      if (!PROPOSAL_ID_RE.test(id)) {
+        throw new Error('malformed proposal id in list response — refusing to build request path');
+      }
       await postAction('/v1/proposals/' + id + '/reject');
     },
   };
