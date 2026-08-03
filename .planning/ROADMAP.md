@@ -1059,7 +1059,25 @@ Plans:
   4. A proposal carries its raw quoted evidence verbatim alongside the structured change, so an approver never decides from model prose alone — EMIT-06
   5. A stale or superseded proposal (its originating belief has since moved again) is detected and refused before an approval can apply it — EMIT-07
 
-**Plans**: TBD
+**Plans**: 5 plans in 4 waves (planned 2026-08-03). Denser than Phase 65's 10 because the phase is a copy-adapt of three shipped patterns — the `ConsolidationSink` triad, the `surfaced_event`/`SurfaceStore`/`/v1/surface` stack, and the exported-predicate structural-test shape — plus wiring and two sentinels. The frozen `action_proposal` shape is declared first (66-01) so the two workstreams research names, emission logic and HTTP surface, can proceed in parallel against it.
+
+Plans:
+**Wave 1**
+
+- [ ] 66-01-PLAN.md — Frozen contract foundation: additive schema-v17 `action_proposal` table + `ActionProposalStore` + pure staleness classifier + three-way frozen-key-set lock (EMIT-02, EMIT-04, EMIT-07, wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 66-02-PLAN.md — `ActionProposalSink` triad (interface / Noop default / SQLite) + deterministic content-hash `proposalId` + `actionProposalSinkEnabled` dark knob (EMIT-01, EMIT-04, EMIT-06, wave 2)
+- [ ] 66-03-PLAN.md — HTTP surface: `GET /v1/proposals` lock-free read + `POST /v1/proposals/:id/approve|reject` per-call lock, typed 404/409/503 mapping, EMIT-07 staleness refusal with durable terminal status (EMIT-03, EMIT-05, EMIT-07, wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 66-04-PLAN.md — Consolidator emission wiring at the nine decisive `applyDecision` sites gated on the imported `isEmissionEligible`, verbatim evidence quote, sleep-pass injection behind the dark knob, doctor dimension 10, and Phase 65's hold sentinel extended to the real sink (EMIT-01, EMIT-06, wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 66-05-PLAN.md — The named "D-43-for-proposals" two-layer sentinel (exported structural predicate + planted offender; whole-table `node`/`edge` runtime snapshot) and the D-13 online-LLM-free regression extended to `/v1/proposals` (EMIT-03, EMIT-05, wave 4)
 
 ### Phase 67: Reference Consumer Adapter
 
