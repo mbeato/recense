@@ -8,8 +8,8 @@
  */
 import type Database from 'better-sqlite3';
 
-// v16: episode.event_ts (EMAIL-04: source-asserted event time)
-export const SCHEMA_VERSION = 16;
+// v17: action_proposal operational table (EMIT-01/EMIT-02)
+export const SCHEMA_VERSION = 17;
 
 /**
  * Full DDL for all four tables plus three hot-path indexes (spec §1, RESEARCH Pattern 1).
@@ -209,6 +209,43 @@ export const DDL = `
     created_at        INTEGER NOT NULL,           -- epoch ms; immutable
     updated_at        INTEGER NOT NULL,           -- epoch ms; updated on every outcome change
     UNIQUE(node_id, occurrence_due_at)
+  );
+
+  -- EMIT-01/EMIT-02: operational proposal outbox (append-mostly, single-writer on INSERT:
+  -- the sleep pass only; the serve path updates only status/updated_at on approve/reject).
+  -- Idempotency key: id itself IS the deterministic content-hash PK (D-07) — INSERT OR IGNORE
+  -- is the whole replay mechanism, mirroring uq_episode_source_external's dedup-by-natural-key
+  -- discipline (schema.ts uq_episode_source_external, above) rather than a separate UNIQUE index.
+  -- entity_node_id / belief_node_id / evidence_episode are all safe under foreign_keys = ON:
+  -- SemanticStore.tombstone() sets a tombstoned flag rather than deleting, and no code path
+  -- issues DELETE FROM episode.
+  CREATE TABLE IF NOT EXISTS action_proposal (
+    id                TEXT    PRIMARY KEY,        -- sha256 hex content hash (D-07), deterministic — NOT AUTOINCREMENT
+    kind              TEXT    NOT NULL CHECK(kind IN ('belief')),  -- discriminator for Phase 68's union
+    entity_node_id    TEXT    NOT NULL REFERENCES node(id),        -- Phase 64 D-07's entity node id field
+    entity_descriptor TEXT    NOT NULL,           -- Phase 64 D-08's entity descriptor field, verbatim
+    belief_node_id    TEXT    NOT NULL REFERENCES node(id),        -- the node applyDecision minted for
+                                                   -- change_to (CONTEXT D-02a). EMIT-07's "belief moved
+                                                   -- past the proposal" check (Pitfall 13) needs the BELIEF
+                                                   -- node, not the resolved ENTITY node. Excluded from the
+                                                   -- id hash — it is newId()-random, so including it would
+                                                   -- falsify EMIT-04 replay determinism.
+    -- change_field/change_from/change_to carry NO CHECK constraint deliberately: a CHECK'd enum
+    -- here would encode a consumer's status vocabulary into recense's seam and falsify the
+    -- domain-neutral claim (research Pitfall 10). kind/confidence/status DO carry inline CHECKs
+    -- below because all three are recense's OWN closed vocabularies.
+    change_field      TEXT    NOT NULL,
+    change_from       TEXT,
+    change_to         TEXT    NOT NULL,
+    evidence_episode  TEXT    NOT NULL REFERENCES episode(id),
+    evidence_quote    TEXT    NOT NULL,           -- verbatim stored episode content (EMIT-06/D-12)
+    confidence        TEXT    NOT NULL CHECK(confidence IN ('high','medium','low')),  -- Phase 63 D-06
+    schema_version    INTEGER NOT NULL,           -- Pitfall 11
+    status            TEXT    NOT NULL DEFAULT 'pending'
+                              CHECK(status IN ('pending','approved','rejected','superseded','expired')),
+    created_at        INTEGER NOT NULL,           -- epoch ms; immutable
+    updated_at        INTEGER NOT NULL,           -- epoch ms
+    expires_at        INTEGER NOT NULL            -- epoch ms; created_at + PROPOSAL_TTL_MS (Pitfall 13 backstop)
   );
 `;
 
@@ -645,6 +682,19 @@ export function initSchema(db: Database.Database): void {
   if (!atCols.has('kind')) {
     db.exec('ALTER TABLE activation_trace ADD COLUMN kind TEXT');
   }
+
+  // v17 migration: action_proposal operational table (Phase 66, EMIT-01/EMIT-02).
+  // Table uses CREATE TABLE IF NOT EXISTS in DDL above → idempotent on fresh DBs.
+  // Existing v16 DBs: action_proposal absent → DDL above creates it (IF NOT EXISTS catches it).
+  // No ALTER TABLE needed — the whole table is new (no column additions to existing tables).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_action_proposal_status_created
+      ON action_proposal(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_action_proposal_entity
+      ON action_proposal(entity_node_id, status);
+    CREATE INDEX IF NOT EXISTS idx_action_proposal_status_expires
+      ON action_proposal(status, expires_at);
+  `);
 
   // Stamp schema version — read first to guard against downgrade (M-9).
   // Throws when stored > SCHEMA_VERSION so a stale launchd binary can't re-stamp a future DB

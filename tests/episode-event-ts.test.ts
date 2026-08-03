@@ -107,15 +107,15 @@ describe('EpisodicStore.append — event_ts (EMAIL-04)', () => {
 });
 
 describe('initSchema — event_ts migration (EMAIL-04)', () => {
-  it('stamps SCHEMA_VERSION 16 on a fresh in-memory DB', () => {
+  it('stamps SCHEMA_VERSION 17 on a fresh in-memory DB', () => {
     const db = new Database(':memory:');
     try {
       initSchema(db);
       const row = db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as
         { value: string } | undefined;
       expect(row).toBeDefined();
-      expect(Number(row!.value)).toBe(16);
-      expect(SCHEMA_VERSION).toBe(16);
+      expect(Number(row!.value)).toBe(17);
+      expect(SCHEMA_VERSION).toBe(17);
 
       const cols = (db.pragma('table_info(episode)') as Array<{ name: string }>).map(r => r.name);
       expect(cols).toContain('event_ts');
