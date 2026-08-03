@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import {
   findByProposalId,
   listLocalRows,
+  LocalStoreCorruptError,
   newLocalId,
   putLocalRow,
   type LocalRow,
@@ -81,17 +82,42 @@ describe('local-store', () => {
     expect(rows.length).toBe(1);
   });
 
-  it('a corrupt store file (invalid JSON) makes listLocalRows return [] rather than throwing', () => {
+  it('a corrupt store file (invalid JSON) makes reads throw LocalStoreCorruptError — never treated as empty (WR-05)', () => {
     putLocalRow(makeRow(), storePath);
     writeFileSync(storePath, 'not valid json{{{');
-    expect(() => listLocalRows(storePath)).not.toThrow();
-    expect(listLocalRows(storePath)).toEqual([]);
+    expect(() => listLocalRows(storePath)).toThrow(LocalStoreCorruptError);
+    expect(() => findByProposalId(randomUUID(), storePath)).toThrow(LocalStoreCorruptError);
   });
 
-  it('a store file with valid JSON of the wrong shape makes listLocalRows return []', () => {
+  it('a store file with valid JSON of the wrong shape throws LocalStoreCorruptError (WR-05)', () => {
     mkdirSync(dirname(storePath), { recursive: true });
     writeFileSync(storePath, JSON.stringify({ not: 'the right shape' }));
+    expect(() => listLocalRows(storePath)).toThrow(LocalStoreCorruptError);
+  });
+
+  it('an array containing one wrong-typed row throws LocalStoreCorruptError — no silent per-row drop (WR-05)', () => {
+    const good = makeRow();
+    mkdirSync(dirname(storePath), { recursive: true });
+    writeFileSync(storePath, JSON.stringify([good, { ...makeRow(), updatedAtMs: 'not-a-number' }]));
+    expect(() => listLocalRows(storePath)).toThrow(LocalStoreCorruptError);
+  });
+
+  it('putLocalRow on a corrupt store throws and never overwrites the file (WR-05)', () => {
+    putLocalRow(makeRow(), storePath);
+    const corruptBytes = 'not valid json{{{';
+    writeFileSync(storePath, corruptBytes);
+
+    expect(() => putLocalRow(makeRow(), storePath)).toThrow(LocalStoreCorruptError);
+
+    // The corrupt file is preserved verbatim for operator inspection —
+    // nothing rewrote it as a fresh one-row store.
+    expect(readFileSync(storePath, 'utf8')).toBe(corruptBytes);
+  });
+
+  it('a missing store file still reads as empty — only an existing corrupt file is fail-closed', () => {
+    expect(existsSync(storePath)).toBe(false);
     expect(listLocalRows(storePath)).toEqual([]);
+    expect(findByProposalId(randomUUID(), storePath)).toBeUndefined();
   });
 
   it('the written store file mode is 0o600', () => {

@@ -51,7 +51,26 @@ export interface LocalRow {
   updatedAtMs: number;
 }
 
-/** Type guard for a single stored row — used by the never-throw read path. */
+/**
+ * Thrown when the store file exists but cannot be trusted (unparseable JSON,
+ * not an array, or a row failing shape validation). Fail-closed (WR-05):
+ * treating a corrupt store as empty would let the next putLocalRow rewrite
+ * the file as a one-row store — silently destroying every terminal
+ * applied/refused marker and re-POSTing previously-applied proposals on the
+ * next sync. The sync must abort instead, and the operator must inspect or
+ * restore the file.
+ */
+export class LocalStoreCorruptError extends Error {
+  constructor(storePath: string, cause: string) {
+    super(
+      `local store file ${storePath} is corrupt (${cause}); refusing to treat it as empty — ` +
+        'inspect or restore the file, then re-run sync',
+    );
+    this.name = 'LocalStoreCorruptError';
+  }
+}
+
+/** Type guard for a single stored row — used by the fail-closed read path. */
 function isLocalRow(v: unknown): v is LocalRow {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
@@ -73,16 +92,26 @@ function isLocalRow(v: unknown): v is LocalRow {
 // Low-level read / write
 // ---------------------------------------------------------------------------
 
-/** Never throws — corrupt/missing file or wrong-shaped rows return []. */
+/**
+ * Missing file returns []. A file that exists but is corrupt — unparseable
+ * JSON, not an array, or any row failing shape validation — throws
+ * LocalStoreCorruptError (WR-05): the store is the system of record, and
+ * silently reading a corrupt file as empty would let the next write destroy
+ * every terminal row.
+ */
 function readRows(storePath: string): LocalRow[] {
+  if (!existsSync(storePath)) return [];
+  let raw: unknown;
   try {
-    if (!existsSync(storePath)) return [];
-    const raw = JSON.parse(readFileSync(storePath, 'utf8')) as unknown;
-    if (!Array.isArray(raw)) return [];
-    return raw.filter(isLocalRow);
+    raw = JSON.parse(readFileSync(storePath, 'utf8'));
   } catch {
-    return [];
+    throw new LocalStoreCorruptError(storePath, 'invalid JSON');
   }
+  if (!Array.isArray(raw)) throw new LocalStoreCorruptError(storePath, 'not a JSON array');
+  if (!raw.every(isLocalRow)) {
+    throw new LocalStoreCorruptError(storePath, 'a row failed shape validation');
+  }
+  return raw as LocalRow[];
 }
 
 /**
@@ -106,7 +135,8 @@ function writeRows(storePath: string, rows: LocalRow[]): void {
 
 /**
  * Return every local row, deep-copied so caller mutations never affect a
- * subsequent read. Never throws — see readRows.
+ * subsequent read. Throws LocalStoreCorruptError on a corrupt store file —
+ * see readRows (WR-05).
  */
 export function listLocalRows(storePath: string): LocalRow[] {
   return readRows(storePath).map(r => JSON.parse(JSON.stringify(r)) as LocalRow);
@@ -124,7 +154,9 @@ export function findByProposalId(proposalId: string, storePath: string): LocalRo
 
 /**
  * Persist a row. If a row with the same localId already exists it is replaced
- * (idempotent put), not appended.
+ * (idempotent put), not appended. Throws LocalStoreCorruptError (before
+ * writing anything) if the existing store file is corrupt — a corrupt store
+ * is never overwritten (WR-05).
  */
 export function putLocalRow(row: LocalRow, storePath: string): void {
   const rows = readRows(storePath).filter(r => r.localId !== row.localId);

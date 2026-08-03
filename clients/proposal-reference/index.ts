@@ -17,7 +17,13 @@ import {
   type ProposalClient,
   type ActionProposalRecord,
 } from './proposal-client';
-import { findByProposalId, putLocalRow, newLocalId, type LocalRow } from './local-store';
+import {
+  findByProposalId,
+  putLocalRow,
+  newLocalId,
+  LocalStoreCorruptError,
+  type LocalRow,
+} from './local-store';
 
 // ---------------------------------------------------------------------------
 // Decision policy (D-07, 66 D-12, APPROVE-04 spirit)
@@ -186,6 +192,12 @@ export async function syncProposals(
       putLocalRow({ ...row, localStatus: 'applied', updatedAtMs: Date.now() }, storePath);
       report.applied++;
     } catch (err) {
+      if (err instanceof LocalStoreCorruptError) {
+        // The system of record itself cannot be trusted — abort the whole
+        // sync with the operator-facing message (WR-05); never fall through
+        // to per-item log-and-continue, which would retry into the same wall.
+        throw err;
+      }
       if (err instanceof ProposalHttpError) {
         if (err.status === 401) {
           // Auth is broken, not this item — abort the whole sync.

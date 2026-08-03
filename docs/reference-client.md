@@ -198,6 +198,15 @@ clients/proposal-reference/
    applied/refused by checking the proposal's status on the server side. A
    409 on a *first* attempt (no resumed row) is still recorded as a plain
    terminal `'refused'`.
+8. **Corrupt store is fail-closed.** If the local store file exists but is
+   corrupt (unparseable JSON, not an array, or a row failing shape
+   validation), reads throw a typed `LocalStoreCorruptError` and the sync
+   aborts with a clear message — the file is **never** treated as empty and
+   **never** overwritten. Treating corruption as empty would let the next
+   write rewrite the store as a one-row file, destroying every terminal
+   `applied`/`refused` marker and re-POSTing previously-applied proposals.
+   The operator inspects or restores the file, then re-runs sync. A missing
+   file (first run) still reads as empty.
 
 The local row keys on `entityDescriptor` (the semantic key, not a node id) and
 carries the consumer's OWN id (`localId`), never recense's. recense never

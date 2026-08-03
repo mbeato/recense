@@ -13,13 +13,13 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as http from 'node:http';
-import { readFileSync, existsSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { syncProposals } from '../index';
 import { createProposalClient, PROPOSAL_SCHEMA_VERSION } from '../proposal-client';
-import { listLocalRows, newLocalId, putLocalRow } from '../local-store';
+import { listLocalRows, LocalStoreCorruptError, newLocalId, putLocalRow } from '../local-store';
 
 const TEST_TOKEN = 'test-bearer-token-67-02';
 
@@ -379,6 +379,20 @@ describe('syncProposals — stub-server behavioral proof (D-02/D-03/D-07)', () =
 
     const persisted = readFileSync(storePath, 'utf8');
     expect(persisted.includes(QUOTE_INJECTION_SENTINEL)).toBe(false);
+  });
+
+  it('corrupt local store (WR-05): sync refuses with LocalStoreCorruptError, issues no POST, and never overwrites the file', async () => {
+    records = [makeRecord({ id: pid('p18'), confidence: 'high' })];
+    const corruptBytes = 'not valid json{{{';
+    writeFileSync(storePath, corruptBytes);
+
+    await expect(syncProposals(client(), storePath, noopLog)).rejects.toThrow(
+      LocalStoreCorruptError,
+    );
+
+    expect(postCalls().length).toBe(0);
+    // The corrupt store is preserved verbatim for the operator to inspect/restore.
+    expect(readFileSync(storePath, 'utf8')).toBe(corruptBytes);
   });
 
   it('malformed proposal id (WR-04): a path-traversal id never produces any POST — the request is refused before it is built', async () => {
