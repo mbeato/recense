@@ -48,7 +48,7 @@ describe('activation_trace table', () => {
       .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string } | undefined;
     expect(row?.value).toBe(String(SCHEMA_VERSION));
-    expect(SCHEMA_VERSION).toBe(16);
+    expect(SCHEMA_VERSION).toBe(17);
   });
 
   it('activation_trace has expected columns (id, ts, query_id, seeds, hops, kind)', () => {
@@ -133,8 +133,8 @@ describe('activation_trace table', () => {
     expect(epCount.cnt).toBe(1);
   });
 
-  it('SCHEMA_VERSION constant equals 16 (v16: episode.event_ts)', () => {
-    expect(SCHEMA_VERSION).toBe(16);
+  it('SCHEMA_VERSION constant equals 17 (EMIT-01/EMIT-02: action_proposal)', () => {
+    expect(SCHEMA_VERSION).toBe(17);
   });
 });
 

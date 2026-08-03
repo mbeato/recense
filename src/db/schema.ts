@@ -222,8 +222,8 @@ export const DDL = `
   CREATE TABLE IF NOT EXISTS action_proposal (
     id                TEXT    PRIMARY KEY,        -- sha256 hex content hash (D-07), deterministic — NOT AUTOINCREMENT
     kind              TEXT    NOT NULL CHECK(kind IN ('belief')),  -- discriminator for Phase 68's union
-    entity_node_id    TEXT    NOT NULL REFERENCES node(id),        -- Phase 64 D-07 claimResolvedEntityId
-    entity_descriptor TEXT    NOT NULL,           -- Phase 64 D-08 claimResolvedEntityDescriptor, verbatim
+    entity_node_id    TEXT    NOT NULL REFERENCES node(id),        -- Phase 64 D-07's entity node id field
+    entity_descriptor TEXT    NOT NULL,           -- Phase 64 D-08's entity descriptor field, verbatim
     belief_node_id    TEXT    NOT NULL REFERENCES node(id),        -- the node applyDecision minted for
                                                    -- change_to (CONTEXT D-02a). EMIT-07's "belief moved
                                                    -- past the proposal" check (Pitfall 13) needs the BELIEF

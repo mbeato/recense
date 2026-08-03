@@ -52,9 +52,9 @@ function insertEdge(
 
 // ── (a) Fresh DB — CHECK constraints ──────────────────────────────────────
 
-describe('schema v11 (now v16) fresh DB', () => {
-  test('SCHEMA_VERSION constant is 16 (EMAIL-04: episode.event_ts)', () => {
-    expect(SCHEMA_VERSION).toBe(16);
+describe('schema v11 (now v17) fresh DB', () => {
+  test('SCHEMA_VERSION constant is 17 (EMIT-01/EMIT-02: action_proposal)', () => {
+    expect(SCHEMA_VERSION).toBe(17);
   });
 
   test("node type='doc' insert succeeds on fresh DB", () => {
@@ -235,13 +235,13 @@ describe('schema v11 migration from pre-v11 DB', () => {
     expect(violations).toHaveLength(0);
   });
 
-  test("meta.schema_version = '16' after migration (v16: episode.event_ts)", () => {
+  test("meta.schema_version = '17' after migration (EMIT-01/EMIT-02: action_proposal)", () => {
     const db = buildPreV11Db();
     initSchema(db);
 
     const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
       { value: string } | undefined;
-    expect(row?.value).toBe('16');
+    expect(row?.value).toBe('17');
   });
 
   test('migration is idempotent: second initSchema call leaves data intact', () => {
@@ -320,11 +320,11 @@ describe('node_doc sidecar table', () => {
 // ── (e) schema version stamp ──────────────────────────────────────────────
 
 describe('schema version stamp', () => {
-  test('fresh DB is stamped v16 (EMAIL-04: episode.event_ts)', () => {
+  test('fresh DB is stamped v17 (EMIT-01/EMIT-02: action_proposal)', () => {
     const db = freshDb();
     const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
       { value: string } | undefined;
-    expect(row?.value).toBe('16');
+    expect(row?.value).toBe('17');
   });
 });
 
