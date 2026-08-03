@@ -268,7 +268,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 11/11 | Complete    | 2026-08-03 |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 5/5 | Complete    | 2026-08-03 |
 | 67. Reference Consumer Adapter | v10.0 | 3/3 | Complete    | 2026-08-03 |
-| 68. Telegram HITL Belief-Kind Extension | v10.0 | 2/3 | In Progress|  |
+| 68. Telegram HITL Belief-Kind Extension | v10.0 | 3/3 | Complete   | 2026-08-03 |
 
 ### Phase 28: Schema-Anchored Corpus
 
@@ -815,7 +815,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
 - [x] **Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix** — Status lifecycle rides the existing PE-gate/`supersedes` machinery unmodified; redesigned provenance-distinctness key makes `countDistinctProvenance` reachable on email evidence without becoming farmable. (completed 2026-08-03)
 - [x] **Phase 66: Domain-Neutral Proposal Emit Seam** — `ActionProposalSink` + `action_proposal` table + `/v1/proposals` routes; a named "D-43-for-proposals" sentinel test closes the milestone's largest correctness risk structurally. (completed 2026-08-03)
 - [x] **Phase 67: Reference Consumer Adapter** — In-repo `clients/proposal-reference/` proves the contract end-to-end with its own import-boundary test. (completed 2026-08-03)
-- [ ] **Phase 68: Telegram HITL Belief-Kind Extension** — Second `kind:'belief'` on the existing StoredProposal union; batching + hold-exclusion bound approval fatigue.
+- [x] **Phase 68: Telegram HITL Belief-Kind Extension** — Second `kind:'belief'` on the existing StoredProposal union; batching + hold-exclusion bound approval fatigue. (completed 2026-08-03)
 - [ ] **Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall** — Entity-anchored candidate generation (reusing Phase 64's union generator), same-project rank treatment, 1-hop relations in the injected block, cited-evidence recall mode. Gated on a 58-prompt eval set from real sessions. Seed: SEED-005.
 
 ### Phase 62: Multi-Inbox Email Ingest Hardening
@@ -1131,7 +1131,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 68-03-PLAN.md — The '3|' dispatch branch and belief decision handler with full refusal mapping and the approval-rate self-report, the numeric-confidence absence scan, and the repo-level e2e against the real served contract (APPROVE-01, APPROVE-02, APPROVE-04, wave 3)
+- [x] 68-03-PLAN.md — The '3|' dispatch branch and belief decision handler with full refusal mapping and the approval-rate self-report, the numeric-confidence absence scan, and the repo-level e2e against the real served contract (APPROVE-01, APPROVE-02, APPROVE-04, wave 3)
 
 ### Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall
 
