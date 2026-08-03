@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { type ClientConfig, type ActionConfig, loadClientConfig, loadActionConfig, loadMcpConfig } from './config';
 import { readStateCursor, writeStateCursor } from './state';
 import { DefaultTelegramTransport, type TelegramTransport, type InlineKeyboardMarkup } from './transport';
-import { type FetchResult, type InboundMessage, type CollectedCallbackQuery, type McpServerConfig, type StoredProposal, type ProposalAction } from './types';
+import { type FetchResult, type InboundMessage, type CollectedCallbackQuery, type McpServerConfig, type StoredProposal, type StoredToolProposal, type ProposalAction } from './types';
 import { createMemoryClient, type MemoryClient, type SurfaceItem } from './memory-client';
 import { encodeCallbackData, decodeCallbackData, encodeProposalCallbackData, decodeProposalCallbackData } from './push-codec';
 import { putProposal, tryReserveProposalSlot, loadExecutable, removeProposal, getProposal } from './proposal-store';
@@ -18,6 +18,7 @@ import {
   type FetchImpl,
 } from './proposal-engine';
 import { listServerTools, callServerTool, extractToolOutput, defaultConnectionFactory, type McpConnectionFactory } from './mcp-client';
+import { isBeliefProposal } from './belief-bridge';
 
 // ---------------------------------------------------------------------------
 // Log helper — append-only file log; never stdout (background process, T-13-05)
@@ -580,7 +581,7 @@ async function sendSurfacedItem(
  * NEVER contains DeepSeek prose or any LLM output (T-23-05-A / ACT-01).
  * Same no-markup discipline as renderText (plain text, not Telegram markdown).
  */
-function renderProposalCard(proposal: StoredProposal): string {
+function renderProposalCard(proposal: StoredToolProposal): string {
   return `[Proposed Action]\nTool: ${proposal.tool}\nArgs: ${JSON.stringify(proposal.args)}\nDue: ${proposal.dueAt}`;
 }
 
@@ -671,7 +672,7 @@ export async function tryGenerateProposal(
   mcpConfigs: McpServerConfig[],
   connectionFactory?: McpConnectionFactory,
   fetchImpl?: FetchImpl,
-): Promise<StoredProposal | null> {
+): Promise<StoredToolProposal | null> {
   try {
     // 1. Memory context for arg parameterization (truncated in buildProposalPrompt, Risk 4)
     const searchResults = await memoryClient.search(item.value);
@@ -734,7 +735,8 @@ export async function tryGenerateProposal(
     if (toolEntry === undefined) return null; // validateProposal already checks allowlist; defensive
 
     // 7. Build immutable StoredProposal (D-07 — payload never re-queried at execute time)
-    const proposal: StoredProposal = {
+    const proposal: StoredToolProposal = {
+      kind: 'tool',
       id: randomUUID(),
       serverName: toolEntry.serverName,
       tool: validated.tool,
@@ -796,6 +798,16 @@ async function executeStoredProposal(
   }
 
   const proposal = loaded.proposal;
+
+  // T-68-01: a belief-kind row must never reach the MCP tool-execution path — a forged
+  // '2|{beliefLocalId}|a' callback would otherwise reach callServerTool with an undefined
+  // tool name. Refuse before any tool-only field is read.
+  if (isBeliefProposal(proposal)) {
+    log('executeStoredProposal: refusing belief-kind proposal on tool-execution path (T-68-01)');
+    try { await transport.sendMessage(chatId, 'that decision is handled by the belief approval flow'); }
+    catch (e) { log('send error (belief-refusal): ' + String(e)); }
+    return;
+  }
 
   // H-04: re-check allowlist at execute time — post-propose config changes revoke access
   const serverCfg = mcpConfigs.find(s => s.name === proposal.serverName);
@@ -936,6 +948,15 @@ async function handleEditPatch(
     return;
   }
 
+  // T-68-01: a belief-kind row must never reach the tool-edit path — refuse before
+  // original.args is read/spread.
+  if (isBeliefProposal(original)) {
+    log('handleEditPatch: refusing belief-kind proposal on tool-edit path (T-68-01)');
+    try { await transport.sendMessage(chatId, 'that decision is handled by the belief approval flow'); }
+    catch (e) { log('send error (belief-refusal): ' + String(e)); }
+    return;
+  }
+
   // 3. Shallow-merge patch over original args (attacker-supplied — validated next)
   const mergedArgs: Record<string, unknown> = { ...original.args, ...patch };
 
@@ -973,7 +994,8 @@ async function handleEditPatch(
   }
 
   // 6. Build fresh StoredProposal (D-06: new id, same dueAt/maxTtlMs/nodeId, recomputed confirm value)
-  const freshProposal: StoredProposal = {
+  const freshProposal: StoredToolProposal = {
+    kind: 'tool',
     id: randomUUID(),
     serverName: original.serverName,
     tool: validation.tool,
@@ -1050,6 +1072,13 @@ export async function handleProposalAction(
     // If the proposal is already gone (getProposal returns null), skip surfaceSeen
     // and keep existing behavior (removeProposal no-ops, hitlEpisode still written).
     const rejectedProposal = getProposal(proposalId, storePath);
+    if (rejectedProposal !== null && isBeliefProposal(rejectedProposal)) {
+      // T-68-01: a belief-kind row must never reach the tool-reject path.
+      log('handleProposalAction: refusing belief-kind proposal on tool-reject path (T-68-01)');
+      try { await transport.sendMessage(chatId, 'that decision is handled by the belief approval flow'); }
+      catch (e) { log('send error (belief-refusal): ' + String(e)); }
+      return;
+    }
     if (rejectedProposal !== null) {
       try {
         await memoryClient.surfaceSeen({
@@ -1083,6 +1112,15 @@ export async function handleProposalAction(
       catch (e) { log('hitlEpisode error (edit-' + editReason + '): ' + String(e)); }
       return;
     }
+
+    // T-68-01: a belief-kind row must never reach the tool-edit path.
+    if (isBeliefProposal(editLoaded.proposal)) {
+      log('handleProposalAction: refusing belief-kind proposal on tool-edit path (T-68-01)');
+      try { await transport.sendMessage(chatId, 'that decision is handled by the belief approval flow'); }
+      catch (e) { log('send error (belief-refusal): ' + String(e)); }
+      return;
+    }
+
     // Register pending-edit (5-minute window — mirrors typed-confirm TTL, Risk 2)
     const EDIT_TTL_MS = 5 * 60_000;
     pendingEdit.set(String(chatId), { proposalId, expiresAt: Date.now() + EDIT_TTL_MS });
@@ -1114,6 +1152,14 @@ export async function handleProposalAction(
   }
 
   const proposal = loaded.proposal;
+
+  // T-68-01: a belief-kind row must never reach the tool-approve path.
+  if (isBeliefProposal(proposal)) {
+    log('handleProposalAction: refusing belief-kind proposal on tool-approve path (T-68-01)');
+    try { await transport.sendMessage(chatId, 'that decision is handled by the belief approval flow'); }
+    catch (e) { log('send error (belief-refusal): ' + String(e)); }
+    return;
+  }
 
   if (proposal.destructive) {
     // D-09 / H-08: destructive tool → typed confirmation required.

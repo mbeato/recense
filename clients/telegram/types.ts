@@ -94,13 +94,16 @@ export interface McpServerConfig {
 }
 
 /**
- * An immutable pending proposal stored between propose-time and execute-time (D-07).
+ * An immutable pending tool-call proposal stored between propose-time and
+ * execute-time (D-07).
  *
  * The `args` field is stored exactly as shown on the approval card and is NEVER
  * re-queried from the engine at execute-time — prevents TOCTOU where memory changes
  * between propose and execute (D-07).
  */
-export interface StoredProposal {
+export interface StoredToolProposal {
+  /** Discriminant — the tool-call proposal kind (Phase 68 D-01). */
+  kind: 'tool';
   /** UUID v4 — the proposalId embedded in the v2 callback_data payload. */
   id: string;
   /** Matches McpServerConfig.name — used for allowlist re-check at execute-time (D-04). */
@@ -139,6 +142,78 @@ export interface StoredProposal {
    */
   expectedConfirmValue: string;
 }
+
+/**
+ * The server-side status vocabulary for a belief-shaped action proposal (Phase 68 /
+ * APPROVE-02). Mirrors `ActionProposalRecord.status` from the frozen `/v1/proposals`
+ * contract (`clients/proposal-reference/proposal-client.ts:26`) — declared by hand
+ * here, never imported from src/ (CLIENT-01).
+ */
+export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'superseded' | 'expired';
+
+/**
+ * An immutable pending belief-shaped proposal, bridged from the frozen `/v1/proposals`
+ * HTTP contract (Phase 66/68 — APPROVE-01/02).
+ *
+ * `dueAt` / `createdAt` / `maxTtlMs` exist SOLELY so this member satisfies the exact
+ * field contract `proposal-store.ts`'s `isExpired()` reads (`p.dueAt`,
+ * `p.createdAt + p.maxTtlMs`). Carrying them — synthesized from the server record's
+ * `expires_at` at bridge time (see belief-bridge.ts) — is the concrete mechanism by
+ * which this member rides the existing store with ZERO changes to proposal-store.ts
+ * or proposal-engine.ts (APPROVE-02, locked verbatim in the ROADMAP SC).
+ *
+ * `confidence` is categorical-only and is NEVER a gate (D-06) — no numeric confidence
+ * field is added on this type, ever. The PE gate upstream (engine-side) is the only gate.
+ */
+export interface StoredBeliefProposal {
+  /** Discriminant — the belief-shaped proposal kind (Phase 68 D-01). */
+  kind: 'belief';
+  /** LOCAL store key — beliefLocalId(serverProposalId), NOT the server id (see belief-bridge.ts). */
+  id: string;
+  /** The server's 64-lowercase-hex sha256 proposal id — the only value ever interpolated into a request path. */
+  serverProposalId: string;
+  /** Verbatim from the record — never normalized, trimmed, or paraphrased (D-05). */
+  entityDescriptor: string;
+  /** Verbatim from the record (D-05). */
+  changeField: string;
+  /** Verbatim sentence, or null — never normalized (D-05). */
+  changeFrom: string | null;
+  /** Verbatim status token (D-05). */
+  changeTo: string;
+  /** Verbatim, rendered as fenced data only — never a gate (D-05/D-06). */
+  evidenceQuote: string;
+  /** Categorical only — never a numeric gate (D-06). */
+  confidence: 'high' | 'medium' | 'low';
+  /**
+   * The server record's own `created_at` (epoch ms), carried through so a later
+   * batching pass can headline the genuinely latest transition in a group instead
+   * of inferring recency from expiry order.
+   */
+  serverCreatedAtMs: number;
+  /** Client-local status tracking — mirrors the terminal/pending split used elsewhere in this client. */
+  localStatus: 'pending' | 'terminal';
+  /**
+   * Store-compatibility field — synthesized so `Date.parse(dueAt) === record.expires_at`.
+   * See the field-contract note on this interface and belief-bridge.ts's mapping.
+   */
+  dueAt: string;
+  /** Store-compatibility field — ISO 8601 UTC timestamp when this row was bridged locally. */
+  createdAt: string;
+  /**
+   * Store-compatibility field — synthesized so the two `isExpired()` conditions
+   * (`now > Date.parse(dueAt)` and `now > Date.parse(createdAt) + maxTtlMs`) coincide
+   * at the server's `expires_at`. NEVER 0 unless the record is already past expiry at
+   * bridge time (see belief-bridge.ts's explicit warning comment on this mapping).
+   */
+  maxTtlMs: number;
+}
+
+/**
+ * An immutable pending proposal stored between propose-time and decision-time.
+ * Discriminated union over `kind`: `'tool'` (MCP tool-call proposals, Phase 23) and
+ * `'belief'` (belief-shaped proposals bridged from `/v1/proposals`, Phase 68).
+ */
+export type StoredProposal = StoredToolProposal | StoredBeliefProposal;
 
 /**
  * The four actions a user can take on a pending proposal via Telegram inline keyboard (ACT-01).

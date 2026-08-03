@@ -36,7 +36,7 @@ import { encodeProposalCallbackData } from '../push-codec';
 import type { ClientConfig } from '../config';
 import type { MemoryClient, HitlEpisodeEntry } from '../memory-client';
 import type { McpConnectionFactory, McpToolDescriptor, McpToolResult } from '../mcp-client';
-import type { McpServerConfig, StoredProposal } from '../types';
+import type { McpServerConfig, StoredProposal, StoredToolProposal } from '../types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -160,9 +160,10 @@ function makeMockMemoryClient(): {
 /** Build a valid non-expired send_email proposal and persist it. */
 function makeSendEmailProposal(
   storePath: string,
-  overrides: Partial<StoredProposal> = {},
-): StoredProposal {
-  const proposal: StoredProposal = {
+  overrides: Partial<StoredToolProposal> = {},
+): StoredToolProposal {
+  const proposal: StoredToolProposal = {
+    kind: 'tool',
     id: `prop-edit-${++_counter}`,
     serverName: 'test-server',
     tool: 'send_email',
