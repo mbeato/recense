@@ -156,6 +156,23 @@ interface ClaimDecision {
   relation: JudgeRelation;
   bestCandidateId: string | null;
   episodeSessionId: string;
+  /**
+   * The episode's source-asserted event time (EMAIL-04), or `null` when the source asserts
+   * none. Consumed by the drift layer's `event_ts` staleness guard (DRIFT-04 / D-11b); `null`
+   * makes the guard abstain into pre-Phase-65 behavior rather than guess. This is NOT
+   * `episode.ts` (ingest time) — the two must never be conflated: `ts` is when recense LEARNED
+   * the episode, `event_ts` is when the source says it happened. Required (not optional) so a
+   * fill site that omits it is a compile error — do not "helpfully" make this optional.
+   */
+  episodeEventTs: number | null;
+  /**
+   * The episode's source adapter name. Consumed by the per-source force-destabilization
+   * threshold lookup (`contradictionNBySource`, D-16). Deliberately the raw source string
+   * rather than a boolean (a `gmailSourced` local already exists at the hoisted intent-field
+   * gate for that purpose) because `contradictionNBySource` is keyed by arbitrary source
+   * names. Required (not optional) so a fill site that omits it is a compile error.
+   */
+  episodeSource: string;
   /** Judge-emitted PE severity [0,1]; meaningful only for 'contradict' verdicts (D-15). */
   magnitude: number;
   /** Episode's source_inference_id — null means provenance-eligible for D-19 recording. */
@@ -813,6 +830,8 @@ export class Consolidator {
               relation: 'confirm',
               bestCandidateId: fastPathCandidate.id,
               episodeSessionId: episode.session_id,
+              episodeEventTs: episode.event_ts ?? null,
+              episodeSource: episode.source,
               magnitude: 0,
               episodeSourceInferenceId: episode.source_inference_id,
               episodeRole: episode.role,
@@ -910,6 +929,8 @@ export class Consolidator {
                 relation: 'unrelated',
                 bestCandidateId: null,
                 episodeSessionId: episode.session_id,
+                episodeEventTs: episode.event_ts ?? null,
+                episodeSource: episode.source,
                 magnitude: 0,
                 episodeSourceInferenceId: episode.source_inference_id,
                 episodeRole: episode.role,
@@ -999,6 +1020,8 @@ export class Consolidator {
             relation: verdict.relation,
             bestCandidateId,
             episodeSessionId: episode.session_id,
+            episodeEventTs: episode.event_ts ?? null,
+            episodeSource: episode.source,
             magnitude: verdict.magnitude,
             episodeSourceInferenceId: episode.source_inference_id,
             episodeRole: episode.role,
