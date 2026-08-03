@@ -1,8 +1,10 @@
 /**
  * recall-cli — on-demand latency-tolerant recall adapter (LEARN-02, D-40).
  *
- * Entry point: `recense recall "<text>"` (positional) or `--query <text>` [--db <path>]
- * (not spawned from the hot SessionStart hook path — that stays cue-less, LLM-free).
+ * Entry point: `recense recall "<text>" [--scope <slug>] [--evidence]` (positional query,
+ * or `--query <text>`) [--db <path>] (not spawned from the hot SessionStart hook path —
+ * that stays cue-less, LLM-free). `--evidence` (RECALL-04/D-07) is read-only and makes
+ * NO LLM generate call — it returns cited node ids + traversed edges instead of prose.
  *
  * Design invariants:
  *  - Acquires the O_EXCL lockfile before any DB open → single-writer preserved (D-43 append).
@@ -62,6 +64,9 @@ function resolveQuery(): string | undefined {
   }
   // Otherwise take the first positional arg, skipping the 'recall' subcommand token
   // and any flag/value pairs (--db <path>, --query <text>, --scope <slug>) and bare flags.
+  // NOTE: --evidence is a BARE flag (no value) — do NOT add it here. It is already
+  // skipped by the `a.startsWith('-')` branch below; adding it to this value-consuming
+  // list would incorrectly swallow the next positional token as its "value".
   const start = argv[2] === 'recall' ? 3 : 2;
   for (let i = start; i < argv.length; i++) {
     const a = argv[i];
@@ -88,6 +93,15 @@ function resolveScope(): string | undefined {
 }
 
 const SAFE_NULL_RESULT = JSON.stringify({ inference: null, episodeId: null, origin: 'inferred' });
+// RECALL-04/D-07: the evidence-shaped safe-null. Used at every early-exit / catch path when
+// --evidence is set, so a caller parsing stdout under --evidence always receives a result
+// shaped with the `evidence` field it is switching on — never a shape that silently omits it.
+const SAFE_NULL_EVIDENCE_RESULT = JSON.stringify({
+  inference: null,
+  episodeId: null,
+  origin: 'inferred',
+  evidence: { path: 'none', nodes: [], edges: [] },
+});
 
 async function main(): Promise<void> {
   // ── 1. Validate args BEFORE acquiring lock (WR-02: lock leak prevention) ──
@@ -96,17 +110,21 @@ async function main(): Promise<void> {
   // here — before acquireLock() — so these exits are always lock-free.
   // WR-03: every early exit writes SAFE_NULL_RESULT to stdout first so callers
   // doing JSON.parse(stdout) always receive parseable JSON, never an empty string.
+  // RECALL-04/D-07: --evidence is a bare flag, resolved here (lock-free, WR-02).
+  const IS_EVIDENCE = process.argv.includes('--evidence');
+  const safeNull = IS_EVIDENCE ? SAFE_NULL_EVIDENCE_RESULT : SAFE_NULL_RESULT;
+
   const dbPath = resolveDbPath();
   if (!dbPath) {
     log('No DB path supplied (--db <path> or RECENSE_DB env var) — exiting');
-    process.stdout.write(SAFE_NULL_RESULT);
+    process.stdout.write(safeNull);
     process.exit(0);
   }
 
   const query = resolveQuery();
   if (!query) {
     log('No --query supplied — exiting');
-    process.stdout.write(SAFE_NULL_RESULT);
+    process.stdout.write(safeNull);
     process.exit(0);
   }
 
@@ -123,11 +141,14 @@ async function main(): Promise<void> {
   // interactive recall fail intermittently whenever it collides with a watcher tick.
   // Retry briefly (bounded) so recall coexists with the watcher; only give up if the
   // lock stays held (e.g. the watcher is mid-LLM-response to a Telegram message).
+  // NOTE: the O_EXCL lock is still acquired in evidence mode even though it writes
+  // nothing — the acquire is cheap, the retry path already coexists with the watcher,
+  // and keeping one code path is safer than branching lock discipline on a flag.
   if (!(await acquireLockWithRetry())) {
     log('Lock held by another process after retries — exiting');
     // WR-03: lock-held is a normal runtime condition; always emit JSON so callers
     // can JSON.parse(stdout) without throwing on an empty string.
-    process.stdout.write(SAFE_NULL_RESULT);
+    process.stdout.write(safeNull);
     process.exit(0);
   }
 
@@ -169,15 +190,16 @@ async function main(): Promise<void> {
     );
 
     // ── 5. Run recall and emit JSON to stdout ─────────────────────────────
-    // Thread scope (undefined = no filter; string = post-resolution member filter per D-01).
-    const result = await engine.recall(query, 'recall-session', scope);
+    // Thread scope (undefined = no filter; string = post-resolution member filter per D-01)
+    // and evidence (RECALL-04/D-07: read-only, LLM-free evidence mode).
+    const result = await engine.recall(query, 'recall-session', scope, { evidence: IS_EVIDENCE });
     process.stdout.write(JSON.stringify(result));
 
     db.close();
   } catch (err) {
     log(`Recall error: ${err}`);
     // Error discipline: safe null JSON to stdout — never a raw error (would corrupt JSON)
-    process.stdout.write(SAFE_NULL_RESULT);
+    process.stdout.write(safeNull);
   } finally {
     // ── 6. Always release the lock ─────────────────────────────────────────
     releaseLock();
