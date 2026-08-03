@@ -98,6 +98,22 @@ describe('extractAnchorTokens', () => {
     expect(tokens[0]).toBe('distinctword0');
   });
 
+  it('WR-01 regression: strips sentence punctuation abutting the entity name ("vtx?" / "vtx." / "vtx,")', () => {
+    expect(extractAnchorTokens('do you remember the contract i have with vtx?')).toContain('vtx');
+    expect(extractAnchorTokens('i signed the contract with vtx.')).toContain('vtx');
+    expect(extractAnchorTokens('about vtx, what were the contract terms')).toContain('vtx');
+    // Never emits the punctuated form — the exact/Dice channels score against clean tokens.
+    expect(extractAnchorTokens('do you remember the contract i have with vtx?')).not.toContain('vtx?');
+  });
+
+  it('WR-01 regression: punctuated stopwords no longer burn MAX_ANCHOR_TOKENS slots', () => {
+    // "the," strips to "the" → STOPWORDS drops it (pre-fix it survived as "the,").
+    const tokens = extractAnchorTokens('the, contract with vtx');
+    expect(tokens).not.toContain('the,');
+    expect(tokens).not.toContain('the');
+    expect(tokens).toContain('vtx');
+  });
+
   it('drops tokens shorter than 3 chars and pure-numeric tokens', () => {
     const tokens = extractAnchorTokens('ok 42 hi vtx 12345');
     expect(tokens).not.toContain('ok');
@@ -124,6 +140,21 @@ describe('collectAnchoredFacts', () => {
       store,
       resolver,
       'do you remember anything from the contract i have with vtx',
+    );
+    expect(results.map(f => f.id)).toContain(factId);
+  });
+
+  it('WR-01 end-to-end: the F2 class resolves when the entity name abuts sentence punctuation', () => {
+    const entityId = newId();
+    store.upsertNode({ id: entityId, type: 'entity', value: 'vtx', origin: 'observed' });
+    const factId = newId();
+    store.upsertNode({ id: factId, type: 'fact', value: 'the ciiaa signed with vtx sets the contract terms', origin: 'observed' });
+    store.setEmbedding(factId, unitVec(0));
+
+    const results = collectAnchoredFacts(
+      store,
+      resolver,
+      'do you remember anything from the contract i have with vtx?',
     );
     expect(results.map(f => f.id)).toContain(factId);
   });

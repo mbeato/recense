@@ -82,9 +82,14 @@ const STOPWORDS = new Set<string>([
 
 /**
  * Extract distinctive candidate tokens from a prompt (pure, no DB): runs `normalizeValue` over
- * the prompt, splits on spaces, drops short/numeric/stopword tokens, and emits surviving
- * unigrams in prompt order followed by adjacent-surviving-pair bigrams (so a two-word entity
- * name like "world triathlon" is recoverable even though neither word alone is the anchor).
+ * the prompt, splits on spaces, strips non-alphanumeric edges per token (WR-01: normalizeValue
+ * only lowercases/collapses whitespace, so "vtx?" would otherwise miss the exact channel AND
+ * score Dice 0 against the stored "vtx" — whiffing whenever the entity name abuts sentence
+ * punctuation, i.e. most natural prompts; edge-stripping also lets punctuated stopwords like
+ * "the," hit the STOPWORDS check instead of burning a MAX_ANCHOR_TOKENS slot), drops
+ * short/numeric/stopword tokens, and emits surviving unigrams in prompt order followed by
+ * adjacent-surviving-pair bigrams (so a two-word entity name like "world triathlon" is
+ * recoverable even though neither word alone is the anchor).
  *
  * Deliberately NO capitalization heuristic: the audit's sharpest whiff ("...contract i have
  * with vtx") is entirely lowercase, so a capitalization filter would falsify the exact case
@@ -92,7 +97,9 @@ const STOPWORDS = new Set<string>([
  */
 export function extractAnchorTokens(promptText: string): string[] {
   const normalized = normalizeValue(promptText);
-  const rawTokens = normalized.split(' ').filter(t => t.length > 0);
+  const rawTokens = normalized.split(' ')
+    .map(t => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .filter(t => t.length > 0);
   const survivors = rawTokens.filter(
     t => t.length >= 3 && !/^\d+$/.test(t) && !STOPWORDS.has(t),
   );
