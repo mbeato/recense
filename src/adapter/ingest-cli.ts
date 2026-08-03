@@ -181,11 +181,25 @@ export async function runPullPhase(
     const appendBatch = db.transaction((batch: NormalizedRecord[]) => {
       for (const r of batch) {
         // recordEvent is synchronous (better-sqlite3 invariant — no await inside tx)
+        //
+        // D-02 PRIMARY shape (65-SESSION-ID-AUDIT.md VERDICT): when the adapter supplies
+        // a richer provenance_key (Gmail, per sender-domain+thread), mint the sessionId
+        // from it instead of the collapsed per-source literal. The nullish fallback
+        // preserves byte-identical behavior for every adapter that does not set the
+        // field — today that is every adapter except Gmail (DRIFT-03).
+        // When provenanceDistinctnessEnabled is false, the Gmail adapter sets
+        // provenance_key to the collapsed 'ingest:gmail' literal, which is exactly what
+        // the fallback expression would have produced — the dark switch is a pure config
+        // flip with no code-path difference.
+        // D-03 forward-only: episodes already ingested keep their historical collapsed
+        // session id; there is no retroactive migration. PendingContradiction,
+        // countDistinctProvenance, routeContradiction, and the episode schema are all
+        // byte-unchanged — the mechanism is fed differently, not modified.
         pipeline.recordEvent({
           content: r.content,
           role: r.role,
           origin: r.origin,
-          sessionId: `ingest:${r.source}`,
+          sessionId: r.provenance_key ?? `ingest:${r.source}`,
           source: r.source,
           externalId: r.external_id,
           eventTs: r.event_ts ?? null,

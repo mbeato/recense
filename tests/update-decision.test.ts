@@ -13,6 +13,7 @@ import {
   isOscillation,
   countDistinctProvenance,
 } from '../src/consolidation/update-decision';
+import { deriveGmailProvenanceKey } from '../src/source/provenance-key';
 
 // peReconcileBandLow=0.8, peReconcileBandHigh=2.0, peAppendNewMinResistance=0.3 (DEFAULT_CONFIG)
 const config = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
@@ -185,5 +186,104 @@ describe('countDistinctProvenance', () => {
       { episode_id: 'e3', session_id: 'session-c', origin: 'inferred' }, // excluded
     ];
     expect(countDistinctProvenance(entries)).toBe(2);
+  });
+
+  // -------------------------------------------------------------------------
+  // DRIFT-03 locked pair (D-07) — mechanism-level counterpart to the key-level
+  // pair in tests/provenance-key.test.ts. These two assertions ARE ROADMAP
+  // success criterion 3 for DRIFT-03. Both directions are first-class:
+  // Direction A's failure means countDistinctProvenance can never exceed 1 on
+  // Gmail-only evidence (the differentiator is mathematically unreachable).
+  // Direction B's failure means a single email forwarded three times through
+  // three different senders can force-destabilize a belief off duplicated
+  // content (research Pitfall 3's farming vector). REVIEW-BLOCKING.
+  //
+  // Keys are derived by calling the real deriveGmailProvenanceKey on the same
+  // fixtures tests/provenance-key.test.ts uses (Direction A / Direction B
+  // forward), never hand-written — a derivation regression must fail here too.
+  // Under the PRIMARY shape (65-SESSION-ID-AUDIT.md VERDICT) the derived value
+  // is what ingest-cli.ts:188 mints into session_id, so the locked pair is
+  // built directly on session_id.
+  // -------------------------------------------------------------------------
+  describe('DRIFT-03 locked pair (D-07)', () => {
+    const THRESHOLD = DEFAULT_CONFIG.provenanceMinResidualChars;
+    const ORIGINAL_STATUS_TEXT =
+      'We regret to inform you that your application was not successful at this time.';
+
+    // Direction A: three genuinely independent status emails (mirrors
+    // tests/provenance-key.test.ts's DIRECTION_A fixtures).
+    const DIRECTION_A = [
+      { fromHeader: 'recruiter@acme.com', threadId: 'thread-1', bodyText: 'We would like to schedule an interview next week.' },
+      { fromHeader: 'no-reply@bigco.example', threadId: 'thread-2', bodyText: 'Your application status has been updated to rejected.' },
+      { fromHeader: 'hiring@thirdco.test', threadId: 'thread-3', bodyText: 'Unfortunately we are moving forward with other candidates.' },
+    ];
+
+    // Direction B: three forwards of ONE underlying thread, three different
+    // forwarding senders, three different thread ids (mirrors
+    // tests/provenance-key.test.ts's DIRECTION_B_FORWARD fixtures).
+    const forwardBody = (sender: string) =>
+      `---------- Forwarded message ----------\nFrom: ${sender}\nSubject: Fwd: status\n\n${ORIGINAL_STATUS_TEXT}`;
+    const DIRECTION_B_FORWARD = [
+      { fromHeader: 'a@one.test', threadId: 'thread-b1', bodyText: forwardBody('HR <hr@acme.com>') },
+      { fromHeader: 'b@two.test', threadId: 'thread-b2', bodyText: forwardBody('HR <hr@acme.com>') },
+      { fromHeader: 'c@three.test', threadId: 'thread-b3', bodyText: forwardBody('HR <hr@acme.com>') },
+    ];
+
+    function deriveKey(f: { fromHeader: string; threadId: string; bodyText: string }): string {
+      return deriveGmailProvenanceKey({ ...f, minResidualChars: THRESHOLD });
+    }
+
+    it('Direction A: three genuinely independent status emails → countDistinctProvenance returns 3', () => {
+      const entries: PendingContradiction[] = DIRECTION_A.map((f, i) => ({
+        episode_id: `a${i}`,
+        session_id: deriveKey(f),
+        origin: 'observed',
+      }));
+      expect(countDistinctProvenance(entries)).toBe(3);
+    });
+
+    it('Direction B: three forwards of one thread, three forwarding senders → countDistinctProvenance returns 1', () => {
+      const entries: PendingContradiction[] = DIRECTION_B_FORWARD.map((f, i) => ({
+        episode_id: `b${i}`,
+        session_id: deriveKey(f),
+        origin: 'observed',
+      }));
+      expect(countDistinctProvenance(entries)).toBe(1);
+    });
+
+    it('pre-phase regression: three collapsed-key entries (dark switch off) → returns 1, exactly today\'s behavior', () => {
+      const entries: PendingContradiction[] = [
+        { episode_id: 'c1', session_id: 'ingest:gmail', origin: 'observed' },
+        { episode_id: 'c2', session_id: 'ingest:gmail', origin: 'observed' },
+        { episode_id: 'c3', session_id: 'ingest:gmail', origin: 'observed' },
+      ];
+      expect(countDistinctProvenance(entries)).toBe(1);
+    });
+
+    it('D-19 preserved: a fourth inferred entry with a fresh distinct key still returns 3', () => {
+      const entries: PendingContradiction[] = DIRECTION_A.map((f, i) => ({
+        episode_id: `a${i}`,
+        session_id: deriveKey(f),
+        origin: 'observed',
+      }));
+      entries.push({
+        episode_id: 'inferred-1',
+        session_id: 'ingest:gmail:fresh-domain.test:thread-fresh',
+        origin: 'inferred',
+      });
+      expect(countDistinctProvenance(entries)).toBe(3);
+    });
+
+    it('mixed sources: Gmail derived keys and a Claude Code UUID session id count together by set cardinality', () => {
+      const entries: PendingContradiction[] = [
+        ...DIRECTION_A.map((f, i) => ({
+          episode_id: `a${i}`,
+          session_id: deriveKey(f),
+          origin: 'observed' as const,
+        })),
+        { episode_id: 'cc1', session_id: '9f3a7b1c-2e4d-4a5f-8b6c-1d2e3f4a5b6c', origin: 'observed' as const },
+      ];
+      expect(countDistinctProvenance(entries)).toBe(4);
+    });
   });
 });
