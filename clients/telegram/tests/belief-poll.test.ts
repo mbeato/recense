@@ -286,6 +286,21 @@ describe('runBeliefBridgePass — gates, dedup, batching, cap, rollback', () => 
     expect(ledger.date).toBe('2026-08-03');
   });
 
+  it("(WR-01) an entity descriptor named 'constructor' is prompted, never suppressed by an inherited Object.prototype member", async () => {
+    const statePath = tmpPath('proto-state');
+    listBody = { items: [makeRecord(pid('proto-key-1'), { entity_descriptor: 'constructor' })] };
+    const transport = new MockTelegramTransport();
+    await runBeliefBridgePass({
+      client: makeClient(), transport, chatIds: [111],
+      storePath: tmpPath('proto-store'), statePath,
+      dailyCap: 10, log: () => {}, nowMs: Date.now(),
+    });
+    expect(transport.sent).toHaveLength(1);
+    // And the ledger recorded it as an own data property.
+    const counts = readBeliefPromptLedger(statePath).counts;
+    expect(Object.hasOwn(counts, 'constructor') ? counts['constructor'] : undefined).toBe(1);
+  });
+
   it('(checker W3) day-boundary resurface round-trip: dropped on the already-prompted day, sent on the next local day', async () => {
     const entity = 'Globex Inc';
     const storePath = tmpPath('resurface-store');

@@ -294,7 +294,16 @@ export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void>
   const groups = groupBeliefProposals(candidateRows, nowMs);
   const today = toLocalDate(new Date(nowMs));
   const ledger = readBeliefPromptLedger(statePath);
-  const ledgerCounts: Record<string, number> = ledger.date === today ? { ...ledger.counts } : {};
+  // Prototype-safe counts map (WR-01): entityDescriptor is external text, so an
+  // entity literally named 'constructor' / 'toString' / '__proto__' must hit
+  // this map as DATA, never as an inherited Object.prototype member. On a
+  // plain-object spread, `ledgerCounts['constructor']` returns the inherited
+  // function, `?? 0` never fires, and the group is dropped as "already
+  // prompted" on every pass, forever — a silent permanent HITL bypass. A
+  // null-prototype object makes such reads miss (→ undefined → ?? 0) and makes
+  // a '__proto__' write a plain own property instead of a prototype swap.
+  const ledgerCounts: Record<string, number> = Object.create(null) as Record<string, number>;
+  if (ledger.date === today) Object.assign(ledgerCounts, ledger.counts);
 
   // Drop groups whose entity already has a non-zero count in today's ledger (step 6b).
   const eligibleGroups = groups.filter(g => (ledgerCounts[g.entityDescriptor] ?? 0) === 0);
