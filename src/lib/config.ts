@@ -1031,6 +1031,16 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   // pre-phase p95, over the 2x threshold) on a 30-rep x 5-probe live-graph probe. Stays dark
   // pending either a better relevance grader (an LLM judge, D-08's --judge escape hatch) or a
   // latency optimization — not a rejection of the mechanism, a measured non-pass on this gate.
+  // Phase 69 D-08 RE-GATE 2026-08-03 (post WR-01 punctuation-strip + WR-03 skipExactChannel fix):
+  // G5 now PASSES — WR-03 dropped the unindexed exact-channel scans, cutting the latency delta
+  // from p95 458->682ms (+410ms, 2.5x) down to p95 305->422ms (+90ms, 1.27x, under the 2x/664ms
+  // threshold). G2 still FAILS — 16/51 baseline-qualifying rows regressed >0.01 relevance (mean
+  // 0.0967 -> 0.0994 on this run, same dilution pattern as the original gate: WR-01's punctuation
+  // fix changes which tokens anchor but does not change the mean-of-injected-lines proxy's
+  // structural penalty for added lower-overlap facts). Per the flip rule (G1/G2/G4 AND G5 must
+  // all pass), stays dark: G5 clearing did not change the outcome because G2 alone still blocks
+  // the flip. Re-gate artifacts: scripts/eval/results/recall-audit/69-gate-{baseline,run}.json
+  // (gitignored, not committed).
   consolSkipThreshold: 0.2,
   consolSkipThresholdAssistant: 0.5,
   unrelatedSimilarityThreshold: 0.3,
@@ -1094,6 +1104,9 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   // vacuous pass with zero real exercise of F4's title+link rendering. Per CLAUDE.md's
   // no-inflated-metrics rule, a vacuous pass is not evidence — stays dark pending an eval set
   // (or graph state) that actually surfaces a doc-type candidate to exercise this path.
+  // Phase 69 D-08 RE-GATE 2026-08-03 (post WR-01/WR-03 fixes): still vacuous — the re-run against
+  // the same 58-prompt set again surfaced 0/58 doc-type rows. No code change in this re-gate
+  // touches doc-candidate surfacing, so this was expected. Stays dark; unchanged status.
   ambientHopInjectionEnabled: true,   // Phase 69 D-08 gate 2026-08-03: ENABLED — literal flipped per the gate annotation below (CR-01)
   // Phase 69 D-08 gate 2026-08-03: enabled — G1/G2/G3/G4 all pass (G1 4/4 contract-class, G2
   // 0/53 regressions — hop lines are structurally additive/enrichment-only per D-06 and never
