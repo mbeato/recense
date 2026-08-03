@@ -1077,6 +1077,10 @@ export interface SettingsFile {
       | 'corpusGen'
       | 'corpusGenMax'
       | 'schemaInductionEnabled'
+      // Phase 66 EMIT-01 dark knob — the documented enable path is
+      // `overrides.actionProposalSinkEnabled: true` in settings.json (recense doctor's
+      // detail text), so it must be part of the typed key set (WR-04, phase 66 review).
+      | 'actionProposalSinkEnabled'
     >
   > & {
     /** Applied by `recense config apply` → scheduler reinstall; NOT read at sleep-pass runtime (D-07). */

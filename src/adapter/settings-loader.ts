@@ -145,7 +145,11 @@ export function loadMergedConfig(
 /**
  * Type guard for the SettingsFile shape.
  * Accepts any object with a string preset field and an overrides object.
- * Deliberately lenient — unknown keys in overrides are silently ignored by the spread.
+ * Deliberately lenient — but note: unknown keys in overrides are NOT ignored. They are
+ * copied by sanitizeCoreGuardrail and spread into the merged EngineConfig, i.e. they PASS
+ * THROUGH (WR-04, phase 66 review — the previous claim here was false). Any knob that is
+ * documented as settable via settings.json must therefore be added to the typed
+ * SettingsFile['overrides'] Pick in config.ts, never left to this passthrough.
  */
 function isSettingsFileShape(v: unknown): v is SettingsFile {
   if (typeof v !== 'object' || v === null) return false;

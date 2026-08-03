@@ -13,7 +13,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { describe, it, expect, afterEach } from 'vitest';
 import { PRESET_CONFIGS, DEFAULT_CONFIG } from '../src/lib/config';
-import type { PresetName } from '../src/lib/config';
+import type { PresetName, SettingsFile } from '../src/lib/config';
 import {
   defaultSettingsPath,
   loadSettingsFile,
@@ -212,6 +212,21 @@ describe('loadMergedConfig — D-05 precedence (env > file > preset > DEFAULT_CO
     // Should fall back to standard defaults — schemaInductionEnabled=true (standard), corpusGen=false
     expect(cfg.schemaInductionEnabled).toBe(true); // standard
     expect(cfg.corpusGen).toBe(false); // standard
+  });
+
+  it('WR-04: overrides.actionProposalSinkEnabled=true type-checks as SettingsFile and flows into the merged config (the documented enable path)', () => {
+    ensureTmpDir();
+    // Typed literal, NOT a cast — this is the compile-time half of WR-04: recense doctor
+    // documents `overrides.actionProposalSinkEnabled: true` as the enable path, so a typed
+    // writer of settings.json must be able to express it without escaping the type system.
+    const settings: SettingsFile = {
+      preset: 'standard',
+      overrides: { actionProposalSinkEnabled: true },
+    };
+    writeSettingsFile(settings, TMP_SETTINGS);
+    expect(DEFAULT_CONFIG.actionProposalSinkEnabled).toBe(false); // dark by default (EMIT-01)
+    const cfg = loadMergedConfig(TEST_DB, {}, TMP_SETTINGS);
+    expect(cfg.actionProposalSinkEnabled).toBe(true);
   });
 });
 
