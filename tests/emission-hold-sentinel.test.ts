@@ -1,14 +1,17 @@
 /**
- * D-13 sentinel — `contradict_hold` is unreachable from the emission seam (Phase 65, Plan 65-09).
+ * D-13 sentinel — `contradict_hold` is unreachable from the emission seam (Phase 65, Plan 65-09;
+ * extended to the real `SQLiteActionProposalSink` in Phase 66, Plan 66-04).
  *
- * REVIEW-BLOCKING: this file establishes D-13 — "only decisive outcomes may ever feed an
- * emission point" — structurally, BEFORE Phase 66's `ActionProposalSink` exists, so Phase 66
- * inherits a guarded seam rather than creating one. Read this header before wiring any
- * proposal sink into the consolidator's contradict branches.
+ * DISCHARGED (Phase 66, Plan 66-04): this file's header used to carry a review-blocking promise
+ * that Phase 66 MUST gate its `ActionProposalSink` on the exported `isEmissionEligible`
+ * predicate AND extend THIS file's behavioral sentinel to the real sink rather than writing a
+ * parallel one. Both are now done: `src/consolidation/consolidator.ts`'s `maybeEmitProposal`
+ * imports `isEmissionEligible` and never re-derives the eligible set (see
+ * `tests/action-proposal-emission.test.ts` for the dedicated behavioral suite against the real
+ * sink), and `makeConsolidatorWithRealSink` below now also wires a real `SQLiteActionProposalSink`
+ * over a real `ActionProposalStore` on the harness's own in-memory DB, so Half A's assertions run
+ * against the actual production sink class, not a mock.
  *
- *  - Phase 66 MUST gate its `ActionProposalSink` on the exported `isEmissionEligible`
- *    predicate (`src/consolidation/status-drift.ts`) and MUST extend THIS file's behavioral
- *    sentinel to the real sink rather than writing a parallel one.
  *  - Research Pitfall 7's reasoning, restated: a hold is explicitly "not enough evidence yet";
  *    surfacing it as a proposal is the low-value noise that trains an approver to stop
  *    reading, and approval fatigue is the milestone's documented UX failure mode.
@@ -21,7 +24,8 @@
  *    synthetic list. A firing counterexample (three distinct-provenance contradictions
  *    crossing the force-destabilization threshold) proves the negative assertions are not
  *    vacuous — a harness that silently never reaches the contradict branch would pass the
- *    negative assertion trivially.
+ *    negative assertion trivially. Both cases now carry the parallel `action_proposal` assertion
+ *    (zero rows for the hold case, exactly one for the counterexample) against the real sink.
  *  - Half B (structural): a comment-stripped source scan of the two hold sub-branches in
  *    `consolidator.ts` (the primary `applyDecision` hold arm and the secondary
  *    `applySecondaryContradiction` hold arm) for any emission-shaped identifier, proven
@@ -37,6 +41,19 @@
  * stripping the whole source first would destroy the very anchor text used to locate the
  * blocks, so the order is find-block-in-real-source, then strip-comments-within-block, then
  * match — not the naive "strip everything, then search" reading of the plan's action text.
+ *
+ * Half B primary-anchor narrowing (Phase 66, Plan 66-04): the primary anchor moved from
+ * `// action === 'hold'` to `// Hold only (distinctCount < contradictionN)`. The outer
+ * `// action === 'hold'` block was never actually the invariant D-13 protects — it merely
+ * happened to contain nothing emission-shaped before this phase existed. That outer else-block
+ * ALSO lexically contains the two legitimate `contradict_force_destabilize` emit sites Phase 66
+ * gates via `maybeEmitProposal` (sites 8/9 in `66-04-PLAN.md`'s emission site map). Adding
+ * `'maybeEmitProposal'` to `FORBIDDEN_EMISSION_IDENTIFIERS` against that wide block would fail
+ * the sentinel on correct code. The hold-ONLY sub-branch (the inner `else` under the
+ * distinctCount/threshold check) is what D-13 actually protects, so the anchor now targets that
+ * inner block specifically — proven correct by the over-narrowing guard test below (the
+ * extracted block contains `'contradict_hold'` and excludes `'contradict_force_destabilize'`)
+ * and by a planted `maybeEmitProposal` offender shaped like that same sub-branch.
  *
  * Harness precedents reused (not reinvented): `tests/consolidation-intent.test.ts`'s harness
  * shape, `tests/status-drift-wiring.test.ts`'s `MarkerProvider` content-keyed provider and
@@ -67,6 +84,8 @@ import { EventStore } from '../src/db/event-store';
 import { newId } from '../src/lib/hash';
 import type { NodeRow } from '../src/lib/types';
 import { isEmissionEligible, EMISSION_ELIGIBLE_EVENT_TYPES } from '../src/consolidation/status-drift';
+import { SQLiteActionProposalSink, type ActionProposalSink } from '../src/consolidation/action-proposal-sink';
+import { ActionProposalStore } from '../src/db/action-proposal-store';
 
 const CONSOLIDATOR_PATH = resolve(__dirname, '..', 'src', 'consolidation', 'consolidator.ts');
 
@@ -136,19 +155,37 @@ function makeNoOpSchemaInducer(h: Harness): SchemaInducer {
 
 /** Wired with a REAL SQLiteConsolidationSink so consolidation_event rows actually land in the
  * DB — required here because this file reads that table directly (mirrors
- * tests/status-drift-wiring.test.ts's makeConsolidatorWithRealSink). */
+ * tests/status-drift-wiring.test.ts's makeConsolidatorWithRealSink).
+ *
+ * Phase 66 (Plan 66-04) extension: ALSO wires a real SQLiteActionProposalSink over a real
+ * ActionProposalStore on the same in-memory DB, so this file's assertions run against the
+ * actual production sink class — discharging this file's header promise (see file header). */
 function makeConsolidatorWithRealSink(h: Harness, provider: ModelProvider): Consolidator {
   const sink: ConsolidationSink = new SQLiteConsolidationSink(new EventStore(h.db), h.clock);
+  const proposalSink: ActionProposalSink = new SQLiteActionProposalSink(
+    new ActionProposalStore(h.db, h.clock), h.clock,
+  );
   return new Consolidator(
     h.db, h.episodes, h.store, h.strength, h.retriever,
     provider, makeNoOpSchemaInducer(h), h.config, h.clock,
-    sink,
+    sink, () => {}, undefined, undefined, undefined, undefined,
+    proposalSink,
   );
 }
 
 function seedNode(h: Harness, value: string, opts: { s?: number; c?: number } = {}): string {
   const id = newId();
   h.store.upsertNode({ id, type: 'fact', value, origin: 'observed', s: opts.s, c: opts.c });
+  h.store.setEmbedding(id, constVec(h.config.embeddingDimensions));
+  return id;
+}
+
+/** Seed a resolvable entity node (type='entity') — Phase 66 extension: lets a claim's
+ * `intent_entity` descriptor resolve to a real node id via the exact channel, so the parallel
+ * `action_proposal` assertions below have a real `entity_node_id` to query by. */
+function seedEntity(h: Harness, value: string): string {
+  const id = newId();
+  h.store.upsertNode({ id, type: 'entity', value, origin: 'observed' });
   h.store.setEmbedding(id, constVec(h.config.embeddingDimensions));
   return id;
 }
@@ -172,6 +209,14 @@ function consolidationEventRowsForCandidate(h: Harness, candidateId: string): Ar
   return h.db
     .prepare('SELECT event_type FROM consolidation_event WHERE node_id = ? OR candidate_id = ?')
     .all(candidateId, candidateId) as Array<{ event_type: string }>;
+}
+
+/** All action_proposal rows resolved against a given entity node id (Phase 66 extension) —
+ * reads the real table directly, mirroring consolidationEventRowsForCandidate's convention. */
+function actionProposalRowsForEntity(h: Harness, entityNodeId: string): Array<{ change_to: string }> {
+  return h.db
+    .prepare('SELECT * FROM action_proposal WHERE entity_node_id = ?')
+    .all(entityNodeId) as Array<{ change_to: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +277,10 @@ describe('D-13 sentinel — contradict_hold is unreachable from the emission sea
 
   it('a single ambiguous low-confidence gmail contradiction produces zero emission-eligible rows, and the belief does not move', async () => {
     const anchorId = seedNode(h, 'anchor placeholder node');
+    // Phase 66 extension: seed a resolvable entity so the all-or-nothing intent/resolution
+    // fields are ALL present — the zero-rows assertion below is then non-vacuous specifically
+    // against the isEmissionEligible gate, not merely because resolution happened to abstain.
+    seedEntity(h, 'Acme Corp');
     const BELIEF_VALUE = 'Acme Corp application status: submitted, awaiting review';
     const MINT_MARKER = '[EP-SENTINEL-MINT]';
     const CONFIRM_MARKER_1 = '[EP-SENTINEL-CONFIRM-1]';
@@ -302,10 +351,19 @@ describe('D-13 sentinel — contradict_hold is unreachable from the emission sea
     const rows = consolidationEventRowsForCandidate(h, nodeId);
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.filter((r) => isEmissionEligible(r.event_type as Parameters<typeof isEmissionEligible>[0]))).toEqual([]);
+
+    // Phase 66 extension: the real ActionProposalSink also wrote zero rows for this entity —
+    // a hold never emits, even with all four intent/resolution fields present.
+    const acmeEntityId = (h.db.prepare("SELECT id FROM node WHERE type = 'entity' AND value = ?").get('Acme Corp') as { id: string }).id;
+    expect(actionProposalRowsForEntity(h, acmeEntityId)).toEqual([]);
   });
 
   it('counterexample: three distinct-provenance high-confidence contradictions cross the force-destabilization threshold and DO produce an emission-eligible row', async () => {
     const anchorId = seedNode(h, 'anchor placeholder node (counterexample)');
+    // Phase 66 extension: seed a resolvable entity so the decisive force-destabilize outcome
+    // below carries a full intent + resolved-entity field set and actually emits a proposal —
+    // keeping the "exactly one action_proposal row" assertion non-vacuous under the real sink.
+    const globexEntityId = seedEntity(h, 'Globex Corp');
     const BELIEF_VALUE = 'Globex Corp application status: submitted, awaiting review';
     const CONTRADICT_VALUE = 'Globex Corp application status: rejected';
     const MINT_MARKER = '[EP-COUNTEREXAMPLE-MINT]';
@@ -358,6 +416,11 @@ describe('D-13 sentinel — contradict_hold is unreachable from the emission sea
     const emissionEligibleRows = rows.filter((r) => isEmissionEligible(r.event_type as Parameters<typeof isEmissionEligible>[0]));
     expect(emissionEligibleRows.length).toBeGreaterThan(0);
     expect(emissionEligibleRows.some((r) => r.event_type === 'contradict_force_destabilize')).toBe(true);
+
+    // Phase 66 extension: the real ActionProposalSink wrote exactly one row for this entity —
+    // keeping the negative assertion above non-vacuous under the real sink, not just under the
+    // consolidation_event predicate scan.
+    expect(actionProposalRowsForEntity(h, globexEntityId)).toHaveLength(1);
   });
 
   it('secondary hold: a verdict listing a second contradicted id that routes to hold likewise produces zero emission-eligible rows for the secondary node', async () => {
@@ -430,14 +493,19 @@ const FORBIDDEN_EMISSION_IDENTIFIERS: readonly string[] = [
   'ActionProposalSink',
   'onDecisive',
   'proposals.',
+  // Phase 66 (Plan 66-04): the real gated helper. Added TOGETHER with the primary-anchor
+  // narrowing below — adding it against the OLD wide anchor would false-fail on the two
+  // legitimate contradict_force_destabilize sites the primary anchor used to also cover.
+  'maybeEmitProposal',
 ];
 
 /**
  * Locate the two hold sub-branches by their stable textual anchors in the UNSTRIPPED source
- * (the primary `applyDecision` hold arm's `// action === 'hold'` comment, and the secondary
- * `applySecondaryContradiction` hold arm's `hold — apply the same D-19...` comment), extract
- * each arm's enclosing balanced `{...}` block, strip comments from JUST that block, and report
- * any occurrence of a forbidden emission-shaped identifier inside it.
+ * (the primary `applyDecision` hold arm's `// Hold only (distinctCount < contradictionN)`
+ * comment — narrowed in Phase 66, Plan 66-04, see file header — and the secondary
+ * `applySecondaryContradiction` hold arm's `hold — apply the same D-19...` comment, unchanged),
+ * extract each arm's enclosing balanced `{...}` block, strip comments from JUST that block, and
+ * report any occurrence of a forbidden emission-shaped identifier inside it.
  *
  * An anchor that is not found is silently skipped (not thrown) so this function stays usable
  * against synthetic partial fixtures in the non-vacuousness tests below; the real-source test
@@ -461,7 +529,9 @@ export function findEmissionCallsInHoldBranches(source: string): string[] {
     }
   }
 
-  scanAnchor("// action === 'hold'", 'primary hold branch (applyDecision)');
+  // Phase 66 (Plan 66-04): narrowed from `// action === 'hold'` to the hold-ONLY sub-branch —
+  // see file header for why the wider anchor cannot coexist with 'maybeEmitProposal' above.
+  scanAnchor("// Hold only (distinctCount < contradictionN)", 'primary hold branch (applyDecision)');
   scanAnchor(
     'hold — apply the same D-19 provenance-eligibility gate as the primary',
     'secondary hold branch (applySecondaryContradiction)',
@@ -475,9 +545,24 @@ describe('D-13 sentinel — contradict_hold is unreachable from the emission sea
     const source = readFileSync(CONSOLIDATOR_PATH, 'utf8');
     // Sanity: both anchors must actually be present in the live source, or the scan below
     // would silently be vacuous (a missing anchor is skipped, not thrown, by design above).
-    expect(source).toContain("// action === 'hold'");
+    expect(source).toContain("// Hold only (distinctCount < contradictionN)");
     expect(source).toContain('hold — apply the same D-19 provenance-eligibility gate as the primary');
     expect(findEmissionCallsInHoldBranches(source)).toEqual([]);
+  });
+
+  it('over-narrowing guard: the narrowed primary anchor extracts the hold-ONLY sub-branch, excluding the legitimate force-destabilize sites (Phase 66)', () => {
+    const source = readFileSync(CONSOLIDATOR_PATH, 'utf8');
+    const anchorText = "// Hold only (distinctCount < contradictionN)";
+    const anchorIdx = source.indexOf(anchorText);
+    expect(anchorIdx).toBeGreaterThan(-1);
+    const openBrace = source.lastIndexOf('{', anchorIdx);
+    expect(openBrace).toBeGreaterThan(-1);
+    const block = extractBalancedBlockFromBrace(source, openBrace);
+    // The narrowed block covers site 10 (contradict_hold) only — not the outer else-block
+    // that also lexically contains sites 8/9 (contradict_force_destabilize). Without this
+    // guard, a future anchor typo could silently select a two-line block and pass trivially.
+    expect(block).toContain('contradict_hold');
+    expect(block).not.toContain('contradict_force_destabilize');
   });
 
   it('non-vacuousness: a planted proposalSink.emit call inside a synthetic hold-branch-shaped block is flagged', () => {
@@ -487,7 +572,7 @@ describe('D-13 sentinel — contradict_hold is unreachable from the emission sea
           if (foo) {
             doSomething();
           } else {
-            // action === 'hold'
+            // Hold only (distinctCount < contradictionN)
             if (eligible) {
               proposalSink.emit(payload);
             }
@@ -506,7 +591,7 @@ describe('D-13 sentinel — contradict_hold is unreachable from the emission sea
           if (foo) {
             doSomething();
           } else {
-            // action === 'hold'
+            // Hold only (distinctCount < contradictionN)
             // Note: Phase 66 must never call proposalSink.emit(...) from this branch.
             if (eligible) {
               recordContradictionOnly();
@@ -519,5 +604,23 @@ describe('D-13 sentinel — contradict_hold is unreachable from the emission sea
     // would falsely flag this block -- this test proves the stripping step is doing real work,
     // not just declared in the header.
     expect(findEmissionCallsInHoldBranches(synthetic)).toEqual([]);
+  });
+
+  it('non-vacuousness: a planted this.maybeEmitProposal(...) call inside a synthetic hold-ONLY-shaped block is flagged (Phase 66)', () => {
+    const synthetic = `
+      class FakeConsolidator {
+        applyDecision() {
+          if (distinctCount >= threshold) {
+            forceDestabilize();
+          } else {
+            // Hold only (distinctCount < contradictionN)
+            this.sink.emit({ event_type: 'contradict_hold' });
+            this.maybeEmitProposal('contradict_hold', decision, episodeId, episodeContent, beliefNodeId, null);
+          }
+        }
+      }
+    `;
+    const offenders = findEmissionCallsInHoldBranches(synthetic);
+    expect(offenders.length).toBeGreaterThan(0);
   });
 });

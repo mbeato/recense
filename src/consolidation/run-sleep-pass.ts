@@ -45,6 +45,8 @@ import { generateCorpusDocs } from '../consolidation/corpus-generator';
 import { EventStore } from '../db/event-store';
 import { SQLiteConsolidationSink } from '../consolidation/sink';
 import type { ConsolidationEventType } from '../consolidation/sink';
+import { SQLiteActionProposalSink, NoopActionProposalSink, type ActionProposalSink } from '../consolidation/action-proposal-sink';
+import { ActionProposalStore } from '../db/action-proposal-store';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 import { newId } from '../lib/hash';
 import { cwdToScope, resolveNodeScope, GLOBAL_SCOPE } from '../lib/scope';
@@ -534,6 +536,12 @@ export async function runConsolidation(
   // Wired here so the live hourly pass appends events to consolidation_event.
   const eventStore = new EventStore(db);
   const sink = new SQLiteConsolidationSink(eventStore, realClock);
+  // EMIT-01/D-04 (Phase 66): the knob below is "a consumer is configured" — with it off, the
+  // live pass gets the same Noop the Consolidator constructor defaults to, so no
+  // action_proposal row is ever written (two independent barriers, T-66-12).
+  const proposalSink: ActionProposalSink = config.actionProposalSinkEnabled
+    ? new SQLiteActionProposalSink(new ActionProposalStore(db, realClock), realClock)
+    : new NoopActionProposalSink();
 
   const inducer = new SchemaInducer(
     // schema-naming routes to the judge provider (reasoning-ish, low volume)
@@ -599,6 +607,7 @@ export async function runConsolidation(
     corpusPromoter,
     insightReflector,
     docGraphDeriver,  // D-11/D-20 (Phase 39.2): sole doc-edge owner, runs after promote()
+    proposalSink,     // EMIT-01 (Phase 66): Noop unless the knob above is on
   );
 
   // ── 5. Run the sleep pass ──────────────────────────────────────────────────

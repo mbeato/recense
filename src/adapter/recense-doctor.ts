@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * recense doctor — 9-dimension install health audit (INSTALL-04; dimensions 7-8 added
- * in Phase 45; dimension 9 added in Phase 62).
+ * recense doctor — 10-dimension install health audit (INSTALL-04; dimensions 7-8 added
+ * in Phase 45; dimension 9 added in Phase 62; dimension 10 added in Phase 66).
  *
- * Checks nine fixed dimensions and prints a human-readable pass/fail per
+ * Checks ten fixed dimensions and prints a human-readable pass/fail per
  * dimension. Exits non-zero if any dimension fails. `--json` is deferred
  * to INSTALL-07.
  *
- * Dimensions (INSTALL-04; 8 from Phase 45; 9 from Phase 62):
+ * Dimensions (INSTALL-04; 8 from Phase 45; 9 from Phase 62; 10 from Phase 66):
  *   1. DB reachability + schema version
  *   2. API key validity via live calls (Anthropic + OpenAI)
  *   3. Scheduler registered + running
@@ -17,6 +17,7 @@
  *   7. Billing posture (subscription + ANTHROPIC_API_KEY in settings.json = footgun; D-12)
  *   8. claude CLI present + logged in via non-billed auth probe (D-13)
  *   9. Gmail accounts — per-account refresh-token presence + backfill-only query scoping (EMAIL-02)
+ *  10. Proposal sink — actionProposalSinkEnabled posture + pending action_proposal count (T-66-05)
  *
  * Design invariants:
  *  - DB opened readonly only — never writes the graph (T-09-10).
@@ -34,6 +35,8 @@
  *  - T-45-05: checkBillingPosture never writes settings.json (detect + warn only).
  *  - T-45-06: checkClaudeCli uses `claude auth status --json` (non-billed); never the inference flag.
  *  - T-62-04: checkGmailAccounts reports token/query PRESENCE only; never emits a token value or a query string.
+ *  - T-66-05: checkProposalSink's detail reports posture (enabled/disabled) and a pending count
+ *    only — never a proposal id, entity descriptor, change value, or evidence quote.
  */
 
 import Database from 'better-sqlite3';
@@ -46,6 +49,7 @@ import { DEFAULT_CONFIG } from '../lib/config';
 import { resolveExistingEnv } from './recense-init';
 import { loadConfiguredEnv, resolveDbPath, resolveEnabledSources, resolveGoogleAccounts, sleepEnvPath } from './runtime-config';
 import { settingsHasAnthropicKey } from './claude-settings-detector';
+import { loadMergedConfig } from './settings-loader';
 
 // ── Check result type ─────────────────────────────────────────────────────────
 
@@ -398,6 +402,56 @@ export function checkGmailAccounts(envPath: string = sleepEnvPath()): CheckResul
   return anyFail ? fail(detail) : pass(detail);
 }
 
+// ── Dimension 10: Proposal sink — actionProposalSinkEnabled posture + pending count (Phase 66) ──
+
+/**
+ * Report the domain-neutral proposal sink's posture (EMIT-01, D-04) and, when enabled, the
+ * pending `action_proposal` row count.
+ *
+ * A dark knob being OFF is a posture, not a fault — this dimension must never `fail` on it
+ * (mirrors checkGmailAccounts' "not enabled" pass convention above). When ON, a missing table
+ * or unreadable DB degrades to a pass with an "unavailable" detail rather than throwing —
+ * checkDb already owns DB-reachability failure, and two dimensions failing for one cause is
+ * noise.
+ *
+ * T-66-05: the detail string reports posture and a count only — never a proposal id, entity
+ * descriptor, change value, or evidence quote.
+ *
+ * @param dbPath - the resolved RECENSE_DB path (mirrors checkDb's convention).
+ * @param envPath - override sleep.env path for testing (mirrors checkServeToken convention).
+ * @param settingsPath - override ~/.claude/settings.json path for testing (mirrors
+ *   checkBillingPosture convention); undefined defers to loadMergedConfig's own default.
+ * @exported — used by tests with temp env/settings files and temp DBs.
+ */
+export function checkProposalSink(
+  dbPath: string,
+  envPath: string = sleepEnvPath(),
+  settingsPath?: string,
+): CheckResult {
+  const env = loadConfiguredEnv(envPath);
+  const config = settingsPath !== undefined
+    ? loadMergedConfig(dbPath, env, settingsPath)
+    : loadMergedConfig(dbPath, env);
+
+  if (!config.actionProposalSinkEnabled) {
+    return pass(
+      'proposal sink disabled (actionProposalSinkEnabled=false) — no action_proposal rows ' +
+      'written; set overrides.actionProposalSinkEnabled: true in settings.json to enable',
+    );
+  }
+
+  try {
+    const db = new Database(dbPath, { readonly: true });
+    const row = db
+      .prepare("SELECT COUNT(*) AS n FROM action_proposal WHERE status = 'pending'")
+      .get() as { n: number } | undefined;
+    db.close();
+    return pass(`proposal sink enabled; ${row?.n ?? 0} pending proposal(s)`);
+  } catch {
+    return pass('proposal sink enabled; proposal count unavailable');
+  }
+}
+
 // ── Dimension 7: Billing posture (D-12) ──────────────────────────────────────
 
 /**
@@ -542,6 +596,7 @@ async function runDoctor(): Promise<void> {
     { name: 'Gmail accounts', result: checkGmailAccounts()    },
     { name: 'Billing',     result: checkBillingPosture()      },
     { name: 'claude CLI',  result: checkClaudeCli()           },
+    { name: 'Proposal sink', result: checkProposalSink(dbPath) },
   ];
 
   process.stdout.write('recense doctor:\n');
