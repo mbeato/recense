@@ -53,13 +53,13 @@
 
 > recense emits `{entity, proposed_change, evidence_episode, confidence}` and stops. Research established the shape (flat semantic `{field, from, to}` triple in recense's own vocabulary — **not** JSON Patch, which presupposes consumer-schema knowledge recense is forbidden to have) and the seam pattern (`ActionProposalSink`, Noop default, mirroring `ConsolidationSink` + the `surfaced_event`/`SurfaceStore`/`/v1/surface` precedent).
 
-- [ ] **EMIT-01**: Proposals are emitted through an `ActionProposalSink` with a **Noop default**, so an install with no consumer configured pays zero cost.
-- [ ] **EMIT-02**: A proposal is a flat, domain-neutral record — `{entity: {node_id, descriptor}, proposed_change: {field, from, to}, evidence_episode, confidence}` in recense's own vocabulary — containing **no consumer-specific fields**. recense never writes a consumer's database.
-- [ ] **EMIT-03**: A consumer can read pending proposals and record an outcome over the existing authenticated `recense serve` surface (`GET /v1/proposals`, `POST /v1/proposals/:id/approve|reject`), mirroring the shipped `/v1/surface` + `/v1/surface/seen` pattern.
-- [ ] **EMIT-04**: Proposal ids are deterministic, so a replayed, retried, or double-delivered proposal cannot be applied twice by a consumer.
-- [ ] **EMIT-05**: Approving or rejecting a proposal writes **only** proposal status — never `node.s` or `node.c` — proven by a named "D-43-for-proposals" sentinel test. A rejection marks the proposal rejected and leaves recense's belief untouched, to be corrected by ordinary reconsolidation when better evidence arrives (founder decision 2026-07-29). This is the milestone's largest new correctness risk: the codebase has shipped this exact self-confirmation defect class twice (a pre-launch critical finding, then v9.0's live C-2).
-- [ ] **EMIT-06**: A proposal carries its **raw quoted evidence verbatim** alongside the structured change, so an approver never decides based on model prose alone. Email content is attacker-controlled and the belief-shaped payload is free text, so hidden instructions could otherwise make an approval message lie without touching any validated field.
-- [ ] **EMIT-07**: A stale or superseded proposal is detected and refused before it applies.
+- [x] **EMIT-01**: Proposals are emitted through an `ActionProposalSink` with a **Noop default**, so an install with no consumer configured pays zero cost.
+- [x] **EMIT-02**: A proposal is a flat, domain-neutral record — `{entity: {node_id, descriptor}, proposed_change: {field, from, to}, evidence_episode, confidence}` in recense's own vocabulary — containing **no consumer-specific fields**. recense never writes a consumer's database.
+- [x] **EMIT-03**: A consumer can read pending proposals and record an outcome over the existing authenticated `recense serve` surface (`GET /v1/proposals`, `POST /v1/proposals/:id/approve|reject`), mirroring the shipped `/v1/surface` + `/v1/surface/seen` pattern.
+- [x] **EMIT-04**: Proposal ids are deterministic, so a replayed, retried, or double-delivered proposal cannot be applied twice by a consumer.
+- [x] **EMIT-05**: Approving or rejecting a proposal writes **only** proposal status — never `node.s` or `node.c` — proven by a named "D-43-for-proposals" sentinel test. A rejection marks the proposal rejected and leaves recense's belief untouched, to be corrected by ordinary reconsolidation when better evidence arrives (founder decision 2026-07-29). This is the milestone's largest new correctness risk: the codebase has shipped this exact self-confirmation defect class twice (a pre-launch critical finding, then v9.0's live C-2).
+- [x] **EMIT-06**: A proposal carries its **raw quoted evidence verbatim** alongside the structured change, so an approver never decides based on model prose alone. Email content is attacker-controlled and the belief-shaped payload is free text, so hidden instructions could otherwise make an approval message lie without touching any validated field.
+- [x] **EMIT-07**: A stale or superseded proposal is detected and refused before it applies.
 
 ### CONSUME — Reference consumer adapter
 
@@ -124,13 +124,13 @@
 | DRIFT-03 | 65 | Complete |
 | DRIFT-04 | 65 | Complete |
 | DRIFT-05 | 65 | Complete |
-| EMIT-01 | 66 | Pending |
-| EMIT-02 | 66 | Pending |
-| EMIT-03 | 66 | Pending |
-| EMIT-04 | 66 | Pending |
-| EMIT-05 | 66 | Pending |
-| EMIT-06 | 66 | Pending |
-| EMIT-07 | 66 | Pending |
+| EMIT-01 | 66 | Complete |
+| EMIT-02 | 66 | Complete |
+| EMIT-03 | 66 | Complete |
+| EMIT-04 | 66 | Complete |
+| EMIT-05 | 66 | Complete |
+| EMIT-06 | 66 | Complete |
+| EMIT-07 | 66 | Complete |
 | CONSUME-01 | 67 | Pending |
 | CONSUME-02 | 67 | Pending |
 | CONSUME-03 | 67 | Pending |
