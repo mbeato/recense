@@ -199,6 +199,24 @@ describe('collectAnchoredFacts', () => {
     expect(hit?.via).toBe('name-fts');
   });
 
+  it('WR-02 regression: an entity→entity relation neighbour is skipped, never returned as a "fact"', () => {
+    const entityId = newId();
+    store.upsertNode({ id: entityId, type: 'entity', value: 'zenphora', origin: 'observed' });
+    // Entity→entity edge (the built_by/works_at shape) at the HIGHEST weight — pre-fix this
+    // bare name would win a slot and flow into anchoredIds.
+    const personId = newId();
+    store.upsertNode({ id: personId, type: 'entity', value: 'someone name', origin: 'observed' });
+    store.upsertEdge({ src: entityId, dst: personId, rel: 'built_by', w: 1.0, kind: 'relation' });
+    // A real fact behind it at lower weight — must still take the slot.
+    const factId = newId();
+    store.upsertNode({ id: factId, type: 'fact', value: 'zenphora ships the widget line', origin: 'observed' });
+    store.upsertEdge({ src: entityId, dst: factId, rel: 'part_of', w: 0.5, kind: 'relation' });
+
+    const results = collectAnchoredFacts(store, resolver, 'tell me about zenphora');
+    expect(results.find(f => f.id === personId)).toBeUndefined();
+    expect(results.find(f => f.id === factId && f.via === 'edge')).toBeDefined();
+  });
+
   it('a tombstoned fact is never returned', () => {
     const entityId = newId();
     store.upsertNode({ id: entityId, type: 'entity', value: 'acme', origin: 'observed' });

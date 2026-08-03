@@ -146,8 +146,10 @@ export interface AnchoredFact {
  * 3. Per accepted entity, EDGE channel: read the entity's edges, keep the real semantic
  *    association edges (`kind === 'relation' && PRED_SET.has(rel)`, the same filter
  *    `buildHonestOneHopTrace` uses), sort by weight desc / neighbour-id-asc tiebreak, and take
- *    live (non-tombstoned) neighbours up to ANCHOR_FACTS_PER_ENTITY. Liveness is checked BEFORE
- *    a slot is consumed, mirroring the honest-trace discipline.
+ *    live (non-tombstoned), NON-ENTITY neighbours up to ANCHOR_FACTS_PER_ENTITY (WR-02:
+ *    entity→entity relation edges exist; a neighbouring entity's value is just a name — the
+ *    wasted token this module's contract rules out). Liveness and the entity skip are checked
+ *    BEFORE a slot is consumed, mirroring the honest-trace discipline.
  * 4. Per accepted entity, NAME channel: call `generateCandidates({ text: entityValue,
  *    nodeType: 'fact' })` — again no embedding argument — to reach facts that MENTION the entity
  *    without carrying an edge to it (the audit's contract facts). Keep positive-score
@@ -208,6 +210,11 @@ export function collectAnchoredFacts(
       if (seenFactIds.has(neighbourId)) continue;
       const node = store.getNode(neighbourId);
       if (!node || node.tombstoned === 1) continue; // liveness before the slot
+      // WR-02: entity→entity relation edges exist (built_by, works_at, ...) — a neighbouring
+      // ENTITY node's value is just a name, exactly the wasted injected token this module's
+      // own contract rules out ("never returns the entity nodes themselves", above). Skip it
+      // BEFORE the slot is consumed so a real fact behind it can still take the slot.
+      if (node.type === 'entity') continue;
       seenFactIds.add(neighbourId);
       facts.push({ id: neighbourId, value: node.value, entityId: entity.id, entityValue: entity.value, via: 'edge' });
       edgeTaken++;
