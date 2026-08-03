@@ -757,9 +757,10 @@ export interface EngineConfig {
    * Phase 69 RECALL-03 (D-06): when true, the ambient injected block renders each surfaced
    * fact's 1-hop relations — the edges `buildHonestOneHopTrace` already computes
    * (AMBIENT_HOP_TOPN=6) and today discards to the viz sink only — compactly within the
-   * existing per-line token budget. Facts win over hops if budget forces a choice (D-06). Dark
-   * default `false` reproduces pre-phase injected-block output exactly (no hop lines). Un-gated
-   * by the 69-06 eval gate (RECALL-05), not by a code merge (D-09).
+   * existing per-line token budget. Facts win over hops if budget forces a choice (D-06).
+   * Ships `true` since the 69-06 D-08 gate (2026-08-03): G1-G4 pass with real exercise (11 hop
+   * lines rendered across the 58-prompt replay). `false` restores pre-phase injected-block
+   * output exactly (no hop lines) — the off-switch, per the un-gating record (RECALL-05, D-09).
    */
   ambientHopInjectionEnabled: boolean;
 
@@ -1086,7 +1087,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   // vacuous pass with zero real exercise of F4's title+link rendering. Per CLAUDE.md's
   // no-inflated-metrics rule, a vacuous pass is not evidence — stays dark pending an eval set
   // (or graph state) that actually surfaces a doc-type candidate to exercise this path.
-  ambientHopInjectionEnabled: false,   // Phase 69 RECALL-03 D-06: dark default — no hop lines in injected block until 69-06 eval
+  ambientHopInjectionEnabled: true,   // Phase 69 D-08 gate 2026-08-03: ENABLED — literal flipped per the gate annotation below (CR-01)
   // Phase 69 D-08 gate 2026-08-03: enabled — G1/G2/G3/G4 all pass (G1 4/4 contract-class, G2
   // 0/53 regressions — hop lines are structurally additive/enrichment-only per D-06 and never
   // enter the fact-relevance mean, G3 vacuous as above, G4 held by the renderer's own two-pass
