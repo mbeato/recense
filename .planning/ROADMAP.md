@@ -1154,8 +1154,8 @@ Plans:
 Plans:
 **Wave 1** *(no dependencies; three plans, zero file overlap)*
 
-- [ ] 69-01-PLAN.md — Register RECALL-01..05 in REQUIREMENTS.md, ship the five dark knobs, and build the LLM-free indexed entity-anchor module (prompt token → entity → facts) with the F2 "contract with vtx" regression test (RECALL-01, wave 1)
-- [ ] 69-02-PLAN.md — `retrieveRanked` opt-in seams: floor-exempt but B2/liveness-bound `anchoredIds` union with honest cosines, plus a single-pass `hopCollector` hand-off; honest-trace hops carry `rel` while every sink keeps its pre-phase payload (RECALL-01, RECALL-03, wave 1)
+- [x] 69-01-PLAN.md — Register RECALL-01..05 in REQUIREMENTS.md, ship the five dark knobs, and build the LLM-free indexed entity-anchor module (prompt token → entity → facts) with the F2 "contract with vtx" regression test (RECALL-01, wave 1)
+- [x] 69-02-PLAN.md — `retrieveRanked` opt-in seams: floor-exempt but B2/liveness-bound `anchoredIds` union with honest cosines, plus a single-pass `hopCollector` hand-off; honest-trace hops carry `rel` while every sink keeps its pre-phase payload (RECALL-01, RECALL-03, wave 1)
 - [ ] 69-05-PLAN.md — `recense recall --evidence`: cited node ids + traversed edges instead of composed prose, zero generates and zero writes, prose mode unchanged (RECALL-04, wave 1)
 
 **Wave 2** *(blocked on 69-01 + 69-02)*

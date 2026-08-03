@@ -20,13 +20,13 @@ import Database from 'better-sqlite3';
 import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
 import type { NodeRow } from '../lib/types';
-import { CandidateRetriever } from './topk';
+import { CandidateRetriever, cosineSimF32 } from './topk';
 import { StrengthDecayManager } from '../strength/decay';
 import { SemanticStore } from '../db/semantic-store';
 import { AllocationGate } from '../gate/allocation-gate';
 import type { ActivationTraceSink } from '../viz/activation-sink';
 import { NoopActivationTraceSink } from '../viz/activation-sink';
-import { buildHonestOneHopTrace } from './honest-trace';
+import { buildHonestOneHopTrace, projectHopsForSink } from './honest-trace';
 import { newId } from '../lib/hash';
 
 export type RetrieveStatus = 'ok' | 'deleted' | 'unreachable';
@@ -376,7 +376,7 @@ export class RetrievalEngine {
    */
   private buildAmbientTracePayload(
     seeds: Array<{ node_id: string; score: number }>,
-  ): { seeds: Array<{ node_id: string; score: number }>; hops: Array<{ node_id: string; src: string; score: null; hop: 1 }> } {
+  ): { seeds: Array<{ node_id: string; score: number }>; hops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }> } {
     return buildHonestOneHopTrace(seeds, this.store, AMBIENT_HOP_TOPN);
   }
 
@@ -411,13 +411,36 @@ export class RetrievalEngine {
    * the session-start budget logic depend on their existing behaviour.
    *
    * B1/B2/B3: used by HybridResponder facts-first branch and the correctness harness query step.
+   *
+   * RECALL-01 (Phase 69, D-02): `opts.anchoredIds` unions entity-anchored candidates (ids the
+   * caller resolved via a SEPARATE lexical/indexed lookup, e.g. name-matched entity nodes) into
+   * the result set. Anchored candidates are floor-EXEMPT — they cleared a different, lexical
+   * bar in the caller's anchor module, not this method's cosine floor — but they are NEVER
+   * stale-entity- or liveness-exempt: they pass through the exact same `staleEntityIds`/
+   * `tombstoned` guard as every cosine hit (B2 discipline holds for anchored rows too). Each
+   * anchored row's score is the REAL cosine of its stored embedding against `queryVec`
+   * (clamped to [0,1]); a null or shape-mismatched embedding scores `0` — never a synthesized
+   * magnitude (no-inflated-metrics). With `opts.anchoredIds` absent, the union is a no-op and
+   * output is byte-identical to pre-phase (D-09).
+   *
+   * RECALL-03 (Phase 69, D-06): `opts.hopCollector` receives the FULL 1-hop trace (each hop
+   * carrying `rel`) for every returned row — cosine AND anchored — computed via the SAME single
+   * `buildAmbientTracePayload` pass this method already runs for the viz trace sink, never a
+   * second edge-read pass. The sink itself keeps receiving exactly the hops it received
+   * pre-phase (filtered back down to the viz-lit seed set, projected to the pre-phase 4-key
+   * shape) — `hopCollector` is strictly additive.
    */
   retrieveRanked(
     queryVec: Float32Array,
     k: number,
     floor: number,
     queryText?: string,
-    opts?: { temporalAnnotate?: boolean; vizFloor?: number },
+    opts?: {
+      temporalAnnotate?: boolean;
+      vizFloor?: number;
+      anchoredIds?: string[];
+      hopCollector?: (hops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }>) => void;
+    },
   ): Array<{ id: string; value: string; score: number }> {
     // LEVER 1: route through hybridTopk when queryText is supplied; else pure cosine topk.
     // hybridTopk returns results sorted by RRF rank; the cosine score component is preserved
@@ -455,6 +478,50 @@ export class RetrievalEngine {
     );
     const filtered = candidates.filter(r => !staleEntityIds.has(r.id));
 
+    // ── RECALL-01 anchored union (Phase 69, D-02) ───────────────────────────────
+    // Entity-anchored candidates union in here — AFTER staleEntityIds exists but BEFORE the
+    // vizFloor lighting scan — so they travel through the SAME B2/liveness discipline as cosine
+    // hits (engine B2 comment above, T-69-02-BYPASS): floor-EXEMPT (a different, lexical bar
+    // already cleared them) but never stale-entity- or liveness-exempt. Score is the true cosine
+    // of the stored embedding, decoded exactly as entity-resolution.ts's dense channel does
+    // (byteLength % 4 guard, length-equality guard, Number.isFinite guard) — a null/unusable
+    // embedding scores 0, never an invented magnitude (T-69-02-FAKE, no-inflated-metrics); the
+    // row still appears because the caller asked for it by name, not by similarity.
+    const anchoredRows: Array<{ id: string; value: string; score: number }> = [];
+    if (opts?.anchoredIds && opts.anchoredIds.length > 0) {
+      const filteredIds = new Set(filtered.map(r => r.id));
+      // Defensive hot-path bound (T-69-02-DOS): the caller (the entity-anchor module) already
+      // caps at MAX_ANCHORED_FACTS; this slice keeps this method's worst case bounded regardless
+      // of caller discipline.
+      for (const id of opts.anchoredIds.slice(0, 16)) {
+        if (filteredIds.has(id)) continue; // already present via cosine — no duplicate row
+        if (staleEntityIds.has(id)) continue; // B2: anchoring never bypasses the stale-entity filter
+        const node = this.store.getNode(id);
+        if (!node || node.tombstoned === 1) continue; // liveness: anchoring never bypasses tombstone
+        let score = 0;
+        const embedding = node.embedding;
+        if (embedding && embedding.byteLength % 4 === 0) {
+          const decoded = new Float32Array(embedding.buffer, embedding.byteOffset, embedding.byteLength / 4);
+          if (decoded.length === queryVec.length) {
+            const cos = Math.max(0, cosineSimF32(queryVec, decoded));
+            score = Number.isFinite(cos) ? cos : 0;
+          }
+        }
+        anchoredRows.push({ id, value: node.value, score });
+      }
+    }
+    // Stable id-asc tiebreak keeps ordering deterministic when scores tie (matches the
+    // dst-asc-tiebreak convention buildHonestOneHopTrace already uses, D-03 precedent).
+    // D-09 byte-identity: when nothing was actually unioned in, skip the sort entirely and
+    // keep `filtered`'s existing order verbatim — the hybrid (queryText) branch's order is RRF
+    // rank, NOT score-sorted, so re-sorting unconditionally would silently reorder that branch's
+    // output even with opts.anchoredIds absent.
+    const unioned = anchoredRows.length > 0
+      ? [...filtered, ...anchoredRows].sort(
+          (a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        )
+      : filtered;
+
     // Phase-19 viz lighting: when a vizFloor BELOW the injection floor is supplied,
     // the trace lights every node the topk scan GENUINELY retrieved down to vizFloor —
     // even when none cleared `floor` (a real read that surfaced nothing to the caller
@@ -486,8 +553,9 @@ export class RetrievalEngine {
     // Orphan nodes have no consolidation_event rows → absent from tsMap → undated.
     // Sort: among dated nodes, newest-supported-first; undated nodes maintain their original
     // cosine/RRF rank position (stable sort by originalIndex when comparing dated vs undated).
+    let finalResults: Array<{ id: string; value: string; score: number }>;
     if (opts?.temporalAnnotate ?? this.config.temporalAnnotation) {
-      const nodeIdsJson = JSON.stringify(filtered.map(c => c.id));
+      const nodeIdsJson = JSON.stringify(unioned.map(c => c.id));
       const tsRows = this.stmtLatestSupportTs.all(nodeIdsJson) as Array<{
         node_id: string;
         latest_ts: number;
@@ -499,14 +567,14 @@ export class RetrievalEngine {
       // Collect the original slot positions occupied by dated nodes (in original order),
       // sort those slot references newest-first, write the dated nodes back into those same
       // slots, and leave undated (orphan) nodes fixed at their original positions.
-      const datedSlots: number[] = filtered
+      const datedSlots: number[] = unioned
         .map((c, i) => (tsMap.has(c.id) ? i : -1))
         .filter((i): i is number => i !== -1);
       const datedSorted: number[] = datedSlots
         .slice()
-        .sort((i, j) => tsMap.get(filtered[j]!.id)! - tsMap.get(filtered[i]!.id)!);
-      const reordered = filtered.slice();
-      datedSlots.forEach((slot, k) => { reordered[slot] = filtered[datedSorted[k]!]!; });
+        .sort((i, j) => tsMap.get(unioned[j]!.id)! - tsMap.get(unioned[i]!.id)!);
+      const reordered = unioned.slice();
+      datedSlots.forEach((slot, i) => { reordered[slot] = unioned[datedSorted[i]!]!; });
       // Apply [YYYY-MM-DD] prefix to dated nodes; leave undated (orphan) values unchanged.
       const annotated = reordered.map(c => {
         const ts = tsMap.get(c.id);
@@ -517,52 +585,69 @@ export class RetrievalEngine {
         }
         return c; // orphan: undated, value unchanged
       });
-
-      // ── Trace emission (D-97 guarded) ────────────────────────────────────────
-      // vizSeedIds (when set) lights the genuinely-retrieved set down to vizFloor;
-      // otherwise the lit set is the returned set (unchanged behaviour). Phase 55
-      // (D-06): seed payload carries each seed's REAL cosine/RRF score; hops are the
-      // seeds' real top-N live kind==='relation' out-edges (SC1/SC2/SC3), built via
-      // the shared helper INSIDE this existing try/catch fire-and-forget guard (D-08).
-      const emitSeeds: Array<{ node_id: string; score: number }> = vizSeedIds
-        ? vizSeedIds.map(id => ({ node_id: id, score: vizSeedScores!.get(id) ?? 0 }))
-        : annotated.map(r => ({ node_id: r.id, score: r.score }));
-      if (this.traceEnabled && emitSeeds.length > 0) {
-        try {
-          const { seeds, hops } = this.buildAmbientTracePayload(emitSeeds);
-          this.traceSink.emit({ query_id: newId(), seeds, hops });
-        } catch {
-          // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
-        }
-      }
-      return annotated;
+      finalResults = annotated;
+    } else {
+      finalResults = unioned;
     }
 
-    // ── Trace emission (D-97 guarded, mirrors retrieveCueless ~L279-300) ────────
-    // retrieveRanked is flat top-k + floor + stale-entity filter — no spread loop ran, so
-    // the results ARE the seeds. Phase 55: hops are no longer fabricated-empty — they are
-    // each seed's REAL 1-hop kind==='relation' out-edges (WR-02: rank-only score:null, never
-    // an invented magnitude). This makes HybridResponder's facts-first branch (the common
-    // memory_ask / Telegram answer path) light the viz with honest spreading-activation
-    // pathways; the inference fallback already emits via RecallEngine. Callers wired with
-    // the Noop sink (correctness harness, session-start) have traceEnabled === false and
-    // skip this entirely.
-    // Phase 55 (D-06): seed payload carries each seed's REAL cosine/RRF score; hops are
-    // the seeds' real top-N live kind==='relation' out-edges (SC1/SC2/SC3), built via the
-    // shared helper INSIDE this existing try/catch fire-and-forget guard (D-08).
+    // ── Trace emission + hop hand-off (D-97 guarded, mirrors retrieveCueless ~L279-300) ──
+    // retrieveRanked is flat top-k + floor + stale-entity filter (+ RECALL-01 anchored union)
+    // — no spread loop ran, so the results ARE the seeds. Phase 55: hops are each seed's REAL
+    // 1-hop kind==='relation' out-edges (WR-02: rank-only score:null, never an invented
+    // magnitude). This makes HybridResponder's facts-first branch (the common memory_ask /
+    // Telegram answer path) light the viz with honest spreading-activation pathways; the
+    // inference fallback already emits via RecallEngine. Callers wired with the Noop sink
+    // (correctness harness, session-start) have traceEnabled === false and skip the sink half.
+    // Phase 55 (D-06): seed payload carries each seed's REAL cosine/RRF score; hops are the
+    // seeds' real top-N live kind==='relation' out-edges (SC1/SC2/SC3), built via the shared
+    // helper INSIDE this existing try/catch fire-and-forget guard (D-08).
+    //
+    // Phase 69 (Plan 02, RECALL-01/03, D-06): SAME shared block for both the temporal and
+    // non-temporal return paths — buildAmbientTracePayload runs AT MOST ONCE per call on every
+    // path. `emitSeeds` (the viz-lit set — unchanged from pre-phase) covers what the sink is
+    // ALLOWED to see; `hopSeedIds` additionally covers every row actually being returned
+    // (including RECALL-01 anchored rows) so `opts.hopCollector` gets hops for the injected
+    // block's facts even when they never touched the viz-lit set. Only ONE call to
+    // buildAmbientTracePayload computes hops for the union of both; the sink then re-derives its
+    // pre-phase-identical payload by filtering that single hop array down to `src ∈ emitSeeds`.
+    // Equivalence argument (T-69-02-SINK): buildHonestOneHopTrace is per-seed independent —
+    // each seed's weight-sort/topN-cap/liveness walk and its (src,dst) dedup key are scoped to
+    // that seed alone, so adding MORE seeds to the same pass never changes the hops produced for
+    // seeds already in the batch. Filtering the combined-batch hop array down to
+    // `src ∈ emitSeeds` therefore reproduces byte-for-byte what calling
+    // buildAmbientTracePayload(emitSeeds) ALONE would have produced — so with no opts.anchoredIds
+    // (hopSeedIds === emitSeeds ids), sink output is unchanged from pre-phase (D-09).
     const emitSeeds: Array<{ node_id: string; score: number }> = vizSeedIds
       ? vizSeedIds.map(id => ({ node_id: id, score: vizSeedScores!.get(id) ?? 0 }))
-      : filtered.map(r => ({ node_id: r.id, score: r.score }));
-    if (this.traceEnabled && emitSeeds.length > 0) {
+      : finalResults.map(r => ({ node_id: r.id, score: r.score }));
+    if (this.traceEnabled || opts?.hopCollector != null) {
       try {
-        const { seeds, hops } = this.buildAmbientTracePayload(emitSeeds);
-        this.traceSink.emit({ query_id: newId(), seeds, hops });
+        const seedsForHopPass: Array<{ node_id: string; score: number }> = [];
+        const seenHopSeedIds = new Set<string>();
+        for (const s of emitSeeds) {
+          if (seenHopSeedIds.has(s.node_id)) continue;
+          seenHopSeedIds.add(s.node_id);
+          seedsForHopPass.push(s);
+        }
+        for (const r of finalResults) {
+          if (seenHopSeedIds.has(r.id)) continue;
+          seenHopSeedIds.add(r.id);
+          seedsForHopPass.push({ node_id: r.id, score: r.score });
+        }
+        const { hops } = this.buildAmbientTracePayload(seedsForHopPass);
+        if (opts?.hopCollector != null) opts.hopCollector(hops);
+        if (this.traceEnabled && emitSeeds.length > 0) {
+          const emitSeedIdSet = new Set(emitSeeds.map(s => s.node_id));
+          const sinkHops = hops.filter(h => emitSeedIdSet.has(h.src));
+          this.traceSink.emit({ query_id: newId(), seeds: emitSeeds, hops: projectHopsForSink(sinkHops) });
+        }
       } catch {
-        // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
+        // Fire-and-forget: neither a sink failure nor a collector throw may surface to the
+        // caller (T-10-05, T-69-02-FAILOPEN).
       }
     }
 
-    return filtered;
+    return finalResults;
   }
 
   /**
