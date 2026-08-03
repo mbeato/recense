@@ -115,7 +115,7 @@ async function main(): Promise<void> {
         judgeConfig: config,
         embedConfig: config,
       });
-      const text = await ambientRecall(db, promptText, provider, config, realClock);
+      const text = await ambientRecall(db, promptText, provider, config, realClock, cwd);
       db.close();
       process.stdout.write(text ? buildHookOutput(text) : '{}');
       process.exit(0);
