@@ -20,6 +20,8 @@
  *   T-12-07: 64KB body cap (incremental byte counting, not content-length); requestTimeout=30s.
  *   T-12-08: default bind 127.0.0.1; --host 0.0.0.0 requires explicit opt-in (D-09).
  *   T-12-09: sessionIdGenerator: undefined (stateless); GET /mcp → 405.
+ *   T-66-02: /v1/proposals/:id/{approve,reject} validates the id shape (sha256 hex)
+ *     before any store call; response details are fixed literals.
  */
 import { appendFileSync } from 'fs';
 import * as http from 'node:http';
@@ -27,7 +29,10 @@ import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { ModelProvider } from '../model/provider';
-import { wireMemoryEngine, registerMemoryTools, MemoryBusyError, SurfaceTargetNotFoundError, type MemoryOps } from './memory-ops';
+import {
+  wireMemoryEngine, registerMemoryTools, MemoryBusyError, SurfaceTargetNotFoundError,
+  ProposalNotFoundError, ProposalNotPendingError, ProposalStaleError, type MemoryOps,
+} from './memory-ops';
 import { resolveExistingEnv, writeEnvFile } from './recense-init';
 import { resolveDbPath, sleepEnvPath } from './runtime-config';
 
@@ -503,6 +508,95 @@ export async function createBrainHttpServer(
           return;
         }
         log(`/v1/surface/seen error: ${err}`);
+        jsonError(res, 500, { error: 'internal_error' });
+        logRequest('POST', url, 500, Date.now() - start);
+      }
+      return;
+    }
+
+    // Both /v1/proposals routes land after the auth gate above (T-12-03/T-12-04/T-12-05
+    // are inherited for free) — do NOT add auth code here.
+
+    // GET /v1/proposals — LLM-free pending proposal list; lock-free read (D-95-equivalent, T-12-02 N/A)
+    // No query parameters in v1 — the response is bounded by PROPOSAL_LIST_LIMIT inside the
+    // store; filtering/pagination is deliberately out of scope, mirroring /v1/surface's minimalism.
+    if (url === '/v1/proposals' && req.method === 'GET') {
+      try {
+        const items = await ops.listProposals();
+        jsonOk(res, { items });
+        logRequest('GET', url, 200, Date.now() - start);
+      } catch (err) {
+        log(`/v1/proposals error: ${err}`);
+        jsonError(res, 500, { error: 'internal_error' });
+        logRequest('GET', url, 500, Date.now() - start);
+      }
+      return;
+    }
+
+    // POST /v1/proposals/:id/approve|reject — per-call lock (T-12-02)
+    if (req.method === 'POST' && url.startsWith('/v1/proposals/')) {
+      const rest = url.slice('/v1/proposals/'.length);
+      const slash = rest.lastIndexOf('/');
+      if (slash <= 0) {
+        jsonError(res, 404, { error: 'not_found' });
+        logRequest('POST', url, 404, Date.now() - start);
+        return;
+      }
+      const id = rest.slice(0, slash);
+      const action = rest.slice(slash + 1);
+      if (action !== 'approve' && action !== 'reject') {
+        jsonError(res, 404, { error: 'not_found' });
+        logRequest('POST', url, 404, Date.now() - start);
+        return;
+      }
+      // T-66-02: shape-check the id BEFORE any store call — proposal ids are sha256 hex
+      // by construction (66-02), so anything else is malformed input, not a missing row.
+      // This keeps arbitrary path text out of the store layer entirely.
+      if (!/^[0-9a-f]{64}$/.test(id)) {
+        jsonError(res, 400, { error: 'bad_request', detail: 'invalid proposal id' });
+        logRequest('POST', url, 400, Date.now() - start);
+        return;
+      }
+      // These routes take no body; the read exists only to drain the request and enforce
+      // the shared 64KB cap (T-12-07) — the content is deliberately never parsed.
+      const rawBody = await readBody(req);
+      if (rawBody === null) {
+        jsonError(res, 413, { error: 'payload_too_large' });
+        logRequest('POST', url, 413, Date.now() - start);
+        return;
+      }
+      try {
+        const ack = action === 'approve' ? await ops.approveProposal(id) : await ops.rejectProposal(id);
+        jsonOk(res, ack);
+        logRequest('POST', url, 200, Date.now() - start);
+      } catch (err) {
+        // Every `detail` below is a fixed literal — never interpolate the proposal id, the
+        // entity descriptor, a node value, or the evidence quote into a response body or a
+        // log line (D-16 / T-12-05).
+        if (err instanceof MemoryBusyError) {
+          jsonError(res, 503, { error: 'service_unavailable', detail: 'memory busy; retry in a moment' });
+          logRequest('POST', url, 503, Date.now() - start);
+          return;
+        }
+        if (err instanceof ProposalNotFoundError) {
+          jsonError(res, 404, { error: 'not_found', detail: 'proposal does not exist' });
+          logRequest('POST', url, 404, Date.now() - start);
+          return;
+        }
+        if (err instanceof ProposalNotPendingError) {
+          jsonError(res, 409, { error: 'conflict', detail: 'proposal is not pending' });
+          logRequest('POST', url, 409, Date.now() - start);
+          return;
+        }
+        if (err instanceof ProposalStaleError) {
+          const detail = err.reason === 'superseded' ? 'proposal superseded'
+            : err.reason === 'entity_gone' ? 'proposal entity retired'
+            : 'proposal expired';
+          jsonError(res, 409, { error: 'conflict', detail });
+          logRequest('POST', url, 409, Date.now() - start);
+          return;
+        }
+        log(`/v1/proposals action error: ${err}`);
         jsonError(res, 500, { error: 'internal_error' });
         logRequest('POST', url, 500, Date.now() - start);
       }
