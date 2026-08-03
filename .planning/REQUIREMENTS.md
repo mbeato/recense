@@ -86,11 +86,11 @@
 > roadmap, not one of the milestone's 30 producer/consumer requirements. Tracked here separately
 > so the v10.0 coverage table below stays exact.
 
-- [ ] **RECALL-01**: Ambient recall reaches facts anchored by a proper noun in the prompt via **LLM-free indexed entity lookup on the hot path** — distinctive prompt tokens alias/exact-matched to entity nodes, their facts unioned with cosine top-k before ranking. The audit's "contract with vtx" class (asked twice, whiffed twice, facts present) resolves. (F2; SC1)
-- [ ] **RECALL-02**: Cross-project recall is PRESERVED (resume sessions legitimately pull VTX/recense facts) but a foreign-project deep-dive doc no longer outranks own-project facts — a same-project rank NUDGE plus doc-type demotion/re-rendering (title + `recense://` link, not a truncated 200-char body), never a hard scope filter. (F1+F4; SC2; carries the D-S1 reversal)
-- [ ] **RECALL-03**: The injected block carries each fact's 1-hop relations — the edges `buildHonestOneHopTrace` already computes (AMBIENT_HOP_TOPN=6) and currently discards to the viz sink — within the existing token budget (~5 lines × 200 chars unless explicitly re-budgeted). (SC3)
-- [ ] **RECALL-04**: `recense recall` gains an **evidence mode**: cited node ids + traversed edges instead of only LLM-composed prose, read-only, so a caller can verify a claim without grepping. (SC4)
-- [ ] **RECALL-05**: Every change is gated on the 58-prompt eval set: no regression on the 42 currently-hit prompts; injected-line relevance improves on the whiffs (the "contract with vtx" class must surface contract facts); ambient block token budget held. `ambient_hit` labels are outcome observations, NOT ground truth — grading is by injected-line relevance. (SC5)
+- [x] **RECALL-01**: Ambient recall reaches facts anchored by a proper noun in the prompt via **LLM-free indexed entity lookup on the hot path** — distinctive prompt tokens alias/exact-matched to entity nodes, their facts unioned with cosine top-k before ranking. The audit's "contract with vtx" class (asked twice, whiffed twice, facts present) resolves. (F2; SC1)
+- [x] **RECALL-02**: Cross-project recall is PRESERVED (resume sessions legitimately pull VTX/recense facts) but a foreign-project deep-dive doc no longer outranks own-project facts — a same-project rank NUDGE plus doc-type demotion/re-rendering (title + `recense://` link, not a truncated 200-char body), never a hard scope filter. (F1+F4; SC2; carries the D-S1 reversal)
+- [x] **RECALL-03**: The injected block carries each fact's 1-hop relations — the edges `buildHonestOneHopTrace` already computes (AMBIENT_HOP_TOPN=6) and currently discards to the viz sink — within the existing token budget (~5 lines × 200 chars unless explicitly re-budgeted). (SC3)
+- [x] **RECALL-04**: `recense recall` gains an **evidence mode**: cited node ids + traversed edges instead of only LLM-composed prose, read-only, so a caller can verify a claim without grepping. (SC4)
+- [x] **RECALL-05**: Every change is gated on the 58-prompt eval set: no regression on the 42 currently-hit prompts; injected-line relevance improves on the whiffs (the "contract with vtx" class must surface contract facts); ambient block token budget held. `ambient_hit` labels are outcome observations, NOT ground truth — grading is by injected-line relevance. (SC5)
 
 ---
 
