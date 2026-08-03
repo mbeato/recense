@@ -28,9 +28,12 @@ import { MockModelProvider } from '../src/model/provider';
 import {
   ambientRecall,
   buildHookOutput,
+  renderAmbientBlock,
   AMBIENT_K,
   AMBIENT_FLOOR,
   MAX_VALUE_CHARS,
+  AMBIENT_BLOCK_CHAR_BUDGET,
+  type RenderRow,
 } from '../src/adapter/ambient-recall';
 
 // ---------------------------------------------------------------------------
@@ -396,5 +399,189 @@ describe('ambientRecall', () => {
     expect(AMBIENT_K).toBe(5);
     // 0.5 → 0.45 tuned from live-graph score probes (3aa350b)
     expect(AMBIENT_FLOOR).toBe(0.45);
+  });
+
+  // ── End-to-end doc-link + hop-injection wiring (Phase 69 Plan 69-04 Task 2/3) ──────────
+
+  it('doc-link end-to-end: a doc row renders as title + citation under the knob, absent when dark', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+    store.upsertNode({
+      id: 'e2e-doc-1',
+      type: 'doc',
+      value: '# The Deep-Dive Title\n\nLots of body prose nobody will read here.',
+      origin: 'observed',
+    });
+    store.setEmbedding('e2e-doc-1', FIXED_VEC);
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+
+    const onCfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientDocLinkRenderEnabled: true };
+    const textOn = await ambientRecall(db, PROMPT, provider, onCfg, clock);
+    expect(textOn).toContain('The Deep-Dive Title — recense://doc/e2e-doc-1');
+    expect(textOn).not.toContain('Lots of body prose');
+
+    const offCfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientDocLinkRenderEnabled: false };
+    const textOff = await ambientRecall(db, PROMPT, provider, offCfg, clock);
+    expect(textOff).toContain('# The Deep-Dive Title');
+    expect(textOff).not.toContain('recense://doc/');
+  });
+
+  it('hop-injection end-to-end: a real 1-hop edge renders under the seeded fact, attributed to the correct src', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+    store.upsertNode({ id: 'e2e-hop-seed', type: 'fact', value: 'seed fact value', origin: 'observed' });
+    store.setEmbedding('e2e-hop-seed', FIXED_VEC);
+    store.upsertNode({ id: 'e2e-hop-neighbour', type: 'fact', value: 'a real neighbour fact', origin: 'observed' });
+    store.upsertEdge({ src: 'e2e-hop-seed', dst: 'e2e-hop-neighbour', rel: 'works_on', w: 1, kind: 'relation' });
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+
+    const onCfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: true };
+    const textOn = await ambientRecall(db, PROMPT, provider, onCfg, clock);
+    expect(textOn).toContain('seed fact value');
+    expect(textOn).toContain('  ↳ works_on a real neighbour fact');
+    expect(textOn).not.toMatch(/↳.*score/);
+
+    const offCfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: false };
+    const textOff = await ambientRecall(db, PROMPT, provider, offCfg, clock);
+    expect(textOff).not.toContain('↳');
+  });
+
+  it('hop-injection: a hop whose neighbour node is tombstoned is dropped, never rendered as a placeholder', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+    store.upsertNode({ id: 'e2e-hop-seed2', type: 'fact', value: 'seed fact value two', origin: 'observed' });
+    store.setEmbedding('e2e-hop-seed2', FIXED_VEC);
+    store.upsertNode({ id: 'e2e-hop-nb2', type: 'fact', value: 'a since-deleted neighbour fact', origin: 'observed' });
+    store.upsertEdge({ src: 'e2e-hop-seed2', dst: 'e2e-hop-nb2', rel: 'works_on', w: 1, kind: 'relation' });
+    store.tombstone('e2e-hop-nb2'); // liveness: dropped rather than rendered with a placeholder
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: true };
+
+    const text = await ambientRecall(db, PROMPT, provider, cfg, clock);
+    expect(text).toContain('seed fact value two');
+    expect(text).not.toContain('↳');
+  });
+
+  it('hop-injection: activation_trace rows are byte-identical in shape whether the knob is on or off (viz sink unaffected, D-06)', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+    store.upsertNode({ id: 'e2e-hop-trace-seed', type: 'fact', value: 'trace seed fact', origin: 'observed' });
+    store.setEmbedding('e2e-hop-trace-seed', FIXED_VEC);
+    store.upsertNode({ id: 'e2e-hop-trace-nb', type: 'fact', value: 'trace neighbour fact', origin: 'observed' });
+    store.upsertEdge({ src: 'e2e-hop-trace-seed', dst: 'e2e-hop-trace-nb', rel: 'works_on', w: 1, kind: 'relation' });
+    setFlag(db, '1');
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+
+    await ambientRecall(db, PROMPT, provider, { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: false }, clock);
+    const traceOff = getLatestTraceRow(db);
+
+    await ambientRecall(db, PROMPT, provider, { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: true }, clock);
+    const traceOn = getLatestTraceRow(db);
+
+    expect(JSON.parse(traceOn.seeds)).toEqual(JSON.parse(traceOff.seeds));
+    expect(JSON.parse(traceOn.hops)).toEqual(JSON.parse(traceOff.hops));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderAmbientBlock — pure renderer (Phase 69 Plan 69-04 Task 1/2/3)
+// ---------------------------------------------------------------------------
+
+function factRow(overrides: Partial<RenderRow> = {}): RenderRow {
+  return {
+    id: 'row-1',
+    value: 'a fact value',
+    score: 0.72,
+    origin: 'observed',
+    type: 'fact',
+    ...overrides,
+  };
+}
+
+describe('renderAmbientBlock', () => {
+  it('m. no doc rows, no hops: byte-identical to the pre-phase loop output', () => {
+    const rows: RenderRow[] = [factRow({ id: 'a', value: 'alpha fact', score: 1 })];
+    const text = renderAmbientBlock(rows);
+    expect(text).toBe('Recalled from recense (ambient):\n- alpha fact (observed, score 1.00)');
+  });
+
+  it('n. never emits more than AMBIENT_K fact lines', () => {
+    const rows: RenderRow[] = Array.from({ length: 8 }, (_, i) =>
+      factRow({ id: `r${i}`, value: `fact ${i}` }),
+    );
+    const text = renderAmbientBlock(rows);
+    const factLines = text.split('\n').slice(1).filter(l => l.startsWith('- '));
+    expect(factLines).toHaveLength(AMBIENT_K);
+  });
+
+  it('o. is pure: same input twice yields the same string, and the source touches no store/db/clock', () => {
+    const rows: RenderRow[] = [factRow()];
+    expect(renderAmbientBlock(rows)).toBe(renderAmbientBlock(rows));
+
+    const src = fs.readFileSync(path.join(__dirname, '../src/adapter/ambient-recall.ts'), 'utf8');
+    const fnStart = src.indexOf('export function renderAmbientBlock');
+    const fnEnd = src.indexOf('\n}\n', fnStart);
+    const fnBody = src.slice(fnStart, fnEnd);
+    expect(/\bstore\.|\bdb\.|\bclock\.|Date\.now/.test(fnBody)).toBe(false);
+  });
+
+  it('p. budget: 5 maximal-length facts plus hops never exceed AMBIENT_BLOCK_CHAR_BUDGET content, and hops drop first', () => {
+    const rows: RenderRow[] = Array.from({ length: AMBIENT_K }, (_, i) =>
+      factRow({
+        id: `r${i}`,
+        value: 'v'.repeat(500), // truncates to MAX_VALUE_CHARS
+        hops: [{ rel: 'works_on', label: 'a neighbour label' }],
+      }),
+    );
+    const text = renderAmbientBlock(rows);
+    // Facts alone already consume the full content budget (5 * 200 = AMBIENT_BLOCK_CHAR_BUDGET)
+    // — D-06: facts still all render, but zero hop lines are added (dropped first).
+    expect(text).not.toContain('↳');
+    const factLines = text.split('\n').slice(1);
+    expect(factLines).toHaveLength(AMBIENT_K);
+  });
+
+  it('q. hops render when the budget has room, beneath their own fact', () => {
+    const rows: RenderRow[] = [
+      factRow({ id: 'r0', value: 'short fact', hops: [{ rel: 'works_on', label: 'neighbour A' }] }),
+    ];
+    const text = renderAmbientBlock(rows);
+    const lines = text.split('\n');
+    expect(lines[1]).toContain('short fact');
+    expect(lines[2]).toBe('  ↳ works_on neighbour A');
+  });
+
+  it('r. doc row renders as title + recense://doc/<raw id> under docLinks:true, and never contains the body', () => {
+    const rows: RenderRow[] = [
+      factRow({
+        id: 'doc-1',
+        type: 'doc',
+        value: '# Deep Dive Title\n\nThe brain-memory system does many things...',
+        score: 0.9,
+      }),
+    ];
+    const text = renderAmbientBlock(rows, { docLinks: true });
+    expect(text).toContain('Deep Dive Title — recense://doc/doc-1 (doc, score 0.90)');
+    expect(text).not.toContain('The brain-memory system does many things');
+  });
+
+  it('s. doc row renders as pre-phase truncated body when docLinks:false', () => {
+    const rows: RenderRow[] = [
+      factRow({ id: 'doc-1', type: 'doc', value: '# Deep Dive Title\n\nBody text here', score: 0.9 }),
+    ];
+    const text = renderAmbientBlock(rows, { docLinks: false });
+    expect(text).toContain('# Deep Dive Title');
+    expect(text).not.toContain('recense://doc/');
+  });
+
+  it('t. non-doc rows are unaffected by docLinks in either state', () => {
+    const rows: RenderRow[] = [factRow({ value: 'a plain fact' })];
+    expect(renderAmbientBlock(rows, { docLinks: true })).toBe(renderAmbientBlock(rows, { docLinks: false }));
+  });
+
+  it('u. anchored-fact provenance renders inside the existing parenthetical', () => {
+    const rows: RenderRow[] = [factRow({ value: 'anchored fact value', anchoredVia: 'zyloquartz' })];
+    const text = renderAmbientBlock(rows);
+    expect(text).toContain('(observed, score 0.72, via zyloquartz)');
   });
 });

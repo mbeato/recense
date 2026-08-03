@@ -39,6 +39,7 @@ import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 import { cwdToScope, GLOBAL_SCOPE } from '../lib/scope';
 import { collectAnchoredFacts, type AnchoredFact } from '../retrieval/entity-anchor';
 import { EntityResolver } from '../consolidation/entity-resolution';
+import type { NodeType } from '../lib/types';
 
 // ---------------------------------------------------------------------------
 // Tuning knobs — adjust here, not inline.
@@ -96,6 +97,22 @@ const ANCHOR_RESERVED_SLOTS = 2;
 const MAX_ANCHOR_PROBE_CHARS = MAX_QUERY_CHARS;
 
 /**
+ * The seed's stated ambient token budget (~5 lines x 200 chars, SEED-005 "Eval-first
+ * requirement"), re-expressed as an enforced constant rather than an assumption (Phase 69
+ * RECALL-03, D-06/D-09). Measured over the block EXCLUDING the `Recalled from recense
+ * (ambient):` header. This is the exact quantity 69-06's eval gate asserts — re-budgeting
+ * here is a deliberate decision, not drift.
+ *
+ * Budget accounting counts the DATA-DRIVEN portion of each line only — the scope marker
+ * plus the fact value/doc title, or a hop's neighbour label — the parts whose length is
+ * driven by graph content and could otherwise be unbounded. The small, constant per-line
+ * decoration (the `- `/`  ↳ ` bullet, the `(origin, score X.XX)` parenthetical) is fixed
+ * format overhead, not counted against the budget, mirroring MAX_VALUE_CHARS's own framing
+ * (cap the data-controlled part, not the format).
+ */
+export const AMBIENT_BLOCK_CHAR_BUDGET = AMBIENT_K * MAX_VALUE_CHARS;
+
+/**
  * Reject after `ms`. The timer is unref'd so a resolved race never holds the
  * process open — the hook must exit promptly (T-RT1-03).
  */
@@ -104,6 +121,113 @@ function rejectAfter(ms: number): Promise<never> {
     const t = setTimeout(() => reject(new Error(`embed timed out after ${ms}ms`)), ms);
     t.unref();
   });
+}
+
+/** One row of pre-resolved data the renderer turns into a line (+ optional hop lines). */
+export interface RenderRow {
+  id: string;
+  value: string;
+  score: number;
+  origin: string;
+  type: NodeType;
+  scope?: string;
+  docSlug?: string;
+  anchoredVia?: string;
+  hops?: Array<{ rel: string; label: string }>;
+}
+
+/**
+ * Pure, budget-enforcing renderer for the injected ambient block (Phase 69 RECALL-02/03,
+ * D-06/D-09). Every DB-derived field arrives pre-resolved on `rows` — this function touches
+ * no store/db/clock collaborator, so it is trivially testable and side-effect-free.
+ *
+ * Budget enforcement, in this exact order:
+ *   1. The header is emitted but not counted against the budget.
+ *   2. One fact line per row (up to AMBIENT_K) is ALWAYS emitted, even once the running
+ *      total exceeds the budget — D-06: facts win, hops are enrichment, never a replacement.
+ *      Facts are accounted for FIRST, as a group — so a budget that is already fully spent by
+ *      facts alone leaves genuinely zero room for any hop (D-06's "when the budget binds,
+ *      hops are dropped" is evaluated against the REAL post-facts total, not a hop's lucky
+ *      position ahead of a later maximal-length fact).
+ *   3. Hop lines are appended beneath their own fact, in supplied order, only while there is
+ *      still room in the (post-facts) budget; the first hop that would breach stops ALL
+ *      further hop appending (never "skip and keep trying" — that would reorder enrichment
+ *      nondeterministically across facts).
+ */
+export function renderAmbientBlock(rows: RenderRow[], opts?: { docLinks?: boolean }): string {
+  const docLinks = opts?.docLinks ?? false;
+  const selected = rows.slice(0, AMBIENT_K);
+
+  // Pass 1 (facts win, D-06): build every fact line and sum their budget-relevant content
+  // length BEFORE any hop is considered, so the hop pass starts from the REAL post-facts
+  // total rather than an artificially low running count from processing rows one at a time.
+  const factEntries = selected.map(row => {
+    const marker = row.scope && row.scope !== GLOBAL_SCOPE ? `[${row.scope}] ` : '';
+    const anchoredSuffix = row.anchoredVia ? `, via ${row.anchoredVia}` : '';
+    let factLine: string;
+    let contentLen: number;
+    if (docLinks && row.type === 'doc') {
+      const title = deriveDocTitle(row);
+      factLine = `- ${marker}${title} — recense://doc/${row.id} (doc, score ${row.score.toFixed(2)}${anchoredSuffix})`;
+      contentLen = marker.length + title.length;
+    } else {
+      const value = row.value.slice(0, MAX_VALUE_CHARS);
+      factLine = `- ${marker}${value} (${row.origin}, score ${row.score.toFixed(2)}${anchoredSuffix})`;
+      contentLen = marker.length + value.length;
+    }
+    return { row, factLine, contentLen };
+  });
+  let runningChars = factEntries.reduce((sum, e) => sum + e.contentLen, 0);
+
+  // Pass 2: attach hop lines beneath their own fact, gated on the post-facts running total.
+  const outLines: string[] = [];
+  let hopsExhausted = false;
+  for (const { row, factLine } of factEntries) {
+    outLines.push(factLine);
+    if (hopsExhausted) continue;
+    for (const hop of (row.hops ?? []).slice(0, MAX_HOP_LINES_PER_FACT)) {
+      const label = hop.label.slice(0, HOP_LABEL_CHARS);
+      if (runningChars + label.length > AMBIENT_BLOCK_CHAR_BUDGET) {
+        hopsExhausted = true;
+        break;
+      }
+      // No score is printed — hop scores are always null by construction (WR-02); printing
+      // a number here would fabricate a magnitude.
+      outLines.push(`  ↳ ${hop.rel} ${label}`);
+      runningChars += label.length;
+    }
+  }
+
+  return ['Recalled from recense (ambient):', ...outLines].join('\n');
+}
+
+/**
+ * Max short title cap for a doc-type row's rendered title (Phase 69 RECALL-02, T-69-04-BUDGET,
+ * 55-01-style magnitude — not a config knob).
+ */
+const DOC_TITLE_CHARS = 80;
+
+/**
+ * Max rendered hop lines per fact (Phase 69 RECALL-03, D-06, 55-01-style magnitude — not a
+ * config knob; tuned only against the eval gate's budget arithmetic).
+ */
+const MAX_HOP_LINES_PER_FACT = 2;
+
+/** Per-hop neighbour-label cap (Phase 69 RECALL-03, magnitude — not a config knob). */
+const HOP_LABEL_CHARS = 60;
+
+/**
+ * Derive a doc row's title purely from its value: the first non-empty line, stripped of a
+ * leading markdown heading run and collapsed whitespace, capped at DOC_TITLE_CHARS. Never
+ * fabricates a title; an empty value falls back to the doc's slug, then its raw id (Phase 69
+ * RECALL-02, F4: MAX_VALUE_CHARS truncation of a hub doc body yields no actionable text, so a
+ * title + citation is strictly cheaper and strictly more useful).
+ */
+function deriveDocTitle(row: RenderRow): string {
+  const firstLine = row.value.split('\n').find(l => l.trim().length > 0) ?? '';
+  const stripped = firstLine.replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim();
+  const title = stripped || row.docSlug || row.id;
+  return title.slice(0, DOC_TITLE_CHARS);
 }
 
 /**
@@ -180,6 +304,12 @@ export async function ambientRecall(
   }
   const anchoredById = new Map<string, AnchoredFact>(anchored.map(a => [a.id, a]));
 
+  // ── 1-hop hand-off (Phase 69 RECALL-03, D-06) ────────────────────────────────────
+  // Gated on config.ambientHopInjectionEnabled (dark default false — D-09: no hopCollector
+  // means retrieveRanked's own `opts?.hopCollector != null` guard is never touched, so the
+  // trace-emission branch's behavior is unchanged and this array simply stays empty).
+  let collectedHops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }> = [];
+
   // retrieveRanked emits the viz trace itself when the flag is on. With vizFloor it
   // lights the genuinely-retrieved nodes down to AMBIENT_VIZ_FLOOR even when nothing
   // clears the injection floor — so the brain lights on essentially every prompt (a
@@ -189,6 +319,9 @@ export async function ambientRecall(
   const results = engine.retrieveRanked(vec, AMBIENT_K, AMBIENT_FLOOR, undefined, {
     vizFloor: AMBIENT_VIZ_FLOOR,
     anchoredIds: anchored.map(a => a.id),
+    ...(config.ambientHopInjectionEnabled
+      ? { hopCollector: (hops: typeof collectedHops) => { collectedHops = hops; } }
+      : {}),
   });
   if (results.length === 0) return '';
 
@@ -267,14 +400,49 @@ export async function ambientRecall(
   // Emit the selected rows in rank order (not selection-pass order).
   const surfaced = ranked.filter(r => selectedIds.has(r.id));
 
-  const lines = ['Recalled from recense (ambient):'];
-  for (const r of surfaced) {
-    const origin = getCachedNode(r.id)?.origin ?? 'observed';
-    const scope = scopes.get(r.id);
-    const marker = scope && scope !== 'global' ? `[${scope}] ` : '';
-    lines.push(`- ${marker}${r.value.slice(0, MAX_VALUE_CHARS)} (${origin}, score ${r.score.toFixed(2)})`);
+  // ── Hop attribution (Phase 69 RECALL-03, D-06) ───────────────────────────────────
+  // Group the collector's hops by their real `src` seed, keep only hops whose src is a
+  // SELECTED row (never an arbitrary or first seed), resolve each hop's neighbour label via
+  // the SAME node-row cache the render loop uses (one getNode per distinct hop target),
+  // drop hops whose neighbour is missing or tombstoned, and cap at MAX_HOP_LINES_PER_FACT
+  // per fact preserving the collector's own order (already weight-desc from
+  // buildHonestOneHopTrace). No score is attached — hop scores are always null (WR-02).
+  const hopsBySrc = new Map<string, Array<{ rel: string; label: string }>>();
+  if (config.ambientHopInjectionEnabled) {
+    for (const hop of collectedHops) {
+      if (!selectedIds.has(hop.src)) continue;
+      const list = hopsBySrc.get(hop.src) ?? [];
+      if (list.length >= MAX_HOP_LINES_PER_FACT) continue;
+      const neighbour = getCachedNode(hop.node_id);
+      if (!neighbour || neighbour.tombstoned === 1) continue; // dropped, never a placeholder
+      list.push({ rel: hop.rel, label: neighbour.value.slice(0, HOP_LABEL_CHARS) });
+      hopsBySrc.set(hop.src, list);
+    }
   }
-  return lines.join('\n');
+
+  const rows: RenderRow[] = surfaced.map(r => {
+    const node = getCachedNode(r.id);
+    return {
+      id: r.id,
+      value: r.value,
+      score: r.score,
+      origin: node?.origin ?? 'observed',
+      type: node?.type ?? 'fact',
+      scope: scopes.get(r.id),
+      // getNodeDoc read ONLY for doc rows under the doc-link knob (at most one sidecar read
+      // per doc row; zero on the common all-facts prompt).
+      docSlug:
+        config.ambientDocLinkRenderEnabled && node?.type === 'doc'
+          ? store.getNodeDoc(r.id)?.slug
+          : undefined,
+      // Phase 69 anchored-fact provenance (D-06/69-03): visibly attribute a floor-exempt
+      // injected line to the entity that anchored it.
+      anchoredVia: anchoredById.get(r.id)?.entityValue,
+      hops: hopsBySrc.get(r.id),
+    };
+  });
+
+  return renderAmbientBlock(rows, { docLinks: config.ambientDocLinkRenderEnabled });
 }
 
 /**
