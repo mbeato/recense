@@ -1164,7 +1164,7 @@ Plans:
 
 **Wave 3** *(blocked on 69-03 — same file)*
 
-- [ ] 69-04-PLAN.md — Injected-block rendering: doc nodes as title + `recense://doc/<id>`, real 1-hop `rel + neighbour` lines, all inside an enforced `AMBIENT_BLOCK_CHAR_BUDGET` where facts win over hops (RECALL-02, RECALL-03, wave 3)
+- [x] 69-04-PLAN.md — Injected-block rendering: doc nodes as title + `recense://doc/<id>`, real 1-hop `rel + neighbour` lines, all inside an enforced `AMBIENT_BLOCK_CHAR_BUDGET` where facts win over hops (RECALL-02, RECALL-03, wave 3)
 
 **Wave 4** *(blocked on 69-03 + 69-04 — the eval gate that un-gates the knobs)*
 
