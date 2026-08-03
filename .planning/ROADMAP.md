@@ -816,7 +816,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
 - [x] **Phase 66: Domain-Neutral Proposal Emit Seam** — `ActionProposalSink` + `action_proposal` table + `/v1/proposals` routes; a named "D-43-for-proposals" sentinel test closes the milestone's largest correctness risk structurally. (completed 2026-08-03)
 - [x] **Phase 67: Reference Consumer Adapter** — In-repo `clients/proposal-reference/` proves the contract end-to-end with its own import-boundary test. (completed 2026-08-03)
 - [x] **Phase 68: Telegram HITL Belief-Kind Extension** — Second `kind:'belief'` on the existing StoredProposal union; batching + hold-exclusion bound approval fatigue. (completed 2026-08-03)
-- [ ] **Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall** — Entity-anchored candidate generation (reusing Phase 64's union generator), same-project rank treatment, 1-hop relations in the injected block, cited-evidence recall mode. Gated on a 58-prompt eval set from real sessions. Seed: SEED-005. **6 plans / 4 waves planned 2026-08-03.**
+- [x] **Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall** — Entity-anchored candidate generation (reusing Phase 64's union generator), same-project rank treatment, 1-hop relations in the injected block, cited-evidence recall mode. Gated on a 58-prompt eval set from real sessions. Seed: SEED-005. **6 plans / 4 waves planned 2026-08-03.** (completed 2026-08-03)
 
 ### Phase 62: Multi-Inbox Email Ingest Hardening
 
@@ -1168,7 +1168,7 @@ Plans:
 
 **Wave 4** *(blocked on 69-03 + 69-04 — the eval gate that un-gates the knobs)*
 
-- [ ] 69-06-PLAN.md — Fail-closed 58-prompt replay gate encoding all four hard gates, a hook-latency probe, and the eval-gated default flip; no verbatim personal prompt ever leaves the gitignored tree (RECALL-05, wave 4)
+- [x] 69-06-PLAN.md — Fail-closed 58-prompt replay gate encoding all four hard gates, a hook-latency probe, and the eval-gated default flip; no verbatim personal prompt ever leaves the gitignored tree (RECALL-05, wave 4)
 
 ## Backlog
 
