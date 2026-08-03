@@ -8,7 +8,9 @@
  * server-side proposal status becomes 'approved' with the local row terminal.
  * Then forces a second real POST (by resetting the local row back to pending —
  * simulating a resumed/racing client) and asserts the client maps the server's
- * genuine 409 response to a terminal refusal with no state inversion (the
+ * genuine 409 response to needs_reconciliation (WR-03: the 409 may be this very
+ * client's own earlier approve whose local terminal write was lost, so the
+ * reply stays neutral and `refused` is untouched) with no state inversion (the
  * server-side status stays 'approved', never flips to anything else).
  *
  * Follows tests/proposal-reference-e2e.test.ts's harness precedent: real
@@ -196,7 +198,7 @@ describe('telegram belief e2e: real HTTP surface + belief-bridge/handleBeliefPro
     try { fs.unlinkSync(statePath); } catch { /* ignore */ }
   });
 
-  it('bridges one pending server proposal into one transition-labeled prompt, applies approve through the frozen contract, and maps a genuine second-POST 409 to a terminal refusal with no state inversion', async () => {
+  it('bridges one pending server proposal into one transition-labeled prompt, applies approve through the frozen contract, and maps a genuine second-POST 409 to needs_reconciliation with no state inversion', async () => {
     const seed = seedProposal();
     const client = createBeliefProposalClient(`http://127.0.0.1:${String(port)}`, TEST_TOKEN);
     const transport = new MockTelegramTransport();
@@ -250,17 +252,22 @@ describe('telegram belief e2e: real HTTP surface + belief-bridge/handleBeliefPro
     );
 
     // No state inversion: the server-side status is still 'approved', never
-    // flipped to anything else by the second (409-refused) approve attempt.
+    // flipped to anything else by the second (409) approve attempt.
     expect(getProposalStatus(seed.proposalId)).toBe('approved');
 
-    // The refusal was mapped to terminal, never left dangling as pending.
+    // WR-03: the 409 on a locally-pending row is exactly the crash-window shape
+    // (this client's OWN earlier approve DID apply), so the row is parked as
+    // needs_reconciliation — never left dangling as pending, never mislabeled
+    // as a refusal.
     const localRowAfterSecondTap = getProposal(localId, storePath);
-    expect(localRowAfterSecondTap && 'localStatus' in localRowAfterSecondTap ? localRowAfterSecondTap.localStatus : undefined).toBe('terminal');
+    expect(localRowAfterSecondTap && 'localStatus' in localRowAfterSecondTap ? localRowAfterSecondTap.localStatus : undefined).toBe('needs_reconciliation');
 
-    // The reply on the second tap is the genuine refusal message (proves the
+    // The reply on the second tap is the genuine neutral 409 mapping (proves the
     // real HTTP 409 round-trip was mapped, not the "already recorded"
-    // short-circuit, which is a different code path).
+    // short-circuit, which is a different code path). It must NOT claim
+    // "nothing was applied" — the earlier approve did apply.
     const lastReply = transport.sent[transport.sent.length - 1];
-    expect(lastReply?.text.toLowerCase()).toContain('nothing was applied');
+    expect(lastReply?.text.toLowerCase()).toContain('moved on the server');
+    expect(lastReply?.text.toLowerCase()).not.toContain('nothing was applied');
   });
 });

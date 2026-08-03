@@ -439,15 +439,20 @@ function maybeAppendSelfReport(baseText: string, stats: BeliefStats): string {
  * auth specifics in a user-facing message (T-68-16):
  *   503  — not terminal. Row stays pending, reply says memory is busy and the
  *          tap can be repeated, no counter is touched.
- *   400/404/409 — terminal. Row is written back terminal, reply says the belief
+ *   400/404 — terminal. Row is written back terminal, reply says the belief
  *          moved on and nothing was applied, `refused` increments, a
  *          belief-refused audit episode is written, never retried.
+ *   409  — needs_reconciliation (WR-03, mirrors Phase 67's third state). A 409
+ *          on a locally-pending row is AMBIGUOUS: it may be a genuine race
+ *          (another actor decided first) or this client's OWN earlier POST whose
+ *          local terminal write was lost to a crash between the POST committing
+ *          server-side and putProposal running. In the second case "nothing was
+ *          applied" would be false and counting it as `refused` would skew the
+ *          D-09 self-report. So: the row is parked as needs_reconciliation
+ *          (further taps never POST again), NO counter is touched, and the reply
+ *          is neutral about the outcome.
  *   401  — not terminal. Row stays pending, neutral reply, no counter touched.
  *   anything else (incl. a network error) — not terminal, same neutral reply.
- * Unlike Phase 67's unattended sync, this POST is a foreground reaction to a
- * human tap with the local row loaded in the same call — there is no
- * crash-resumed pending row whose earlier POST might already have succeeded, so
- * a 409 here is unambiguous and needs no `needs_reconciliation` third state.
  *
  * Does NOT call answerCallbackQuery — the outer callback drain calls it
  * unconditionally on every branch (Pitfall #1, mirrors handleProposalAction).
@@ -492,6 +497,14 @@ export async function handleBeliefProposalAction(
   if (row.localStatus === 'terminal') {
     try { await transport.sendMessage(chatId, 'that decision was already recorded'); }
     catch (e) { log68('send error (already-terminal): ' + String(e)); }
+    return;
+  }
+
+  // WR-03: a row parked as needs_reconciliation is settled server-side in a way
+  // this client could not observe — a further tap must not POST again.
+  if (row.localStatus === 'needs_reconciliation') {
+    try { await transport.sendMessage(chatId, 'state moved on the server — check /v1/proposals for the recorded outcome'); }
+    catch (e) { log68('send error (needs-reconciliation-replay): ' + String(e)); }
     return;
   }
 
@@ -544,9 +557,22 @@ export async function handleBeliefProposalAction(
         return;
       }
 
-      if (status === 400 || status === 404 || status === 409) {
+      if (status === 409) {
+        // WR-03: ambiguous — the server settled this proposal, possibly via this
+        // client's OWN earlier POST whose local terminal write was lost to a
+        // crash. Park as needs_reconciliation (further taps never POST again),
+        // touch no counter, reply neutrally (see function doc).
+        putProposal({ ...row, localStatus: 'needs_reconciliation' }, storePath);
+        try { await transport.sendMessage(chatId, 'state moved on the server — check /v1/proposals for the recorded outcome'); }
+        catch (e) { log68('send error (belief-409): ' + String(e)); }
+        try { await memoryClient.hitlEpisode({ decision: 'belief-needs-reconciliation' }); }
+        catch (e) { log68('hitlEpisode error (belief-needs-reconciliation): ' + String(e)); }
+        return;
+      }
+
+      if (status === 400 || status === 404) {
         // Terminal refusal — write the row back terminal, count it, audit it,
-        // never retry (see function doc's 409-unambiguity note).
+        // never retry.
         putProposal({ ...row, localStatus: 'terminal' }, storePath);
         const stats = readBeliefStats(statePath);
         stats.refused++;

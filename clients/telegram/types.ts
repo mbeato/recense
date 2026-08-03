@@ -190,8 +190,15 @@ export interface StoredBeliefProposal {
    * of inferring recency from expiry order.
    */
   serverCreatedAtMs: number;
-  /** Client-local status tracking — mirrors the terminal/pending split used elsewhere in this client. */
-  localStatus: 'pending' | 'terminal';
+  /**
+   * Client-local status tracking — mirrors the terminal/pending split used elsewhere
+   * in this client, plus 'needs_reconciliation' (WR-03, mirrors Phase 67's third
+   * state): a 409 landed on a locally-pending row, so the server settled this
+   * proposal in a way this client cannot see — possibly this client's OWN earlier
+   * POST whose local terminal write was lost to a crash. Parked, never re-POSTed,
+   * never counted as refused.
+   */
+  localStatus: 'pending' | 'terminal' | 'needs_reconciliation';
   /**
    * Store-compatibility field — synthesized so `Date.parse(dueAt) === record.expires_at`.
    * See the field-contract note on this interface and belief-bridge.ts's mapping.

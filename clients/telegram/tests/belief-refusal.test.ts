@@ -2,8 +2,9 @@
  * clients/telegram/tests/belief-refusal.test.ts — Phase 68 Plan 03 Task 2.
  *
  * Behavioral proof of handleBeliefProposalAction's full refusal-status mapping
- * (503 defers, 400/404/409 terminal-refused, 401 neutral-pending) and the
- * approval-rate self-report counters (D-09). Covers every <behavior> bullet.
+ * (503 defers, 400/404 terminal-refused, 409 needs_reconciliation (WR-03),
+ * 401 neutral-pending) and the approval-rate self-report counters (D-09).
+ * Covers every <behavior> bullet.
  *
  * No src/ imports — CLIENT-01 structural guard (scanned by import-boundary.test.ts).
  */
@@ -118,7 +119,7 @@ describe('handleBeliefProposalAction — refusal-status mapping (D-04)', () => {
     rmFile(statePath);
   });
 
-  it('a 409 response marks the row terminal, replies that the belief moved on, and increments refused', async () => {
+  it('(WR-03) a 409 response parks the row needs_reconciliation, replies neutrally about the outcome, and does NOT increment refused', async () => {
     const nowMs = Date.now();
     const row = putBeliefRow(storePath, makeRecord(pid('409-1')), nowMs);
     const { client } = makeScriptedClient({
@@ -129,9 +130,12 @@ describe('handleBeliefProposalAction — refusal-status mapping (D-04)', () => {
     await handleBeliefProposalAction(t, makeMemoryClient(), client, storePath, statePath, CHAT_ID, { localId: row.id, action: 'approve' }, nowMs);
 
     const reread = getProposal(row.id, storePath);
-    expect(reread && 'localStatus' in reread ? reread.localStatus : undefined).toBe('terminal');
-    expect(t.sent.some(s => s.text.toLowerCase().includes('nothing was applied'))).toBe(true);
-    expect(readBeliefStats(statePath).refused).toBe(1);
+    expect(reread && 'localStatus' in reread ? reread.localStatus : undefined).toBe('needs_reconciliation');
+    // A 409 may be this client's OWN crash-lost earlier approve — "nothing was
+    // applied" would be false in that case, so the reply must stay neutral.
+    expect(t.sent.some(s => s.text.toLowerCase().includes('moved on the server'))).toBe(true);
+    expect(t.sent.some(s => s.text.toLowerCase().includes('nothing was applied'))).toBe(false);
+    expect(readBeliefStats(statePath).refused).toBe(0);
   });
 
   it('a 404 response marks the row terminal with the same class of reply', async () => {
