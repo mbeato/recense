@@ -65,9 +65,9 @@
 
 > Scope edge (founder decision 2026-07-29): recense ships the producer seam **plus a thin in-repo reference consumer** proving the contract end-to-end. The live jobfill integration is jobfill's own repo, later.
 
-- [ ] **CONSUME-01**: An in-repo reference consumer adapter reads proposals and maps them onto its own local rows, proving the contract works end-to-end without recense knowing its schema.
-- [ ] **CONSUME-02**: The reference adapter imports **no** engine module — enforced by its own tsconfig boundary and its own import-boundary test (the existing test only scans `clients/telegram/`).
-- [ ] **CONSUME-03**: The contract is documented well enough that a third-party consumer can be written against it, following the existing `docs/reference-client.md` adopter-template pattern.
+- [x] **CONSUME-01**: An in-repo reference consumer adapter reads proposals and maps them onto its own local rows, proving the contract works end-to-end without recense knowing its schema.
+- [x] **CONSUME-02**: The reference adapter imports **no** engine module — enforced by its own tsconfig boundary and its own import-boundary test (the existing test only scans `clients/telegram/`).
+- [x] **CONSUME-03**: The contract is documented well enough that a third-party consumer can be written against it, following the existing `docs/reference-client.md` adopter-template pattern.
 
 ### APPROVE — Human-in-the-loop approval
 
@@ -131,9 +131,9 @@
 | EMIT-05 | 66 | Complete |
 | EMIT-06 | 66 | Complete |
 | EMIT-07 | 66 | Complete |
-| CONSUME-01 | 67 | Pending |
-| CONSUME-02 | 67 | Pending |
-| CONSUME-03 | 67 | Pending |
+| CONSUME-01 | 67 | Complete |
+| CONSUME-02 | 67 | Complete |
+| CONSUME-03 | 67 | Complete |
 | APPROVE-01 | 68 | Pending |
 | APPROVE-02 | 68 | Pending |
 | APPROVE-03 | 68 | Pending |
