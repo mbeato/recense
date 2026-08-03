@@ -161,5 +161,44 @@ None — `OPENAI_API_KEY`, the live DB, and the gitignored eval set were all alr
 All three files confirmed present on disk (`scripts/eval/recall-audit-gate.cjs`, `scripts/eval/69-entity-anchor-latency.cjs`, plus modified `package.json`/`src/lib/config.ts`/`tests/ambient-recall.test.ts`); all three commit hashes (`ce9acc1`, `ca6044b`, `846f4fc`) confirmed present in `git log --oneline --all`. `git status --porcelain scripts/eval/results/` is empty; no `.jsonl` file was ever staged or committed.
 
 ---
+
+## Re-gate Correction Note — 2026-08-03 (post review-fix commits 7895ed1, d1e8dde)
+
+The numbers above are the original gate run and are left unchanged. This note records a
+**re-gate**, run after two review fixes landed that targeted the original G2/G5 failure
+mechanisms directly: `7895ed1` (WR-01, anchor tokens strip punctuation) and `d1e8dde` (WR-03,
+`skipExactChannel` drops ~45 unindexed node-table scans/prompt).
+
+Re-gate against the live graph (27,016 nodes at run time — grown since the original 27,003-node
+run):
+
+- **Baseline (this run, all 5 knobs dark):** row_count=58, qualifying=51, mean_relevance=0.0967.
+- **Run (`entityAnchoringEnabled:true` + shipped nudge/demote/hop):** G1 4/4 pass, **G2 FAILS**
+  (16/51 regressed >0.01, mean 0.0967→0.0994 — same dilution pattern as the original run), G3
+  vacuous pass (0 doc rows), G4 pass.
+- **Latency probe (30 reps x 5 probes, live graph, 27,016 nodes):**
+  `anchoring OFF p50/p95 = 305/332 ms; ON p50/p95 = 313/422 ms; delta p50/p95 = +8/+90 ms`.
+- **G5 (soft latency gate):** anchored p95 (422ms) vs 2x baseline p95 (332ms x 2 = 664ms) —
+  **PASSES** this time (was a FAIL in the original run: 682ms vs 544ms). WR-03's
+  `skipExactChannel` fix cut the p95 delta from +410ms (2.5x) to +90ms (1.27x).
+
+**Verdict: `entityAnchoringEnabled` stays dark.** The flip rule requires G1/G2/G4 AND G5 to all
+pass. G5 clearing is real progress from WR-03, but G2 alone still blocks the flip — the
+mean-of-injected-lines relevance proxy still dilutes toward the newly-added anchored facts,
+independent of which tokens anchor. This is a confirmed honest null post-fix, not a rejection: the
+documented `--judge` LLM-grade escape hatch (in `recall-audit-gate.cjs`'s header, still not
+implemented) remains the correct next step to re-evaluate this metric honestly.
+
+`ambientDocLinkRenderEnabled` was also re-gated: the same 58-prompt set again surfaced **0/58
+doc-type rows** — confirmed still vacuous, unchanged. Stays dark.
+
+Both knobs' doc comments in `src/lib/config.ts` carry a dated `Phase 69 D-08 RE-GATE 2026-08-03`
+annotation with these numbers. `.planning/phases/69-retrieval-upgrade-entity-anchored-ambient-recall/69-VERIFICATION.md`
+was updated from `gaps_found` to `passed_with_open_item` to reflect the confirmed-honest-null
+outcome. Gate artifacts (`69-gate-baseline.json`, `69-gate-run.json`) are gitignored under
+`scripts/eval/results/recall-audit/` and were not committed.
+
+---
 *Phase: 69-retrieval-upgrade-entity-anchored-ambient-recall*
 *Completed: 2026-08-03*
+*Re-gated: 2026-08-03*
