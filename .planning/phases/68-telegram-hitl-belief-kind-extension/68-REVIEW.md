@@ -22,7 +22,8 @@ findings:
   warning: 6
   info: 7
   total: 14
-status: issues_found
+status: fixed
+fixed_at: 2026-08-03T14:25:00Z
 ---
 
 # Phase 68: Code Review Report
@@ -30,7 +31,22 @@ status: issues_found
 **Reviewed:** 2026-08-03T14:15:00Z
 **Depth:** standard
 **Files Reviewed:** 13
-**Status:** issues_found
+**Status:** fixed (all Critical + Warning findings; Info findings intentionally skipped)
+
+## Fixes Applied
+
+All Critical and Warning findings fixed on main, one atomic commit per finding. Info findings (IN-01..IN-07) skipped by fix scope. Verified after fixes: `npm run typecheck` clean, ad-hoc strict tsc over `clients/telegram/*.ts` + `tests/*.ts` clean, phase suite 374/374, full `npm test` 3951 passed (no strip-hidden flake fired).
+
+| Finding | Fix | Commit |
+|---------|-----|--------|
+| CR-01 | Bridge shrinks each group's constituent set until the rendered message fits `TELEGRAM_MAX_TEXT` (4096) BEFORE reserving a slot or storing rows; renderer gained a `totalCount` param so the overflow line honestly names carried constituents (they are not stored, so they resurface on the next eligible day); `MockTelegramTransport.sendMessage` now throws on >4096 like the live Bot API; 10-constituent max-length regression test. The cap-slot half of the doom loop is closed by WR-06's reserve-on-delivery. | 193cd3d |
+| WR-01 | `ledgerCounts` is a null-prototype object (`Object.create(null)` + `Object.assign`), so entity descriptors equal to inherited `Object.prototype` keys (`constructor`, `toString`, `__proto__`, ...) read as data and a `__proto__` write cannot swap the prototype. Regression test with a `'constructor'` descriptor. | ab75257 |
+| WR-02 | `beliefKeyboard` applies the same `serverCreatedAtMs`-ascending stable sort the renderer uses to number blocks, so keyboard row N always matches numbered block N; both button labels carry the block number (`✅ 1. from → to` / `❌ 1. to`), disambiguating truncated same-transition labels. Divergent-order regression test (created-order ≠ expiry-order). | d30d2f3 |
+| WR-03 | 409 on a locally-pending row is parked as `localStatus: 'needs_reconciliation'` (new union member, mirrors Phase 67's third state): neutral reply ("state moved on the server — check /v1/proposals for the recorded outcome"), `refused` counter untouched, further taps short-circuit without POSTing, audit episode `belief-needs-reconciliation`. 400/404 keep the terminal-refused mapping. The wrong docstring claim ("no crash-resumed pending row... needs no needs_reconciliation third state") corrected; refusal tests and the e2e's second-tap assertions updated to the honest semantics. | 52a5ec8 |
+| WR-04 | Per-group send loop tries each chat independently and rolls back rows only when ZERO chats received the message — a delivered keyboard's rows are load-bearing and survive a partial multi-chat failure; no duplicate re-prompt on the next pass. Partial-failure regression test. | 093bed3 |
+| WR-05 | `isInspectableProposalRecord` now validates value types for every field the bridge consumes (strings where strings are read, `id` matching `^[0-9a-f]{64}$`, `change_from` string\|null, numeric timestamps/`schema_version`, categorical `confidence` enum; `kind`/`status` string-typed only so unknown vocabulary stays a per-record skip). A malformed item stops the whole pass with zero `putProposal` writes. Regression tests: non-string `entity_descriptor` through the bridge → no store writes; direct type-matrix on the gate. | 32f94a7 |
+| WR-06 | Daily cap enforced with a read-only `getCapState` check before building a group; `tryReserveProposalSlot` is called only after at least one chat received the prompt. A failed send (transient outage) no longer burns a slot of the cap shared with tool proposals per retry pass. No changes to the frozen `proposal-store.ts` (`getCapState` was already exported); zero-diff hash lock still green. Regression test: failed pass leaves count 0, delivered pass consumes exactly 1. | b2661a6 |
+| IN-01..IN-07 | Skipped — Info findings are out of fix scope for this pass. | — |
 
 ## Summary
 
