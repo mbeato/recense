@@ -157,6 +157,7 @@ clients/proposal-reference/
 | `RECENSE_SERVE_URL` | no | `http://127.0.0.1:7701` | recense serve base URL |
 | `RECENSE_SERVE_TOKEN` | yes | — | Bearer token for recense serve auth |
 | `RECENSE_REFERENCE_STORE_PATH` | no | `~/.config/recense/proposal-reference-store.json` | Adapter-owned local row store path |
+| `RECENSE_REFERENCE_LOG_PATH` | no | `<store dir>/proposal-reference.log` | Adapter-owned append-only log path |
 
 **How it works:**
 
@@ -350,6 +351,8 @@ consumer must not branch on its exact text:
 - `409 { "error": "conflict", "detail": "proposal expired" }` — past the
   proposal's TTL.
 - `413 { "error": "payload_too_large" }`
+- `500 { "error": "internal_error" }` — an unexpected server-side failure;
+  both proposal routes can emit it.
 - `503 { "error": "service_unavailable", "detail": "memory busy; retry in a moment" }`
 
 **Replay semantics.** Proposal ids are deterministic (content-hashed), so safe
@@ -365,7 +368,9 @@ uses `needs_reconciliation`; see "How it works" step 7).
 
 **Retry policy.** Of every response above, only `503` is retryable. `400`,
 `404`, and `409` are all terminal — mark the proposal refused locally and
-never retry it.
+never retry it. Statuses outside the mapped set (`500`, `413`, or anything
+unlisted) are treated by the reference adapter as retryable: the local row is
+left `pending` and the item is re-attempted on a later sync.
 
 ### `/v1/add` — reference clients do not call this
 
