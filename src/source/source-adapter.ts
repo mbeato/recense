@@ -77,6 +77,13 @@ export function contentExternalId(relPath: string, content: string): string {
  *  6. An adapter that sets event_ts must have derived it from source-asserted data
  *     (e.g. a parsed Date: header) and must set null rather than guess when that data
  *     is absent or implausible — never a heuristic salvage (EMAIL-04).
+ *  7. An adapter that sets provenance_key must derive it from source-asserted lineage the
+ *     SOURCE controls (e.g. Gmail's server-assigned threadId), never from sender-controlled
+ *     header reconstruction (References, In-Reply-To), and must derive sender identity
+ *     through invisible-codepoint stripping and normalization before use (D-04/D-05). When
+ *     any component is unparseable the adapter must emit the source's shared collapsed key,
+ *     never a per-message unique value — a per-message key is the farmable shape research
+ *     Pitfall 3 bans.
  *
  * Salience is NOT included (D-60): AllocationGate.score(content, role, source)
  * applies the per-source weight at append time. Adapters carry no salience hint.
@@ -129,6 +136,18 @@ export interface NormalizedRecord {
    * (source, external_id)) — see invariant 6 above.
    */
   event_ts?: number | null;
+
+  /**
+   * Optional adapter-derived provenance-distinctness key for this record (DRIFT-03).
+   * Sources that do not compute one omit it entirely; only the Gmail adapter sets it today.
+   * NOT a salience hint (D-60 still forbids adapters from carrying salience), NOT a dedup
+   * key (D-59 still owns dedup via (source, external_id)), and NOT a substitute for
+   * external_id — naming that relationship explicitly matters, because research's
+   * "dangerous shortcuts" table bans message-id-as-distinctness-key, and this field is the
+   * shape that ban is easy to violate by accident. Consumed by the ingest mint site (Plan
+   * 65-07) and by nothing else.
+   */
+  provenance_key?: string;
 
   /**
    * Conversation role (D-10). For communication sources use 'user'; for tool output 'tool'.

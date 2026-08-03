@@ -36,6 +36,7 @@ const stubMeta = {
 function makeRaw(id = 'msg-001'): RawGmailMessage {
   return {
     id,
+    threadId: 'thread-001',
     headers: { from: 'sender@example.com', subject: 'test', date: '' },
     bodyText: 'body',
   };

@@ -30,6 +30,7 @@ import {
 function makeRaw(overrides: Partial<RawGmailMessage> = {}): RawGmailMessage {
   return {
     id: 'msg-001',
+    threadId: 'thread-001',
     headers: { from: 'alice@acme.com', subject: 'test', date: '' },
     bodyText: 'body',
     ...overrides,

@@ -58,6 +58,7 @@ import type { EngineConfig } from '../lib/config';
 import type { NormalizedRecord, SourceAdapter } from './source-adapter';
 import { redactSecrets } from './redact';
 import { stripHiddenContent, stripInvisibleCodepoints } from './strip-hidden';
+import { deriveGmailProvenanceKey, COLLAPSED_GMAIL_PROVENANCE_KEY } from './provenance-key';
 
 // ---------------------------------------------------------------------------
 // Raw message type — the API-agnostic representation used by GmailFetcher
@@ -71,6 +72,15 @@ import { stripHiddenContent, stripInvisibleCodepoints } from './strip-hidden';
 export interface RawGmailMessage {
   /** Gmail API message id (immutable, used as external_id — D-59). */
   id: string;
+  /**
+   * Gmail's server-assigned thread id (from `resp.data.threadId` on the `messages.get`
+   * response the fetcher already makes — no new API call). Used as the thread-lineage
+   * component of the DRIFT-03 provenance-distinctness key (see provenance-key.ts). Lineage
+   * must NEVER be reconstructed from the `References` or `In-Reply-To` headers instead —
+   * those are sender-controlled and forgeable, while `threadId` is assigned by Gmail's own
+   * servers and is the one component of the key not under the sender's control (D-04).
+   */
+  threadId: string;
   headers: {
     /** RFC 2822 From: value, e.g. '"Alice Smith" <alice@acme.com>' */
     from: string;
@@ -251,7 +261,13 @@ class RealGmailFetcher implements GmailFetcher {
       const from = headers.find(h => h.name?.toLowerCase() === 'from')?.value ?? '';
       const subject = headers.find(h => h.name?.toLowerCase() === 'subject')?.value ?? '(no subject)';
       const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value ?? '';
-      messages.push({ id, headers: { from, subject, date }, bodyText: extractBodyText(payload) });
+      // D-04/DRIFT-03: threadId is already present on this same messages.get response —
+      // zero new API calls, no quota change, no new scope. Fall back to '' when absent;
+      // deriveGmailProvenanceKey treats an empty thread id as unparseable and falls back
+      // to the collapsed key, so an absent field just degrades to pre-Phase-65 behavior
+      // for that one message.
+      const threadId = resp.data.threadId ?? '';
+      messages.push({ id, threadId, headers: { from, subject, date }, bodyText: extractBodyText(payload) });
     }
 
     return { messages, newHistoryId };
@@ -482,7 +498,9 @@ const STRIP_INPUT_OMITTED_MARKER = '[body omitted: exceeds size limit]';
  * @param accountId Google account id (D-09) — embedded in the inline provenance header
  *                  as `· Acct: <accountId>` so the extractor sees it. Comes from trusted
  *                  config.googleAccounts; never sourced from external email content (T-20-06).
- * @param _config   EngineConfig (reserved for future per-source tunables; unused today).
+ * @param config    EngineConfig slice carrying the DRIFT-03 provenance-distinctness knobs
+ *                  (`provenanceDistinctnessEnabled`, `provenanceMinResidualChars`) alongside
+ *                  `gmail`.
  * @param nowMs     Current time in epoch ms (EMAIL-04) — passed through to parseEmailDate.
  *                  Explicit parameter, never Date.now() inside this function, so the
  *                  normalizer stays pure as its doc block promises.
@@ -490,8 +508,7 @@ const STRIP_INPUT_OMITTED_MARKER = '[body omitted: exceeds size limit]';
 export function normalizeGmailMessage(
   raw: RawGmailMessage,
   accountId: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _config: Pick<EngineConfig, 'gmail'>,
+  config: Pick<EngineConfig, 'gmail' | 'provenanceDistinctnessEnabled' | 'provenanceMinResidualChars'>,
   nowMs: number
 ): NormalizedRecord {
   // EMAIL-03/CR-02 (62-REVIEW.md): the BODY gets the full 8-stage stripHiddenContent,
@@ -537,6 +554,23 @@ export function normalizeGmailMessage(
   // tests/gmail-hidden-content.test.ts's source-order assertion keeps it there.
   const content = redactSecrets(combined);
 
+  // DRIFT-03: derive the provenance-distinctness key. Two details are load-bearing:
+  //  - Pass `strippedFrom` (already invisible-codepoint-stripped, above), not
+  //    `raw.headers.from`. `deriveGmailProvenanceKey` strips again internally and is
+  //    idempotent, so this is belt-and-braces; passing the stripped value keeps the single
+  //    sender-controlled-input discipline visible at this call site (D-05).
+  //  - Pass `raw.bodyText` — the RAW body, not `strippedBody`. The quote/forward detector
+  //    needs the original structure: `stripHiddenContent` may have already removed markup
+  //    that carried the forward boundary, and `strippedBody` can be the
+  //    STRIP_INPUT_OMITTED_MARKER sentinel for over-cap messages, which would read as "no
+  //    quote markers, plenty of residual" and defeat the residual gate.
+  const derivedProvenanceKey = deriveGmailProvenanceKey({
+    fromHeader: strippedFrom,
+    threadId: raw.threadId,
+    bodyText: raw.bodyText,
+    minResidualChars: config.provenanceMinResidualChars,
+  });
+
   return {
     content,
     source: 'gmail',
@@ -548,6 +582,14 @@ export function normalizeGmailMessage(
     // EMAIL-04: source-asserted event time from the Date: header, or null on any
     // absent/malformed/implausible header (confident-or-null — see parseEmailDate).
     event_ts: parseEmailDate(raw.headers.date, nowMs),
+    // D-14 dark-launch semantics: the key is COMPUTED unconditionally so it is observable
+    // in tests and in Plan 65-10's dry-run, and the switch only decides whether it is
+    // REPORTED. When disabled the record carries the collapsed 'ingest:gmail' literal,
+    // byte-identical to what ingest-cli.ts mints today, so enablement is a pure config flip
+    // with no code path difference.
+    provenance_key: config.provenanceDistinctnessEnabled
+      ? derivedProvenanceKey
+      : COLLAPSED_GMAIL_PROVENANCE_KEY,
     role: 'user',
   };
 }
@@ -575,6 +617,61 @@ export function resolveAccountQuery(
   const account = config.googleAccounts.find(a => a.id === accountId);
   const query = account?.query?.trim();
   return query ? query : config.gmail.query;
+}
+
+// ---------------------------------------------------------------------------
+// orderGmailBackfillByEventTime — DRIFT-04 first half: chronological query-backfill (D-11a)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reorder a query-backfill batch of `NormalizedRecord`s so that among records carrying a
+ * non-null `event_ts`, the older one comes first — without moving any record out of the set
+ * of index slots event-time-bearing records already occupy, and without moving any
+ * `event_ts === null` (or `undefined`) record at all.
+ *
+ * This is a PARALLEL implementation of `orderEpisodesForConsolidation`'s
+ * (`src/consolidation/episode-order.ts`) slot-preserving algorithm, not a call into it:
+ * `orderEpisodesForConsolidation` is typed on `EpisodeRow`, which carries DB-assigned fields
+ * (`id`, `ts`, `salience`, `consolidated`) that a pre-append `NormalizedRecord` does not have.
+ * Generalizing the shipped function would widen a load-bearing consolidation-path signature
+ * to serve one ingest-side caller. The algorithm is deliberately IDENTICAL so the codebase
+ * carries one mental model of this reorder; if either changes, both must.
+ *
+ * Pure, total, deterministic, allocation-only: never mutates `records` or any record object.
+ * Permutation guarantee: output has the same length and the same multiset of `external_id`s
+ * as the input, always. Idempotent: `orderGmailBackfillByEventTime(f(x))` deep-equals `f(x)`.
+ */
+export function orderGmailBackfillByEventTime(
+  records: readonly NormalizedRecord[]
+): NormalizedRecord[] {
+  const eventTimeIndices: number[] = [];
+  for (let i = 0; i < records.length; i++) {
+    const eventTs = records[i]!.event_ts;
+    if (eventTs !== null && eventTs !== undefined) {
+      eventTimeIndices.push(i);
+    }
+  }
+
+  // Nothing to reorder: 0 or 1 event-time-bearing records can't change relative order.
+  if (eventTimeIndices.length < 2) {
+    return [...records];
+  }
+
+  const sortedEventTimeRecords = eventTimeIndices
+    .map(i => records[i]!)
+    .sort((a, b) => {
+      // event_ts is non-null for every record in this subset (guaranteed by eventTimeIndices).
+      const diff = a.event_ts! - b.event_ts!;
+      if (diff !== 0) return diff;
+      // Deterministic tie-break for equal-timestamp messages.
+      return a.external_id < b.external_id ? -1 : a.external_id > b.external_id ? 1 : 0;
+    });
+
+  const result = [...records];
+  for (let slot = 0; slot < eventTimeIndices.length; slot++) {
+    result[eventTimeIndices[slot]!] = sortedEventTimeRecords[slot]!;
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +757,19 @@ export class GmailAdapter implements SourceAdapter {
     const nowMs = Date.now();
     const records = messages.map(msg => normalizeGmailMessage(msg, this.accountId, this.config, nowMs));
 
+    // D-11a: `cursor === null` is exactly the query-backfill case — the same condition
+    // `fetchMessages` branches on for `startHistoryId`. Only the backfill batch is
+    // reordered: `users.history.list` (the incremental branch) already delivers messages
+    // in `messageAdded` order, an incremental pull is a handful of messages rather than a
+    // full backlog, and `orderEpisodesForConsolidation` already refines ordering inside the
+    // sleep pass for every source. The backfill is the case where ingestion order diverges
+    // from send order by months (research Pitfall 5).
+    // Residual, named honestly (mirrors episode-order.ts's own residual note): this closes
+    // a SINGLE account's own backlog only. Cross-run and cross-account interleaving is
+    // D-12's named accepted risk, and the drift layer's event_ts staleness guard (Plan
+    // 65-05, wired in 65-08) is the second half of the DRIFT-04 defense.
+    const orderedRecords = cursor === null ? orderGmailBackfillByEventTime(records) : records;
+
     // M-6: capture newHistoryId for the deferred cursor commit (NOT written here).
     // commitCursor is a thunk — called by the orchestrator after appendBatch succeeds.
     const commitCursor = (): void => {
@@ -668,6 +778,6 @@ export class GmailAdapter implements SourceAdapter {
       }
     };
 
-    return { records, commitCursor };
+    return { records: orderedRecords, commitCursor };
   }
 }
