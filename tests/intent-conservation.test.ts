@@ -15,6 +15,15 @@
  * constants -- never a literal array retyped in this file. A test that hardcoded the four
  * status strings as a literal array would keep passing while the code vocabulary drifted from
  * the prompt; only asserting against the SAME constant both sides read makes the test meaningful.
+ *
+ * Phase 64 companion (D-09): `tests/resolution-conservation.test.ts` runs the same inertness
+ * discipline for the resolved-entity fields (`claimResolvedEntityId` / `claimResolvedEntityDescriptor`)
+ * that Phase 64 threads onto `ClaimDecision` alongside `claimIntentStatus` / `claimIntentEntity` /
+ * `claimIntentConfidence`. Its `snapshotDb` is a strengthened superset of this file's helper --
+ * it additionally records every table's `payload` column when present and, for
+ * `consolidation_event` specifically, an id-normalized concatenation of every TEXT column --
+ * closing the blind spot 63-REVIEW flagged as WR-02 (this file's original helper compared only
+ * one privileged column per table and never inspected `consolidation_event.payload`).
  */
 import Database from 'better-sqlite3';
 import { describe, it, expect } from 'vitest';
@@ -166,6 +175,12 @@ describe('vocabulary parity across the classification pipeline', () => {
  * loosening of this assertion (excluding a table from the snapshot, widening "no intent
  * column anywhere" to "no intent column outside action_proposal", etc.) is a review-blocking
  * change to this file, not routine maintenance (T-63-05-C).
+ *
+ * REVIEW-BLOCKING (Phase 64 extension): the same discipline covers `claimResolvedEntityId` /
+ * `claimResolvedEntityDescriptor` in `tests/resolution-conservation.test.ts`, the companion
+ * guard for those two fields. A silent loosening of ITS snapshot comparison or its
+ * `consolidation_event.payload` leak scan is likewise review-blocking -- do not treat a change
+ * to that file as routine maintenance either.
  */
 describe('classification is inert — zero database delta (D-08)', () => {
   interface Harness {
