@@ -265,7 +265,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 62. Multi-Inbox Email Ingest Hardening | v10.0 | 31/31 | Complete   | 2026-08-02 |
 | 63. Offline Intent Classification | v10.0 | 6/6 | Complete    | 2026-08-02 |
 | 64. Entity Resolution Hardening | v10.0 | 4/4 | Complete    | 2026-08-03 |
-| 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 0/0 | Not started | — |
+| 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 3/10 | In Progress|  |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 0/0 | Not started | — |
 | 67. Reference Consumer Adapter | v10.0 | 0/0 | Not started | — |
 | 68. Telegram HITL Belief-Kind Extension | v10.0 | 0/0 | Not started | — |
@@ -1015,9 +1015,9 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 65-01-PLAN.md — session_id blast-radius audit (D-02 research gate) + consumer structural lock
-- [ ] 65-02-PLAN.md — strip-quoted.ts: LLM-free quoted/forwarded detector + residual-emptiness judge (D-06/D-07)
-- [ ] 65-03-PLAN.md — six Phase 65 dark config knobs, all defaulting to pre-phase behavior (D-09/D-11/D-14/D-16)
+- [x] 65-01-PLAN.md — session_id blast-radius audit (D-02 research gate) + consumer structural lock
+- [x] 65-02-PLAN.md — strip-quoted.ts: LLM-free quoted/forwarded detector + residual-emptiness judge (D-06/D-07)
+- [x] 65-03-PLAN.md — six Phase 65 dark config knobs, all defaulting to pre-phase behavior (D-09/D-11/D-14/D-16)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
