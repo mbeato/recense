@@ -135,14 +135,32 @@ export function dampByConfidence(
 
 /**
  * Event types that count as evidence FOR the candidate node's current value when computing
- * the staleness horizon. A hold's episode is contradicting evidence recorded AGAINST the
- * candidate, not supporting evidence for it — counting it would let the very claim being
- * evaluated raise the bar against itself, so the hold outcome is deliberately excluded here.
- * The unrelated/schema/merge outcomes are excluded as not evidence about this node's value.
+ * the staleness horizon.
+ *
+ * `'confirm'`, `'extend'`, and `'unrelated'` are evidence FOR this node's value — the last two
+ * because they are the node's founding mint (`consolidator.ts` emits both with `node_id` = the
+ * minted node; `'unrelated'` additionally carries `candidate_id: null`, so it can only ever
+ * raise its OWN node's horizon and can never produce a cross-node false positive).
+ *
+ * `'contradict_hold'` stays excluded: a hold's episode is contradicting evidence recorded
+ * AGAINST the candidate, not supporting evidence for it — counting it would let the claim
+ * under evaluation raise the bar against itself.
+ *
+ * `'schema_emitted'`, `'schema_falsified'`, `'entity_merge'`, `'fact_merge'` stay excluded as
+ * not evidence about this node's value.
+ *
+ * CORRECTION (DRIFT-04 / WR-02, 65-11): `'unrelated'` was originally excluded here on the
+ * (wrong) rationale that it is "not evidence about this node's value." Excluding it made the
+ * guard silently inert for every brand-new tracked entity's first status email — the
+ * auto-unrelated branch (`consolidator.ts:947-973`) fires whenever a claim has no existing
+ * candidate at all, which is the common cold-start path, not an edge case. `65-VERIFICATION.md`
+ * reproduced the resulting revert directly. Do not re-narrow this set to exclude the standalone
+ * mint again without meeting that same reproduction.
  */
 export const SUPPORTING_EVENT_TYPES: ReadonlySet<ConsolidationEventType> = new Set<ConsolidationEventType>([
   'confirm',
   'extend',
+  'unrelated', // standalone/cold-start mint — node_id is the node it minted (consolidator.ts:1356-1376)
   'contradict_reconcile',
   'contradict_append_new',
   'contradict_force_destabilize',

@@ -257,6 +257,66 @@ async function establishBelief(
   return { consolidator, nodeId: row.id };
 }
 
+/**
+ * Establish a belief node through a REAL first `consolidate()` pass over an EMPTY graph, so the
+ * auto-unrelated branch (`consolidator.ts:947-973`) fires deterministically: zero cosine
+ * candidates, zero anchors, zero BM25 hits -- and, critically, no judge call at all. This is
+ * the genuine cold-start mint path this plan (65-11) exists to close: `establishBelief`'s
+ * seeded anchor is exactly what let the shipped DRIFT-04 e2e suite pass over
+ * `65-VERIFICATION.md`'s second `missing` item, because it always mints via 'extend' and never
+ * exercises the 'unrelated' branch every brand-new tracked entity's FIRST status email actually
+ * takes. Do NOT modify `establishBelief` -- the existing cases above depend on its 'extend'
+ * path; this is a sibling, not a replacement.
+ */
+async function establishBeliefColdStart(
+  h: Harness,
+  value: string,
+  opts: { eventTs?: number | null } = {},
+): Promise<{ consolidator: Consolidator; nodeId: string }> {
+  const mintMarker = `[EP-COLDSTART-MINT:${value}]`;
+  const mintProvider = new MarkerProvider(
+    constEmbedFn(h.config.embeddingDimensions),
+    [{ marker: mintMarker, claims: [{ type: 'fact', value }] }],
+    () => {
+      throw new Error(
+        'establishBeliefColdStart: judge resolver was called -- the auto-unrelated branch ' +
+        '(consolidator.ts:947-973) makes NO judge call. If this throws, the fixture stopped ' +
+        'taking the cold-start mint path and silently reverted to an extend/confirm mint.',
+      );
+    },
+  );
+  const consolidator = makeConsolidatorWithRealSink(h, mintProvider);
+  h.episodes.append({
+    content: `Establishing update ${mintMarker}: ${value}`,
+    origin: 'observed',
+    salience: 0.9,
+    hard_keep: 1,
+    role: 'user',
+    session_id: 'sess-establish-belief-coldstart',
+    source: 'gmail',
+    event_ts: opts.eventTs ?? null,
+  });
+  await consolidator.consolidate();
+  const row = h.db.prepare('SELECT id FROM node WHERE value = ?').get(value) as { id: string };
+  return { consolidator, nodeId: row.id };
+}
+
+/**
+ * Non-vacuity anchor for the cold-start cases below: asserts the node's ONLY
+ * consolidation_event row is the 'unrelated' mint itself, with candidate_id null and
+ * node_id equal to the minted node. Without this, a fixture that accidentally mints via
+ * 'extend' or 'confirm' would pass for the wrong reason and re-hide the DRIFT-04 gap.
+ */
+function assertColdStartMint(h: Harness, nodeId: string): void {
+  const rows = h.db
+    .prepare('SELECT event_type, candidate_id, node_id FROM consolidation_event WHERE node_id = ?')
+    .all(nodeId) as Array<{ event_type: string; candidate_id: string | null; node_id: string }>;
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.event_type).toBe('unrelated');
+  expect(rows[0]!.candidate_id).toBeNull();
+  expect(rows[0]!.node_id).toBe(nodeId);
+}
+
 // ---------------------------------------------------------------------------
 // Shared contradiction-fixture runner for the DRIFT-03 consequence cases
 // ---------------------------------------------------------------------------
@@ -675,5 +735,91 @@ describe('DRIFT-04: out-of-order evidence cannot revert', () => {
     expect(node.tombstoned).toBeFalsy();
     expect(node.value).toBe(OFFER_VALUE);
     expect(pendingContradictionsCount(node)).toBe(1);
+  });
+
+  it("cold-start ('unrelated'-minted) belief: a stale backfilled contradiction cannot revert it", async () => {
+    // REQUIREMENTS.md, verbatim: "Out-of-order evidence (a rejection arriving after an offer)
+    // does not silently revert a newer status." This is 65-VERIFICATION.md's BLOCKER
+    // regression guard: every case above establishes its belief via establishBelief()'s
+    // seeded-anchor 'extend' path, which structurally cannot reach the cold-start 'unrelated'
+    // mint that every brand-new tracked entity's FIRST status email actually takes (no existing
+    // candidate at all -> consolidator.ts:947-973's auto-unrelated gate).
+    const h = makeHarness();
+    const OFFER_VALUE = 'Massive Dynamic application status: offer extended';
+    const { consolidator, nodeId } = await establishBeliefColdStart(h, OFFER_VALUE, { eventTs: DAY30 });
+    assertColdStartMint(h, nodeId);
+    const eventsBefore = (
+      h.db.prepare('SELECT COUNT(*) AS n FROM consolidation_event WHERE node_id = ? OR candidate_id = ?').get(nodeId, nodeId) as { n: number }
+    ).n;
+
+    const REJECTION_MARKER = '[EP-COLDSTART-STALE-REJECTION]';
+    swapProvider(consolidator, new MarkerProvider(
+      constEmbedFn(h.config.embeddingDimensions),
+      [{ marker: REJECTION_MARKER, claims: [{
+        type: 'fact', value: 'Massive Dynamic application status: rejected',
+        intent_status: 'rejected', intent_entity: 'Massive Dynamic', intent_confidence: 'high',
+      }] }],
+      (_claim, candidates) => {
+        const target = candidates.find((c) => c.value === OFFER_VALUE);
+        if (!target) throw new Error('cold-start stale fixture: offer node not found among candidates');
+        return { relation: 'contradict', best_candidate_id: target.id, magnitude: 0.5, contradicted_ids: [target.id] };
+      },
+    ));
+    h.episodes.append({
+      content: `Update ${REJECTION_MARKER}: Massive Dynamic application status: rejected`,
+      origin: 'observed', salience: 0.9, hard_keep: 1, role: 'user',
+      session_id: 'sess-coldstart-stale-rejection', source: 'gmail', event_ts: DAY10, // older than the mint
+    });
+    await consolidator.consolidate();
+
+    const node = getNodeById(h, nodeId);
+    expect(node.tombstoned).toBeFalsy();
+    expect(node.value).toBe(OFFER_VALUE);
+    expect(pendingContradictionsCount(node)).toBe(0);
+    const eventsAfter = (
+      h.db.prepare('SELECT COUNT(*) AS n FROM consolidation_event WHERE node_id = ? OR candidate_id = ?').get(nodeId, nodeId) as { n: number }
+    ).n;
+    expect(eventsAfter).toBe(eventsBefore);
+  });
+
+  it("cold-start chronological control: a NEWER contradiction against an 'unrelated'-minted belief still routes normally", async () => {
+    // States what proves the fix discriminates on TIME rather than blanket-suppressing every
+    // contradiction against a cold-start-minted node: the identical mint, only NEWER, still
+    // corrects the belief by tombstone-and-mint-new through the unmodified PE machinery.
+    const h = makeHarness();
+    const OFFER_VALUE = 'Massive Dynamic Holdings application status: offer extended';
+    const REJECTED_VALUE = 'Massive Dynamic Holdings application status: rejected';
+    const { consolidator, nodeId } = await establishBeliefColdStart(h, OFFER_VALUE, { eventTs: DAY10 });
+    assertColdStartMint(h, nodeId);
+
+    const REJECTION_MARKER = '[EP-COLDSTART-CHRONO]';
+    swapProvider(consolidator, new MarkerProvider(
+      constEmbedFn(h.config.embeddingDimensions),
+      [{ marker: REJECTION_MARKER, claims: [{
+        type: 'fact', value: REJECTED_VALUE,
+        intent_status: 'rejected', intent_entity: 'Massive Dynamic Holdings', intent_confidence: 'high',
+      }] }],
+      (_claim, candidates) => {
+        const target = candidates.find((c) => c.value === OFFER_VALUE);
+        if (!target) throw new Error('cold-start chronological fixture: offer node not found among candidates');
+        // Observed cold-start mint resistance is identical to the 'extend' mint's: upsertNode
+        // is called with no s/c override on either path (both default to s=0.1, c=0.5 ->
+        // resistance=0.05). magnitude 0.06 -> ratio 1.2 -> mid-band reconcile, mirroring the
+        // existing chronological control's 0.06-against-0.05 reasoning above.
+        return { relation: 'contradict', best_candidate_id: target.id, magnitude: 0.06, contradicted_ids: [target.id] };
+      },
+    ));
+    h.episodes.append({
+      content: `Update ${REJECTION_MARKER}: ${REJECTED_VALUE}`,
+      origin: 'observed', salience: 0.9, hard_keep: 1, role: 'user',
+      session_id: 'sess-coldstart-chrono', source: 'gmail', event_ts: DAY30, // newer -- not stale
+    });
+    await consolidator.consolidate();
+
+    const oldNode = getNodeById(h, nodeId);
+    expect(oldNode.tombstoned).toBeTruthy();
+    const newNode = getLiveNodeByValue(h, REJECTED_VALUE);
+    expect(newNode).toBeDefined();
+    expect(newNode!.prev_value).toBe(OFFER_VALUE);
   });
 });

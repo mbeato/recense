@@ -304,6 +304,55 @@ describe('StatusDrift.evaluate — event_ts staleness (DRIFT-04)', () => {
     expect(result).toEqual({ action: 'proceed', magnitude: 0.5, damped: false, staleness: 'unknown-prior-ts' });
   });
 
+  it("'unrelated' mint is supporting evidence: drops a contradicting claim whose event_ts predates the mint's dated episode", () => {
+    // The consolidator's 'unrelated' branch (consolidator.ts:1356-1376) emits node_id = the
+    // node it minted with candidate_id: null -- it IS that node's founding evidence, exactly
+    // like 'extend'. This is the DRIFT-04 cold-start regression 65-VERIFICATION.md reproduced:
+    // every brand-new tracked entity's first status email mints via 'unrelated'.
+    const h = makeHarness();
+    const nodeId = seedNode(h);
+    seedSupportingEvidence(h, nodeId, 'unrelated', 999_999);
+    const result = h.drift.evaluate({
+      magnitude: 0.5,
+      confidence: 'high',
+      claimEventTs: 1,
+      candidateNodeId: nodeId,
+    });
+    expect(result).toEqual({ action: 'drop', reason: 'stale-event', priorEventTs: 999_999, claimEventTs: 1 });
+  });
+
+  it("'unrelated' mint paired control: proceeds when the claim is newer than the mint's dated episode", () => {
+    // Proves the new member discriminates on TIME, not on mere presence of an 'unrelated' row.
+    const h = makeHarness();
+    const nodeId = seedNode(h);
+    seedSupportingEvidence(h, nodeId, 'unrelated', 999_999);
+    const result = h.drift.evaluate({
+      magnitude: 0.5,
+      confidence: 'high',
+      claimEventTs: 1_000_000,
+      candidateNodeId: nodeId,
+    });
+    expect(result).toEqual({ action: 'proceed', magnitude: 0.5, damped: false, staleness: 'ok' });
+  });
+
+  it("cross-node isolation: an 'unrelated' row seeded against node A does not raise node B's horizon", () => {
+    // Re-verification of 65-VERIFICATION.md's third `missing` item and WR-02's "including it
+    // could never produce a false positive" claim -- this is the assertion that makes that
+    // claim TESTED rather than accepted from prose. 'unrelated' rows carry candidate_id: null
+    // and node_id = their own mint, so they can only ever raise their own node's horizon.
+    const h = makeHarness();
+    const nodeA = seedNode(h);
+    const nodeB = seedNode(h);
+    seedSupportingEvidence(h, nodeA, 'unrelated', 999_999);
+    const result = h.drift.evaluate({
+      magnitude: 0.5,
+      confidence: 'high',
+      claimEventTs: 1,
+      candidateNodeId: nodeB,
+    });
+    expect(result).toEqual({ action: 'proceed', magnitude: 0.5, damped: false, staleness: 'unknown-prior-ts' });
+  });
+
   it('MAX semantics: three supporting rows at increasing event_ts use the newest for comparison', () => {
     const h = makeHarness();
     const nodeId = seedNode(h);
@@ -311,6 +360,22 @@ describe('StatusDrift.evaluate — event_ts staleness (DRIFT-04)', () => {
     seedSupportingEvidence(h, nodeId, 'contradict_reconcile', 300);
     seedSupportingEvidence(h, nodeId, 'extend', 200);
     // Claim is newer than two of the three rows but older than the newest (300) — must still drop.
+    const result = h.drift.evaluate({
+      magnitude: 0.5,
+      confidence: 'high',
+      claimEventTs: 250,
+      candidateNodeId: nodeId,
+    });
+    expect(result).toEqual({ action: 'drop', reason: 'stale-event', priorEventTs: 300, claimEventTs: 250 });
+  });
+
+  it("MAX semantics: an 'unrelated' mint composes with a later 'confirm' rather than short-circuiting the horizon", () => {
+    // Proves the new member composes with the existing MAX() logic instead of being a special
+    // case bypassing it -- the newest row still wins regardless of which event type it is.
+    const h = makeHarness();
+    const nodeId = seedNode(h);
+    seedSupportingEvidence(h, nodeId, 'unrelated', 100);
+    seedSupportingEvidence(h, nodeId, 'confirm', 300);
     const result = h.drift.evaluate({
       magnitude: 0.5,
       confidence: 'high',
@@ -442,15 +507,22 @@ describe('emission eligibility (D-13)', () => {
   });
 });
 
-// Sanity: SUPPORTING_EVENT_TYPES is a strict superset-of-context but excludes contradict_hold
-// (asserted directly since the staleness block above only proves it behaviorally).
+// Sanity: SUPPORTING_EVENT_TYPES excludes contradict_hold/schema/merge outcomes but INCLUDES
+// the standalone mint as founding evidence (asserted directly since the staleness block above
+// only proves it behaviorally).
 describe('SUPPORTING_EVENT_TYPES sanity', () => {
-  it('excludes contradict_hold and unrelated/schema/merge outcomes', () => {
+  it('includes the standalone mint as founding evidence; excludes contradict_hold and schema/merge outcomes', () => {
     expect(SUPPORTING_EVENT_TYPES.has('contradict_hold')).toBe(false);
-    expect(SUPPORTING_EVENT_TYPES.has('unrelated')).toBe(false);
+    // 'unrelated' carries node_id = the node it minted and candidate_id: null
+    // (consolidator.ts:1356-1376) -- it IS that node's founding evidence, exactly like
+    // 'extend'. The pre-fix exclusion of 'unrelated' here is what made 65-VERIFICATION.md's
+    // DRIFT-04 blocker reachable: every brand-new tracked entity's first status email mints
+    // via 'unrelated', so the staleness guard was silently inert for that path.
+    expect(SUPPORTING_EVENT_TYPES.has('unrelated')).toBe(true);
     expect(SUPPORTING_EVENT_TYPES.has('schema_emitted')).toBe(false);
     expect(SUPPORTING_EVENT_TYPES.has('schema_falsified')).toBe(false);
     expect(SUPPORTING_EVENT_TYPES.has('entity_merge')).toBe(false);
     expect(SUPPORTING_EVENT_TYPES.has('fact_merge')).toBe(false);
+    expect(SUPPORTING_EVENT_TYPES.size).toBe(7);
   });
 });
