@@ -1010,7 +1010,7 @@ Plans:
   4. Out-of-order evidence (e.g. a rejection processed after an offer during backfill) does not silently revert a newer status — DRIFT-04
   5. Belief-correction accuracy on real multi-inbox traffic is measured and recorded honestly against recense's own harness — with no external accuracy bar cited, since none exists for this feature class — before Phase 66 wires any consumer live — DRIFT-05
 
-**Plans**: 10 plans in 6 waves
+**Plans**: 11 plans in 7 waves
 
 Plans:
 **Wave 1**
@@ -1040,6 +1040,10 @@ Plans:
 
 - [x] 65-09-PLAN.md — end-to-end DRIFT-02/DRIFT-04 proofs + D-13 hold-never-emits sentinel
 - [x] 65-10-PLAN.md — DRIFT-05 dry-run harness + honest measurement + blocking enablement checkpoint
+
+**Wave 7** *(gap closure — 65-VERIFICATION.md DRIFT-04 blocker)*
+
+- [ ] 65-11-PLAN.md — SUPPORTING_EVENT_TYPES counts the cold-start `'unrelated'` mint as founding evidence, so the event_ts staleness guard protects a brand-new entity's first status email (DRIFT-04)
 
 ### Phase 66: Domain-Neutral Proposal Emit Seam
 
