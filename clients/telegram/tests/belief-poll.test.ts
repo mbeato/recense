@@ -329,16 +329,24 @@ describe('runBeliefBridgePass — gates, dedup, batching, cap, rollback', () => 
     expect(getProposal(id.slice(0, 32), storePath)).toBeNull();
   });
 
-  it('when sendMessage throws, the rows written for that group are removed again so the next pass can retry', async () => {
-    const id = pid('send-fail');
-    listBody = { items: [makeRecord(id)] };
+  it('when sendMessage throws, the rows written for that group are removed again so the next pass can retry (every constituent)', async () => {
+    const entity = 'Send-Fail Entity';
+    const id1 = pid('send-fail-1');
+    const id2 = pid('send-fail-2');
+    listBody = {
+      items: [
+        makeRecord(id1, { entity_descriptor: entity }),
+        makeRecord(id2, { entity_descriptor: entity }),
+      ],
+    };
     const storePath = tmpPath('sendfail-store');
     await runBeliefBridgePass({
       client: makeClient(), transport: new ThrowingTransport(), chatIds: [111],
       storePath, statePath: tmpPath('sendfail-state'),
       dailyCap: 10, log: () => {}, nowMs: Date.now(),
     });
-    expect(getProposal(id.slice(0, 32), storePath)).toBeNull();
+    expect(getProposal(id1.slice(0, 32), storePath)).toBeNull();
+    expect(getProposal(id2.slice(0, 32), storePath)).toBeNull();
   });
 
   it('a pass whose listProposals throws logs and resolves — it never rejects', async () => {
