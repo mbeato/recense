@@ -30,6 +30,7 @@ import { StrengthDecayManager } from '../strength/decay';
 import { AllocationGate } from '../gate/allocation-gate';
 import { RetrievalEngine } from '../retrieval/engine';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
+import { cwdToScope, GLOBAL_SCOPE } from '../lib/scope';
 
 // ---------------------------------------------------------------------------
 // Tuning knobs — adjust here, not inline.
@@ -90,6 +91,13 @@ function rejectAfter(ms: number): Promise<never> {
  * Returns '' when nothing clears the floor (caller emits '{}').
  * The caller MUST have run initSchema on `db` already (the sink prepares a statement
  * against `meta`).
+ *
+ * `cwd` (Phase 69 RECALL-02, D-01): the hook's working directory, threaded in from
+ * turn-capture-cli so this path can know "same project" for the first time (mirrors the
+ * `retrieveCueless(cwd)` soft-scoping precedent at session-start-cli.ts:134-136). Defaults
+ * to '' so every pre-phase 5-arg call site/test compiles and behaves unchanged: an empty
+ * cwd derives GLOBAL_SCOPE via `cwdToScope`, which disables the ordering nudge entirely
+ * (D-01 — a conservative default for an unknown origin).
  */
 export async function ambientRecall(
   db: Database.Database,
@@ -97,6 +105,7 @@ export async function ambientRecall(
   provider: ModelProvider,
   config: EngineConfig,
   clock: Clock = realClock,
+  cwd: string = '',
 ): Promise<string> {
   // Collaborators on the SHARED handle — single process, single DB open.
   const store = new SemanticStore(db, clock, config);
@@ -107,6 +116,12 @@ export async function ambientRecall(
   const retriever = new CandidateRetriever(db, { indexPath: vectorIndexPath(config.dbPath) });
   const strength = new StrengthDecayManager(db, clock, config);
   const gate = new AllocationGate(config);
+
+  // Phase 69 RECALL-02 (D-01): derive the caller's project scope from cwd (same
+  // `cwdToScope` primitive session-start-cli's `retrieveCueless(cwd)` already uses for
+  // soft project scoping). currentScope === GLOBAL_SCOPE (unknown/personal/home-dir
+  // origin) disables the ordering nudge below entirely.
+  const currentScope = cwdToScope(cwd);
 
   // This is the UserPromptSubmit hook, NOT SessionStart — D-97 (SessionStart stays
   // Noop/cueless/LLM-free) is untouched; session-start-cli does not import this module.
@@ -132,16 +147,19 @@ export async function ambientRecall(
   const results = engine.retrieveRanked(vec, AMBIENT_K, AMBIENT_FLOOR, undefined, { vizFloor: AMBIENT_VIZ_FLOOR });
   if (results.length === 0) return '';
 
+  // D-S6 provenance surfacing: batch-read scopes over ALL rows retrieveRanked returned,
+  // BEFORE any slicing/selection — one read serves both the pre-existing `[slug]` display
+  // marker AND (Phase 69 D-01) the ordering-only same-project rank nudge below. For every
+  // OTHER caller (`RecallEngine.recall --scope`, corpus, viz) this read remains
+  // display-only and never influences selection/order (D-S1); on THIS path only, Phase 69
+  // D-01 partially reverses that for ordering (never existence) — see the bounded carve-out
+  // recorded at `SemanticStore.getNodeScopes`.
+  const scopes = store.getNodeScopes(results.map(r => r.id));
+
   // Token-lean block: header + one capped line per fact, max AMBIENT_K lines.
   // retrieveRanked rows carry id/value/score only; one indexed getNode per surfaced
   // row is acceptable on this path.
   const surfaced = results.slice(0, AMBIENT_K);
-
-  // D-S6 provenance surfacing: batch-read scopes AFTER ranking/selection — this read
-  // NEVER influences score, filter, or order (D-S1). A non-global scope renders as a
-  // `[slug]` prefix; 'global' and unscoped nodes render with no marker (keeps the block
-  // lean — only project-specific provenance is flagged). Display-only by construction.
-  const scopes = store.getNodeScopes(surfaced.map(r => r.id));
 
   const lines = ['Recalled from recense (ambient):'];
   for (const r of surfaced) {

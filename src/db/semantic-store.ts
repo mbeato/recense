@@ -659,8 +659,17 @@ export class SemanticStore {
   /**
    * Batch-read scopes for several node ids → Map<node_id, scope> (recall surfacing, D-S6).
    * Avoids N queries on the recall display path. Nodes without a scope row are simply
-   * absent from the returned Map (caller treats absence as 'global'). Display-only — this
-   * read happens AFTER ranking and never influences selection/order (D-S1).
+   * absent from the returned Map (caller treats absence as 'global').
+   *
+   * D-S1 still holds — display-only, never influences selection/order — for EVERY caller
+   * EXCEPT one bounded, deliberate exception: Phase 69 D-01 partially reverses D-S1 for
+   * `src/adapter/ambient-recall.ts` ONLY, where this same map ALSO feeds an ordering-only
+   * same-project rank nudge / foreign-doc demotion. Even there the reversal is bounded: the
+   * map never gates existence, never enters the cosine floor, and never changes a displayed
+   * score — it only re-orders which of the already-selected rows surface first. Every other
+   * caller (`RecallEngine.recall --scope`, corpus rendering, viz) keeps the original
+   * filter-never, order-never semantics unchanged. Do not weaken this guarantee elsewhere;
+   * `ambient-recall.ts` is the single carve-out call site.
    */
   getNodeScopes(nodeIds: string[]): Map<string, string> {
     const out = new Map<string, string>();
