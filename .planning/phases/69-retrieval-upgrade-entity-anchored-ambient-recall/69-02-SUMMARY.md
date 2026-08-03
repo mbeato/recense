@@ -110,6 +110,11 @@ None - no external service configuration required.
 - Viz sink (`activation_trace` persistence + SSE) is provably byte-identical to pre-phase for every existing caller — no downstream plan needs to re-verify sink shape.
 - No blockers for 69-03/69-04/69-05/69-06.
 
+## Self-Check: PASSED
+
+All created/modified files confirmed present on disk; all 4 task/summary commit hashes
+(`7a98d89`, `3fe2a80`, `48af5d9`, `9378a97`) confirmed present in `git log --oneline --all`.
+
 ---
 *Phase: 69-retrieval-upgrade-entity-anchored-ambient-recall*
 *Completed: 2026-08-03*
