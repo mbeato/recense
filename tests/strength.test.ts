@@ -490,6 +490,74 @@ describe('STR-03: AND-gated eviction sweep', () => {
     expect(evicted).toContain('plain-fact');
     expect(store.getNode('plain-fact')).toBeNull();
   });
+
+  // ── WR-02 (phase 66 review): action_proposal FK child-wipe ────────────────
+
+  /** Seed a minimal episode + action_proposal row referencing the given nodes. */
+  function seedProposal(id: string, entityNodeId: string, beliefNodeId: string, status: string): void {
+    const epId = `ep-for-${id}`;
+    db.prepare(`
+      INSERT INTO episode (id, ts, content, origin, salience, role, session_id)
+      VALUES (@id, @ts, 'evidence content', 'observed', 0.5, 'user', 'sess-wr02')
+    `).run({ id: epId, ts: clock.nowMs() });
+    db.prepare(`
+      INSERT INTO action_proposal (
+        id, kind, entity_node_id, entity_descriptor, belief_node_id,
+        change_field, change_from, change_to,
+        evidence_episode, evidence_quote, confidence, schema_version,
+        status, created_at, updated_at, expires_at
+      ) VALUES (
+        @id, 'belief', @entity_node_id, 'Acme Corp', @belief_node_id,
+        'status', NULL, 'submitted',
+        @evidence_episode, 'evidence content', 'high', 17,
+        @status, @now, @now, @expires
+      )
+    `).run({
+      id, entity_node_id: entityNodeId, belief_node_id: beliefNodeId,
+      evidence_episode: epId, status, now: clock.nowMs(), expires: clock.nowMs() + 1_000_000,
+    });
+  }
+
+  it('WR-02: a settled (terminal) action_proposal referencing the node is deleted by the sweep and the node is evicted — no permanent FK pin', () => {
+    // Live entity node (never evicted) + tombstoned belief node referenced by a SETTLED proposal.
+    store.upsertNode({ id: 'wr02-entity', type: 'entity', value: 'Acme', origin: 'observed', s: 0.9, c: 0.5, tombstoned: false });
+    store.upsertNode({ id: 'wr02-belief', type: 'fact', value: 'stale belief', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
+    seedProposal('wr02-terminal', 'wr02-entity', 'wr02-belief', 'superseded');
+
+    clock.advanceDays(31);
+    let evicted: string[] = [];
+    expect(() => { evicted = manager.runEvictionSweep(); }).not.toThrow();
+
+    // Pre-fix: the proposal FK made the per-node transaction throw SQLITE_CONSTRAINT_FOREIGNKEY,
+    // the bare catch swallowed it, and the node was silently re-failed on every sweep, forever.
+    expect(evicted).toContain('wr02-belief');
+    expect(store.getNode('wr02-belief')).toBeNull();
+    const proposalRow = db.prepare("SELECT * FROM action_proposal WHERE id = 'wr02-terminal'").get();
+    expect(proposalRow).toBeUndefined();
+    // Live entity node untouched (tombstoned=0 gate).
+    expect(store.getNode('wr02-entity')).not.toBeNull();
+  });
+
+  it('WR-02: a PENDING action_proposal still pins its node — the sweep skips it without aborting, and the pending row survives', () => {
+    store.upsertNode({ id: 'wr02-pinned', type: 'fact', value: 'pinned belief', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
+    store.upsertNode({ id: 'wr02-entity2', type: 'entity', value: 'Globex', origin: 'observed', s: 0.9, c: 0.5, tombstoned: false });
+    // A second, unpinned evictable node proves the sweep continues past the FK failure.
+    store.upsertNode({ id: 'wr02-unpinned', type: 'fact', value: 'unpinned', origin: 'observed', s: 0.001, c: 0.001, tombstoned: true });
+    seedProposal('wr02-pending', 'wr02-entity2', 'wr02-pinned', 'pending');
+
+    clock.advanceDays(31);
+    let evicted: string[] = [];
+    expect(() => { evicted = manager.runEvictionSweep(); }).not.toThrow();
+
+    // The pending proposal's FK blocks the pinned node (deliberate — its approve-time
+    // staleness check must still be able to read the node), but the sweep continues.
+    expect(evicted).not.toContain('wr02-pinned');
+    expect(store.getNode('wr02-pinned')).not.toBeNull();
+    expect(evicted).toContain('wr02-unpinned');
+    // The pending row itself is untouched.
+    const pendingRow = db.prepare("SELECT status FROM action_proposal WHERE id = 'wr02-pending'").get() as { status: string };
+    expect(pendingRow.status).toBe('pending');
+  });
 });
 
 describe('STR-03 INVARIANT: 30-day simulated month — no evidence-backed node evicted', () => {

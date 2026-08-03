@@ -216,9 +216,13 @@ export const DDL = `
   -- Idempotency key: id itself IS the deterministic content-hash PK (D-07) — INSERT OR IGNORE
   -- is the whole replay mechanism, mirroring uq_episode_source_external's dedup-by-natural-key
   -- discipline (schema.ts uq_episode_source_external, above) rather than a separate UNIQUE index.
-  -- entity_node_id / belief_node_id / evidence_episode are all safe under foreign_keys = ON:
+  -- entity_node_id / belief_node_id / evidence_episode under foreign_keys = ON:
   -- SemanticStore.tombstone() sets a tombstoned flag rather than deleting, and no code path
-  -- issues DELETE FROM episode.
+  -- issues DELETE FROM episode — but StrengthDecayManager.runEvictionSweep() (strength/decay.ts)
+  -- DOES issue DELETE FROM node for tombstoned+decayed nodes. Its child-wipe therefore deletes
+  -- settled (non-pending) proposal rows referencing the node first (WR-02, phase 66 review);
+  -- a PENDING proposal deliberately pins its nodes against eviction until it settles, so the
+  -- approve-time staleness check can always read them.
   CREATE TABLE IF NOT EXISTS action_proposal (
     id                TEXT    PRIMARY KEY,        -- sha256 hex content hash (D-07), deterministic — NOT AUTOINCREMENT
     kind              TEXT    NOT NULL CHECK(kind IN ('belief')),  -- discriminator for Phase 68's union

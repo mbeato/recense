@@ -74,6 +74,16 @@ export class StrengthDecayManager {
   // or the eviction transaction throws SQLITE_CONSTRAINT_FOREIGNKEY — same FK class as FK-01/FK-02.
   // D-08: surfaced_event intentionally excluded.
   private readonly stmtDeleteInsightForNode: Database.Statement;
+  // WR-02 (phase 66 review): action_proposal.entity_node_id / belief_node_id both REFERENCE
+  // node(id), and terminal proposal rows are never deleted anywhere else — without this
+  // child-wipe, ONE settled proposal would pin its nodes against eviction forever (the sweep's
+  // bare catch would silently retry and re-fail every pass). Terminal-status-only: a PENDING
+  // proposal deliberately keeps pinning its nodes (its approve-time staleness check must still
+  // be able to read them) until it settles or is refused. Deleting settled proposal rows does
+  // NOT violate never-delete-evidence: nodes/episodes are the evidence, action_proposal is an
+  // operational outbox (mirrors the T-38-01 child-wipe precedent, not the D-08 surfaced_event
+  // exclusion — the sleep pass never READS proposals, it only clears settled rows FK-safely).
+  private readonly stmtDeleteTerminalProposalsForNode: Database.Statement;
 
   constructor(db: Database.Database, clock: Clock, config: EngineConfig) {
     this.db = db;
@@ -110,6 +120,12 @@ export class StrengthDecayManager {
     // Must run BEFORE stmtDeleteNode — otherwise the FK constraint throws SQLITE_CONSTRAINT_FOREIGNKEY.
     // This is the single easiest-to-miss FK landmine in Phase 38 (PATTERNS.md §"Eviction").
     this.stmtDeleteInsightForNode = db.prepare('DELETE FROM node_insight WHERE node_id = ?');
+    // WR-02: settled (non-pending) proposals referencing the node must go BEFORE stmtDeleteNode
+    // or their FKs pin the node permanently. Pending rows are intentionally left — they block
+    // eviction until settled (see field comment above).
+    this.stmtDeleteTerminalProposalsForNode = db.prepare(
+      "DELETE FROM action_proposal WHERE status != 'pending' AND (entity_node_id = ? OR belief_node_id = ?)"
+    );
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -211,12 +227,17 @@ export class StrengthDecayManager {
         (nowMs - row.last_access) > EVICTION_TOMBSTONE_AGE_MS
       ) {
         // FK-safe per-node transaction: FK-02 child-wipe order matches schema-relations.ts FK-02.
-        // Delete order: edges → node_scope → node_temporal → node.
+        // Delete order: edges → node_scope → node_temporal → node_insight → terminal
+        // action_proposal rows → node.
         // Both node_scope.node_id and node_temporal.node_id REFERENCES node(id); both must be
         // cleaned before the node row or the transaction throws SQLITE_CONSTRAINT_FOREIGNKEY.
         // D-08: surfaced_event is intentionally excluded — the sleep pass must not touch it.
+        // WR-02: a PENDING action_proposal is also intentionally NOT deleted — its FK makes
+        // this transaction throw, the catch below skips the node, and the node is retried on
+        // a later sweep once the proposal has settled (then its terminal row IS cleaned here).
         // .immediate() prevents SQLITE_BUSY_SNAPSHOT in WAL mode (M-5 prerequisite for sweep).
-        // try/catch: one bad node (e.g. live surfaced_event FK) never aborts the sweep (M-1).
+        // try/catch: one bad node (e.g. live surfaced_event or pending-proposal FK) never
+        // aborts the sweep (M-1).
         try {
           this.db.transaction(() => {
             this.stmtDeleteEdgesForNode.run(row.id, row.id);
@@ -226,6 +247,9 @@ export class StrengthDecayManager {
             // node_insight.node_id REFERENCES node(id) — omitting this throws SQLITE_CONSTRAINT_FOREIGNKEY
             // when evicting any insight node. Non-insight nodes have no row; DELETE is a no-op.
             this.stmtDeleteInsightForNode.run(row.id);
+            // WR-02: settled proposals referencing this node BEFORE node (FK-safe child-wipe).
+            // Nodes never referenced by a proposal see a no-op DELETE.
+            this.stmtDeleteTerminalProposalsForNode.run(row.id, row.id);
             this.stmtDeleteNode.run(row.id);
           }).immediate();
           evicted.push(row.id);

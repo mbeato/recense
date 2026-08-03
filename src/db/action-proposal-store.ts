@@ -1,5 +1,8 @@
 /**
- * ActionProposalStore — owns every SQL statement touching `action_proposal` (EMIT-01/EMIT-02).
+ * ActionProposalStore — owns every SQL statement touching `action_proposal` (EMIT-01/EMIT-02),
+ * with ONE deliberate exception: StrengthDecayManager.runEvictionSweep() (strength/decay.ts)
+ * deletes settled (non-pending) proposal rows as part of its FK-safe child-wipe, so a terminal
+ * proposal cannot pin an evictable node forever (WR-02, phase 66 review).
  *
  * D-43-for-proposals: this module NEVER writes `node` or `edge`. It holds SELECT-only reads
  * against `node` for the staleness check (getStalenessInputs) and no other node access.
