@@ -19,8 +19,10 @@
  *    activation_trace ring via the flag-gated sink (documented exception, same as
  *    memory-ops search).
  *  - T-RT1-06 (Phase 69, T-69-03-DOS/T-69-03-WRITE): entity anchoring is read-only
- *    (EntityResolver/collectAnchoredFacts touch no mutation method), indexed-lookup-only
- *    (no dense/full-table scan — see entity-anchor.ts D-03), provider-free (constructor
+ *    (EntityResolver/collectAnchoredFacts touch no mutation method), FTS-indexed-lookup-only
+ *    (no dense scan — no vec is ever passed — and no exact-channel scan: `skipExactChannel`
+ *    disables resolveEntityByName's unindexed node-table statements on this path, WR-03;
+ *    see entity-anchor.ts), provider-free (constructor
  *    never accepts a ModelProvider — zero net-new LLM/network calls), fail-open (any
  *    throw during resolution/collection is swallowed and the path continues cosine-only),
  *    and bounded by the anchor module's own caps (MAX_ANCHORED_ENTITIES, MAX_ANCHORED_FACTS).

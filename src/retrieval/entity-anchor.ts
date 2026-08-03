@@ -135,13 +135,16 @@ export interface AnchoredFact {
 
 /**
  * Resolve a prompt's distinctive tokens to live entity nodes and union in their facts through
- * two indexed channels — read-only, no LLM call, no full-table dense scan.
+ * two FTS-indexed channels — read-only, no LLM call, no full-table scan of any kind.
  *
  * 1. Tokenize the prompt (`extractAnchorTokens`).
  * 2. For each token, call `resolver.generateCandidates({ text: token, nodeType: 'entity' })`
- *    with NO embedding argument (T-69-01-DOS): the dense channel is an O(N) full-table scan and
- *    decode over the whole node table, which would blow the hook latency budget; the exact and
- *    BM25 channels here are indexed. Accept the top-scoring candidate iff its score clears
+ *    with NO embedding argument (T-69-01-DOS) AND `skipExactChannel: true` (WR-03): the dense
+ *    channel is an O(N) full-table scan and decode over the whole node table, and the exact
+ *    channel's `resolveEntityByName` statements are ALSO unindexed node-table scans (no
+ *    expression index on `LOWER(value)`) — either would blow the hook latency budget. Only the
+ *    BM25 (FTS-indexed) channel runs here; the Dice re-score carries exact names over the
+ *    floor without the scan. Accept the top-scoring candidate iff its score clears
  *    ANCHOR_LEX_FLOOR, dedupe entity ids across tokens, stop after MAX_ANCHORED_ENTITIES.
  * 3. Per accepted entity, EDGE channel: read the entity's edges, keep the real semantic
  *    association edges (`kind === 'relation' && PRED_SET.has(rel)`, the same filter
@@ -151,7 +154,7 @@ export interface AnchoredFact {
  *    wasted token this module's contract rules out). Liveness and the entity skip are checked
  *    BEFORE a slot is consumed, mirroring the honest-trace discipline.
  * 4. Per accepted entity, NAME channel: call `generateCandidates({ text: entityValue,
- *    nodeType: 'fact' })` — again no embedding argument — to reach facts that MENTION the entity
+ *    nodeType: 'fact' })` — again no embedding argument, again `skipExactChannel` — to reach facts that MENTION the entity
  *    without carrying an edge to it (the audit's contract facts). Keep positive-score
  *    candidates, skip ids already taken, skip tombstoned, take up to ANCHOR_FACTS_PER_ENTITY by
  *    score desc / id-asc tiebreak.
@@ -178,6 +181,7 @@ export function collectAnchoredFacts(
       text: token,
       nodeType: 'entity',
       k: ANCHOR_CANDIDATE_K,
+      skipExactChannel: true, // WR-03: no unindexed node-table scans on the hook hot path
     });
     if (candidates.length === 0) continue;
 
@@ -225,6 +229,7 @@ export function collectAnchoredFacts(
       text: entity.value,
       nodeType: 'fact',
       k: ANCHOR_CANDIDATE_K,
+      skipExactChannel: true, // WR-03: no unindexed node-table scans on the hook hot path
     });
     const rankedNameCandidates = nameCandidates
       .filter(c => c.score > 0)

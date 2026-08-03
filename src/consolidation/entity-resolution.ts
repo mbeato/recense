@@ -167,12 +167,21 @@ export class EntityResolver {
   /**
    * The reusable three-channel union candidate generator (Phase 69 seam).
    * Type-agnostic: `nodeType` is opt-in so a future caller can anchor against any node type.
+   *
+   * `skipExactChannel` (Phase 69 WR-03, hot-path bound): when true, channel 1 is skipped
+   * entirely — `resolveEntityByName`'s three statements (`LOWER(value) = LOWER(?)` ×2 and a
+   * `LIKE '%…%'`) are unindexed full node-table scans (schema has no expression index on
+   * `LOWER(value)`), unacceptable on the hook-latency-bound ambient path. The BM25 channel
+   * is FTS-indexed and the Dice re-score below carries exact names over the floor on its
+   * own, so precision holds without the scan. Default false: offline callers (consolidation
+   * `resolve`) keep the shipped priority ladder unchanged.
    */
   generateCandidates(opts: {
     text: string;
     vec?: Float32Array;
     nodeType?: string;
     k?: number;
+    skipExactChannel?: boolean;
   }): { candidates: EntityCandidate[]; channelCounts: ChannelCounts } {
     const type = opts.nodeType ?? null;
     const k = opts.k ?? ENTITY_CANDIDATE_K;
@@ -184,12 +193,16 @@ export class EntityResolver {
     let denseCount = 0;
 
     // 1. exact / entity-keyed — the shipped priority ladder, reused per D-02.
-    const exactId = this.store.resolveEntityByName(opts.text.trim());
-    if (exactId !== null) {
-      const node = this.store.getNode(exactId);
-      if (node && (opts.nodeType === undefined || node.type === opts.nodeType)) {
-        merged.set(node.id, { value: node.value, channels: new Set<ChannelName>(['exact']), dense: 0 });
-        exactCount = 1;
+    // WR-03: skipped when the caller opts out — resolveEntityByName is unindexed node-table
+    // scans, never acceptable on the hook-latency hot path (see method doc above).
+    if (!opts.skipExactChannel) {
+      const exactId = this.store.resolveEntityByName(opts.text.trim());
+      if (exactId !== null) {
+        const node = this.store.getNode(exactId);
+        if (node && (opts.nodeType === undefined || node.type === opts.nodeType)) {
+          merged.set(node.id, { value: node.value, channels: new Set<ChannelName>(['exact']), dense: 0 });
+          exactCount = 1;
+        }
       }
     }
 
