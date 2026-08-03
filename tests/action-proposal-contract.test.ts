@@ -252,6 +252,12 @@ describe('classifyProposalStaleness precedence (D-10, EMIT-07)', () => {
 // ---------------------------------------------------------------------------
 
 describe('ActionProposalStore.listPending', () => {
+  // WR-03: listPending filters on expires_at > clock.nowMs(). Seeds below pin expires_at
+  // explicitly past the FakeClock epoch (2026-01-01) so the fixtures under test are FRESH
+  // — the small created_at values would otherwise put the default (created_at + TTL,
+  // i.e. 1970-era) expiry behind the clock and filter every row.
+  const FRESH_EXPIRY = Date.UTC(2026, 6, 1);
+
   it('excludes non-pending rows and orders by created_at ascending', () => {
     const db = makeDb();
     const clock = new FakeClock(Date.UTC(2026, 0, 1));
@@ -274,6 +280,7 @@ describe('ActionProposalStore.listPending', () => {
           change_to: `state-${i}`,
           created_at: 3000 - i * 1000, // insert out of order: 3000, 2000, 1000
           updated_at: 3000 - i * 1000,
+          expires_at: FRESH_EXPIRY,
         })
       );
     }
@@ -290,6 +297,7 @@ describe('ActionProposalStore.listPending', () => {
       status: 'approved',
       created_at: 500,
       updated_at: 500,
+      expires_at: FRESH_EXPIRY,
     });
 
     for (const r of rows) store.insert(r);
@@ -321,11 +329,82 @@ describe('ActionProposalStore.listPending', () => {
           change_to: `state-${i}`,
           created_at: 1000 + i,
           updated_at: 1000 + i,
+          expires_at: FRESH_EXPIRY,
         })
       );
     }
 
     expect(store.listPending(2).length).toBe(2);
+  });
+
+  it('WR-03: expired pending rows cannot starve the window — 101 expired + 1 fresh returns exactly the fresh one', () => {
+    const db = makeDb();
+    const nowMs = Date.UTC(2026, 0, 1);
+    const clock = new FakeClock(nowMs);
+    const store = new ActionProposalStore(db, clock);
+
+    const entityId = newId();
+    const beliefId = newId();
+    const episodeId = newId();
+    seedNode(db, entityId, 'Acme Corp application');
+    seedNode(db, beliefId, 'interviewing');
+    seedEpisode(db, episodeId, 'we would like to schedule an interview');
+
+    // 101 expired pending rows, all OLDER than the fresh one — pre-fix they occupy the
+    // entire LIMIT-100 window oldest-first and the fresh proposal is invisible forever.
+    for (let i = 0; i < 101; i++) {
+      store.insert(
+        makeRecord({
+          id: sha256(`starved-${i}`),
+          entity_node_id: entityId,
+          belief_node_id: beliefId,
+          evidence_episode: episodeId,
+          created_at: 1000 + i,
+          updated_at: 1000 + i,
+          expires_at: nowMs - 1, // past TTL (boundary: expires_at <= now is expired)
+        })
+      );
+    }
+    const freshId = sha256('the-fresh-one');
+    store.insert(
+      makeRecord({
+        id: freshId,
+        entity_node_id: entityId,
+        belief_node_id: beliefId,
+        evidence_episode: episodeId,
+        created_at: 10_000, // newest row
+        updated_at: 10_000,
+        expires_at: nowMs + 1_000_000,
+      })
+    );
+
+    const pending = store.listPending();
+    expect(pending.map(p => p.id)).toEqual([freshId]);
+  });
+
+  it('WR-03 boundary: expires_at === nowMs is excluded (matches classifyProposalStaleness)', () => {
+    const db = makeDb();
+    const nowMs = Date.UTC(2026, 0, 1);
+    const clock = new FakeClock(nowMs);
+    const store = new ActionProposalStore(db, clock);
+
+    const entityId = newId();
+    const beliefId = newId();
+    const episodeId = newId();
+    seedNode(db, entityId, 'Acme Corp application');
+    seedNode(db, beliefId, 'interviewing');
+    seedEpisode(db, episodeId, 'we would like to schedule an interview');
+
+    store.insert(
+      makeRecord({
+        entity_node_id: entityId,
+        belief_node_id: beliefId,
+        evidence_episode: episodeId,
+        expires_at: nowMs,
+      })
+    );
+
+    expect(store.listPending()).toEqual([]);
   });
 });
 

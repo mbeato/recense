@@ -149,9 +149,17 @@ export class ActionProposalStore {
       )
     `);
 
+    // WR-03 (phase 66 review): exclude rows past their TTL. Nothing transitions a pending
+    // row to 'expired' except an explicit approve attempt on that id (the D-10 refusal
+    // path), and ordering is oldest-first — without this filter, >= LIMIT accumulated
+    // expired rows would permanently hide every newer proposal from the only list
+    // endpoint. The read-filter (not a lazy UPDATE sweep) preserves listPending()'s
+    // lock-free read-only property; the DURABLE 'expired' transition still happens only
+    // at approve time (D-10). Boundary matches classifyProposalStaleness: expires_at <=
+    // now is expired, so only expires_at > now is listed.
     this.stmtListPending = db.prepare(`
       SELECT * FROM action_proposal
-      WHERE status = 'pending'
+      WHERE status = 'pending' AND expires_at > @now
       ORDER BY created_at ASC
       LIMIT @limit
     `);
@@ -189,7 +197,9 @@ export class ActionProposalStore {
   }
 
   listPending(limit: number = PROPOSAL_LIST_LIMIT): ActionProposalRecord[] {
-    return this.stmtListPending.all({ limit }) as ActionProposalRecord[];
+    // WR-03: expired rows are filtered from the read; their durable status transition
+    // still happens only under the write lock at approve time (D-10).
+    return this.stmtListPending.all({ limit, now: this.clock.nowMs() }) as ActionProposalRecord[];
   }
 
   getById(id: string): ActionProposalRecord | null {
