@@ -132,8 +132,11 @@ proving the domain-neutral action-proposal contract (`GET /v1/proposals`,
 `POST /v1/proposals/:id/approve|reject`) end-to-end. Like the Telegram client,
 its `tsconfig.json` has no `paths` entry into `src/`, and it carries its own
 import-boundary test (`clients/proposal-reference/tests/import-boundary.test.ts`)
-that scans every `.ts` file in the directory, including its own tests, for any
-import that resolves into the engine's `src/` tree.
+that scans every TypeScript file (`.ts`/`.mts`/`.cts`/`.tsx`) in the directory,
+including its own tests, for any import — static `from`, CJS `require(...)`, or
+dynamic `import(...)`, with or without a trailing slash on the specifier — that
+resolves into the engine's `src/` tree. The scan enforces a minimum scanned-file
+count so a broken walk fails loudly instead of passing vacuously.
 
 **Directory layout:**
 
