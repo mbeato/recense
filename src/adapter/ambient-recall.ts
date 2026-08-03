@@ -18,6 +18,12 @@
  *  - T-RT1-05: recall path is read-only (retrieveRanked); the only write is the capped
  *    activation_trace ring via the flag-gated sink (documented exception, same as
  *    memory-ops search).
+ *  - T-RT1-06 (Phase 69, T-69-03-DOS/T-69-03-WRITE): entity anchoring is read-only
+ *    (EntityResolver/collectAnchoredFacts touch no mutation method), indexed-lookup-only
+ *    (no dense/full-table scan — see entity-anchor.ts D-03), provider-free (constructor
+ *    never accepts a ModelProvider — zero net-new LLM/network calls), fail-open (any
+ *    throw during resolution/collection is swallowed and the path continues cosine-only),
+ *    and bounded by the anchor module's own caps (MAX_ANCHORED_ENTITIES, MAX_ANCHORED_FACTS).
  */
 import Database from 'better-sqlite3';
 import type { Clock } from '../lib/clock';
@@ -31,6 +37,8 @@ import { AllocationGate } from '../gate/allocation-gate';
 import { RetrievalEngine } from '../retrieval/engine';
 import { SwitchableActivationTraceSink } from '../viz/activation-sink';
 import { cwdToScope, GLOBAL_SCOPE } from '../lib/scope';
+import { collectAnchoredFacts, type AnchoredFact } from '../retrieval/entity-anchor';
+import { EntityResolver } from '../consolidation/entity-resolution';
 
 // ---------------------------------------------------------------------------
 // Tuning knobs — adjust here, not inline.
@@ -72,6 +80,20 @@ export const MAX_QUERY_CHARS = 4_000;
 
 /** Embed-call timeout — well under the harness's 5s hook kill. */
 export const EMBED_TIMEOUT_MS = 2_500;
+
+/**
+ * Max injected slots a floor-exempt anchored fact may occupy, out of AMBIENT_K (Phase 69
+ * RECALL-01, T-69-03-PRECISION, 55-01-style magnitude constant). Caps how many facts that
+ * only cleared the anchor module's lexical bar — not the cosine floor — can be FORCED into
+ * the block; it never caps anchored facts that also earn a spot on cosine merit. Without
+ * this cap, a prompt anchoring several low-relevance entities could crowd out the whole
+ * block with unsolicited lines (F5's precision argument — ambient injection is unsolicited,
+ * so precision beats recall here, same rationale as AMBIENT_FLOOR above).
+ */
+const ANCHOR_RESERVED_SLOTS = 2;
+
+/** Reuse the existing prompt-embedding bound for anchor tokenization (55-01 convention: no second magnitude for the same "how much of the prompt do we look at" question). */
+const MAX_ANCHOR_PROBE_CHARS = MAX_QUERY_CHARS;
 
 /**
  * Reject after `ms`. The timer is unref'd so a resolved race never holds the
@@ -138,13 +160,36 @@ export async function ambientRecall(
   ]);
   if (!vec) return '';
 
+  // ── Entity anchoring (Phase 69 RECALL-01, D-02/D-03) ─────────────────────────────
+  // Gated on config.entityAnchoringEnabled (dark default false — D-09 byte-identity:
+  // `anchored` stays [], `anchoredIds` becomes an empty array, and retrieveRanked's own
+  // opts.anchoredIds no-op guard leaves its output untouched). The whole block is
+  // wrapped in try/catch: on ANY throw during resolution or collection, `anchored`
+  // resets to [] and the path continues cosine-only — a slow/broken anchor module must
+  // never fail the hook (fail-open, mirrors this file's T-RT1-03 posture; see T-RT1-06
+  // above). Retained keyed by id (not just ids) so 69-04's renderer can read
+  // `entityValue`/`via` for the provenance marker without a second collection pass.
+  let anchored: AnchoredFact[] = [];
+  if (config.entityAnchoringEnabled) {
+    try {
+      const resolver = new EntityResolver(db, store, config);
+      anchored = collectAnchoredFacts(store, resolver, promptText.slice(0, MAX_ANCHOR_PROBE_CHARS));
+    } catch {
+      anchored = [];
+    }
+  }
+  const anchoredById = new Map<string, AnchoredFact>(anchored.map(a => [a.id, a]));
+
   // retrieveRanked emits the viz trace itself when the flag is on. With vizFloor it
   // lights the genuinely-retrieved nodes down to AMBIENT_VIZ_FLOOR even when nothing
   // clears the injection floor — so the brain lights on essentially every prompt (a
   // real read happened), while injection still uses AMBIENT_FLOOR. Do NOT add a second
   // emit here.
   const engine = new RetrievalEngine(db, clock, config, retriever, store, strength, gate, traceSink);
-  const results = engine.retrieveRanked(vec, AMBIENT_K, AMBIENT_FLOOR, undefined, { vizFloor: AMBIENT_VIZ_FLOOR });
+  const results = engine.retrieveRanked(vec, AMBIENT_K, AMBIENT_FLOOR, undefined, {
+    vizFloor: AMBIENT_VIZ_FLOOR,
+    anchoredIds: anchored.map(a => a.id),
+  });
   if (results.length === 0) return '';
 
   // D-S6 provenance surfacing: batch-read scopes over ALL rows retrieveRanked returned,
@@ -156,14 +201,75 @@ export async function ambientRecall(
   // recorded at `SemanticStore.getNodeScopes`.
   const scopes = store.getNodeScopes(results.map(r => r.id));
 
-  // Token-lean block: header + one capped line per fact, max AMBIENT_K lines.
-  // retrieveRanked rows carry id/value/score only; one indexed getNode per surfaced
-  // row is acceptable on this path.
-  const surfaced = results.slice(0, AMBIENT_K);
+  // One indexed getNode per distinct id, cached — shared by the foreign-doc check below
+  // and the origin lookup in the render loop, so no id is read from the node table twice.
+  const nodeCache = new Map<string, ReturnType<typeof store.getNode>>();
+  const getCachedNode = (id: string): ReturnType<typeof store.getNode> => {
+    if (!nodeCache.has(id)) nodeCache.set(id, store.getNode(id));
+    return nodeCache.get(id) ?? null;
+  };
+
+  // ── Ordering-only scope nudge + reserved-slot selection (Phase 69 RECALL-02, D-01) ──
+  // (a) ORDERING-ONLY: `rankScore` never touches `r.score` — `r.score` (the true cosine)
+  //     is exactly what gets rendered below; rankScore exists purely as a sort key.
+  // (b) NEVER A FILTER (D-01: nudge, never filter): every row in `results` remains a
+  //     selection candidate regardless of rankScore — the nudge can move a row's
+  //     position but can never remove it (T-69-03-FILTER).
+  // (c) `currentScope === GLOBAL_SCOPE` (unknown/personal cwd) disables the same-project
+  //     boost entirely; foreign-doc demotion still applies to scoped docs since "foreign"
+  //     is well-defined independent of whether the CALLER's own scope is known.
+  // (d) Both magnitudes are eval-tuned in 69-06 and ship at 0 (D-09): with both weights
+  //     0, `rankScore(r) === r.score` for every row, so the stable sort below reduces to
+  //     "resort by the same score, tie-broken by original index" — byte-identical to
+  //     `results`' own order.
+  const isForeignDoc = (id: string): boolean => {
+    const node = getCachedNode(id);
+    if (!node || node.type !== 'doc') return false;
+    const scope = scopes.get(id) ?? GLOBAL_SCOPE;
+    return scope !== currentScope && scope !== GLOBAL_SCOPE;
+  };
+  const rankScore = (r: { id: string; score: number }): number => {
+    const scope = scopes.get(r.id) ?? GLOBAL_SCOPE;
+    const sameProjectBoost =
+      currentScope !== GLOBAL_SCOPE && scope === currentScope ? config.sameProjectRankNudge : 0;
+    const foreignDemotion = isForeignDoc(r.id) ? config.foreignDocDemotion : 0;
+    return r.score + sameProjectBoost - foreignDemotion;
+  };
+  const ranked = results
+    .map((r, i) => ({ r, i, rank: rankScore(r) }))
+    .sort((a, b) => b.rank - a.rank || a.i - b.i)
+    .map(x => x.r);
+
+  // Reserved-slot selection (T-69-03-PRECISION): at most ANCHOR_RESERVED_SLOTS of the
+  // AMBIENT_K slots may be FORCED in purely because a fact is anchored — an anchored
+  // fact that also earns a spot in the general rank order competes there like any other
+  // row and never counts against this budget.
+  const resultIds = new Set(results.map(r => r.id));
+  const anchoredPresentCount = anchored.reduce((n, a) => n + (resultIds.has(a.id) ? 1 : 0), 0);
+  const reserved = Math.min(ANCHOR_RESERVED_SLOTS, anchoredPresentCount);
+  const nonReservedSlots = AMBIENT_K - reserved;
+
+  const selectedIds = new Set<string>();
+  for (const r of ranked) {
+    if (selectedIds.size >= nonReservedSlots) break;
+    selectedIds.add(r.id);
+  }
+  for (const r of ranked) {
+    if (selectedIds.size >= AMBIENT_K) break;
+    if (!anchoredById.has(r.id) || selectedIds.has(r.id)) continue;
+    selectedIds.add(r.id);
+  }
+  for (const r of ranked) {
+    if (selectedIds.size >= AMBIENT_K) break;
+    if (selectedIds.has(r.id)) continue;
+    selectedIds.add(r.id);
+  }
+  // Emit the selected rows in rank order (not selection-pass order).
+  const surfaced = ranked.filter(r => selectedIds.has(r.id));
 
   const lines = ['Recalled from recense (ambient):'];
   for (const r of surfaced) {
-    const origin = store.getNode(r.id)?.origin ?? 'observed';
+    const origin = getCachedNode(r.id)?.origin ?? 'observed';
     const scope = scopes.get(r.id);
     const marker = scope && scope !== 'global' ? `[${scope}] ` : '';
     lines.push(`- ${marker}${r.value.slice(0, MAX_VALUE_CHARS)} (${origin}, score ${r.score.toFixed(2)})`);
