@@ -159,6 +159,24 @@ describe('proposal settle races (CR-01)', () => {
     expect(readStatus()).toBe('approved');
   });
 
+  it('WR-01 fail-closed: a proposal whose entity node row is hard-deleted is refused entity_gone, never approved', async () => {
+    // FK enforcement is a per-connection pragma — a connection running with
+    // foreign_keys = OFF (the codebase's own v7/v11/v12/v13 table-rebuild pattern) can
+    // hard-delete the node row and orphan the proposal. getStalenessInputs' INNER JOIN
+    // then returns null; pre-fix, `{ ...null }` spread to `{}` and classified as 'ok'
+    // → false approval.
+    const rawDb = new Database(tmpDbPath);
+    rawDb.pragma('foreign_keys = OFF');
+    rawDb.prepare('DELETE FROM node WHERE id = ?').run(entityId);
+    rawDb.close();
+
+    const attempt = ops.approveProposal(proposalId);
+    await expect(attempt).rejects.toBeInstanceOf(ProposalStaleError);
+    await expect(attempt).rejects.toMatchObject({ reason: 'entity_gone' });
+    // The refusal is durable (D-10) — entity_gone maps to the 'superseded' terminal status.
+    expect(readStatus()).toBe('superseded');
+  });
+
   it('a durable stale refusal is never overwritten: reject racing a stale approve loses and the terminal status stays superseded', async () => {
     // Tombstone the belief up front — the approve will refuse as stale and write the
     // durable terminal status (D-10).

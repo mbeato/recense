@@ -605,8 +605,14 @@ export function wireMemoryEngine(
       // EMIT-07 staleness gate — UNDER the lock, so the verdict cannot be invalidated by
       // a concurrent sleep pass tombstoning the belief between classification and write.
       const inputs = proposalWriteStore.getStalenessInputs(id);
-      // Cannot be null here: getById() above already proved the row exists.
-      const verdict = classifyProposalStaleness({ ...inputs!, nowMs: realClock.nowMs() });
+      // WR-01 fail-closed: getStalenessInputs INNER JOINs node twice, so it returns null
+      // not only for a missing proposal (ruled out by getById above) but whenever either
+      // referenced node ROW is gone — e.g. orphaned by a future FK-off table rebuild. A
+      // hard-deleted node is strictly worse than a tombstoned one, so null classifies as
+      // entity_gone (a refusal), never 'ok'.
+      const verdict = inputs === null
+        ? 'entity_gone'
+        : classifyProposalStaleness({ ...inputs, nowMs: realClock.nowMs() });
       if (verdict !== 'ok') {
         // D-10: a refused proposal cannot be resurrected by re-delivery, so the refusal
         // must be durable — write the terminal status BEFORE throwing, not just a
