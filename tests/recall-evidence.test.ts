@@ -189,6 +189,47 @@ describe('RecallEngine evidence mode (RECALL-04, D-07)', () => {
     expect(generateCalls).toBe(0);
   });
 
+  it('Test 1b (CR-02 regression): multi-anchor pool — every cited edge exists in the edge table; no fabricated bestMatch attribution', async () => {
+    h = makeHarness({ predicateGlossThreshold: 0.35 });
+    storeGlossEmbeddings(h.store);
+
+    // Decoy anchor: cosine 1.0 with the cue (bestMatch, topHits[0]) but carries NO edges.
+    const decoyId = seedNode(h, { id: 'decoy-anchor', value: 'decoy best match entity', type: 'entity', vectorDim: 0 });
+    // Real anchor: lower cosine (0.6) — in the typedAnchorPoolK pool but NOT bestMatch —
+    // and it holds the ONLY built_by edge to the frontier target.
+    const realAnchorId = seedNode(h, { id: 'real-anchor', value: 'real edge-bearing entity', type: 'entity' });
+    const realVec = new Float32Array(TEST_DIMS);
+    realVec[0] = 0.6;
+    realVec[1] = 0.8;
+    h.store.setEmbedding(realAnchorId, realVec);
+    const targetId = seedNode(h, { id: 'edge-target-1b', value: 'the frontier target', type: 'entity' });
+    h.store.upsertEdge({ src: realAnchorId, dst: targetId, rel: 'built_by', w: 1.0, kind: 'relation' });
+
+    const provider = makeProvider({ dims: TEST_DIMS, cueVecDim: 0 });
+    const engine = makeEngine(h, provider);
+
+    const result = await engine.recall('who built this thing', 'session-1b', undefined, { evidence: true });
+
+    expect(result.evidence?.path).toBe('typed');
+    // Every emitted (src, rel, dst) triple must be a REAL row in the edge table — the
+    // whole point of --evidence is verifiable citations, never a guessed attribution.
+    const edgeExists = h.db.prepare('SELECT 1 AS one FROM edge WHERE src = ? AND rel = ? AND dst = ?');
+    expect(result.evidence!.edges.length).toBeGreaterThan(0);
+    for (const e of result.evidence!.edges) {
+      expect(
+        edgeExists.get(e.src, e.rel, e.dst),
+        `cited edge (${e.src} -${e.rel}-> ${e.dst}) does not exist in the edge table`,
+      ).toBeDefined();
+    }
+    // The real traversed edge is cited; the decoy bestMatch is never fabricated as a src.
+    expect(result.evidence!.edges).toContainEqual({ src: realAnchorId, rel: 'built_by', dst: targetId, kind: 'relation' });
+    expect(result.evidence!.edges.some(e => e.src === decoyId)).toBe(false);
+    // Contributing anchor + frontier node are cited.
+    const citedIds = result.evidence!.nodes.map(n => n.id);
+    expect(citedIds).toContain(realAnchorId);
+    expect(citedIds).toContain(targetId);
+  });
+
   it('Test 2: neighborhood path — evidence.path=neighborhood, schema+members cited, abstracts + schema_rel edges cited', async () => {
     const schemaAId = seedNode(h, { value: 'primary schema', type: 'schema', origin: 'inferred', vectorDim: 0 });
     const memberA1Id = seedNode(h, { value: 'member of primary schema', type: 'fact', vectorDim: 1 });

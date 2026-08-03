@@ -60,8 +60,11 @@ const MAX_QUERY_BYTES = 4_000;
 
 /**
  * RECALL-04/D-07: verifiable evidence payload — cited node ids + the edges actually
- * traversed, reported from the SAME traversal structures the prose path already builds
- * (never a re-derivation). `path` records which resolution branch produced the payload;
+ * traversed. The neighborhood path reports from the SAME traversal structures the prose
+ * path already builds. The typed path re-reads each pool anchor's real out-edges to
+ * attribute frontier nodes honestly (CR-02): typedReach reports only dst ids, so every
+ * cited (src, rel, dst) triple is verified against a real edge-table row rather than
+ * guessed from bestMatch. `path` records which resolution branch produced the payload;
  * 'none' means nothing resolved (empty arrays, not an omitted field).
  */
 export interface RecallEvidence {
@@ -253,23 +256,57 @@ export class RecallEngine {
           const anchorLabel = anchorNode ? anchorNode.value : bestMatch.id;
 
           // ── RECALL-04/D-07: evidence short-circuit — BEFORE the compose call below ──
-          // The typed-path payload (anchor + frontier + the predicate edges that produced
-          // it) already exists in memory; report it directly instead of composing prose.
-          // If anchorNode failed to resolve (degenerate: bestMatch.id no longer live),
-          // there is nothing citable — fall back to the evidence-shaped safe-null rather
-          // than fabricate a citation for a non-existent node.
+          // The typed-path payload (contributing anchors + frontier + the predicate edges
+          // that produced it) is reported directly instead of composing prose.
+          //
+          // CR-02 (honest attribution): typedReach seeds its frontier from the WHOLE
+          // typedAnchorPoolK pool and reports only dst ids — it never says which pool
+          // anchor reached each dst. Citing every frontier node against bestMatch would
+          // fabricate (src, rel, dst) triples that may not exist in the graph. Instead,
+          // re-derive the real (anchor, matchedPredicate, dst) pairs by scanning each pool
+          // anchor's actual out-edges (the same getOutEdgesWithRel read typedReach itself
+          // performed) and keeping only pairs whose dst is in the frontier — every cited
+          // edge is a real row in the edge table, never a guessed attribution
+          // (honest-trace.ts spine). Only anchors that contributed a verifiable edge are
+          // cited as nodes. Read-only, latency-tolerant CLI path — the extra bounded edge
+          // scan (≤ typedAnchorPoolK reads) never touches the ambient hook.
           if (evidenceMode) {
-            if (!anchorNode) return NULL_EVIDENCE_RESULT;
-            const evidenceIds = [anchorNode.id, ...typedNodes.map(n => n.id)];
+            const frontierIds = new Set(typedNodes.map(n => n.id));
+            const poolIds = topHits.slice(0, this.config.typedAnchorPoolK).map((h) => h.id);
+            const edges: RecallEvidence['edges'] = [];
+            const contributingAnchors: Array<{ id: string; value: string; type: NodeType }> = [];
+            const seenAnchorIds = new Set<string>();
+            const seenEdgeKeys = new Set<string>();
+            for (const poolId of poolIds) {
+              if (seenAnchorIds.has(poolId)) continue;
+              const realEdges = this.store
+                .getOutEdgesWithRel(poolId)
+                .filter(e => e.kind === 'relation' && e.rel === matchedPredicate && frontierIds.has(e.dst));
+              if (realEdges.length === 0) continue;
+              const anchorN = this.store.getNode(poolId);
+              if (!anchorN || anchorN.tombstoned === 1) continue; // nothing citable for a dead anchor
+              seenAnchorIds.add(poolId);
+              contributingAnchors.push({ id: anchorN.id, value: anchorN.value, type: anchorN.type });
+              for (const e of realEdges) {
+                const key = `${poolId} ${e.dst}`;
+                if (seenEdgeKeys.has(key)) continue;
+                seenEdgeKeys.add(key);
+                edges.push({ src: poolId, rel: matchedPredicate, dst: e.dst, kind: 'relation' });
+              }
+            }
+            // Degenerate: no verifiable traversal survives (e.g. the contributing anchor
+            // died between typedReach and this scan) — safe-null rather than fabricate.
+            if (edges.length === 0) return NULL_EVIDENCE_RESULT;
+            const evidenceIds = [...contributingAnchors.map(a => a.id), ...typedNodes.map(n => n.id)];
             const scopeMap = this.store.getNodeScopes(evidenceIds);
             const nodes: RecallEvidence['nodes'] = [
-              {
-                id: anchorNode.id,
-                cite: `recense://${anchorNode.type}/${anchorNode.id}`,
-                type: anchorNode.type,
-                value: anchorNode.value,
-                scope: scopeMap.get(anchorNode.id),
-              },
+              ...contributingAnchors.map(a => ({
+                id: a.id,
+                cite: `recense://${a.type}/${a.id}`,
+                type: a.type,
+                value: a.value,
+                scope: scopeMap.get(a.id),
+              })),
               ...typedNodes.map(n => ({
                 id: n.id,
                 cite: `recense://${n.type}/${n.id}`,
@@ -278,12 +315,6 @@ export class RecallEngine {
                 scope: scopeMap.get(n.id),
               })),
             ];
-            const edges: RecallEvidence['edges'] = typedNodes.map(n => ({
-              src: anchorNode.id,
-              rel: matchedPredicate,
-              dst: n.id,
-              kind: 'relation',
-            }));
             return { inference: null, episodeId: null, origin: 'inferred', evidence: { path: 'typed', nodes, edges } };
           }
 
