@@ -26,7 +26,7 @@ import { SemanticStore } from '../db/semantic-store';
 import { AllocationGate } from '../gate/allocation-gate';
 import type { ActivationTraceSink } from '../viz/activation-sink';
 import { NoopActivationTraceSink } from '../viz/activation-sink';
-import { buildHonestOneHopTrace } from './honest-trace';
+import { buildHonestOneHopTrace, projectHopsForSink } from './honest-trace';
 import { newId } from '../lib/hash';
 
 export type RetrieveStatus = 'ok' | 'deleted' | 'unreachable';
@@ -376,7 +376,7 @@ export class RetrievalEngine {
    */
   private buildAmbientTracePayload(
     seeds: Array<{ node_id: string; score: number }>,
-  ): { seeds: Array<{ node_id: string; score: number }>; hops: Array<{ node_id: string; src: string; score: null; hop: 1 }> } {
+  ): { seeds: Array<{ node_id: string; score: number }>; hops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }> } {
     return buildHonestOneHopTrace(seeds, this.store, AMBIENT_HOP_TOPN);
   }
 
@@ -530,7 +530,7 @@ export class RetrievalEngine {
       if (this.traceEnabled && emitSeeds.length > 0) {
         try {
           const { seeds, hops } = this.buildAmbientTracePayload(emitSeeds);
-          this.traceSink.emit({ query_id: newId(), seeds, hops });
+          this.traceSink.emit({ query_id: newId(), seeds, hops: projectHopsForSink(hops) });
         } catch {
           // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
         }
@@ -556,7 +556,7 @@ export class RetrievalEngine {
     if (this.traceEnabled && emitSeeds.length > 0) {
       try {
         const { seeds, hops } = this.buildAmbientTracePayload(emitSeeds);
-        this.traceSink.emit({ query_id: newId(), seeds, hops });
+        this.traceSink.emit({ query_id: newId(), seeds, hops: projectHopsForSink(hops) });
       } catch {
         // Fire-and-forget: a sink failure must never surface to the caller (T-10-05).
       }

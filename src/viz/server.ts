@@ -57,7 +57,7 @@ import {
 } from '../adapter/gen-status';
 import type { PresetName, SettingsFile } from '../lib/config';
 import { PRED_SET } from '../model/typed-predicates';
-import { buildHonestOneHopTrace, type HonestTraceReader } from '../retrieval/honest-trace';
+import { buildHonestOneHopTrace, projectHopsForSink, type HonestTraceReader } from '../retrieval/honest-trace';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -855,9 +855,11 @@ export function startVizServer(
     if (seeds.length === 0) return;
     const { hops } = buildHonestOneHopTrace(seeds, spontaneousReader, SPONT_HOP_TOPN);
     if (hops.length === 0) return;
+    // Phase 69 (Plan 02, D-06): project the additive `rel` key back off before this hits the
+    // SSE payload — the spontaneous emitter's wire shape stays byte-identical to pre-phase.
     const spontaneousPayload = `event: trace\ndata: ${JSON.stringify({
       seeds,
-      hops,
+      hops: projectHopsForSink(hops),
       kind: 'spontaneous',
     })}\n\n`;
     for (const res of clients) {

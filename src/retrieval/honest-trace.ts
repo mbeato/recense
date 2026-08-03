@@ -23,6 +23,16 @@
  * guessed attribution. De-dups on the (src,dst) pair (an edge is unique per seed already; the
  * guard just protects against a src→dst appearing under two `rel`s).
  *
+ * Phase 69 (Plan 02, RECALL-03): hops ADDITIVELY carry `rel` — the real predicate of the
+ * out-edge that produced the hop — so a caller (the injected-block renderer) can render
+ * "relation + neighbor label" instead of a bare node id. This is purely additive: every
+ * EXISTING consumer of this function's return value that feeds a trace sink (engine.ts's two
+ * `traceSink.emit` sites, viz/server.ts's spontaneous emitter) MUST project each hop back down
+ * to the pre-phase 4-key shape `{ node_id, src, score, hop }` before handing it to `emit` — the
+ * sink JSON-serialises whatever object it is given straight into the persisted
+ * `activation_trace.hops` column and the viz SSE payload, so an unprojected `rel` key would
+ * silently change both (D-06: "the viz sink keeps receiving exactly what it receives today").
+ *
  * Pure / side-effect-free: reads only through the injected reader — no writes, no DB open.
  */
 import { PRED_SET } from '../model/typed-predicates';
@@ -37,8 +47,8 @@ export function buildHonestOneHopTrace(
   seeds: Array<{ node_id: string; score: number }>,
   reader: HonestTraceReader,
   topN: number,
-): { seeds: Array<{ node_id: string; score: number }>; hops: Array<{ node_id: string; src: string; score: null; hop: 1 }> } {
-  const hops: Array<{ node_id: string; src: string; score: null; hop: 1 }> = [];
+): { seeds: Array<{ node_id: string; score: number }>; hops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }> } {
+  const hops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }> = [];
   const seenPairs = new Set<string>();
 
   for (const seed of seeds) {
@@ -57,9 +67,22 @@ export function buildHonestOneHopTrace(
       if (seenPairs.has(pairKey)) continue;
       seenPairs.add(pairKey);
       taken++;
-      hops.push({ node_id: edge.dst, src: seed.node_id, score: null, hop: 1 });
+      hops.push({ node_id: edge.dst, src: seed.node_id, rel: edge.rel, score: null, hop: 1 });
     }
   }
 
   return { seeds, hops };
+}
+
+/**
+ * Phase 69 (Plan 02, D-06): projects a hop array carrying the additive `rel` key back down to
+ * the pre-phase 4-key shape `{ node_id, src, score, hop }` before it reaches a trace sink's
+ * `emit`. Shared by every existing consumer (engine.ts's two `traceSink.emit` sites, the
+ * viz/server.ts spontaneous emitter) so the projection can never drift between callers — the
+ * same correctness-spine reasoning as buildHonestOneHopTrace itself.
+ */
+export function projectHopsForSink(
+  hops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }>,
+): Array<{ node_id: string; src: string; score: null; hop: 1 }> {
+  return hops.map(({ node_id, src, score, hop }) => ({ node_id, src, score, hop }));
 }

@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildHonestOneHopTrace, type HonestTraceReader } from '../src/retrieval/honest-trace';
+import { buildHonestOneHopTrace, projectHopsForSink, type HonestTraceReader } from '../src/retrieval/honest-trace';
 
 type FakeEdge = { dst: string; rel: string; w: number; kind: string };
 
@@ -74,14 +74,42 @@ describe('buildHonestOneHopTrace', () => {
     expect(result.hops.map(h => h.node_id)).toEqual(['r1']);
   });
 
-  it('every hop is { node_id, src: seedId, score: null, hop: 1 }; seeds passthrough unchanged', () => {
+  it('every hop is { node_id, src: seedId, rel, score: null, hop: 1 }; seeds passthrough unchanged', () => {
     const edges: FakeEdge[] = [{ dst: 'r1', rel: 'uses', w: 0.5, kind: 'relation' }];
     const reader = makeFakeReader({ seed: edges });
     const seeds = [{ node_id: 'seed', score: 0.42 }];
     const result = buildHonestOneHopTrace(seeds, reader, 6);
 
     expect(result.seeds).toBe(seeds);
-    expect(result.hops).toEqual([{ node_id: 'r1', src: 'seed', score: null, hop: 1 }]);
+    expect(result.hops).toEqual([{ node_id: 'r1', src: 'seed', rel: 'uses', score: null, hop: 1 }]);
+  });
+
+  it('a hop carries the `rel` of the real out-edge that produced it (Phase 69 RECALL-03)', () => {
+    const edges: FakeEdge[] = [
+      { dst: 'r1', rel: 'built_by', w: 0.9, kind: 'relation' },
+      { dst: 'r2', rel: 'depends_on', w: 0.5, kind: 'relation' },
+    ];
+    const reader = makeFakeReader({ seed: edges });
+    const result = buildHonestOneHopTrace([{ node_id: 'seed', score: 0.9 }], reader, 6);
+
+    const byDst = new Map(result.hops.map(h => [h.node_id, h.rel]));
+    expect(byDst.get('r1')).toBe('built_by');
+    expect(byDst.get('r2')).toBe('depends_on');
+  });
+
+  it('projectHopsForSink strips `rel` back to the pre-phase 4-key shape (D-06)', () => {
+    const edges: FakeEdge[] = [{ dst: 'r1', rel: 'uses', w: 0.5, kind: 'relation' }];
+    const reader = makeFakeReader({ seed: edges });
+    const result = buildHonestOneHopTrace([{ node_id: 'seed', score: 0.9 }], reader, 6);
+    const projected = projectHopsForSink(result.hops);
+
+    // D-06: the viz sink keeps receiving exactly what it receives today — assert the
+    // pre-phase key set, not just absence of `rel`, so an unrelated future key addition
+    // would also fail this lock.
+    for (const hop of projected) {
+      expect(Object.keys(hop).sort()).toEqual(['hop', 'node_id', 'score', 'src']);
+    }
+    expect(projected).toEqual([{ node_id: 'r1', src: 'seed', score: null, hop: 1 }]);
   });
 
   it('resolves equal-weight edges deterministically by dst id ascending (D-03)', () => {
