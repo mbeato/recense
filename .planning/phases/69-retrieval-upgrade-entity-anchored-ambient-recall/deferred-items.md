@@ -72,3 +72,12 @@ or `src/db/semantic-store.ts` (69-03's touched files). `npm run typecheck` is cl
 `npx vitest run tests/ambient-recall.test.ts tests/recall-scope.test.ts tests/entity-anchor.test.ts
 tests/retrieval-anchor-union.test.ts tests/honest-trace.test.ts` — 46/46 passed. Not fixed here,
 per the same Scope Boundary rule 69-01/69-02 already invoked.
+
+## 69-04: same pre-existing dist/-dependent failures recur (out of scope, not touched)
+
+`npx vitest run` (full suite) after 69-04's three tasks shows the identical 24 failures across
+the same 8 files listed above (`dist/` still absent in this worktree — unchanged root cause).
+None of the 8 files reference `src/adapter/ambient-recall.ts` (69-04's only touched source
+file). `npm run typecheck` is clean; `npx vitest run tests/ambient-recall.test.ts
+tests/honest-trace.test.ts` — 34/34 passed. Not fixed here, per the same Scope Boundary rule
+69-01/69-02/69-03 already invoked.
