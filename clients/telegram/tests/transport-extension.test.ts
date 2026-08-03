@@ -119,6 +119,15 @@ describe('MockTelegramTransport — sendMessage with replyMarkup', () => {
     expect(t.sent[0]).not.toHaveProperty('replyMarkup');
     expect(t.sent[1]).toHaveProperty('replyMarkup', markup);
   });
+
+  it('(CR-01) sendMessage over 4096 chars throws like the real Bot API and records nothing', async () => {
+    const t = new MockTelegramTransport();
+    await expect(t.sendMessage(111, 'x'.repeat(4097))).rejects.toThrow(/too long/);
+    expect(t.sent).toHaveLength(0);
+    // Exactly at the limit is still legal.
+    await t.sendMessage(111, 'x'.repeat(4096));
+    expect(t.sent).toHaveLength(1);
+  });
 });
 
 describe('MockTelegramTransport — getUpdates with callback_query updates', () => {

@@ -50,6 +50,14 @@ export interface TelegramUpdate {
   callback_query?: CallbackQuery;
 }
 
+/**
+ * Telegram's hard sendMessage limit on `text` length, in characters (CR-01).
+ * A longer text is refused by the Bot API with HTTP 400 — deterministically, on
+ * every retry — so callers composing variable-length messages must bound their
+ * total under this before handing text to a transport.
+ */
+export const TELEGRAM_MAX_TEXT = 4096;
+
 // ---------------------------------------------------------------------------
 // TelegramTransport seam (injected — Default uses fetch, Mock is scripted)
 // ---------------------------------------------------------------------------
@@ -164,6 +172,14 @@ export class MockTelegramTransport implements TelegramTransport {
   }
 
   async sendMessage(chatId: number, text: string, replyMarkup?: InlineKeyboardMarkup): Promise<void> {
+    // Model Telegram's real 4096-char sendMessage limit (CR-01): the live API
+    // refuses longer texts with HTTP 400, so the mock must throw too — a test
+    // that "delivers" an oversized message would prove nothing.
+    if (text.length > TELEGRAM_MAX_TEXT) {
+      throw new Error(
+        'telegram sendMessage HTTP 400 (message is too long: ' + String(text.length) + ' chars)',
+      );
+    }
     const entry: { chatId: number; text: string; replyMarkup?: InlineKeyboardMarkup } = {
       chatId,
       text,

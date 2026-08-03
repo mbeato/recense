@@ -26,7 +26,7 @@ import {
 } from './belief-proposal-client';
 import { renderBeliefDecisionMessage, beliefKeyboard, asDisplayText } from './belief-render';
 import { readBeliefPromptLedger, writeBeliefPromptLedger, readBeliefStats, writeBeliefStats, type BeliefStats } from './state';
-import type { TelegramTransport } from './transport';
+import { TELEGRAM_MAX_TEXT, type TelegramTransport } from './transport';
 import type { MemoryClient } from './memory-client';
 
 // ---------------------------------------------------------------------------
@@ -308,22 +308,39 @@ export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void>
   });
 
   for (const group of orderedGroups) {
+    // Cap constituents at MAX_GROUP_CONSTITUENTS, choosing the earliest-expiring
+    // ones, then shrink further until the rendered message fits Telegram's hard
+    // 4096-char sendMessage limit (CR-01). An oversized message is refused with
+    // HTTP 400 deterministically on EVERY retry pass, so a doomed send must
+    // never be built. Constituents carried out of this message are NOT stored
+    // (dedup will not suppress them), so they resurface on the entity's next
+    // eligible day; the renderer's overflow line names them honestly against the
+    // group's full size.
+    let capped = [...group.rows]
+      .sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt))
+      .slice(0, MAX_GROUP_CONSTITUENTS);
+    let text = renderBeliefDecisionMessage(capped, group.rows.length);
+    while (text.length > TELEGRAM_MAX_TEXT && capped.length > 1) {
+      capped = capped.slice(0, capped.length - 1);
+      text = renderBeliefDecisionMessage(capped, group.rows.length);
+    }
+    if (text.length > TELEGRAM_MAX_TEXT) {
+      // Structurally unreachable while the renderer's per-field caps hold (one
+      // constituent renders far below the limit), but never hand the transport
+      // a message Telegram is guaranteed to refuse.
+      log('belief bridge: rendered message exceeds Telegram limit even at one constituent — skipping group');
+      continue;
+    }
+
     const reserved = tryReserveProposalSlot(dailyCap, storePath, new Date(nowMs));
     if (!reserved) {
       log('belief bridge: daily cap reached — stopping pass');
       return;
     }
 
-    // Cap constituents at MAX_GROUP_CONSTITUENTS, choosing the earliest-expiring ten;
-    // the renderer's own overflow line names the remainder.
-    const capped = [...group.rows]
-      .sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt))
-      .slice(0, MAX_GROUP_CONSTITUENTS);
-
     // Store-first (step 8) — no button can ever reference a missing row.
     for (const row of capped) putProposal(row, storePath);
 
-    const text = renderBeliefDecisionMessage(capped);
     const keyboard = beliefKeyboard(capped);
 
     try {

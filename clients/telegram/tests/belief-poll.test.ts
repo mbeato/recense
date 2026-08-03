@@ -349,6 +349,49 @@ describe('runBeliefBridgePass — gates, dedup, batching, cap, rollback', () => 
     expect(getProposal(id2.slice(0, 32), storePath)).toBeNull();
   });
 
+  it('(CR-01) a 10-constituent group with max-length fields stays under Telegram\'s 4096-char limit — one prompt, blocks matching keyboard rows, remainder carried honestly', async () => {
+    // At the renderer's own field caps a 10-constituent group renders ~5,473
+    // chars — over Telegram's hard 4,096 limit. MockTelegramTransport now throws
+    // on oversized text exactly like the live Bot API, so this test fails loudly
+    // if the bridge ever hands a doomed message to the transport again.
+    const entity = 'E'.repeat(200);
+    const base = Date.now();
+    listBody = {
+      items: Array.from({ length: 10 }, (_, i) =>
+        makeRecord(pid('maxlen-' + String(i)), {
+          entity_descriptor: entity,
+          change_field: 'f'.repeat(200),
+          change_from: 'x'.repeat(200),
+          change_to: 'y'.repeat(200),
+          evidence_quote: 'q'.repeat(600),
+          created_at: base + i,
+        }),
+      ),
+    };
+    const transport = new MockTelegramTransport();
+    const storePath = tmpPath('maxlen-store');
+    await runBeliefBridgePass({
+      client: makeClient(), transport, chatIds: [111],
+      storePath, statePath: tmpPath('maxlen-state'),
+      dailyCap: 10, log: () => {}, nowMs: Date.now(),
+    });
+
+    // Exactly one prompt reached the transport (the mock would have thrown on >4096).
+    expect(transport.sent).toHaveLength(1);
+    const sent = transport.sent[0];
+    expect(sent).toBeDefined();
+    expect(sent!.text.length).toBeLessThanOrEqual(4096);
+
+    // Numbered blocks and keyboard rows describe the same shrunken constituent set.
+    const numberedBlocks = sent!.text.split('\n').filter(l => /^\d+\.\s/.test(l)).length;
+    expect(numberedBlocks).toBeGreaterThan(0);
+    expect(numberedBlocks).toBeLessThan(10); // the shrink actually happened
+    expect(sent!.replyMarkup?.inline_keyboard).toHaveLength(numberedBlocks);
+
+    // Carried constituents are named, not silently dropped.
+    expect(sent!.text).toContain(`${String(10 - numberedBlocks)} more not shown`);
+  });
+
   it('a pass whose listProposals throws logs and resolves — it never rejects', async () => {
     listBody = 500; // stub server returns 500 → ProposalHttpError
     const transport = new MockTelegramTransport();

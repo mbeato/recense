@@ -72,15 +72,18 @@ export function asDisplayText(value: string, maxLen: number): string {
  *   3. One numbered block per constituent (earliest-first): the same field/transition
  *      line, then the evidence quote on its own line inside `"..."` delimiters
  *      (cap 280), then the row's expiry (`dueAt`).
- *   4. If the group exceeds MAX_CONSTITUENTS, a trailing overflow line naming the
- *      remaining count.
+ *   4. If the full group (`totalCount` when given, else `group.length`) exceeds the
+ *      constituents actually rendered, a trailing overflow line naming the
+ *      remaining count. `totalCount` lets a caller that pre-capped `group` for
+ *      Telegram's message-length limit (CR-01 — see belief-bridge.ts) keep the
+ *      overflow line honest about constituents it carried out of this message.
  *
  * The coarse categorical confidence MAY appear as plain text next to a constituent
  * (D-06) — the literal word "confidence" is never written, so no numeric-confidence
  * pattern can ever match this output; a raw numeric confidence is never rendered,
  * ever.
  */
-export function renderBeliefDecisionMessage(group: StoredBeliefProposal[]): string {
+export function renderBeliefDecisionMessage(group: StoredBeliefProposal[], totalCount?: number): string {
   const ordered = [...group].sort((a, b) => a.serverCreatedAtMs - b.serverCreatedAtMs);
   const first = ordered[0];
   if (first === undefined) return '[Belief update]';
@@ -103,8 +106,10 @@ export function renderBeliefDecisionMessage(group: StoredBeliefProposal[]): stri
     lines.push(`   Expires: ${c.dueAt}`);
   });
 
-  if (ordered.length > MAX_CONSTITUENTS) {
-    lines.push(`... and ${String(ordered.length - MAX_CONSTITUENTS)} more not shown`);
+  const total = totalCount ?? ordered.length;
+  const hidden = total - constituents.length;
+  if (hidden > 0) {
+    lines.push(`... and ${String(hidden)} more not shown`);
   }
 
   return lines.join('\n');
