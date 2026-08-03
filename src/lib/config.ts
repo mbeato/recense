@@ -5,6 +5,7 @@
  * Values are calibration placeholders — tune against real MEMORY.md cadence.
  * Confidence uses c ← c + β(1−c) self-limiting form (D-14).
  */
+import type { IntentConfidence } from '../model/claim-extractor';
 
 /**
  * Role-based salience weights for the Allocation Gate (INGEST-02, D-01/02/03).
@@ -86,6 +87,107 @@ export interface EngineConfig {
    * (Chen-2020 threshold). N=3 balances noise tolerance vs. responsiveness.
    */
   contradictionN: number;
+
+  /**
+   * Phase 65 D-16: per-source override for `contradictionN` (research Pitfall 3).
+   * Sources not listed fall back to the global `contradictionN` (3). Email's realistic
+   * corroboration cadence is days between genuinely distinct signals, while Claude Code's
+   * is minutes between turns, so one global N is a compromise for both.
+   * Ships EMPTY deliberately — the Plan 65-10 dry-run is what supplies evidence for any entry.
+   * Reversibility: remove an entry to restore the global `contradictionN` for that source;
+   * an empty map is pre-Phase-65 behavior exactly.
+   */
+  contradictionNBySource: Record<string, number>;
+
+  /**
+   * Phase 65 D-14: master dark-launch switch for the DRIFT-03 redesigned
+   * provenance-distinctness key. When `false`, the Gmail adapter still COMPUTES and reports
+   * the derived key for observability, but every ingested Gmail episode keeps the
+   * pre-Phase-65 collapsed `ingest:gmail` session id, so `countDistinctProvenance` behaves
+   * byte-identically to today. When `true`, the derived `(normalized-sender-domain,
+   * gmail-thread-id)` key takes effect. Research Pitfall 3 puts this change in the same
+   * caution class as `GMAIL_EXTRACTION_PROMPT` edits — compute-and-log first, enable only
+   * after the Plan 65-10 dry-run against real multi-email status threads is reviewed.
+   * D-03: enabling is forward-only — episodes already ingested keep their historical
+   * collapsed session id and are never migrated.
+   * Reversibility: `false` is pre-Phase-65 behavior exactly.
+   */
+  provenanceDistinctnessEnabled: boolean;
+
+  /**
+   * Phase 65 D-07: minimum count of NON-WHITESPACE characters that must survive
+   * `stripQuotedForwarded` for a message to contribute an independent provenance. Below this
+   * the message is treated as pure quotation/forward and collapses into the shared
+   * non-independent bucket, which is what makes three forwards of one thread count as one.
+   * 20 non-whitespace characters clears habitual filler forwards ("FYI", "Thoughts?", "see
+   * below") while a genuine short status line ("Unfortunately, we are moving forward with
+   * other candidates") clears it comfortably. Calibration placeholder — Plan 65-10's dry-run
+   * reports the observed residual-length distribution over real threads, and this is the
+   * knob it tunes.
+   * Setting it to `0` disables the residual gate entirely and is NOT recommended: it reopens
+   * forwarded/quoted distinctness farming (research Pitfall 3's inverse risk).
+   * Reversibility: this knob is only consumed when `provenanceDistinctnessEnabled` is `true`;
+   * with the master switch at its `false` default, pre-Phase-65 behavior holds regardless of
+   * this value.
+   */
+  provenanceMinResidualChars: number;
+
+  /**
+   * Phase 65: master switch for the belief-gated status-drift layer (confidence damping
+   * D-09 plus the `event_ts` staleness guard D-11b). Defaults ON, unlike the provenance
+   * knob, because the drift layer is strictly non-amplifying — it can only hold, dampen, or
+   * drop a contradiction, never strengthen or accelerate one — and it is a structural no-op
+   * for any decision that carries no intent-classification confidence, which is every
+   * non-Gmail decision in the engine. It closes DRIFT-02 and DRIFT-04, which are phase
+   * success criteria, so dark-launching it would ship the phase without its own guarantees.
+   * Reversibility: `false` restores pre-Phase-65 routing exactly — `routeContradiction` is
+   * called with the undamped magnitude and no staleness check runs.
+   */
+  statusDriftEnabled: boolean;
+
+  /**
+   * Phase 65 D-09: multiplier applied to a contradicting claim's PE magnitude before it
+   * reaches the UNMODIFIED `routeContradiction`, keyed on Phase 63's coarse intent confidence.
+   *
+   * Lower-only lock (D-09, extends the D-43 non-strengthening doctrine and backlog B-04's
+   * lower-only constraint): every factor is clamped to `[0, 1]` at the point of consumption,
+   * so no configured value — not even `5` — can ever produce a magnitude greater than the
+   * one the judge emitted. Consumption-side clamping rather than validation-side rejection is
+   * deliberate: a malformed config degrades to safe behavior instead of throwing during a
+   * sleep pass.
+   *
+   * Why `high: 1` and not something greater: identity, never amplification. A high-confidence
+   * classification earns the judge's own magnitude unchanged, nothing more.
+   *
+   * Why `low: 0` specifically: magnitude 0 divided by any resistance is 0, which is below
+   * `peReconcileBandLow`, so `routeContradiction` returns `'hold'` — deterministically,
+   * through the unmodified function. This is how "a low-confidence classification must not
+   * produce a decisive flip on its own" is guaranteed structurally rather than by a threshold
+   * that a weak node's tiny resistance could still let through. A held claim still records a
+   * pending contradiction, so three independent low-confidence emails can still cross
+   * `contradictionN` and force-destabilize — that is "email earns confidence through
+   * consolidation volume," and it is the pre-existing mechanism, unmodified.
+   *
+   * Reversibility: `{ high: 1, medium: 1, low: 1 }` restores pre-Phase-65 magnitudes exactly
+   * (equivalent to `statusDriftEnabled: false` for the damping half).
+   */
+  statusDriftConfidenceDamping: Record<IntentConfidence, number>;
+
+  /**
+   * Phase 65 D-11b: when `true`, a contradicting status claim whose episode `event_ts` is
+   * older than the most recent dated supporting evidence for the candidate node is DROPPED —
+   * no routing, no pending contradiction recorded, no sink event (research Pitfall 5).
+   * Dropping rather than holding is load-bearing, because a held contradiction accumulates
+   * toward `contradictionN` and three stale backfilled rejections would then force-
+   * destabilize a newer offer — the exact DRIFT-04 failure the guard exists to prevent.
+   * Where either timestamp is null (undated evidence), the guard abstains and pre-Phase-65
+   * behavior applies; that abstention is counted and logged, never silent.
+   * D-12: cross-run and cross-account interleaving beyond this guard plus the Plan 65-06
+   * backfill sort remains a named, accepted, documented risk this milestone — bi-temporal
+   * validity columns stay deferred.
+   * Reversibility: `false` restores pre-Phase-65 behavior exactly.
+   */
+  statusDriftEventTsGuard: boolean;
 
   /**
    * effective_s threshold for eviction candidacy (AND-gated with c + tombstoned).
@@ -806,6 +908,12 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   eta: 0.1,
   beta: 0.05,
   contradictionN: 3,
+  contradictionNBySource: {}, // Phase 65 D-16: dark — empty map restores the global contradictionN for every source
+  provenanceDistinctnessEnabled: false, // Phase 65 D-14: dark-launch off; pre-Phase-65 collapsed session id stays in effect
+  provenanceMinResidualChars: 20, // Phase 65 D-07: non-whitespace residual floor for independent provenance
+  statusDriftEnabled: true, // Phase 65: non-amplifying drift layer defaults ON (closes DRIFT-02/04)
+  statusDriftConfidenceDamping: { high: 1, medium: 0.6, low: 0 }, // Phase 65 D-09: lower-only clamp domain
+  statusDriftEventTsGuard: true, // Phase 65 D-11b: stale backfilled contradictions dropped, not held
   evictionSThreshold: 0.05,
   evictionCThreshold: 0.15,
   trainingConfidenceThreshold: 0.6,
