@@ -35,9 +35,9 @@
 
 > "Which tracked application/company/role is this email about." Research answered PROJECT.md's open question on canonical-list ownership: recense resolves against **its own** graph and emits a descriptor; it never mirrors or live-queries a consumer's ID space.
 
-- [ ] **RESOLVE-01**: Entity resolution uses broadened candidate generation (exact/entity-keyed + BM25 + dense union — reusing v9.0's RECON machinery), never dense-cosine alone, which structurally cannot separate near-duplicate entity names.
-- [ ] **RESOLVE-02**: Resolution is **confident-or-null**: when no candidate clears the bar it abstains and no proposal is produced, rather than emitting a best-available guess. A wrong-entity match would silently corrupt an external system of record.
-- [ ] **RESOLVE-03**: A resolved entity is emitted as recense's own stable node id **plus** a human-readable descriptor. recense never mirrors, imports, or queries the consumer's canonical ID space — the consumer's adapter owns the match into its own IDs.
+- [x] **RESOLVE-01**: Entity resolution uses broadened candidate generation (exact/entity-keyed + BM25 + dense union — reusing v9.0's RECON machinery), never dense-cosine alone, which structurally cannot separate near-duplicate entity names.
+- [x] **RESOLVE-02**: Resolution is **confident-or-null**: when no candidate clears the bar it abstains and no proposal is produced, rather than emitting a best-available guess. A wrong-entity match would silently corrupt an external system of record.
+- [x] **RESOLVE-03**: A resolved entity is emitted as recense's own stable node id **plus** a human-readable descriptor. recense never mirrors, imports, or queries the consumer's canonical ID space — the consumer's adapter owns the match into its own IDs.
 
 ### DRIFT — Belief-gated status drift
 
@@ -116,9 +116,9 @@
 | CLASSIFY-02 | 63 | Complete |
 | CLASSIFY-03 | 63 | Complete |
 | CLASSIFY-04 | 63 | Complete |
-| RESOLVE-01 | 64 | Pending |
-| RESOLVE-02 | 64 | Pending |
-| RESOLVE-03 | 64 | Pending |
+| RESOLVE-01 | 64 | Complete |
+| RESOLVE-02 | 64 | Complete |
+| RESOLVE-03 | 64 | Complete |
 | DRIFT-01 | 65 | Pending |
 | DRIFT-02 | 65 | Pending |
 | DRIFT-03 | 65 | Pending |
