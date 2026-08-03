@@ -1117,7 +1117,21 @@ Plans:
   3. Same-entity same-day proposals are batched into one prompt, and held (non-decisive) updates are never surfaced to the user — APPROVE-03
   4. Raw numeric confidence is never shown to the user and is never a programmatic approval gate — the PE gate is the only gate — APPROVE-04
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+
+**Wave 1**
+
+- [ ] 68-01-PLAN.md — StoredProposal becomes a kind-discriminated union with a belief member that rides the frozen store's expiry/cap machinery, plus the /v1/proposals HTTP bridge and the zero-diff lock (APPROVE-02, wave 1)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 68-02-PLAN.md — The v3 callback codec and the structured decision surface (from → to on the tap targets), and the poll pass that batches same-entity same-day proposals into one prompt behind a default-OFF gate (APPROVE-01, APPROVE-03, APPROVE-04, wave 2)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 68-03-PLAN.md — The '3|' dispatch branch and belief decision handler with full refusal mapping and the approval-rate self-report, the numeric-confidence absence scan, and the repo-level e2e against the real served contract (APPROVE-01, APPROVE-02, APPROVE-04, wave 3)
 
 ### Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall
 
