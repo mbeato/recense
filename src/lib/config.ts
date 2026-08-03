@@ -403,6 +403,18 @@ export interface EngineConfig {
   entityResolutionMargin: number;
 
   /**
+   * Phase 69 RECALL-01 (D-03/D-09): master switch for entity-anchored ambient recall —
+   * distinctive prompt tokens resolved against live entity nodes via `collectAnchoredFacts`
+   * (`src/retrieval/entity-anchor.ts`), their facts unioned into the ambient candidate pool
+   * ahead of ranking. Dark default `false` reproduces pre-phase ambient-recall behavior
+   * byte-for-byte — the anchoring module is built and tested in 69-01 but wired into nothing
+   * live until this flag flips. D-01 boundary (verbatim): scope becomes a rank nudge on the
+   * ambient path only, never a filter — `recense recall --scope` semantics are unchanged.
+   * Un-gated by the 69-06 eval gate (RECALL-05), not by a code merge (D-09).
+   */
+  entityAnchoringEnabled: boolean;
+
+  /**
    * Salience below which a non-hard-keep episode is skipped in consolidation replay (CONSOL-01).
    * 0.2 means episodes with <20% salience are skipped unless force-kept.
    * Calibrate against real transcript cadence — too low wastes LLM budget on noise.
@@ -494,6 +506,29 @@ export interface EngineConfig {
    * Tune via held-out LoCoMo sweep; ship w* = argmax(R@5) with zero per-category regression (D-04/D-05).
    */
   bm25FusionWeight: number;
+
+  /**
+   * Phase 69 RECALL-02 (D-01/D-05): ordering-only same-project rank nudge applied to ambient
+   * candidates whose scope matches the caller's cwd-derived project. Ordering-only, by
+   * construction: this weight never enters the cosine floor gate and never changes a displayed
+   * score (69-03 implements that constraint; this comment is the contract). Dark default `0`
+   * reproduces pre-phase ambient ranking exactly. This is the D-S1 partial reversal recorded in
+   * CONTEXT.md D-01: scope becomes a rank signal on the ambient path ONLY — every other caller
+   * (`recense recall --scope`, etc.) keeps the original filter-never semantics. Un-gated by the
+   * 69-06 eval gate (RECALL-05), not by a code merge (D-09).
+   */
+  sameProjectRankNudge: number;
+
+  /**
+   * Phase 69 RECALL-02 (D-01/D-05): ordering-only rank demotion applied to foreign-project
+   * `type='doc'` candidates on the ambient path (F1: 49% of scoped injected lines were
+   * foreign-project and outscored own-project lines pre-phase). Ordering-only, by construction:
+   * never enters the cosine floor gate, never changes a displayed score (enforced in 69-03).
+   * Dark default `0` reproduces pre-phase ambient ranking exactly. Same D-S1 partial-reversal
+   * boundary as `sameProjectRankNudge` — a rank nudge on the ambient path only, never a filter.
+   * Un-gated by the 69-06 eval gate (RECALL-05), not by a code merge (D-09).
+   */
+  foreignDocDemotion: number;
 
   /**
    * Phase 37: min cosine for query→predicate confident match (D-07).
@@ -709,6 +744,24 @@ export interface EngineConfig {
    * D-05: prove-before-activate posture (mirrors Phase 35 D-04).
    */
   insightSurfacingEnabled: boolean;
+
+  /**
+   * Phase 69 RECALL-02 (F4, D-05): when true, `type='doc'` nodes in the ambient injected block
+   * render as title + `recense://doc/<id>` link instead of a truncated 200-char value body —
+   * a truncated hub-doc body is wasted tokens (F4). Dark default `false` reproduces pre-phase
+   * rendering exactly. Un-gated by the 69-06 eval gate (RECALL-05), not by a code merge (D-09).
+   */
+  ambientDocLinkRenderEnabled: boolean;
+
+  /**
+   * Phase 69 RECALL-03 (D-06): when true, the ambient injected block renders each surfaced
+   * fact's 1-hop relations — the edges `buildHonestOneHopTrace` already computes
+   * (AMBIENT_HOP_TOPN=6) and today discards to the viz sink only — compactly within the
+   * existing per-line token budget. Facts win over hops if budget forces a choice (D-06). Dark
+   * default `false` reproduces pre-phase injected-block output exactly (no hop lines). Un-gated
+   * by the 69-06 eval gate (RECALL-05), not by a code merge (D-09).
+   */
+  ambientHopInjectionEnabled: boolean;
 
   // --- Phase 44: settings surface cost levers (D-04/D-06/D-11/D-12) ---
 
@@ -960,6 +1013,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   bm25CandidateK: 5,   // Phase 46 D-03: default ON; set 0 to reproduce pre-46 behavior (D-07)
   entityResolutionFloor: 0.75,   // Phase 64 D-05: conservative confident-or-null score floor
   entityResolutionMargin: 0.15,  // Phase 64 D-05: conservative confident-or-null top-2 margin
+  entityAnchoringEnabled: false,  // Phase 69 RECALL-01 D-03/D-09: dark default — module built+tested, not wired live
   consolSkipThreshold: 0.2,
   consolSkipThresholdAssistant: 0.5,
   unrelatedSimilarityThreshold: 0.3,
@@ -970,6 +1024,8 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   rankWeightR: 0.0,
   rankStrengthWeight: 0,  // D-04: dark default — ships w=0; no behavior change at merge
   bm25FusionWeight: 0,  // Phase 47 D-05: w* = 0 (held-out LoCoMo sweep null result — R@5 max at w=0, no positive weight passes per-category no-regression gate); set 0 to use pure cosine
+  sameProjectRankNudge: 0,  // Phase 69 RECALL-02 D-01/D-05: dark default — ordering-only, un-gated by 69-06 eval
+  foreignDocDemotion: 0,  // Phase 69 RECALL-02 D-01/D-05: dark default — ordering-only, un-gated by 69-06 eval
   // Phase 37: min cosine for query→predicate confident match (D-07, RESEARCH §2).
   // Below threshold → schema-neighborhood fallback (D-06); calibrate against D-05 harness.
   predicateGlossThreshold: 0.35,
@@ -1003,6 +1059,8 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   reflectMassFloorLow: 7,             // hysteresis low-water: dissolve insight when mass drops below this (D-06; seeded from Phase-28 lowMass:7)
   reflectFreshnessThreshold: 0.7,     // conservative recall freshness gate; lower after 38-04 eval (D-05)
   insightSurfacingEnabled: false,     // D-05: ship DARK — no recall behavior change until 38-04 eval proves compose-token win (mirrors rankStrengthWeight:0)
+  ambientDocLinkRenderEnabled: false,  // Phase 69 RECALL-02 D-05: dark default — pre-phase truncated-body rendering unchanged until 69-06 eval
+  ambientHopInjectionEnabled: false,   // Phase 69 RECALL-03 D-06: dark default — no hop lines in injected block until 69-06 eval
 
   // Phase 39.1: subject doc exhaust-gate tunables (D-06/D-07)
   corpusSubjectDriftThreshold: 3,     // min atom-touch-count since last gen to trigger REFRESH gate (D-06; analogous to highMass:10 shape)
