@@ -111,6 +111,13 @@ const MAX_ANCHOR_PROBE_CHARS = MAX_QUERY_CHARS;
  * decoration (the `- `/`  ↳ ` bullet, the `(origin, score X.XX)` parenthetical) is fixed
  * format overhead, not counted against the budget, mirroring MAX_VALUE_CHARS's own framing
  * (cap the data-controlled part, not the format).
+ *
+ * WR-04 hard guarantee: each fact line's counted content (scope marker + value/title) is
+ * capped at MAX_VALUE_CHARS — the marker counts INSIDE the per-line cap, never on top of it
+ * — so AMBIENT_K fact lines can total at most AMBIENT_K × MAX_VALUE_CHARS = this budget, and
+ * hops only append while the running total stays under it. The renderer's counted content
+ * therefore NEVER exceeds this constant, which is exactly the invariant the 69-06 eval
+ * gate's G4 check asserts (guard-set and ship-set agree on the same named quantity).
  */
 export const AMBIENT_BLOCK_CHAR_BUDGET = AMBIENT_K * MAX_VALUE_CHARS;
 
@@ -145,8 +152,11 @@ export interface RenderRow {
  *
  * Budget enforcement, in this exact order:
  *   1. The header is emitted but not counted against the budget.
- *   2. One fact line per row (up to AMBIENT_K) is ALWAYS emitted, even once the running
- *      total exceeds the budget — D-06: facts win, hops are enrichment, never a replacement.
+ *   2. One fact line per row (up to AMBIENT_K) is ALWAYS emitted — D-06: facts win, hops are
+ *      enrichment, never a replacement. WR-04: each fact line's counted content (scope marker
+ *      + value/title) is capped at MAX_VALUE_CHARS, so this facts-always-render floor is
+ *      budget-safe by construction — AMBIENT_K capped lines total at most
+ *      AMBIENT_BLOCK_CHAR_BUDGET exactly, never past it.
  *      Facts are accounted for FIRST, as a group — so a budget that is already fully spent by
  *      facts alone leaves genuinely zero room for any hop (D-06's "when the budget binds,
  *      hops are dropped" is evaluated against the REAL post-facts total, not a hop's lucky
@@ -166,14 +176,18 @@ export function renderAmbientBlock(rows: RenderRow[], opts?: { docLinks?: boolea
   const factEntries = selected.map(row => {
     const marker = row.scope && row.scope !== GLOBAL_SCOPE ? `[${row.scope}] ` : '';
     const anchoredSuffix = row.anchoredVia ? `, via ${row.anchoredVia}` : '';
+    // WR-04: the marker counts INSIDE the MAX_VALUE_CHARS per-line cap (marker + value/title
+    // <= MAX_VALUE_CHARS), so the always-rendered fact lines can never total past
+    // AMBIENT_BLOCK_CHAR_BUDGET — the hard guarantee G4 asserts.
+    const valueCap = Math.max(0, MAX_VALUE_CHARS - marker.length);
     let factLine: string;
     let contentLen: number;
     if (docLinks && row.type === 'doc') {
-      const title = deriveDocTitle(row);
+      const title = deriveDocTitle(row).slice(0, valueCap);
       factLine = `- ${marker}${title} — recense://doc/${row.id} (doc, score ${row.score.toFixed(2)}${anchoredSuffix})`;
       contentLen = marker.length + title.length;
     } else {
-      const value = row.value.slice(0, MAX_VALUE_CHARS);
+      const value = row.value.slice(0, valueCap);
       factLine = `- ${marker}${value} (${row.origin}, score ${row.score.toFixed(2)}${anchoredSuffix})`;
       contentLen = marker.length + value.length;
     }

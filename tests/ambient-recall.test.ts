@@ -571,6 +571,31 @@ describe('renderAmbientBlock', () => {
     expect(factLines).toHaveLength(AMBIENT_K);
   });
 
+  it('p2. WR-04 regression: scope markers count INSIDE the per-line cap — 5 maximal scoped facts never exceed AMBIENT_BLOCK_CHAR_BUDGET', () => {
+    const rows: RenderRow[] = Array.from({ length: AMBIENT_K }, (_, i) =>
+      factRow({
+        id: `r${i}`,
+        value: 'v'.repeat(500),
+        scope: 'someprojectscope',
+        hops: [{ rel: 'works_on', label: 'a neighbour label' }],
+      }),
+    );
+    const text = renderAmbientBlock(rows);
+    const factLines = text.split('\n').slice(1).filter(l => l.startsWith('- '));
+    expect(factLines).toHaveLength(AMBIENT_K);
+    // Per-line: the data-driven content (marker + value) is capped at MAX_VALUE_CHARS,
+    // so summed counted content <= AMBIENT_BLOCK_CHAR_BUDGET — the invariant G4 asserts.
+    let counted = 0;
+    for (const line of factLines) {
+      const content = line.replace(/^- /, '').replace(/ \(observed, score \d\.\d\d\)$/, '');
+      expect(content.length).toBeLessThanOrEqual(MAX_VALUE_CHARS);
+      counted += content.length;
+    }
+    expect(counted).toBeLessThanOrEqual(AMBIENT_BLOCK_CHAR_BUDGET);
+    // Budget fully spent by facts — zero hop lines (facts win, hops drop first).
+    expect(text).not.toContain('↳');
+  });
+
   it('q. hops render when the budget has room, beneath their own fact', () => {
     const rows: RenderRow[] = [
       factRow({ id: 'r0', value: 'short fact', hops: [{ rel: 'works_on', label: 'neighbour A' }] }),
