@@ -267,7 +267,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 64. Entity Resolution Hardening | v10.0 | 4/4 | Complete    | 2026-08-03 |
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 11/11 | Complete    | 2026-08-03 |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 5/5 | Complete    | 2026-08-03 |
-| 67. Reference Consumer Adapter | v10.0 | 2/3 | In Progress|  |
+| 67. Reference Consumer Adapter | v10.0 | 3/3 | Complete   | 2026-08-03 |
 | 68. Telegram HITL Belief-Kind Extension | v10.0 | 0/0 | Not started | — |
 
 ### Phase 28: Schema-Anchored Corpus
@@ -814,7 +814,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
 - [x] **Phase 64: Entity Resolution Hardening** — Broadened candidate generation + confident-or-null resolution against recense's own graph; descriptor-only, never a consumer ID. (completed 2026-08-03)
 - [x] **Phase 65: Belief-Gated Status Drift + Provenance-Distinctness Fix** — Status lifecycle rides the existing PE-gate/`supersedes` machinery unmodified; redesigned provenance-distinctness key makes `countDistinctProvenance` reachable on email evidence without becoming farmable. (completed 2026-08-03)
 - [x] **Phase 66: Domain-Neutral Proposal Emit Seam** — `ActionProposalSink` + `action_proposal` table + `/v1/proposals` routes; a named "D-43-for-proposals" sentinel test closes the milestone's largest correctness risk structurally. (completed 2026-08-03)
-- [ ] **Phase 67: Reference Consumer Adapter** — In-repo `clients/proposal-reference/` proves the contract end-to-end with its own import-boundary test.
+- [x] **Phase 67: Reference Consumer Adapter** — In-repo `clients/proposal-reference/` proves the contract end-to-end with its own import-boundary test. (completed 2026-08-03)
 - [ ] **Phase 68: Telegram HITL Belief-Kind Extension** — Second `kind:'belief'` on the existing StoredProposal union; batching + hold-exclusion bound approval fatigue.
 - [ ] **Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall** — Entity-anchored candidate generation (reusing Phase 64's union generator), same-project rank treatment, 1-hop relations in the injected block, cited-evidence recall mode. Gated on a 58-prompt eval set from real sessions. Seed: SEED-005.
 
@@ -1103,7 +1103,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 67-03-PLAN.md — Repo-level end-to-end proof through the adapter's public entry against the real served contract incl. the 409 refusal round-trip, and the `docs/reference-client.md` proposal-consumer section with both mandatory carry-forwards (CONSUME-01, CONSUME-02, CONSUME-03, wave 3)
+- [x] 67-03-PLAN.md — Repo-level end-to-end proof through the adapter's public entry against the real served contract incl. the 409 refusal round-trip, and the `docs/reference-client.md` proposal-consumer section with both mandatory carry-forwards (CONSUME-01, CONSUME-02, CONSUME-03, wave 3)
 
 ### Phase 68: Telegram HITL Belief-Kind Extension
 
