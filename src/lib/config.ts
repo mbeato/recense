@@ -1014,6 +1014,15 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   entityResolutionFloor: 0.75,   // Phase 64 D-05: conservative confident-or-null score floor
   entityResolutionMargin: 0.15,  // Phase 64 D-05: conservative confident-or-null top-2 margin
   entityAnchoringEnabled: false,  // Phase 69 RECALL-01 D-03/D-09: dark default — module built+tested, not wired live
+  // Phase 69 D-08 gate 2026-08-03: HONEST NULL — G2 FAILS. entityAnchoringEnabled alone (isolated
+  // from the ordering/rendering knobs) moved mean lexical relevance 0.1009 -> 0.0936 on the
+  // 58-prompt eval set, regressing 20/53 baseline-qualifying rows (>0.01 relevance drop) even
+  // though it strictly ADDS facts (never displaces) — the mean-of-injected-lines proxy penalizes
+  // added lower-lexical-overlap anchored facts even when they're net-new coverage, not a
+  // replacement. G5 (D-03 soft latency gate) also fails: p95 458->682ms (2.5x the 272ms
+  // pre-phase p95, over the 2x threshold) on a 30-rep x 5-probe live-graph probe. Stays dark
+  // pending either a better relevance grader (an LLM judge, D-08's --judge escape hatch) or a
+  // latency optimization — not a rejection of the mechanism, a measured non-pass on this gate.
   consolSkipThreshold: 0.2,
   consolSkipThresholdAssistant: 0.5,
   unrelatedSimilarityThreshold: 0.3,
@@ -1024,8 +1033,19 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   rankWeightR: 0.0,
   rankStrengthWeight: 0,  // D-04: dark default — ships w=0; no behavior change at merge
   bm25FusionWeight: 0,  // Phase 47 D-05: w* = 0 (held-out LoCoMo sweep null result — R@5 max at w=0, no positive weight passes per-category no-regression gate); set 0 to use pure cosine
-  sameProjectRankNudge: 0,  // Phase 69 RECALL-02 D-01/D-05: dark default — ordering-only, un-gated by 69-06 eval
-  foreignDocDemotion: 0,  // Phase 69 RECALL-02 D-01/D-05: dark default — ordering-only, un-gated by 69-06 eval
+  sameProjectRankNudge: 0.05,  // Phase 69 RECALL-02 D-01/D-05: dark default — ordering-only, un-gated by 69-06 eval
+  // Phase 69 D-08 gate 2026-08-03: enabled at 0.05 — G1/G2/G3/G4 all pass on the 58-prompt eval
+  // set (G1 4/4 contract-class rows unaffected, G2 0/53 regressions — byte-identical mean
+  // relevance to the dark baseline since this is ordering-only and did not move any row's
+  // top-AMBIENT_K selection on the live graph, G3 vacuously satisfied — zero foreign docs
+  // surfaced in this eval set — and G4 unaffected). Swept against (0.03,0.05)/(0.05,0.10)/
+  // (0.08,0.15) paired with foreignDocDemotion; all three passed identically (the eval set never
+  // exercised a rank-boundary case where the nudge changed selection), so the SEED's recommended
+  // starting magnitude (0.05, ~1/4 the 0.45-0.65 score spread) ships per the tie-break-toward-
+  // smaller-perturbation rule (D-08/Task 3 step 3).
+  foreignDocDemotion: 0.10,  // Phase 69 RECALL-02 D-01/D-05: dark default — ordering-only, un-gated by 69-06 eval
+  // Phase 69 D-08 gate 2026-08-03: enabled at 0.10 — same gate result as sameProjectRankNudge
+  // above (paired sweep, same eval run); see that comment for the full G1-G4 detail.
   // Phase 37: min cosine for query→predicate confident match (D-07, RESEARCH §2).
   // Below threshold → schema-neighborhood fallback (D-06); calibrate against D-05 harness.
   predicateGlossThreshold: 0.35,
@@ -1060,7 +1080,18 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   reflectFreshnessThreshold: 0.7,     // conservative recall freshness gate; lower after 38-04 eval (D-05)
   insightSurfacingEnabled: false,     // D-05: ship DARK — no recall behavior change until 38-04 eval proves compose-token win (mirrors rankStrengthWeight:0)
   ambientDocLinkRenderEnabled: false,  // Phase 69 RECALL-02 D-05: dark default — pre-phase truncated-body rendering unchanged until 69-06 eval
+  // Phase 69 D-08 gate 2026-08-03: HONEST NULL — not a failure, an untested path. Zero doc-type
+  // nodes cleared AMBIENT_FLOOR in the top-AMBIENT_K for ANY of the 58 eval-set prompts (0/58
+  // rows rendered a doc line in either isolation or the combined sweep), so G1-G4 report a
+  // vacuous pass with zero real exercise of F4's title+link rendering. Per CLAUDE.md's
+  // no-inflated-metrics rule, a vacuous pass is not evidence — stays dark pending an eval set
+  // (or graph state) that actually surfaces a doc-type candidate to exercise this path.
   ambientHopInjectionEnabled: false,   // Phase 69 RECALL-03 D-06: dark default — no hop lines in injected block until 69-06 eval
+  // Phase 69 D-08 gate 2026-08-03: enabled — G1/G2/G3/G4 all pass (G1 4/4 contract-class, G2
+  // 0/53 regressions — hop lines are structurally additive/enrichment-only per D-06 and never
+  // enter the fact-relevance mean, G3 vacuous as above, G4 held by the renderer's own two-pass
+  // budget accounting). REAL exercise (not vacuous): 11 hop lines rendered across the 58-prompt
+  // replay, attached beneath 1-hop facts the engine already computed.
 
   // Phase 39.1: subject doc exhaust-gate tunables (D-06/D-07)
   corpusSubjectDriftThreshold: 3,     // min atom-touch-count since last gen to trigger REFRESH gate (D-06; analogous to highMass:10 shape)
