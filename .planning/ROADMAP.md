@@ -816,7 +816,7 @@ recense ingests real events across both inboxes, decides *what changed* about a 
 - [x] **Phase 66: Domain-Neutral Proposal Emit Seam** — `ActionProposalSink` + `action_proposal` table + `/v1/proposals` routes; a named "D-43-for-proposals" sentinel test closes the milestone's largest correctness risk structurally. (completed 2026-08-03)
 - [x] **Phase 67: Reference Consumer Adapter** — In-repo `clients/proposal-reference/` proves the contract end-to-end with its own import-boundary test. (completed 2026-08-03)
 - [x] **Phase 68: Telegram HITL Belief-Kind Extension** — Second `kind:'belief'` on the existing StoredProposal union; batching + hold-exclusion bound approval fatigue. (completed 2026-08-03)
-- [ ] **Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall** — Entity-anchored candidate generation (reusing Phase 64's union generator), same-project rank treatment, 1-hop relations in the injected block, cited-evidence recall mode. Gated on a 58-prompt eval set from real sessions. Seed: SEED-005.
+- [ ] **Phase 69: Retrieval Upgrade — Entity-Anchored Ambient Recall** — Entity-anchored candidate generation (reusing Phase 64's union generator), same-project rank treatment, 1-hop relations in the injected block, cited-evidence recall mode. Gated on a 58-prompt eval set from real sessions. Seed: SEED-005. **6 plans / 4 waves planned 2026-08-03.**
 
 ### Phase 62: Multi-Inbox Email Ingest Hardening
 
@@ -1137,7 +1137,7 @@ Plans:
 
 **Goal**: A memory-shaped prompt in any Claude Code session surfaces the facts that actually answer it — including facts reachable only by name rather than by topic similarity — instead of the five most cosine-similar nodes, and the agent can verify what it was given rather than falling back to grep.
 **Depends on**: Phase 64 (reuses that phase's broadened candidate generator — exact/entity-keyed ∪ BM25 ∪ dense union over the RECON machinery — rather than building a second, divergent one for the recall path)
-**Requirements**: TBD (derive from SEED-005 during discuss/plan)
+**Requirements**: RECALL-01, RECALL-02, RECALL-03, RECALL-04, RECALL-05 (derived from SEED-005 in `69-CONTEXT.md`; registered in REQUIREMENTS.md by plan 69-01)
 **Seed**: `.planning/seeds/SEED-005-retrieval-upgrade-recall-audit.md` — findings F1–F5 from a 1,942-turn / 302-session live transcript audit (`scripts/eval/recall-audit.py`)
 **Success Criteria** (what must be TRUE):
 
@@ -1147,9 +1147,28 @@ Plans:
   4. `recense recall` can return cited evidence (node ids + traversed edges) instead of only an LLM-composed prose inference, so a caller can verify a claim without grepping
   5. Every change is gated on the 58-prompt memory-shaped eval set extracted from real sessions (`scripts/eval/recall-audit-evalset.py`): no regression on the 42 currently-hit prompts, and the injected-line relevance improves on the whiffs
 
-**Explicit decision reversal**: criterion 2 contradicts **D-S1** ("scope is provenance, not a retrieval signal"). This must be recorded as a deliberate reversal in the phase CONTEXT with its rationale, not slipped in as an implementation detail.
+**Explicit decision reversal**: criterion 2 contradicts **D-S1** ("scope is provenance, not a retrieval signal"). This must be recorded as a deliberate reversal in the phase CONTEXT with its rationale, not slipped in as an implementation detail. **Recorded** as `69-CONTEXT.md` D-01 and bounded there: scope becomes an ordering-only rank nudge on the ambient path, never a filter; `recense recall --scope` semantics are unchanged. Plan 69-03 carries it into code (the `getNodeScopes` doc-comment carve-out) and every SUMMARY restates it.
 
-**Plans**: TBD
+**Plans**: 6 plans in 4 waves. All new behavior ships behind dark knobs whose defaults reproduce pre-phase output byte-for-byte; the 58-prompt eval gate in 69-06 — not the merge — is what flips them (D-09).
+
+Plans:
+**Wave 1** *(no dependencies; three plans, zero file overlap)*
+
+- [ ] 69-01-PLAN.md — Register RECALL-01..05 in REQUIREMENTS.md, ship the five dark knobs, and build the LLM-free indexed entity-anchor module (prompt token → entity → facts) with the F2 "contract with vtx" regression test (RECALL-01, wave 1)
+- [ ] 69-02-PLAN.md — `retrieveRanked` opt-in seams: floor-exempt but B2/liveness-bound `anchoredIds` union with honest cosines, plus a single-pass `hopCollector` hand-off; honest-trace hops carry `rel` while every sink keeps its pre-phase payload (RECALL-01, RECALL-03, wave 1)
+- [ ] 69-05-PLAN.md — `recense recall --evidence`: cited node ids + traversed edges instead of composed prose, zero generates and zero writes, prose mode unchanged (RECALL-04, wave 1)
+
+**Wave 2** *(blocked on 69-01 + 69-02)*
+
+- [ ] 69-03-PLAN.md — Ambient integration: thread `cwd` into `ambientRecall` (the missing link), union anchored facts into reserved slots, and apply the ordering-only scope nudge; D-01 carve-out documented at `getNodeScopes` (RECALL-01, RECALL-02, wave 2)
+
+**Wave 3** *(blocked on 69-03 — same file)*
+
+- [ ] 69-04-PLAN.md — Injected-block rendering: doc nodes as title + `recense://doc/<id>`, real 1-hop `rel + neighbour` lines, all inside an enforced `AMBIENT_BLOCK_CHAR_BUDGET` where facts win over hops (RECALL-02, RECALL-03, wave 3)
+
+**Wave 4** *(blocked on 69-03 + 69-04 — the eval gate that un-gates the knobs)*
+
+- [ ] 69-06-PLAN.md — Fail-closed 58-prompt replay gate encoding all four hard gates, a hook-latency probe, and the eval-gated default flip; no verbatim personal prompt ever leaves the gitignored tree (RECALL-05, wave 4)
 
 ## Backlog
 
