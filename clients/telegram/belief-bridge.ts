@@ -1,9 +1,10 @@
 /**
- * Belief-shaped proposal record→row mapping and deterministic local id derivation
- * (Phase 68 — APPROVE-02).
+ * Belief-shaped proposal record→row mapping, deterministic local id derivation, and
+ * the belief poll pass itself (Phase 68 — APPROVE-01/02/03).
  *
  * Zero src/ imports — this module imports only types from ./types and functions
- * from ./proposal-store (both local to clients/telegram/), never anything from src/
+ * from ./proposal-store, ./belief-proposal-client, ./belief-render, ./state, and
+ * ./transport (all local to clients/telegram/), never anything from src/
  * (CLIENT-01 / import-boundary guard).
  *
  * `proposal-store.ts` and `proposal-engine.ts` are consumed here exactly as-is,
@@ -14,6 +15,17 @@
  */
 
 import type { StoredProposal, StoredBeliefProposal } from './types';
+import { tryReserveProposalSlot, putProposal, getProposal, removeProposal } from './proposal-store';
+import {
+  type BeliefProposalClient,
+  type ActionProposalRecord as ClientActionProposalRecord,
+  isInspectableProposalRecord,
+  PROPOSAL_SCHEMA_VERSION,
+  ProposalHttpError,
+} from './belief-proposal-client';
+import { renderBeliefDecisionMessage, beliefKeyboard } from './belief-render';
+import { readBeliefPromptLedger, writeBeliefPromptLedger } from './state';
+import type { TelegramTransport } from './transport';
 
 // ---------------------------------------------------------------------------
 // Locally-declared wire vocabulary (CONSUME-02: transcribed by hand, mirrors
@@ -113,4 +125,202 @@ export function toStoredBeliefProposal(record: ActionProposalRecord, nowMs: numb
 /** Narrow a `StoredProposal` to its belief-kind member. */
 export function isBeliefProposal(p: StoredProposal): p is StoredBeliefProposal {
   return p.kind === 'belief';
+}
+
+// ---------------------------------------------------------------------------
+// Local calendar-day helper (Phase 68 — copied from proposal-store.ts's
+// toLocalDate; the store is frozen and its helper is not exported).
+// ---------------------------------------------------------------------------
+
+/** Compute local YYYY-MM-DD string for the given Date. Mirrors proposal-store.ts. */
+function toLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// ---------------------------------------------------------------------------
+// Batching (D-07 / APPROVE-03)
+// ---------------------------------------------------------------------------
+
+/** One batched group: all pending belief rows for one entity, one local day. */
+export interface BeliefProposalGroup {
+  entityDescriptor: string;
+  localDate: string;
+  rows: StoredBeliefProposal[];
+}
+
+/**
+ * Group belief-proposal rows by entityDescriptor + local calendar day (the batch
+ * identity D-07 defines), so same-entity same-day proposals collapse into ONE
+ * Telegram prompt instead of one prompt per email. The local day is computed once
+ * for the whole call from `nowMs` — the day the PASS is running, not each row's own
+ * timestamp — since batch identity is about how many prompts go out today, not when
+ * each underlying email arrived.
+ *
+ * Within a group, rows are ordered by serverCreatedAtMs ascending.
+ */
+export function groupBeliefProposals(rows: StoredBeliefProposal[], nowMs: number): BeliefProposalGroup[] {
+  const localDate = toLocalDate(new Date(nowMs));
+  const byEntity = new Map<string, StoredBeliefProposal[]>();
+
+  for (const row of rows) {
+    const existing = byEntity.get(row.entityDescriptor);
+    if (existing) {
+      existing.push(row);
+    } else {
+      byEntity.set(row.entityDescriptor, [row]);
+    }
+  }
+
+  const groups: BeliefProposalGroup[] = [];
+  for (const [entityDescriptor, groupRows] of byEntity) {
+    groupRows.sort((a, b) => a.serverCreatedAtMs - b.serverCreatedAtMs);
+    groups.push({ entityDescriptor, localDate, rows: groupRows });
+  }
+  return groups;
+}
+
+// ---------------------------------------------------------------------------
+// The belief poll pass (D-03/D-04/D-07/D-08 — APPROVE-01/03)
+// ---------------------------------------------------------------------------
+
+/** Max constituents sent per group — earliest-expiring ten win; renderer names the rest. */
+const MAX_GROUP_CONSTITUENTS = 10;
+
+export interface BeliefBridgeDeps {
+  client: BeliefProposalClient;
+  transport: TelegramTransport;
+  /** Numeric Telegram chat ids to send the batched prompt to (config.allowlist mapped to numbers). */
+  chatIds: number[];
+  storePath: string;
+  statePath: string;
+  dailyCap: number;
+  log: (msg: string) => void;
+  /** Epoch ms at pass time — injectable for deterministic tests. */
+  nowMs: number;
+}
+
+/**
+ * Poll GET /v1/proposals, gate/dedup/batch/cap the result, and send at most one
+ * Telegram prompt per entity per local day (D-07). Never throws — every error path
+ * logs and returns/continues rather than rejecting, so the caller's setInterval
+ * callback is always safe.
+ *
+ * Order of operations (mirrors clients/proposal-reference/index.ts's fail-closed
+ * list → wire-shape gate → schema gate → per-item filter shape):
+ *   1. list (ProposalHttpError or any other throw → log + return; no privileged
+ *      fallback for 401 — this loop just returns like any other status, since it has
+ *      nothing sensitive to protect by staying up);
+ *   2. wire-shape gate (isInspectableProposalRecord) — one malformed item stops the
+ *      whole pass, applying nothing;
+ *   3. schema gate (PROPOSAL_SCHEMA_VERSION) — a mismatch stops the whole pass;
+ *   4. per-record filters that SKIP rather than stop: kind !== 'belief', status !== 'pending';
+ *   5. dedup on the derived local id — a row already in the store is dropped (O(1)
+ *      lookup via getProposal, no listing API added to the frozen store);
+ *   6. group by entity + local day, then drop any group whose entity already has a
+ *      non-zero count in today's ledger (D-07's one-prompt-per-entity-per-day invariant
+ *      — this is what makes Pitfall 7's ">5 prompts/day for one entity" structurally
+ *      unreachable);
+ *   7. per group, earliest-dueAt-first: reserve one cap slot (one slot per PROMPT, not
+ *      per constituent, since fatigue is measured in prompts) — on false, log and stop
+ *      bridging for the WHOLE pass;
+ *   8. store-first (putProposal every constituent BEFORE sending — no dangling button
+ *      tap possible), then one sendMessage per group carrying the rendered message and
+ *      keyboard. On a send failure, roll back (removeProposal every row just written)
+ *      so the next pass retries, and leave the ledger untouched (T-68-11). On success,
+ *      increment the entity's ledger count for today.
+ */
+export async function runBeliefBridgePass(deps: BeliefBridgeDeps): Promise<void> {
+  const { client, transport, chatIds, storePath, statePath, dailyCap, log, nowMs } = deps;
+
+  let records: ClientActionProposalRecord[];
+  try {
+    records = await client.listProposals();
+  } catch (err) {
+    if (err instanceof ProposalHttpError) {
+      log('belief bridge: list failed with status ' + String(err.status));
+    } else {
+      log('belief bridge: list failed: ' + String(err));
+    }
+    return;
+  }
+
+  // Wire-shape gate (step 2) — one malformed item stops the pass, applies nothing.
+  if (records.some(r => !isInspectableProposalRecord(r))) {
+    log('belief bridge: malformed item in list response — stopping pass');
+    return;
+  }
+
+  // Schema gate (step 3) — a mismatch stops the pass, applies nothing.
+  const badSchema = records.find(r => r.schema_version !== PROPOSAL_SCHEMA_VERSION);
+  if (badSchema !== undefined) {
+    log('belief bridge: schema mismatch (' + String(badSchema.schema_version) + ') — stopping pass');
+    return;
+  }
+
+  // Per-record filters that skip rather than stop (step 4).
+  const pendingBeliefRecords = records.filter(r => r.kind === 'belief' && r.status === 'pending');
+
+  // Dedup on the derived local id (step 5).
+  const candidateRows: StoredBeliefProposal[] = [];
+  for (const record of pendingBeliefRecords) {
+    const row = toStoredBeliefProposal(record, nowMs);
+    if (getProposal(row.id, storePath) !== null) continue; // already in the store
+    candidateRows.push(row);
+  }
+  if (candidateRows.length === 0) return;
+
+  // Group by entity + local day (step 6a).
+  const groups = groupBeliefProposals(candidateRows, nowMs);
+  const today = toLocalDate(new Date(nowMs));
+  const ledger = readBeliefPromptLedger(statePath);
+  const ledgerCounts: Record<string, number> = ledger.date === today ? { ...ledger.counts } : {};
+
+  // Drop groups whose entity already has a non-zero count in today's ledger (step 6b).
+  const eligibleGroups = groups.filter(g => (ledgerCounts[g.entityDescriptor] ?? 0) === 0);
+  if (eligibleGroups.length === 0) return;
+
+  // Process earliest-dueAt-first (step 7).
+  const orderedGroups = [...eligibleGroups].sort((a, b) => {
+    const aEarliest = Math.min(...a.rows.map(r => Date.parse(r.dueAt)));
+    const bEarliest = Math.min(...b.rows.map(r => Date.parse(r.dueAt)));
+    return aEarliest - bEarliest;
+  });
+
+  for (const group of orderedGroups) {
+    const reserved = tryReserveProposalSlot(dailyCap, storePath, new Date(nowMs));
+    if (!reserved) {
+      log('belief bridge: daily cap reached — stopping pass');
+      return;
+    }
+
+    // Cap constituents at MAX_GROUP_CONSTITUENTS, choosing the earliest-expiring ten;
+    // the renderer's own overflow line names the remainder.
+    const capped = [...group.rows]
+      .sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt))
+      .slice(0, MAX_GROUP_CONSTITUENTS);
+
+    // Store-first (step 8) — no button can ever reference a missing row.
+    for (const row of capped) putProposal(row, storePath);
+
+    const text = renderBeliefDecisionMessage(capped);
+    const keyboard = beliefKeyboard(capped);
+
+    try {
+      for (const chatId of chatIds) {
+        await transport.sendMessage(chatId, text, keyboard);
+      }
+    } catch (err) {
+      // Roll back so the next pass retries — a lost message must never become a
+      // permanently suppressed proposal (T-68-11). Ledger is left untouched.
+      for (const row of capped) removeProposal(row.id, storePath);
+      log('belief bridge: send failed for entity group, rolled back: ' + String(err));
+      continue;
+    }
+
+    ledgerCounts[group.entityDescriptor] = (ledgerCounts[group.entityDescriptor] ?? 0) + 1;
+    writeBeliefPromptLedger(statePath, { date: today, counts: ledgerCounts });
+  }
 }
