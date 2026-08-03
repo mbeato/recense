@@ -43,11 +43,11 @@
 
 > **The differentiating requirement** — the reason this milestone belongs in recense and not in a script. Status transitions are beliefs, updated through the existing PE gate. Research confirmed this forces **no** new data model: v9.0's bi-temporal DEFER stands.
 
-- [ ] **DRIFT-01**: A status lifecycle (applied → interviewing → rejected → offer) is stored as an ordinary fact node and updated through the existing PE-gated `routeContradiction()` / tombstone / `supersedes` machinery — no new data model, no bi-temporal or supersedes-chain columns.
-- [ ] **DRIFT-02**: A single ambiguous email does not flip a status — the update holds until evidence clears the PE gate, and a held (non-decisive) update produces no proposal.
-- [ ] **DRIFT-03**: Provenance distinctness is derived from sender identity + thread lineage **with quoted/forwarded content stripped first**, so `countDistinctProvenance` can fire on genuinely independent email evidence *and* a forwarded or quoted thread cannot manufacture false independence. Today every Gmail episode shares the literal `session_id: 'ingest:gmail'`, so the distinct-provenance mechanism can mathematically never fire on email-only evidence — this is a hard prerequisite for DRIFT-02 to work as claimed, not an optimization.
-- [ ] **DRIFT-04**: Out-of-order evidence (a rejection arriving after an offer) does not silently revert a newer status.
-- [ ] **DRIFT-05**: Belief-correction accuracy on real multi-inbox traffic is measured honestly against recense's own harness before any consumer is wired live. **No external accuracy bar exists for this feature class** — no competitor publishes a methodology-disclosed number — so nothing is claimed that recense's own measurement does not show.
+- [x] **DRIFT-01**: A status lifecycle (applied → interviewing → rejected → offer) is stored as an ordinary fact node and updated through the existing PE-gated `routeContradiction()` / tombstone / `supersedes` machinery — no new data model, no bi-temporal or supersedes-chain columns.
+- [x] **DRIFT-02**: A single ambiguous email does not flip a status — the update holds until evidence clears the PE gate, and a held (non-decisive) update produces no proposal.
+- [x] **DRIFT-03**: Provenance distinctness is derived from sender identity + thread lineage **with quoted/forwarded content stripped first**, so `countDistinctProvenance` can fire on genuinely independent email evidence *and* a forwarded or quoted thread cannot manufacture false independence. Today every Gmail episode shares the literal `session_id: 'ingest:gmail'`, so the distinct-provenance mechanism can mathematically never fire on email-only evidence — this is a hard prerequisite for DRIFT-02 to work as claimed, not an optimization.
+- [x] **DRIFT-04**: Out-of-order evidence (a rejection arriving after an offer) does not silently revert a newer status.
+- [x] **DRIFT-05**: Belief-correction accuracy on real multi-inbox traffic is measured honestly against recense's own harness before any consumer is wired live. **No external accuracy bar exists for this feature class** — no competitor publishes a methodology-disclosed number — so nothing is claimed that recense's own measurement does not show.
 
 ### EMIT — Domain-neutral proposal seam
 
@@ -119,11 +119,11 @@
 | RESOLVE-01 | 64 | Complete |
 | RESOLVE-02 | 64 | Complete |
 | RESOLVE-03 | 64 | Complete |
-| DRIFT-01 | 65 | Pending |
-| DRIFT-02 | 65 | Pending |
-| DRIFT-03 | 65 | Pending |
-| DRIFT-04 | 65 | Pending |
-| DRIFT-05 | 65 | Pending |
+| DRIFT-01 | 65 | Complete |
+| DRIFT-02 | 65 | Complete |
+| DRIFT-03 | 65 | Complete |
+| DRIFT-04 | 65 | Complete |
+| DRIFT-05 | 65 | Complete |
 | EMIT-01 | 66 | Pending |
 | EMIT-02 | 66 | Pending |
 | EMIT-03 | 66 | Pending |
