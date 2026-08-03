@@ -296,12 +296,42 @@ describe('ambientRecall', () => {
     expect(text).not.toContain('v'.repeat(MAX_VALUE_CHARS + 1));
   });
 
-  it('f. dark defaults: the injected block is byte-identical to pre-phase (D-09)', async () => {
+  it('f. shipped defaults (69-06 D-08 gate 2026-08-03): single-candidate block is unchanged by the newly-lit ordering/hop knobs', async () => {
+    // sameProjectRankNudge/foreignDocDemotion only affect ORDER among >1 candidate (D-01: nudge,
+    // never a filter), and ambientHopInjectionEnabled only adds lines when the seed has edges —
+    // this single-node, no-edge fixture exercises neither, so the shipped-default output is
+    // literally the same string as the old all-dark expectation (see the explicit dark-config
+    // case immediately below, which pins that pre-phase expectation regardless of DEFAULT_CONFIG
+    // drift). entityAnchoringEnabled and ambientDocLinkRenderEnabled stay dark (69-06 honest
+    // nulls) so this fixture cannot regress on those axes either.
     seedNode(db);
     const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
     const clock = new FakeClock(Date.UTC(2026, 0, 1));
 
     const text = await ambientRecall(db, PROMPT, provider, config(), clock);
+
+    expect(text).toBe('Recalled from recense (ambient):\n- a seeded ambient fact (observed, score 1.00)');
+  });
+
+  it('f2. explicit dark-config case: all five Phase-69 knobs forced to their pre-phase values still byte-match (D-09 regression pin)', async () => {
+    // Retains the ORIGINAL 69-03 expectation as an explicit, DEFAULT_CONFIG-independent case —
+    // this must keep passing even if a future gate run flips more of DEFAULT_CONFIG, because it
+    // constructs the dark config directly rather than reading it off the (now partially-lit)
+    // shipped default.
+    seedNode(db);
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const darkCfg = {
+      ...DEFAULT_CONFIG,
+      dbPath: tmpDbPath,
+      entityAnchoringEnabled: false,
+      sameProjectRankNudge: 0,
+      foreignDocDemotion: 0,
+      ambientDocLinkRenderEnabled: false,
+      ambientHopInjectionEnabled: false,
+    };
+
+    const text = await ambientRecall(db, PROMPT, provider, darkCfg, clock);
 
     expect(text).toBe('Recalled from recense (ambient):\n- a seeded ambient fact (observed, score 1.00)');
   });
