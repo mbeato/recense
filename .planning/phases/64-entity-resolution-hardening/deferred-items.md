@@ -75,3 +75,28 @@ never touches viz routes, stats aggregation, or node-growth derivation).
 Per the executor's scope-boundary rule, none of the above are fixed in this plan — logged here
 instead. The plan's own required verification set (typecheck + the 9 named
 consolidation/intent/resolution test files, 118 tests) all pass green; see `64-03-SUMMARY.md`.
+
+## Plan 64-04: pre-existing, out-of-scope test failures
+
+Full-suite run (`npx vitest run`) at the close of 64-04 shows 23 failures across the same 7
+CLI-subprocess/timing files as 64-01/64-02/64-03, none touching
+`tests/resolution-conservation.test.ts`, `tests/intent-conservation.test.ts`, or any
+consolidation/resolution source file:
+
+- `tests/adapter-capture.test.ts` (8 failures)
+- `tests/adapter-inject.test.ts` (5 failures)
+- `tests/episodic-dryrun-gate.test.ts` (1 failure)
+- `tests/eval-harness-smoke.test.ts` (3 failures)
+- `tests/locomo-harness.test.ts` (2 failures)
+- `tests/locomo-latency-curve.test.ts` (1 failure)
+- `tests/locomo-scorer.test.ts` (3 failures)
+
+A second full-suite run in the same session additionally showed `tests/strip-hidden.test.ts`
+fail twice on timing assertions (`completes under 1000ms`, `t256/max(t128,1) <= 8`) — confirmed
+to **pass 340/340 in isolation** (`npx vitest run tests/strip-hidden.test.ts`), the same
+parallel-load timing flake documented for `tests/viz-stats-routes.test.ts` in 64-03's entry
+above. Neither `strip-hidden.test.ts` nor this plan's own files share any import or code path.
+
+Per the executor's scope-boundary rule, none of the above are fixed in this plan — logged here
+instead. `npm run typecheck` exits 0. The plan's own required verification set (typecheck + the
+6 named conservation/resolution test files, 55 tests) all pass green; see `64-04-SUMMARY.md`.
