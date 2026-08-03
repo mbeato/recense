@@ -47,6 +47,7 @@ import type { Origin, PendingContradiction, EpisodeRow, EpisodeRole } from '../l
 import { newId } from '../lib/hash';
 import { normalizeValue } from './normalize';
 import { EntityResolver } from './entity-resolution';
+import { StatusDrift } from './status-drift';
 import { routeContradiction, isOscillation, countDistinctProvenance } from './update-decision';
 import { orderEpisodesForConsolidation } from './episode-order';
 import type { SchemaInducer } from './schema-induction';
@@ -167,10 +168,11 @@ interface ClaimDecision {
   episodeEventTs: number | null;
   /**
    * The episode's source adapter name. Consumed by the per-source force-destabilization
-   * threshold lookup (`contradictionNBySource`, D-16). Deliberately the raw source string
-   * rather than a boolean (a `gmailSourced` local already exists at the hoisted intent-field
-   * gate for that purpose) because `contradictionNBySource` is keyed by arbitrary source
-   * names. Required (not optional) so a fill site that omits it is a compile error.
+   * threshold lookup (D-16, keyed by config's per-source contradiction-count override map).
+   * Deliberately the raw source string rather than a boolean (a `gmailSourced` local already
+   * exists at the hoisted intent-field gate for that purpose) because that override map is
+   * keyed by arbitrary source names. Required (not optional) so a fill site that omits it is
+   * a compile error.
    */
   episodeSource: string;
   /** Judge-emitted PE severity [0,1]; meaningful only for 'contradict' verdicts (D-15). */
@@ -289,6 +291,20 @@ export class Consolidator {
   // (not per episode) — mirrors why entity-resolution.ts prepares its own statements in its
   // constructor rather than per resolve() call.
   private readonly entityResolver: EntityResolver;
+  // DRIFT-01..04 (Phase 65): standalone, LLM-free, read-only status-drift decision module.
+  // Constructed once here (not per episode), mirroring entityResolver above. Consulted
+  // structurally BEFORE both routeContradiction call sites (never inside them) — see the
+  // primary contradict branch and applySecondaryContradiction.
+  private readonly statusDrift: StatusDrift;
+  // DRIFT-05 (Plan 65-10 consumer): observability-only drift outcome counters — never gate
+  // behavior. Promoted to instance fields (rather than consolidate()-method-scope `let`s,
+  // Phase 46/64's pattern) because applyDecision and applySecondaryContradiction are separate
+  // private methods and cannot close over a method-local variable. Reset at the START of
+  // consolidate() so counts are per-pass, not cumulative across the process lifetime.
+  private driftEvaluations = 0;
+  private driftDamped = 0;
+  private driftStaleDropped = 0;
+  private driftEventTsUnknown = 0;
 
   // M1: prepared statements for entity-anchored candidate expansion (T-01-SQL).
   // Compiled once in the constructor; sync reads only (T-02-ASYNC — no await, never inside
@@ -344,6 +360,9 @@ export class Consolidator {
     // RESOLVE-01/02/03 (Phase 64, D-04): constructed with (db, store, config) — no
     // ModelProvider — the type-level guarantee that resolution can never call an LLM.
     this.entityResolver = new EntityResolver(db, store, config);
+    // DRIFT-01..04 (Phase 65): constructed with (db, config) — no ModelProvider, no
+    // SemanticStore — the type-level guarantee that drift evaluation can never call an LLM.
+    this.statusDrift = new StatusDrift(db, config);
 
     // M1: compile prepared statements once (T-01-SQL).
     // stmtProvenanceSiblingFacts: given an entity node id, return DISTINCT live fact siblings
@@ -586,6 +605,14 @@ export class Consolidator {
    * Phase C: re-embed nodes dirtied by Phase B, then eviction sweep.
    */
   async consolidate(): Promise<void> {
+    // DRIFT-05: reset the drift counters at the START of the pass — they are instance fields
+    // (see field declarations above) so applyDecision/applySecondaryContradiction can
+    // increment them, but must still read as per-pass, not cumulative-across-lifetime.
+    this.driftEvaluations = 0;
+    this.driftDamped = 0;
+    this.driftStaleDropped = 0;
+    this.driftEventTsUnknown = 0;
+
     // ── Phase A prefix: Re-embed dirty nodes so nomination is meaningful ────
     // (seeded/newly-appended nodes start with embedded_hash IS NULL)
     await this.reembedDirty();
@@ -1151,6 +1178,11 @@ export class Consolidator {
     this.log(
       `RESOLVE-64 attempts=${resolutionAttempts} hits=${resolutionHits} abstains=${resolutionAbstains} | exact=${resolutionExactTotal} bm25=${resolutionBm25Total} dense=${resolutionDenseTotal}`
     );
+    // DRIFT-05 (Plan 65-10 consumer): observable drift-layer outcome counts, emitted once per
+    // pass after all chunks complete — mirrors the Phase 46/64 observability precedents above.
+    this.log(
+      `DRIFT-65 evaluations=${this.driftEvaluations} damped=${this.driftDamped} staleDropped=${this.driftStaleDropped} eventTsUnknown=${this.driftEventTsUnknown}`
+    );
 
     // ── Phase C: Re-embed nodes dirtied by this pass, then eviction sweep ──
     await this.reembedDirty();
@@ -1345,6 +1377,50 @@ export class Consolidator {
       }
 
       case 'contradict': {
+        // DRIFT-01..04 (Phase 65): consult the drift layer BEFORE the M2 secondary loop below
+        // and BEFORE the primary routing call — a stale claim must have no graph effect on
+        // secondaries either (T-65-08-STALEHOLD). Positioned textually AFTER the WR-01/CR-01/
+        // ACT-03 hard stop in the per-episode loop above (which has already `continue`d out
+        // inferred/echo/hitl episodes before applyDecision is ever reached) — this block does
+        // NOT re-check origin/echo/hitl itself, inheriting that guard by call-site position
+        // rather than re-implementing it (Pitfall 6: this exact defect class shipped twice
+        // before). Guarded on bestCandidateId !== null: when null there is no node to compare
+        // timestamps against, so evaluation is skipped and today's behavior is unchanged (the
+        // branch already breaks below when bestCandidateId is null).
+        //
+        // routeContradiction itself is NOT modified and gets no new branch — the guard sits
+        // structurally before it (D-11), which is what keeps DRIFT-01's "machinery unmodified"
+        // true. `driftMagnitude` carries the (possibly damped) value into routing; every
+        // `sink.emit` payload below deliberately keeps `magnitude: decision.magnitude`
+        // UNCHANGED — the sink records the judge's own emitted severity, and rewriting it with
+        // the damped value would make the audit trail lie about what the judge said.
+        let driftMagnitude = decision.magnitude;
+        if (decision.bestCandidateId !== null) {
+          this.driftEvaluations++;
+          const drift = this.statusDrift.evaluate({
+            magnitude: decision.magnitude,
+            confidence: decision.claimIntentConfidence,
+            claimEventTs: decision.episodeEventTs,
+            candidateNodeId: decision.bestCandidateId,
+          });
+          if (drift.action === 'drop') {
+            // DRIFT-04 crux: DROP, not hold — a held contradiction is recorded into
+            // pending_contradictions and would accumulate toward force-destabilization, so
+            // three stale backfilled rejections would eventually flip a newer, correct belief.
+            // Dropping produces no graph effect at all, mirroring the existing "not
+            // provenance-eligible: drop silently" behavior in the hold branch below. `break`s
+            // out of the whole case — no secondary routing (loop below never runs), no primary
+            // routing, no recordContradiction, and no sink emit occurs.
+            this.driftStaleDropped++;
+            break;
+          }
+          driftMagnitude = drift.magnitude;
+          if (drift.damped) this.driftDamped++;
+          if (drift.staleness === 'unknown-claim-ts' || drift.staleness === 'unknown-prior-ts') {
+            this.driftEventTsUnknown++;
+          }
+        }
+
         // M2: route secondary contradicted nodes BEFORE the primary break/guard (plan 260611-ue6 Task 3).
         // contradictedIds is already filtered to the candidate set (T-UE6-02 — fill section above).
         // Skip the primary id here — it is handled by the existing primary block below so that
@@ -1369,8 +1445,10 @@ export class Consolidator {
         );
         const resistance = effectiveS * node.c; // D-16
 
-        // Route by PE magnitude / resistance (spec §4 step 3, D-15/D-16)
-        const action = routeContradiction(decision.magnitude, resistance, this.config);
+        // Route by PE magnitude / resistance (spec §4 step 3, D-15/D-16). driftMagnitude is
+        // decision.magnitude unchanged unless the drift layer above damped it (DRIFT-01: the
+        // routing function itself is untouched).
+        const action = routeContradiction(driftMagnitude, resistance, this.config);
 
         if (action === 'reconcile') {
           // D-20 oscillation guard: if the new value normalizes to the superseded prev_value,
@@ -1470,9 +1548,16 @@ export class Consolidator {
               const entries = safeParseContradictions(updatedNode.pending_contradictions);
               const distinctCount = countDistinctProvenance(entries);
 
+              // D-16 (Phase 65): per-source force-destabilization threshold, falling back to
+              // the global contradictionN — mirrors the consolSkipThresholdBySource idiom
+              // above. The empty default map ({}) means every source falls back to the global
+              // 3, so this is behavior-neutral until an entry is added; Plan 65-10's dry-run
+              // supplies evidence for any entry.
+              const threshold = this.config.contradictionNBySource[decision.episodeSource] ?? this.config.contradictionN;
+
               // Force-destabilize when N distinct independent sessions have contradicted
               // this node (Chen-2020 lock-in fix, D-19 / UPDATE-05 criterion 3).
-              if (distinctCount >= this.config.contradictionN) {
+              if (distinctCount >= threshold) {
                 // Apply same D-20 oscillation guard to the forced reconcile
                 if (isOscillation(decision.claimValue, updatedNode.prev_value)) {
                   // Flip-back via force-destabilize — append standalone (both coexist)
@@ -1571,11 +1656,35 @@ export class Consolidator {
     const node = this.store.getNode(nodeId);
     if (!node || node.tombstoned) return;
 
+    // DRIFT-01..04 (Phase 65): same drift consultation as the primary branch, evaluated per
+    // SECONDARY node id — "most recent supporting evidence" is a property of the node being
+    // contradicted, not of the claim, so this cannot be hoisted to a single claim-level check.
+    // Confidence damping resolves to the same factor as the primary branch because it is a
+    // claim-level property; that is expected, not duplicated logic. `return` here is this
+    // void-returning method's equivalent of the primary branch's `break` — it short-circuits
+    // before any routing, recordContradiction, or sink emit for this secondary.
+    this.driftEvaluations++;
+    const drift = this.statusDrift.evaluate({
+      magnitude: decision.magnitude,
+      confidence: decision.claimIntentConfidence,
+      claimEventTs: decision.episodeEventTs,
+      candidateNodeId: nodeId,
+    });
+    if (drift.action === 'drop') {
+      this.driftStaleDropped++;
+      return;
+    }
+    const driftMagnitude = drift.magnitude;
+    if (drift.damped) this.driftDamped++;
+    if (drift.staleness === 'unknown-claim-ts' || drift.staleness === 'unknown-prior-ts') {
+      this.driftEventTsUnknown++;
+    }
+
     const effectiveS = this.strength.effectiveStrength(
       node.s, node.last_access, this.clock.nowMs(), this.config.lambda,
     );
     const resistance = effectiveS * node.c; // D-16
-    const action = routeContradiction(decision.magnitude, resistance, this.config);
+    const action = routeContradiction(driftMagnitude, resistance, this.config);
 
     if (action === 'reconcile') {
       // Tombstone only — primary already minted the new current node (no D-20 guard needed:
@@ -1619,7 +1728,12 @@ export class Consolidator {
           const entries = safeParseContradictions(updatedNode.pending_contradictions);
           const distinctCount = countDistinctProvenance(entries);
 
-          if (distinctCount >= this.config.contradictionN) {
+          // D-16 (Phase 65): same per-source threshold lookup as the primary branch — both
+          // sites are converted so a partial conversion cannot leave this path on a different
+          // bar (T-65-08-THRESH).
+          const threshold = this.config.contradictionNBySource[decision.episodeSource] ?? this.config.contradictionN;
+
+          if (distinctCount >= threshold) {
             // Force-destabilize secondary: tombstone only (no mint — primary already minted)
             this.store.tombstone(nodeId);
             this.sink.emit({
