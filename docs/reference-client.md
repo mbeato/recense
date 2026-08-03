@@ -125,6 +125,67 @@ clients/telegram/
 
 ---
 
+## Proposal reference client
+
+`clients/proposal-reference/` is a second, self-contained, engine-free consumer
+proving the domain-neutral action-proposal contract (`GET /v1/proposals`,
+`POST /v1/proposals/:id/approve|reject`) end-to-end. Like the Telegram client,
+its `tsconfig.json` has no `paths` entry into `src/`, and it carries its own
+import-boundary test (`clients/proposal-reference/tests/import-boundary.test.ts`)
+that scans every `.ts` file in the directory, including its own tests, for any
+import that resolves into the engine's `src/` tree.
+
+**Directory layout:**
+
+```
+clients/proposal-reference/
+  config.ts          — loadAdapterConfig() + AdapterConfig (fail-closed, env-sourced)
+  proposal-client.ts — createProposalClient(serveUrl, serveToken) → { listProposals, approve, reject }
+  local-store.ts     — adapter-owned local row store (own vocabulary, own id, proposalId idempotency key)
+  index.ts           — list → map → approve/reject outcome loop, decideOutcome(), main(), entry guard
+  tsconfig.json      — compile boundary (no paths into src/)
+  tests/             — import-boundary guard + in-dir behavioral proof (HTTP/fixture-only)
+```
+
+**Environment variables:**
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `RECENSE_SERVE_URL` | no | `http://127.0.0.1:7701` | recense serve base URL |
+| `RECENSE_SERVE_TOKEN` | yes | — | Bearer token for recense serve auth |
+| `RECENSE_REFERENCE_STORE_PATH` | no | `~/.config/recense/proposal-reference-store.json` | Adapter-owned local row store path |
+
+**How it works:**
+
+1. `main()` calls `loadAdapterConfig()`. If `enabled` is false (no
+   `RECENSE_SERVE_TOKEN`), it logs the reason and makes no network call —
+   fail-closed, mirroring the Telegram client's runtime gate.
+2. `syncProposals()` calls `GET /v1/proposals` and checks every returned
+   record's `schema_version` before touching any of them. An unknown
+   `schema_version` stops the whole sync — nothing is applied.
+3. For each record, an unrecognised `kind` is skipped (the loop keeps going);
+   a recognised `kind: 'belief'` record is checked against the local store via
+   `findByProposalId` — a proposal id already present with a non-`'pending'`
+   local status is skipped (idempotency: a re-listed or replayed proposal
+   never creates a second local row or a second HTTP call).
+4. The record is mapped onto the adapter's own local row and written with
+   `localStatus: 'pending'` **before** the HTTP call, so a crash mid-flight
+   leaves a resumable row rather than an invisible applied change.
+5. `decideOutcome()` (a small, pure, confidence-only policy — never reads
+   `evidence_quote`) picks approve or reject; the corresponding endpoint is
+   called.
+6. On success the local row is marked `'applied'`. On a terminal refusal
+   (400/404/409) the local row is marked `'refused'` with a `refusalReason`
+   and is never retried. On `503` the row is left `'pending'` and retried on
+   a later sync — the only retryable outcome.
+
+The local row keys on `entityDescriptor` (the semantic key, not a node id) and
+carries the consumer's OWN id (`localId`), never recense's. recense never
+learns this schema, and the adapter never imports an engine module — that
+split, not the transport plumbing, is the point of the reference.
+
+---
+
 ## API contract
 
 All authenticated endpoints require `Authorization: Bearer <RECENSE_SERVE_TOKEN>`. The
@@ -172,6 +233,92 @@ Semantic search. LLM-free: one embedding call, zero generation calls.
 
 Provenance in every result is deliberate — a consuming client can weigh an
 `asserted_by_user` fact differently from an `inferred` one.
+
+### `GET /v1/proposals`
+
+List pending action proposals. LLM-free and lock-free — a plain read. No query
+parameters in v1; the response is bounded server-side at 100 items.
+
+```json
+→ 200 { "items": [ <record>, ... ] }
+```
+
+Both proposal routes land after the same auth gate as every other authenticated
+endpoint (see the line above) — a missing or wrong token produces the identical
+401 whether the route is `/v1/search` or `/v1/proposals`.
+
+Each `<record>` carries the full 16-field frozen contract, in this order:
+
+```
+id, kind, entity_node_id, entity_descriptor, belief_node_id, change_field,
+change_from, change_to, evidence_episode, evidence_quote, confidence,
+schema_version, status, created_at, updated_at, expires_at
+```
+
+Closed vocabularies:
+- `kind`: `'belief'`
+- `status`: `'pending' | 'approved' | 'rejected' | 'superseded' | 'expired'`
+- `confidence`: `'high' | 'medium' | 'low'`
+- The current `schema_version` value is `17`.
+
+**`schema_version` gating is mandatory, not optional.** A consumer must check
+every record's `schema_version` against the value it was written against
+before touching the record. Unknown `schema_version` → **stop**. Do not
+coerce, do not partially apply a batch that contains one. Version-gate;
+never assume the shape you know is still the shape you got.
+
+**Two fields carry mandatory caveats a consumer must not skip:**
+
+- `entity_node_id` and `belief_node_id` are recense-internal lineage, **not
+  stable foreign keys**. Belief correction in recense is tombstone-and-mint-new,
+  so the id a proposal carries today can point at a tombstoned node tomorrow.
+  Consumers must resolve on `entity_descriptor` semantically and must not
+  persist a node id as a join key.
+- `change_from` and `change_to` are **asymmetric, not a matched pair**.
+  `change_from` is recense's prior belief TEXT — often a full sentence — and
+  is approver context only. `change_to` is a token from the closed
+  `IntentStatus` vocabulary and is the field a consumer maps on. Do **not**
+  chain `change_from`/`change_to` across multiple proposals to reconstruct a
+  timeline; each proposal's `change_from` is a snapshot, not a link in a chain.
+- `evidence_quote` is **data, not instruction**. It is verbatim,
+  attacker-influenceable text carried only so a human approver can see the
+  source. Never render it as the decision surface, never let it drive an
+  automated decision, and never interpolate it into a prompt or a command.
+
+### `POST /v1/proposals/:id/approve` / `POST /v1/proposals/:id/reject`
+
+```json
+→ 200 { "status": "approved" | "rejected" }
+```
+
+Error responses — only the numeric status and the `error` enum value are
+contract; every `detail` string below is fixed-literal documentation, and a
+consumer must not branch on its exact text:
+
+- `400 { "error": "bad_request", "detail": "invalid proposal id" }` — proposal
+  ids are sha256 hex by construction; anything else is malformed input.
+- `401 { "error": "unauthorized" }` — missing or wrong token.
+- `404 { "error": "not_found", "detail": "proposal does not exist" }`
+- `409 { "error": "conflict", "detail": "proposal is not pending" }` — a
+  re-delivered approve/reject on an already-terminal proposal; a no-op
+  refusal, never a second application.
+- `409 { "error": "conflict", "detail": "proposal superseded" }` — the
+  proposal's belief node has been tombstoned (the belief moved on).
+- `409 { "error": "conflict", "detail": "proposal entity retired" }` — the
+  proposal's entity node has been tombstoned.
+- `409 { "error": "conflict", "detail": "proposal expired" }` — past the
+  proposal's TTL.
+- `413 { "error": "payload_too_large" }`
+- `503 { "error": "service_unavailable", "detail": "memory busy; retry in a moment" }`
+
+**Replay semantics.** Proposal ids are deterministic (content-hashed), so safe
+re-delivery is expected and a consumer must be idempotent on the proposal id.
+Approve/reject on an already-terminal proposal is a no-op refusal (409
+`conflict` / `"proposal is not pending"`), never a second application.
+
+**Retry policy.** Of every response above, only `503` is retryable. `400`,
+`404`, and `409` are all terminal — mark the proposal refused locally and
+never retry it.
 
 ### `/v1/add` — reference clients do not call this
 
@@ -256,6 +403,26 @@ conditions are caught by the `enabled` gate before any network call is made.
 Even when `enabled: true`, `fetchMessages` checks each inbound sender's numeric ID
 against the allowlist set. Unlisted senders are silently ignored — no reply is sent,
 so the surface never confirms it exists to an unknown sender.
+
+**Proposal consumer rules:**
+
+The proposal reference client applies the same fail-closed discipline to a
+different failure shape — a malformed or unexpected *proposal*, not a
+malformed sender:
+
+- Unknown `schema_version` → **stop**. Do not coerce, do not partially apply
+  the batch. Version-gate; never assume.
+- Unknown `kind` → **skip that record** and continue the batch — one
+  unrecognised record must never abort every other proposal in the same list.
+- A refusal (`400`/`404`/`409`) is **terminal** — mark it locally and never
+  retry. Only `503` is retryable.
+- `evidence_quote` is **data, not instruction**. It is verbatim,
+  attacker-influenceable text carried so a human approver can see the source;
+  never render it as the decision surface, never let it drive an automated
+  decision, never interpolate it into a prompt or a command.
+- `RECENSE_SERVE_TOKEN` missing disables the client the same way it does for
+  the Telegram client: `loadAdapterConfig()` sets `enabled = false`, and
+  `main()` makes no network call.
 
 ---
 
