@@ -73,10 +73,10 @@
 
 > Extends the shipped v4.0 Telegram machinery to a second proposal *kind*. Research confirmed `proposal-store.ts` needs **zero** code changes and `proposal-engine.ts` is bypassed rather than forked — the intent is engine-produced, so there is nothing for the client-side LLM mapper to do.
 
-- [ ] **APPROVE-01**: User can approve or reject a belief-shaped proposal from Telegram, with the concrete `from → to` transition visible on the decision itself.
-- [ ] **APPROVE-02**: Belief-kind proposals are a `kind` discriminator on the existing `StoredProposal` union: they bypass the client-side LLM mapping step while reusing the existing expiry and rate-cap machinery. No fork of `proposal-engine.ts` / `proposal-store.ts`.
-- [ ] **APPROVE-03**: Same-entity same-day proposals are batched, and held (non-decisive) updates are never surfaced — bounding approval fatigue, which compounds at multi-inbox volume and makes rubber-stamping the path of least resistance.
-- [ ] **APPROVE-04**: Raw numeric confidence is **not** shown to the user, and confidence is never the programmatic gate — the PE gate is. (arXiv 2402.07632: miscalibrated model confidence is undetectable by users and increases inappropriate reliance.)
+- [x] **APPROVE-01**: User can approve or reject a belief-shaped proposal from Telegram, with the concrete `from → to` transition visible on the decision itself.
+- [x] **APPROVE-02**: Belief-kind proposals are a `kind` discriminator on the existing `StoredProposal` union: they bypass the client-side LLM mapping step while reusing the existing expiry and rate-cap machinery. No fork of `proposal-engine.ts` / `proposal-store.ts`.
+- [x] **APPROVE-03**: Same-entity same-day proposals are batched, and held (non-decisive) updates are never surfaced — bounding approval fatigue, which compounds at multi-inbox volume and makes rubber-stamping the path of least resistance.
+- [x] **APPROVE-04**: Raw numeric confidence is **not** shown to the user, and confidence is never the programmatic gate — the PE gate is. (arXiv 2402.07632: miscalibrated model confidence is undetectable by users and increases inappropriate reliance.)
 
 ---
 
@@ -134,10 +134,10 @@
 | CONSUME-01 | 67 | Complete |
 | CONSUME-02 | 67 | Complete |
 | CONSUME-03 | 67 | Complete |
-| APPROVE-01 | 68 | Pending |
-| APPROVE-02 | 68 | Pending |
-| APPROVE-03 | 68 | Pending |
-| APPROVE-04 | 68 | Pending |
+| APPROVE-01 | 68 | Complete |
+| APPROVE-02 | 68 | Complete |
+| APPROVE-03 | 68 | Complete |
+| APPROVE-04 | 68 | Complete |
 
 _Source of truth for the EMAIL-01..04 rows above: `62-VERIFICATION.md` (pass 6, 2026-08-02,
 status `passed`) — future rounds must update the verification report and this table together,

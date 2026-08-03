@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v10.0
 milestone_name: Action Proposals
-status: executing
-stopped_at: Phase 68 context gathered
-last_updated: "2026-08-03T10:00:09.600Z"
+status: ready_to_plan
+stopped_at: Phase 68 complete (3/3) — ready to discuss Phase 69
+last_updated: 2026-08-03T11:29:21.773Z
 last_activity: 2026-08-03 -- Phase 68 execution started
 progress:
   total_phases: 8
   completed_phases: 6
   total_plans: 63
-  completed_plans: 60
+  completed_plans: 149
   percent: 75
 ---
 
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Phase 68 — Telegram HITL Belief-Kind Extension
+**Current focus:** Phase 69 — retrieval upgrade entity anchored ambient recall
 
 **v9.0 Key research grounding (June-2026 deep-research pass — historical, still load-bearing for RESOLVE/DRIFT reuse):**
 
@@ -41,10 +41,10 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 
 ## Current Position
 
-Phase: 68 (Telegram HITL Belief-Kind Extension) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 68
-Last activity: 2026-08-03 -- Phase 68 execution started
+Phase: 69
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-03
 
 ## Performance Metrics
 

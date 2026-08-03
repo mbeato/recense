@@ -268,7 +268,7 @@ Full phase details: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md)
 | 65. Belief-Gated Status Drift + Provenance-Distinctness Fix | v10.0 | 11/11 | Complete    | 2026-08-03 |
 | 66. Domain-Neutral Proposal Emit Seam | v10.0 | 5/5 | Complete    | 2026-08-03 |
 | 67. Reference Consumer Adapter | v10.0 | 3/3 | Complete    | 2026-08-03 |
-| 68. Telegram HITL Belief-Kind Extension | v10.0 | 3/3 | Complete   | 2026-08-03 |
+| 68. Telegram HITL Belief-Kind Extension | v10.0 | 3/3 | Complete    | 2026-08-03 |
 
 ### Phase 28: Schema-Anchored Corpus
 
