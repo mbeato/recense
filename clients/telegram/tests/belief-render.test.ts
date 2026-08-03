@@ -261,4 +261,54 @@ describe('beliefKeyboard', () => {
     const kb = beliefKeyboard(group);
     expect(kb.inline_keyboard.length).toBeLessThanOrEqual(10);
   });
+
+  it('(WR-02) when created-order and expiry-order diverge, keyboard row N still matches numbered block N, and each label carries its block number', () => {
+    const now = Date.now();
+    // earliest-CREATED but latest-EXPIRING constituent
+    const earlyCreated = makeBelief({
+      id: hex('wr02-early', 32),
+      changeTo: 'alpha-target',
+      serverCreatedAtMs: now - 10_000,
+      dueAt: new Date(now + 172_800_000).toISOString(),
+    });
+    // latest-created but earliest-expiring constituent
+    const lateCreated = makeBelief({
+      id: hex('wr02-late', 32),
+      changeTo: 'beta-target',
+      serverCreatedAtMs: now,
+      dueAt: new Date(now + 3_600_000).toISOString(),
+    });
+    // Pass in expiry order (the bridge's selection order) — the divergent case.
+    const group = [lateCreated, earlyCreated];
+
+    const rendered = renderBeliefDecisionMessage(group);
+    const kb = beliefKeyboard(group);
+
+    // Message block 1 is the earliest-created constituent...
+    const block1 = rendered.split('\n').find(l => l.startsWith('1. '));
+    expect(block1).toBeDefined();
+    expect(block1).toContain('alpha-target');
+
+    // ...and keyboard row 1 is the SAME constituent, numbered to match.
+    const row1Approve = kb.inline_keyboard[0]?.[0];
+    expect(row1Approve).toBeDefined();
+    expect(row1Approve!.text).toContain('1.');
+    expect(row1Approve!.text).toContain('alpha-target');
+    expect(decodeBeliefCallbackData(row1Approve!.callback_data)?.localId).toBe(earlyCreated.id);
+
+    const row2Approve = kb.inline_keyboard[1]?.[0];
+    expect(row2Approve).toBeDefined();
+    expect(row2Approve!.text).toContain('2.');
+    expect(row2Approve!.text).toContain('beta-target');
+    expect(decodeBeliefCallbackData(row2Approve!.callback_data)?.localId).toBe(lateCreated.id);
+
+    // Same-transition rows stay distinguishable: reject labels differ by number.
+    const kbSame = beliefKeyboard([
+      makeBelief({ id: hex('wr02-dup-1', 32), serverCreatedAtMs: now - 5_000 }),
+      makeBelief({ id: hex('wr02-dup-2', 32), serverCreatedAtMs: now - 4_000 }),
+    ]);
+    const label1 = kbSame.inline_keyboard[0]?.[0]?.text;
+    const label2 = kbSame.inline_keyboard[1]?.[0]?.text;
+    expect(label1).not.toBe(label2);
+  });
 });

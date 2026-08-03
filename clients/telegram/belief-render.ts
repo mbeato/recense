@@ -119,6 +119,13 @@ export function renderBeliefDecisionMessage(group: StoredBeliefProposal[], total
  * Build the belief decision keyboard: one row per constituent (max MAX_CONSTITUENTS
  * rows, matching renderBeliefDecisionMessage's overflow rule), each row two buttons.
  *
+ * Row order is the SAME `serverCreatedAtMs`-ascending order (stable sort) that
+ * renderBeliefDecisionMessage numbers its blocks in (WR-02) — sorted here
+ * independently so keyboard row N corresponds to numbered block N no matter what
+ * order the caller passes, and each label carries its block number so two
+ * same-transition constituents (truncated labels can collide at BUTTON_SIDE_CAP)
+ * stay distinguishable on the tap target.
+ *
  * D-05 rationale: the approve button's label carries the transition itself (a check
  * mark, the from side, '→', the to side) rather than a bare "Approve" — a fixed
  * generic label becomes a conditioned reflex (v4.0 D-09 lineage) and the transition
@@ -130,18 +137,21 @@ export function renderBeliefDecisionMessage(group: StoredBeliefProposal[], total
  * v3 byte-budget note).
  */
 export function beliefKeyboard(group: StoredBeliefProposal[]): InlineKeyboardMarkup {
-  const constituents = group.slice(0, MAX_CONSTITUENTS);
+  const constituents = [...group]
+    .sort((a, b) => a.serverCreatedAtMs - b.serverCreatedAtMs)
+    .slice(0, MAX_CONSTITUENTS);
 
-  const rows = constituents.map(c => {
+  const rows = constituents.map((c, i) => {
+    const n = String(i + 1);
     const from = c.changeFrom === null ? '(unset)' : asDisplayText(c.changeFrom, BUTTON_SIDE_CAP);
     const to = asDisplayText(c.changeTo, BUTTON_SIDE_CAP);
     return [
       {
-        text: `✅ ${from} → ${to}`,
+        text: `✅ ${n}. ${from} → ${to}`,
         callback_data: encodeBeliefCallbackData(c.id, 'a'),
       },
       {
-        text: `❌ ${to}`,
+        text: `❌ ${n}. ${to}`,
         callback_data: encodeBeliefCallbackData(c.id, 'r'),
       },
     ];
