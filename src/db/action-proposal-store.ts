@@ -124,7 +124,7 @@ export class ActionProposalStore {
   private readonly stmtListPending: Database.Statement;
   private readonly stmtGetById: Database.Statement;
   private readonly stmtStalenessInputs: Database.Statement;
-  private readonly stmtUpdateStatus: Database.Statement;
+  private readonly stmtTransitionFromPending: Database.Statement;
 
   constructor(db: Database.Database, clock: Clock) {
     this.db = db;
@@ -172,8 +172,12 @@ export class ActionProposalStore {
 
     // D-43-for-proposals: the only write path here touches action_proposal.status + updated_at.
     // Never node, never edge.
-    this.stmtUpdateStatus = db.prepare(`
-      UPDATE action_proposal SET status = @status, updated_at = @now WHERE id = @id
+    // CR-01 (phase 66 review): compare-and-set — the `AND status = 'pending'` guard re-checks
+    // the precondition atomically inside the UPDATE itself, so a terminal status
+    // (approved/rejected/superseded/expired) can never be overwritten by a racing settle.
+    this.stmtTransitionFromPending = db.prepare(`
+      UPDATE action_proposal SET status = @status, updated_at = @now
+      WHERE id = @id AND status = 'pending'
     `);
   }
 
@@ -203,7 +207,13 @@ export class ActionProposalStore {
     };
   }
 
-  updateStatus(id: string, status: ProposalStatus, nowMs: number): void {
-    this.stmtUpdateStatus.run({ id, status, now: nowMs });
+  /**
+   * CAS status transition: pending → `status`. Returns true iff exactly one row changed —
+   * i.e. the row existed AND was still 'pending' at write time. A false return means the
+   * proposal was already settled (or never existed); the stored terminal status is durable
+   * and must never be overwritten (CR-01 double-settle guard; D-10 durable refusal).
+   */
+  transitionFromPending(id: string, status: ProposalStatus, nowMs: number): boolean {
+    return this.stmtTransitionFromPending.run({ id, status, now: nowMs }).changes === 1;
   }
 }

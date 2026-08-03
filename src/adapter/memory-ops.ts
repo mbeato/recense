@@ -251,9 +251,12 @@ export interface MemoryOps {
    * status-transition write (status + updated_at) — never node, never edge. Throws ProposalNotFoundError (missing
    * id), ProposalNotPendingError (already terminal — re-delivery is a no-op, EMIT-04), or
    * ProposalStaleError (EMIT-07: the belief moved on, the entity was retired, or the
-   * proposal is past its TTL — classifyProposalStaleness runs before the lock; a non-'ok'
-   * verdict writes a durable terminal status BEFORE throwing so re-delivery cannot
-   * resurrect a refused proposal, D-10).
+   * proposal is past its TTL). CR-01: every decisive check — pending status, staleness
+   * classification, and the transition itself — runs UNDER the write lock, and the
+   * transition is a compare-and-set (pending-only), so a concurrent settle or a sleep-pass
+   * tombstone between check and write can never produce a false ack or overwrite a
+   * terminal status. A non-'ok' verdict writes a durable terminal status BEFORE throwing
+   * so re-delivery cannot resurrect a refused proposal (D-10).
    */
   approveProposal(id: string): Promise<{ status: string }>;
   /**
@@ -572,40 +575,54 @@ export function wireMemoryEngine(
   // (+ updated_at) is touched.
   async function approveProposal(id: string): Promise<{ status: string }> {
     // Fast-fail BEFORE the lock (mirrors T-21-08): a missing id never takes the lock.
-    const proposal = proposalWriteStore.getById(id);
-    if (!proposal) {
+    // These pre-lock reads are an OPTIMIZATION ONLY — every decisive check re-runs under
+    // the lock below, because check-then-act across the lock boundary is a race (CR-01).
+    const preflight = proposalWriteStore.getById(id);
+    if (!preflight) {
       throw new ProposalNotFoundError(id);
     }
-    // A re-delivered approve on an already-terminal proposal is a no-op, not a second
-    // application (EMIT-04's consumer-side half).
-    if (proposal.status !== 'pending') {
-      throw new ProposalNotPendingError(id, proposal.status);
-    }
-
-    // EMIT-07 staleness gate — still before the lock, because it is a pure read.
-    const inputs = proposalWriteStore.getStalenessInputs(id);
-    // Cannot be null here: getById() above already proved the row exists.
-    const verdict = classifyProposalStaleness({ ...inputs!, nowMs: realClock.nowMs() });
-    if (verdict !== 'ok') {
-      // D-10: a refused proposal cannot be resurrected by re-delivery, so the refusal
-      // must be durable — write the terminal status BEFORE throwing, not just a response code.
-      const terminalStatus = verdict === 'expired' ? 'expired' : 'superseded';
-      if (!(await acquireLockWithRetry())) {
-        throw new MemoryBusyError();
-      }
-      try {
-        proposalWriteStore.updateStatus(id, terminalStatus, realClock.nowMs());
-      } finally {
-        releaseLock();
-      }
-      throw new ProposalStaleError(id, verdict);
+    if (preflight.status !== 'pending') {
+      throw new ProposalNotPendingError(id, preflight.status);
     }
 
     if (!(await acquireLockWithRetry())) {
       throw new MemoryBusyError();
     }
     try {
-      proposalWriteStore.updateStatus(id, 'approved', realClock.nowMs());
+      // Re-check under the lock (CR-01): a concurrent approve/reject or the hourly sleep
+      // pass may have settled the row or moved the graph between the pre-lock reads and
+      // lock acquisition.
+      const proposal = proposalWriteStore.getById(id);
+      if (!proposal) {
+        throw new ProposalNotFoundError(id);
+      }
+      // A re-delivered approve on an already-terminal proposal is a no-op, not a second
+      // application (EMIT-04's consumer-side half).
+      if (proposal.status !== 'pending') {
+        throw new ProposalNotPendingError(id, proposal.status);
+      }
+
+      // EMIT-07 staleness gate — UNDER the lock, so the verdict cannot be invalidated by
+      // a concurrent sleep pass tombstoning the belief between classification and write.
+      const inputs = proposalWriteStore.getStalenessInputs(id);
+      // Cannot be null here: getById() above already proved the row exists.
+      const verdict = classifyProposalStaleness({ ...inputs!, nowMs: realClock.nowMs() });
+      if (verdict !== 'ok') {
+        // D-10: a refused proposal cannot be resurrected by re-delivery, so the refusal
+        // must be durable — write the terminal status BEFORE throwing, not just a
+        // response code. CAS (pending-only) so a concurrent settle is never overwritten.
+        const terminalStatus = verdict === 'expired' ? 'expired' : 'superseded';
+        proposalWriteStore.transitionFromPending(id, terminalStatus, realClock.nowMs());
+        throw new ProposalStaleError(id, verdict);
+      }
+
+      if (!proposalWriteStore.transitionFromPending(id, 'approved', realClock.nowMs())) {
+        // Defensive: unreachable while every writer honors the single-writer lock, but if
+        // the CAS reports no row moved, report the stored status rather than acking a
+        // write that did not happen.
+        const current = proposalWriteStore.getById(id);
+        throw new ProposalNotPendingError(id, current?.status ?? 'pending');
+      }
       return { status: 'approved' };
     } finally {
       releaseLock();
@@ -620,19 +637,34 @@ export function wireMemoryEngine(
   // arrives. Refusing a stale reject would leave a dead row pending forever, so a stale
   // proposal being rejected is accepted as harmless rather than treated as an omission.
   async function rejectProposal(id: string): Promise<{ status: string }> {
-    const proposal = proposalWriteStore.getById(id);
-    if (!proposal) {
+    // Pre-lock fast-fail — advisory only; the decisive checks re-run under the lock (CR-01).
+    const preflight = proposalWriteStore.getById(id);
+    if (!preflight) {
       throw new ProposalNotFoundError(id);
     }
-    if (proposal.status !== 'pending') {
-      throw new ProposalNotPendingError(id, proposal.status);
+    if (preflight.status !== 'pending') {
+      throw new ProposalNotPendingError(id, preflight.status);
     }
 
     if (!(await acquireLockWithRetry())) {
       throw new MemoryBusyError();
     }
     try {
-      proposalWriteStore.updateStatus(id, 'rejected', realClock.nowMs());
+      // Re-check under the lock (CR-01): a concurrent approve (or a stale-refusal's
+      // terminal write) between the pre-lock read and lock acquisition must surface as
+      // ProposalNotPendingError — never overwrite a terminal status with 'rejected'.
+      const proposal = proposalWriteStore.getById(id);
+      if (!proposal) {
+        throw new ProposalNotFoundError(id);
+      }
+      if (proposal.status !== 'pending') {
+        throw new ProposalNotPendingError(id, proposal.status);
+      }
+      if (!proposalWriteStore.transitionFromPending(id, 'rejected', realClock.nowMs())) {
+        // Defensive: unreachable while every writer honors the single-writer lock.
+        const current = proposalWriteStore.getById(id);
+        throw new ProposalNotPendingError(id, current?.status ?? 'pending');
+      }
       return { status: 'rejected' };
     } finally {
       releaseLock();

@@ -15,7 +15,8 @@
  *  - D-10's fixed staleness precedence (entity_gone > superseded > expired) across all 8
  *    boolean/expiry combinations.
  *  - listPending()'s pending-only / created_at-ascending / limit discipline.
- *  - updateStatus()'s isolation: only status + updated_at change, nothing else.
+ *  - transitionFromPending()'s isolation (only status + updated_at change, nothing else)
+ *    and its CAS guarantee (a terminal status is never overwritten — CR-01).
  *
  * `foreign_keys = ON` is never disabled — real node/episode rows are seeded so the
  * action_proposal FK references resolve honestly.
@@ -329,10 +330,10 @@ describe('ActionProposalStore.listPending', () => {
 });
 
 // ---------------------------------------------------------------------------
-// updateStatus() isolation
+// transitionFromPending() isolation + CAS (CR-01)
 // ---------------------------------------------------------------------------
 
-describe('ActionProposalStore.updateStatus isolation', () => {
+describe('ActionProposalStore.transitionFromPending isolation + CAS', () => {
   it('mutates status + updated_at only; every other column is byte-identical', () => {
     const db = makeDb();
     const clock = new FakeClock(Date.UTC(2026, 0, 1));
@@ -352,7 +353,7 @@ describe('ActionProposalStore.updateStatus isolation', () => {
     store.insert(rec);
 
     const before = store.getById(rec.id)!;
-    store.updateStatus(rec.id, 'approved', 5000);
+    expect(store.transitionFromPending(rec.id, 'approved', 5000)).toBe(true);
     const after = store.getById(rec.id)!;
 
     expect(after.status).toBe('approved');
@@ -361,6 +362,42 @@ describe('ActionProposalStore.updateStatus isolation', () => {
     const { status: _s1, updated_at: _u1, ...beforeRest } = before;
     const { status: _s2, updated_at: _u2, ...afterRest } = after;
     expect(afterRest).toEqual(beforeRest);
+  });
+
+  it('CR-01: a terminal status is never overwritten — CAS returns false and the row is untouched', () => {
+    const db = makeDb();
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new ActionProposalStore(db, clock);
+
+    const entityId = newId();
+    const beliefId = newId();
+    const episodeId = newId();
+    seedNode(db, entityId, 'Acme Corp application');
+    seedNode(db, beliefId, 'interviewing');
+    seedEpisode(db, episodeId, 'we would like to schedule an interview');
+
+    const rec = makeRecord({
+      entity_node_id: entityId, belief_node_id: beliefId, evidence_episode: episodeId,
+      created_at: 1000, updated_at: 1000,
+    });
+    store.insert(rec);
+
+    expect(store.transitionFromPending(rec.id, 'rejected', 2000)).toBe(true);
+
+    // Every terminal target must refuse to move an already-settled row.
+    for (const target of ['approved', 'superseded', 'expired'] as const) {
+      expect(store.transitionFromPending(rec.id, target, 9000)).toBe(false);
+    }
+    const after = store.getById(rec.id)!;
+    expect(after.status).toBe('rejected');
+    expect(after.updated_at).toBe(2000);
+  });
+
+  it('CR-01: returns false for a missing id (no row invented)', () => {
+    const db = makeDb();
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new ActionProposalStore(db, clock);
+    expect(store.transitionFromPending('no-such-id', 'approved', 1000)).toBe(false);
   });
 });
 
