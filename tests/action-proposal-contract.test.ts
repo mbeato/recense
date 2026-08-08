@@ -30,6 +30,7 @@ import {
   ActionProposalStore,
   ACTION_PROPOSAL_FIELDS,
   classifyProposalStaleness,
+  PROPOSAL_LIST_LIMIT,
   PROPOSAL_TTL_MS,
   type ActionProposalRecord,
 } from '../src/db/action-proposal-store';
@@ -405,6 +406,84 @@ describe('ActionProposalStore.listPending', () => {
     );
 
     expect(store.listPending()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countPending() — WR-01 starvation detectability
+// ---------------------------------------------------------------------------
+
+describe('ActionProposalStore.countPending', () => {
+  it('WR-01: counts past PROPOSAL_LIST_LIMIT so a saturated window is distinguishable from an exhausted one', () => {
+    const db = makeDb();
+    const nowMs = Date.UTC(2026, 0, 1);
+    const store = new ActionProposalStore(db, new FakeClock(nowMs));
+
+    const entityId = newId();
+    const beliefId = newId();
+    const episodeId = newId();
+    seedNode(db, entityId, 'Acme Corp application');
+    seedNode(db, beliefId, 'interviewing');
+    seedEpisode(db, episodeId, 'we would like to schedule an interview');
+
+    for (let i = 0; i < PROPOSAL_LIST_LIMIT + 37; i++) {
+      store.insert(
+        makeRecord({
+          id: sha256(`unsettled-${i}`),
+          entity_node_id: entityId,
+          belief_node_id: beliefId,
+          evidence_episode: episodeId,
+          created_at: 1000 + i,
+          updated_at: 1000 + i,
+          expires_at: nowMs + 1_000_000,
+        })
+      );
+    }
+
+    expect(store.listPending().length).toBe(PROPOSAL_LIST_LIMIT);
+    expect(store.countPending()).toBe(PROPOSAL_LIST_LIMIT + 37);
+  });
+
+  it('WR-01: applies the same expiry + tombstone filter as listPending', () => {
+    const db = makeDb();
+    const nowMs = Date.UTC(2026, 0, 1);
+    const store = new ActionProposalStore(db, new FakeClock(nowMs));
+
+    const entityId = newId();
+    const deadEntityId = newId();
+    const liveBeliefId = newId();
+    const deadBeliefId = newId();
+    const episodeId = newId();
+    seedNode(db, entityId, 'Acme Corp application');
+    seedNode(db, deadEntityId, 'Retired Corp application');
+    seedNode(db, liveBeliefId, 'interviewing');
+    seedNode(db, deadBeliefId, 'applied');
+    seedEpisode(db, episodeId, 'we would like to schedule an interview');
+    db.prepare('UPDATE node SET tombstoned = 1 WHERE id IN (@a, @b)').run({
+      a: deadEntityId,
+      b: deadBeliefId,
+    });
+
+    const insert = (id: string, entity: string, belief: string, expiresAt: number): void => {
+      store.insert(
+        makeRecord({
+          id: sha256(id),
+          entity_node_id: entity,
+          belief_node_id: belief,
+          evidence_episode: episodeId,
+          created_at: 1000,
+          updated_at: 1000,
+          expires_at: expiresAt,
+        })
+      );
+    };
+    insert('live', entityId, liveBeliefId, nowMs + 1_000_000);
+    insert('expired', entityId, liveBeliefId, nowMs - 1);
+    insert('superseded', entityId, deadBeliefId, nowMs + 1_000_000);
+    insert('entity-gone', deadEntityId, liveBeliefId, nowMs + 1_000_000);
+
+    expect(store.countPending()).toBe(1);
+    expect(store.countPending()).toBe(store.listPending().length);
   });
 });
 

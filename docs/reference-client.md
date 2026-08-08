@@ -282,8 +282,15 @@ List pending action proposals. LLM-free and lock-free — a plain read. No query
 parameters in v1; the response is bounded server-side at 100 items.
 
 ```json
-→ 200 { "items": [ <record>, ... ] }
+→ 200 { "items": [ <record>, ... ], "total_pending": 3 }
 ```
+
+`total_pending` counts every pending proposal that passes the same filter `items`
+does (unexpired, neither node tombstoned), *without* the 100-item bound. Compare it
+to `items.length`: when they differ, the window is saturated and newer proposals
+are not visible to you. The list is oldest-first and nothing ages a pending row out
+before its 14-day TTL, so a consumer that settles fewer rows than arrive will see
+`total_pending` climb while `items` stays pinned at the same oldest 100.
 
 Both proposal routes land after the same auth gate as every other authenticated
 endpoint (see the line above) — a missing or wrong token produces the identical

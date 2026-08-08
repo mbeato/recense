@@ -520,10 +520,13 @@ export async function createBrainHttpServer(
     // GET /v1/proposals — LLM-free pending proposal list; lock-free read (D-95-equivalent, T-12-02 N/A)
     // No query parameters in v1 — the response is bounded by PROPOSAL_LIST_LIMIT inside the
     // store; filtering/pagination is deliberately out of scope, mirroring /v1/surface's minimalism.
+    // WR-01 (v10 cross-review): `total_pending` counts every pending row passing the same
+    // filter, unbounded by the limit, so a consumer can distinguish an exhausted list from a
+    // saturated window. It is a COUNT — never a payload field — so it leaks no proposal data.
     if (url === '/v1/proposals' && req.method === 'GET') {
       try {
         const items = await ops.listProposals();
-        jsonOk(res, { items });
+        jsonOk(res, { items, total_pending: await ops.countPendingProposals() });
         logRequest('GET', url, 200, Date.now() - start);
       } catch (err) {
         log(`/v1/proposals error: ${err}`);

@@ -125,6 +125,7 @@ export class ActionProposalStore {
   // T-01-SQL: all filter/write values are bound parameters, never string-interpolated.
   private readonly stmtInsert: Database.Statement;
   private readonly stmtListPending: Database.Statement;
+  private readonly stmtCountPending: Database.Statement;
   private readonly stmtGetById: Database.Statement;
   private readonly stmtStalenessInputs: Database.Statement;
   private readonly stmtTransitionFromPending: Database.Statement;
@@ -180,6 +181,23 @@ export class ActionProposalStore {
       LIMIT @limit
     `);
 
+    // WR-01 (v10 cross-review): the same predicate as stmtListPending with no LIMIT, so
+    // `total_pending` counts exactly the rows a consumer could ever see across pages. A
+    // human-gated consumer settles only what someone taps, so once PROPOSAL_LIST_LIMIT
+    // unsettled rows accumulate the oldest-first window returns the same 100 rows on every
+    // poll and newer proposals are invisible until they age out. Nothing here changes that
+    // — it makes the starvation DETECTABLE instead of silent, so a consumer can tell
+    // "I have seen everything" from "I am looking at a saturated window".
+    this.stmtCountPending = db.prepare(`
+      SELECT COUNT(*) AS n FROM action_proposal p
+      JOIN node e ON e.id = p.entity_node_id
+      JOIN node b ON b.id = p.belief_node_id
+      WHERE p.status = 'pending'
+        AND p.expires_at > @now
+        AND e.tombstoned = 0
+        AND b.tombstoned = 0
+    `);
+
     this.stmtGetById = db.prepare(`
       SELECT * FROM action_proposal WHERE id = @id
     `);
@@ -216,6 +234,15 @@ export class ActionProposalStore {
     // WR-03: expired rows are filtered from the read; their durable status transition
     // still happens only under the write lock at approve time (D-10).
     return this.stmtListPending.all({ limit, now: this.clock.nowMs() }) as ActionProposalRecord[];
+  }
+
+  /**
+   * WR-01: total pending rows passing the SAME (expiry + tombstone) filter as listPending,
+   * unbounded by PROPOSAL_LIST_LIMIT. A consumer comparing this to `items.length` can tell
+   * a saturated window from an exhausted one. Read-only, like listPending.
+   */
+  countPending(): number {
+    return (this.stmtCountPending.get({ now: this.clock.nowMs() }) as { n: number }).n;
   }
 
   getById(id: string): ActionProposalRecord | null {

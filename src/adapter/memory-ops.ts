@@ -245,6 +245,12 @@ export interface MemoryOps {
    */
   listProposals(): Promise<ActionProposalRecord[]>;
   /**
+   * LLM-free read path: ActionProposalStore.countPending(). NO lock acquisition.
+   * WR-01: counts every pending row passing the same filter listProposals() applies,
+   * unbounded by PROPOSAL_LIST_LIMIT, so a consumer can detect a saturated list window.
+   */
+  countPendingProposals(): Promise<number>;
+  /**
    * Approve a pending proposal. Per-call lock (T-12-02).
    *
    * D-43-for-proposals: the ONLY write this can reach is the proposal store's single
@@ -571,6 +577,11 @@ export function wireMemoryEngine(
     return proposalReadStore!.listPending();
   }
 
+  /** WR-01: read-only companion to listProposals() — same filter, no LIMIT. */
+  async function countPendingProposals(): Promise<number> {
+    return proposalReadStore!.countPending();
+  }
+
   // D-43-for-proposals: NEVER writes node or edge. Only action_proposal.status
   // (+ updated_at) is touched.
   async function approveProposal(id: string): Promise<{ status: string }> {
@@ -686,7 +697,7 @@ export function wireMemoryEngine(
   }
 
   return Promise.resolve({
-    ops: { sessionId, search, add, ask, surface, surfaceSeen, listProposals, approveProposal, rejectProposal },
+    ops: { sessionId, search, add, ask, surface, surfaceSeen, listProposals, countPendingProposals, approveProposal, rejectProposal },
     close,
   });
 }

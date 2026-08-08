@@ -268,6 +268,20 @@ describe('proposal routes: GET /v1/proposals, POST /v1/proposals/:id/approve|rej
     }
   });
 
+  it('WR-01: GET /v1/proposals carries total_pending, counting only rows that pass the list filter', async () => {
+    seedProposal();
+    seedProposal();
+    seedProposal({ status: 'approved' });
+    seedProposal({ beliefTombstoned: true });
+    seedProposal({ expiresAt: Date.now() - 1_000_000 });
+
+    const res = await request('GET', '/v1/proposals');
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { items: unknown[]; total_pending: number };
+    expect(body.total_pending).toBe(2);
+    expect(body.items.length).toBe(2);
+  });
+
   // ── CR-01: the list filter is the exact complement of the refusal classifier ──
   // Both fixtures below are the SAME ones the EMIT-07 refusal matrix uses further down;
   // pre-fix each was listed to every consumer and then guaranteed to 409 on the tap.
