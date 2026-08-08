@@ -72,26 +72,43 @@ function refusalReasonForStatus(status: number): 'bad_request' | 'not_found' | '
 }
 
 /**
- * The keys the sync loop reads off a listed record. The list response is an
- * unchecked cast at a trust boundary (plain-HTTP transport), so before the
- * loop touches any item, every item must be an object carrying this key set —
- * a malformed item produces the documented graceful stop (WR-03), never a raw
- * TypeError escaping syncProposals.
+ * Proposal ids are sha256 hex by construction. Checked here as well as in
+ * proposal-client.ts because this gate runs BEFORE anything is persisted, and a
+ * non-conforming id must never reach the local store.
  */
-const REQUIRED_RECORD_KEYS = [
-  'id',
-  'kind',
-  'entity_descriptor',
-  'change_field',
-  'change_to',
-  'confidence',
-  'schema_version',
-] as const;
+const RECORD_ID_RE = /^[0-9a-f]{64}$/;
 
+/**
+ * The list response is an unchecked cast at a trust boundary (plain-HTTP
+ * transport), so before the loop touches any item, every field the loop reads
+ * must be present WITH the type the loop reads it as — a malformed item produces
+ * the documented graceful stop (WR-03), never a raw TypeError escaping
+ * syncProposals.
+ *
+ * WR-02 (v10 cross-review): this used to check key PRESENCE only, so a record
+ * carrying `"id": 12345` or `"entity_descriptor": null` passed the gate, was
+ * copied into a LocalRow, and was persisted by putLocalRow — which validates only
+ * the pre-existing rows it READS, never the row it is about to write. The next
+ * sync's readRows then ran isLocalRow over that row, failed it, and threw
+ * LocalStoreCorruptError, which syncProposals deliberately re-throws — aborting
+ * every future sync until a human restores the file. The adapter could brick
+ * itself permanently by writing a row it had guaranteed itself it could not read.
+ * The write path's guard set and the read path's guard set must be one source, so
+ * these checks mirror local-store.ts:isLocalRow (and the sibling client's
+ * isInspectableProposalRecord) rather than merely testing for keys.
+ */
 function isInspectableRecord(v: unknown): boolean {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
-  return REQUIRED_RECORD_KEYS.every(k => k in r);
+  return (
+    typeof r['id'] === 'string' && RECORD_ID_RE.test(r['id']) &&
+    typeof r['kind'] === 'string' &&
+    typeof r['entity_descriptor'] === 'string' &&
+    typeof r['change_field'] === 'string' &&
+    typeof r['change_to'] === 'string' &&
+    (r['confidence'] === 'high' || r['confidence'] === 'medium' || r['confidence'] === 'low') &&
+    typeof r['schema_version'] === 'number'
+  );
 }
 
 /**
@@ -140,8 +157,8 @@ async function runSyncPass(
   // schema gate below).
   if ((records as unknown[]).some(r => !isInspectableRecord(r))) {
     log(
-      'malformed item in list response — not an object carrying the record key set; ' +
-        'stopping sync, applying nothing',
+      'malformed item in list response — not an object carrying the record fields at the ' +
+        'types this adapter reads them as; stopping sync, applying nothing',
     );
     return report;
   }

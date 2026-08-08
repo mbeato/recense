@@ -338,6 +338,33 @@ describe('syncProposals — stub-server behavioral proof (D-02/D-03/D-07)', () =
     expect(listLocalRows(storePath).length).toBe(0);
   });
 
+  it('WR-02: a record whose fields carry the wrong TYPE is refused before anything is persisted', async () => {
+    // Every fixture below passes a presence-only key check and fails the type check.
+    // Pre-fix each was copied into a LocalRow and written by putLocalRow (which never
+    // validates the row it writes); the NEXT sync's readRows then failed isLocalRow and
+    // threw LocalStoreCorruptError, bricking every future sync.
+    const wrongTypes: Fixture[] = [
+      makeRecord({ id: 12345 as unknown as string }),
+      makeRecord({ id: pid('p18'), entity_descriptor: null as unknown as string }),
+      makeRecord({ id: pid('p19'), change_to: 42 as unknown as string }),
+      makeRecord({ id: pid('p20'), confidence: 'very-high' }),
+      makeRecord({ id: pid('p21'), schema_version: String(PROPOSAL_SCHEMA_VERSION) }),
+      makeRecord({ id: 'not-64-hex' }),
+    ];
+
+    for (const fixture of wrongTypes) {
+      records = [fixture];
+      const report = await syncProposals(client(), storePath, noopLog);
+      expect(report.applied).toBe(0);
+      expect(postCalls().length).toBe(0);
+      // Nothing persisted — so the store never becomes unreadable to its own read path.
+      expect(existsSync(storePath)).toBe(false);
+    }
+
+    // And the store is still readable after all of that (no LocalStoreCorruptError).
+    expect(listLocalRows(storePath)).toEqual([]);
+  });
+
   it('unknown kind skips just that record (D-07): one POST, one local row', async () => {
     records = [
       makeRecord({ id: pid('p9'), kind: 'unknown-kind', confidence: 'high' }),
@@ -447,10 +474,15 @@ describe('syncProposals — stub-server behavioral proof (D-02/D-03/D-07)', () =
 
     const report = await syncProposals(client(), storePath, noopLog);
 
-    // No request of any kind was steered onto another route, and the
-    // malformed record produced no POST at all.
+    // No request of any kind was steered onto another route. WR-02 moved the id-shape
+    // check into the wire gate, which is a stop-the-WHOLE-pass condition (matching the
+    // sibling client), so the well-formed sibling record is not applied either — a list
+    // response containing a malformed item is not the contract this adapter reads, and
+    // partial application of an untrusted response is exactly what the gate forbids.
+    // proposal-client.ts still holds its own pre-request id check as defence in depth.
     expect(requests.some(r => r.url.includes('/v1/add'))).toBe(false);
-    expect(postCalls().length).toBe(1); // only the well-formed p15 record
-    expect(report.applied).toBe(1);
+    expect(postCalls().length).toBe(0);
+    expect(report.applied).toBe(0);
+    expect(listLocalRows(storePath).length).toBe(0);
   });
 });
