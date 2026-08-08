@@ -1739,6 +1739,21 @@ export class Consolidator {
    *    origin and echo episodes cannot destabilize secondaries.
    *  - D-20: oscillation guard does NOT apply here — secondaries carry no new value to compare.
    *  - T-02-ASYNC: pure sync method (no await); never called inside a db.transaction.
+   *
+   * Proposal-seam exclusion (66-04-PLAN.md:196, restated here because WR-03 of the v10
+   * cross-review correctly noted the decision was only visible as an ABSENT call): this
+   * method emits three event types that `isEmissionEligible` accepts — contradict_reconcile,
+   * contradict_append_new, contradict_force_destabilize — and deliberately does NOT route any
+   * of them through the proposal gate, including the two branches that tombstone. The reason
+   * is not that secondaries are harmless: it is that a secondary is an ADDITIONAL prior node
+   * contradicted by the SAME claim the primary branch already emitted a proposal for. Routing
+   * secondaries through the gate would mint N proposals for one transition, identical in
+   * entity, change_field, and change_to and differing only in belief_node_id — N decision
+   * cards for one human decision, which is the approval-fatigue failure mode the whole seam
+   * exists to avoid. The primary's proposal names the transition; the secondaries are
+   * bookkeeping against superseded prior nodes and have no from→to a consumer could act on.
+   * This exclusion is behaviorally locked by the zero-row assertion in
+   * tests/action-proposal-emission.test.ts — do not "fix" it by adding a gate call here.
    */
   private applySecondaryContradiction(
     nodeId: string,

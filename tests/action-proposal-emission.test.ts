@@ -41,6 +41,7 @@ import {
   type ActionProposalSink,
 } from '../src/consolidation/action-proposal-sink';
 import { ActionProposalStore, type ActionProposalRecord } from '../src/db/action-proposal-store';
+import { isEmissionEligible } from '../src/consolidation/status-drift';
 
 // ---------------------------------------------------------------------------
 // Embed helper — constant vector for every text (cosine 1.0 between any two embedded texts),
@@ -633,6 +634,63 @@ describe('action-proposal-emission — decisive change writes a proposal through
     const rowsAfterReplay = proposalRowsForEntity(h, entityId);
     expect(rowsAfterReplay).toHaveLength(1);
     expect(rowsAfterReplay[0]!.id).toBe(firstId);
+  });
+
+  it('WR-03: a multi-contradicted_ids verdict emits for the primary ONLY — the secondary tombstones with zero action_proposal rows of its own', async () => {
+    // The deliberate exclusion recorded at 66-04-PLAN.md:196 and restated in
+    // applySecondaryContradiction's doc comment: secondaries emit three event types
+    // isEmissionEligible accepts, and none of them is routed through the proposal gate.
+    // Before this test the decision existed only as an ABSENT call, so an added gate call
+    // would have inverted it silently. Non-vacuousness is proven three ways: the secondary
+    // node really is tombstoned, its consolidation_event really is an emission-eligible
+    // type, and the primary really did emit — so the zero is a scoped zero, not an
+    // everything-was-zero.
+    const dims = h.config.embeddingDimensions;
+    const entityId = seedEntity(h, 'Secondary Corp');
+    // resistance = effective_s * c ≈ 0.8 * 0.8 = 0.64 on both, so magnitude 1.0 gives
+    // ratio ≈ 1.56 — inside [peReconcileBandLow 0.8, peReconcileBandHigh 2.0) — and BOTH
+    // the primary and the secondary route to 'reconcile', the branch that tombstones.
+    const primaryId = seedNode(h, 'Secondary Corp application status: submitted', { s: 0.8, c: 0.8 });
+    const secondaryId = seedNode(h, 'Secondary Corp recruiter screen scheduled', { s: 0.8, c: 0.8 });
+    const MARKER = '[EP-SECONDARY]';
+    const CONTRADICT_VALUE = 'Secondary Corp application status: rejected';
+
+    const provider = new MarkerProvider(
+      constEmbedFn(dims),
+      [{ marker: MARKER, claims: [{
+        type: 'fact', value: CONTRADICT_VALUE,
+        intent_status: 'rejected', intent_entity: 'Secondary Corp', intent_confidence: 'high',
+      }] }],
+      () => ({
+        relation: 'contradict',
+        best_candidate_id: primaryId,
+        magnitude: 1.0,
+        contradicted_ids: [primaryId, secondaryId],
+      }),
+    );
+    const consolidator = makeConsolidatorWithRealProposalSink(h, provider);
+    h.episodes.append({
+      content: `Update ${MARKER}: ${CONTRADICT_VALUE}`,
+      origin: 'observed', salience: 1.0, hard_keep: 1, role: 'user',
+      session_id: 'sess-secondary', source: 'gmail', event_ts: 1_000_000,
+    });
+    await consolidator.consolidate();
+
+    // The secondary branch genuinely fired and genuinely retired a live belief.
+    expect(getNodeById(h, secondaryId).tombstoned).toBeTruthy();
+    expect(consolidationEventTypesForCandidate(h, secondaryId)).toContain('contradict_reconcile');
+    // And the event type it emitted IS one the proposal seam accepts — so the zero below is
+    // the exclusion, not an ineligible-event-type coincidence.
+    expect(isEmissionEligible('contradict_reconcile')).toBe(true);
+
+    // Exactly one proposal for the whole claim: the primary's. Never one per contradicted id.
+    const rows = allProposalRows(h);
+    expect(rows).toHaveLength(1);
+    expect(rows).toEqual(proposalRowsForEntity(h, entityId));
+    expect(rows[0]!.belief_node_id).not.toBe(secondaryId);
+    // The primary reconcile names the newly-minted node, not either retired one.
+    expect(rows[0]!.belief_node_id).toBe(findNodeIdByValue(h, CONTRADICT_VALUE));
+    expect(getNodeById(h, primaryId).tombstoned).toBeTruthy();
   });
 
   it('with NoopActionProposalSink injected, a decisive force-destabilize case writes zero action_proposal rows despite the graph mutation happening', async () => {
