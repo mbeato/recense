@@ -407,6 +407,23 @@ describe('ambientRecall', () => {
     expect(text).toContain(FOREIGN_DOC_VALUE);
   });
 
+  it('k2. WR-02 regression: with an unknown caller scope (cwd="" -> global) foreignDocDemotion is neutral — pure cosine order, no demotion applied', async () => {
+    seedForeignDocDemotionGraph(db);
+    const provider = new MockModelProvider({ embedFn: () => DEMOTE_QUERY_VEC });
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, foreignDocDemotion: 0.5 };
+
+    // No cwd argument -> currentScope === GLOBAL_SCOPE. "Foreign" is undefined for an
+    // unknown caller (2026-08-07 cross-review WR-02), so the demotion must not fire and
+    // rank order is the raw cosine order: foreign doc 1.0 > own fact 0.8 > global doc 0.6.
+    const text = await ambientRecall(db, PROMPT, provider, cfg, clock);
+    const lines = factLines(text);
+
+    expect(lines[0]).toContain(FOREIGN_DOC_VALUE);
+    expect(lines[1]).toContain(OWN_FACT_VALUE);
+    expect(lines[2]).toContain(GLOBAL_DOC_VALUE);
+  });
+
   it('l. AMBIENT_FLOOR still gates non-anchored candidates regardless of knob state', async () => {
     seedFloorGraph(db);
     const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });

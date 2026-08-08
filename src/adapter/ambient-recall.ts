@@ -375,9 +375,14 @@ export async function ambientRecall(
   // (b) NEVER A FILTER (D-01: nudge, never filter): every row in `results` remains a
   //     selection candidate regardless of rankScore — the nudge can move a row's
   //     position but can never remove it (T-69-03-FILTER).
-  // (c) `currentScope === GLOBAL_SCOPE` (unknown/personal cwd) disables the same-project
-  //     boost entirely; foreign-doc demotion still applies to scoped docs since "foreign"
-  //     is well-defined independent of whether the CALLER's own scope is known.
+  // (c) `currentScope === GLOBAL_SCOPE` (unknown/personal cwd) disables BOTH the
+  //     same-project boost AND the foreign-doc demotion (2026-08-07 cross-review WR-02:
+  //     "foreign" is a relation TO the caller, so with an unknown caller it is a guess,
+  //     not a definition — an unknown origin must be neutral, symmetric with the nudge
+  //     guard). This also aligns live behavior with the arm the 69-06 gate actually
+  //     measured: the gate always synthesized a known project cwd, so the
+  //     unknown-caller demotion branch had zero eval coverage while firing on ~45% of
+  //     real live turns.
   // (d) Both magnitudes are eval-tuned in 69-06 and ship at 0 (D-09): with both weights
   //     0, `rankScore(r) === r.score` for every row, so the stable sort below reduces to
   //     "resort by the same score, tie-broken by original index" — byte-identical to
@@ -392,7 +397,8 @@ export async function ambientRecall(
     const scope = scopes.get(r.id) ?? GLOBAL_SCOPE;
     const sameProjectBoost =
       currentScope !== GLOBAL_SCOPE && scope === currentScope ? config.sameProjectRankNudge : 0;
-    const foreignDemotion = isForeignDoc(r.id) ? config.foreignDocDemotion : 0;
+    const foreignDemotion =
+      currentScope !== GLOBAL_SCOPE && isForeignDoc(r.id) ? config.foreignDocDemotion : 0;
     return r.score + sameProjectBoost - foreignDemotion;
   };
   const ranked = results
