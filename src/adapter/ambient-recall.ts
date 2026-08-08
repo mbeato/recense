@@ -421,19 +421,32 @@ export async function ambientRecall(
   const reserved = Math.min(ANCHOR_RESERVED_SLOTS, anchoredPresentCount);
   const nonReservedSlots = AMBIENT_K - reserved;
 
+  // 2026-08-07 cross-review WR-04: the cap must hold even when cosine candidates are
+  // scarce. A floor-exempt anchored row (in `ranked` only because it was anchored, cosine
+  // below AMBIENT_FLOOR) may enter ONLY through the reserved pass, and the reserved pass
+  // counts its own additions — otherwise fewer than `nonReservedSlots` genuine cosine hits
+  // let anchored rows leak into general slots (pass 1) or the backfill (pass 3), shipping
+  // more than ANCHOR_RESERVED_SLOTS unsolicited lines. Rendering fewer than AMBIENT_K
+  // lines in that scarce case is the docstring's stated intent ("never crowd out the
+  // block"), not a shortfall.
+  const isFloorExempt = (r: { id: string; score: number }): boolean =>
+    anchoredById.has(r.id) && r.score < AMBIENT_FLOOR;
   const selectedIds = new Set<string>();
   for (const r of ranked) {
     if (selectedIds.size >= nonReservedSlots) break;
+    if (isFloorExempt(r)) continue; // floor-exempt rows use reserved slots only
     selectedIds.add(r.id);
   }
+  let forcedAnchored = 0;
   for (const r of ranked) {
-    if (selectedIds.size >= AMBIENT_K) break;
+    if (selectedIds.size >= AMBIENT_K || forcedAnchored >= reserved) break;
     if (!anchoredById.has(r.id) || selectedIds.has(r.id)) continue;
     selectedIds.add(r.id);
+    forcedAnchored++;
   }
   for (const r of ranked) {
     if (selectedIds.size >= AMBIENT_K) break;
-    if (selectedIds.has(r.id)) continue;
+    if (selectedIds.has(r.id) || isFloorExempt(r)) continue;
     selectedIds.add(r.id);
   }
   // Emit the selected rows in rank order (not selection-pass order).

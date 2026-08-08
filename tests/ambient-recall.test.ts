@@ -365,6 +365,30 @@ describe('ambientRecall', () => {
     expect(lines.filter(l => l.includes('anchored'))).toHaveLength(2);
   });
 
+  it('h2. WR-04 regression: with fewer cosine hits than AMBIENT_K - ANCHOR_RESERVED_SLOTS, floor-exempt anchored lines never exceed ANCHOR_RESERVED_SLOTS', async () => {
+    // seedAnchorGraph: 4 anchor-reachable facts, all orthogonally embedded (floor-exempt).
+    // Plus exactly ONE genuine cosine hit — scarcer than the 3 general slots. Pre-fix,
+    // pass 1 consumed general slots with floor-exempt anchored rows and the backfill
+    // added the rest: 4 unsolicited anchored lines. Post-fix: 1 cosine + at most 2
+    // reserved anchored lines, and the block legitimately renders FEWER than AMBIENT_K.
+    seedAnchorGraph(db);
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+    store.upsertNode({ id: 'scarce-cosine-hit', type: 'fact', value: 'the one genuine cosine hit', origin: 'observed' });
+    store.setEmbedding('scarce-cosine-hit', FIXED_VEC);
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, entityAnchoringEnabled: true };
+
+    const text = await ambientRecall(db, 'tell me everything about zyloquartz please', provider, cfg, clock);
+    const lines = factLines(text);
+
+    expect(lines.filter(l => l.includes('the one genuine cosine hit'))).toHaveLength(1);
+    // At most ANCHOR_RESERVED_SLOTS floor-exempt anchored lines (all 4 seeded anchored
+    // facts are below-floor, so every anchored line here is floor-exempt).
+    expect(lines.filter(l => l.includes('anchored')).length).toBeLessThanOrEqual(2);
+    expect(lines).toHaveLength(3); // 1 cosine + 2 reserved — never padded with more anchored rows
+  });
+
   it('i. sameProjectRankNudge moves an own-project fact above a higher-cosine foreign fact — never a filter', async () => {
     seedScopeNudgeGraph(db);
     const provider = new MockModelProvider({ embedFn: () => SCOPE_QUERY_VEC });
