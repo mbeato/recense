@@ -41,9 +41,18 @@
  * of the Dice token-overlap between the normalized prompt and the normalized line value/title
  * (`normalizeValue`, the same normalization the engine uses). This is a LEXICAL PROXY, not a
  * judge — its absolute value is meaningless; only baseline-vs-run deltas on the SAME prompt are
- * interpretable. `--judge` (LLM relevance grade) is NOT implemented here — deliberately, to keep
- * this script's default path fully offline besides the 58 embeds; a judge pass would need the
- * same explicit-paid-tier discipline as gate-accuracy-runner.cjs and must never be the default.
+ * interpretable.
+ *
+ * `--judge` (opt-in, 2026-08-07, discharges the 69-06 follow-up): swaps the lexical proxy for a
+ * gpt-4o-mini relevance grade — one call per replayed row, temperature 0, grading every injected
+ * fact line 0/1 for "useful context for this prompt", row relevance = mean of labels. This is
+ * the explicit PAID tier (locomo-scorer.cjs precedent) and is NEVER the default: without the
+ * flag the script stays lexical/offline besides the 58 embeds. Judge mode sends the prompt and
+ * the rendered line values to OpenAI — the same provider that already receives every prompt via
+ * the replay embed. Judge errors fail CLOSED (3 attempts, then exit 1 — a failed grade never
+ * counts as a 0). Artifacts record `grader`; `--run` refuses a baseline graded by a different
+ * grader, so G2 deltas are never computed across grading methods. Judge artifacts default to
+ * their own `-judge` suffixed paths and never clobber the lexical ones.
  *
  * Parsing note (Claude's-discretion resolution, mirrors 69-04-SUMMARY's documented tension):
  * the rendered block (69-04 grammar) carries a raw node id ONLY on doc-mode lines
@@ -91,16 +100,22 @@ if (!IS_BASELINE && !IS_RUN) {
   console.error('  --out <path>            output artifact path');
   console.error('  --baseline-json <path>  baseline artifact (--run only)');
   console.error('  --nudge <n> --demote <n> rank-weight sweep overrides (--run only)');
+  console.error('  --judge                 PAID: grade relevance with gpt-4o-mini instead of the lexical proxy.');
+  console.error('                          Never the default. Baseline and run must use the same grader.');
   console.error('');
   console.error('  This is NOT part of `npm run gate` — needs a live personal DB + OPENAI_API_KEY.');
   process.exit(1);
 }
 
 const MODE = IS_BASELINE ? 'baseline' : 'run';
+const IS_JUDGE = process.argv.includes('--judge');
+const GRADER = IS_JUDGE ? 'judge' : 'lexical';
+const JUDGE_MODEL = 'gpt-4o-mini';
+const GRADER_SUFFIX = IS_JUDGE ? '-judge' : '';
 const SET_PATH = path.resolve(arg('--set', 'scripts/eval/results/recall-audit/memory-shaped-evalset.jsonl'));
 const DB_PATH = arg('--db', process.env.RECENSE_DB || path.join(os.homedir(), '.config/recense/recense.db'));
-const OUT_PATH = path.resolve(arg('--out', `scripts/eval/results/recall-audit/69-gate-${MODE}.json`));
-const BASELINE_JSON_PATH = arg('--baseline-json', path.resolve('scripts/eval/results/recall-audit/69-gate-baseline.json'));
+const OUT_PATH = path.resolve(arg('--out', `scripts/eval/results/recall-audit/69-gate-${MODE}${GRADER_SUFFIX}.json`));
+const BASELINE_JSON_PATH = arg('--baseline-json', path.resolve(`scripts/eval/results/recall-audit/69-gate-baseline${GRADER_SUFFIX}.json`));
 const NUDGE = parseFloat(arg('--nudge', '0.05'));
 const DEMOTE = parseFloat(arg('--demote', '0.10'));
 
@@ -146,6 +161,13 @@ if (IS_RUN) {
   }
   if (!Array.isArray(baselineArtifact.rows) || baselineArtifact.rows.length === 0) {
     console.error(`GATE FAIL: baseline artifact at ${BASELINE_JSON_PATH} has no rows`);
+    process.exit(1);
+  }
+  // Grader-mismatch guard: G2 deltas are only interpretable within one grading method.
+  // Pre-judge baselines carry no `grader` field — treat absent as 'lexical'.
+  const baselineGrader = baselineArtifact.grader || 'lexical';
+  if (baselineGrader !== GRADER) {
+    console.error(`GATE FAIL: baseline at ${BASELINE_JSON_PATH} was graded with '${baselineGrader}' but this run uses '${GRADER}' — rerun --baseline with the same grader`);
     process.exit(1);
   }
 }
@@ -238,6 +260,47 @@ function diceOverlap(promptText, valueText) {
 
 const CONTRACT_TERM_RE = /contract|ciiaa|agreement|employment|equity|compensation|salary|terms|signed/i;
 
+// ---- --judge grader (opt-in PAID tier; locomo-scorer.cjs precedent) -----------------------
+// One gpt-4o-mini call per row: every injected line graded 0/1 for usefulness to the prompt,
+// row relevance = mean. temperature 0. Fail-closed: 3 attempts, then throw (main() exits 1) —
+// a failed grade must never silently score 0, which would bias G2 toward whichever arm failed.
+const judgeClient = IS_JUDGE ? new (require('openai'))() : null;
+
+async function judgeGradeRow(promptText, values) {
+  if (values.length === 0) return [];
+  const numbered = values.map((v, i) => `${i + 1}. ${v}`).join('\n');
+  const judgePrompt =
+    'A coding assistant is about to answer the user prompt below. Candidate memory lines were ' +
+    'retrieved to inject as background context. For EACH numbered line, judge whether it is ' +
+    'useful context for answering this specific prompt (relevant to its subject, project, or ' +
+    'entities — not merely generic). Reply with ONLY a JSON array of 0/1 integers, one per ' +
+    `line, in order (length ${values.length}). No other text.\n\n` +
+    `User prompt:\n${promptText}\n\nCandidate memory lines:\n${numbered}`;
+  let lastErr = 'unparseable response';
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await judgeClient.chat.completions.create({
+        model: JUDGE_MODEL,
+        max_tokens: 10 + 4 * values.length,
+        temperature: 0,
+        messages: [{ role: 'user', content: judgePrompt }],
+      });
+      const text = response.choices?.[0]?.message?.content ?? '';
+      const m = text.match(/\[[\s\d,]*\]/);
+      if (m) {
+        const labels = JSON.parse(m[0]);
+        if (Array.isArray(labels) && labels.length === values.length && labels.every(x => x === 0 || x === 1)) {
+          return labels;
+        }
+      }
+      lastErr = `bad shape: ${text.slice(0, 80)}`;
+    } catch (e) {
+      lastErr = String(e.message || e).slice(0, 200);
+    }
+  }
+  throw new Error(`judge grading failed after 3 attempts: ${lastErr}`);
+}
+
 // ---- replay loop ---------------------------------------------------------------------------
 async function main() {
   const perRow = [];
@@ -258,7 +321,9 @@ async function main() {
       block = '';
     }
     const { rows: parsedRows, charCount } = parseBlock(block);
-    const relevances = parsedRows.map(r => diceOverlap(row.prompt, r.value));
+    const relevances = IS_JUDGE
+      ? await judgeGradeRow(row.prompt, parsedRows.map(r => r.value))
+      : parsedRows.map(r => diceOverlap(row.prompt, r.value));
     const meanRelevance = relevances.length ? relevances.reduce((a, b) => a + b, 0) / relevances.length : 0;
 
     // G1 CONTRACT-CLASS (checked here per-row while raw values are still in memory; only the
@@ -307,6 +372,8 @@ async function main() {
     mode: MODE,
     commit,
     ts: new Date().toISOString(),
+    grader: GRADER,
+    ...(IS_JUDGE ? { judge_model: JUDGE_MODEL } : {}),
     knobs,
     row_count: perRow.length,
     viz_trace_enabled_observed: vizFlagOn,

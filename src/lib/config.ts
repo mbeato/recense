@@ -1041,6 +1041,16 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   // all pass), stays dark: G5 clearing did not change the outcome because G2 alone still blocks
   // the flip. Re-gate artifacts: scripts/eval/results/recall-audit/69-gate-{baseline,run}.json
   // (gitignored, not committed).
+  // Phase 69 D-08 JUDGE RE-GATE 2026-08-07 (--judge escape hatch implemented per the 69-06
+  // follow-up: gpt-4o-mini, temperature 0, per-line 0/1 usefulness grades, mean per row; both
+  // arms graded by the same judge): G1 PASS, G3 PASS, G4 PASS, G2 FAILS HARDER than the lexical
+  // proxy — 30/54 baseline-qualifying rows regress, mean judged relevance 0.7026 -> 0.5466.
+  // Decisively, rows with UNCHANGED line counts (5L -> 5L) regress too, which REFUTES the
+  // mean-dilution hypothesis recorded above: the judge is saying the anchored selections
+  // genuinely displace/dilute content it grades useful, not that a lexical artifact penalizes
+  // net-new additions. Stays dark on the strength of the better grader; any future attempt
+  // should revisit the anchoring SELECTION (which facts an anchor pulls), not the grading.
+  // Artifacts: scripts/eval/results/recall-audit/69-gate-{baseline,run}-judge.json (gitignored).
   consolSkipThreshold: 0.2,
   consolSkipThresholdAssistant: 0.5,
   unrelatedSimilarityThreshold: 0.3,
