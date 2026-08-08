@@ -35,7 +35,7 @@ import { SemanticStore } from '../src/db/semantic-store';
 import { ActionProposalStore, type ActionProposalRecord } from '../src/db/action-proposal-store';
 import { createBrainHttpServer, type BrainHttpServer } from '../src/adapter/serve-cli';
 import type { ModelProvider } from '../src/model/provider';
-import { createProposalClient } from '../clients/proposal-reference/proposal-client';
+import { createProposalClient, type ProposalClient } from '../clients/proposal-reference/proposal-client';
 import { syncProposals } from '../clients/proposal-reference/index';
 import { listLocalRows, findByProposalId } from '../clients/proposal-reference/local-store';
 
@@ -238,10 +238,25 @@ describe('proposal-reference adapter e2e: real HTTP surface + adapter public ent
 
   // ── Refusal round-trip (D-03) ──────────────────────────────────────────────
 
-  it('refusal round-trip: approving a proposal whose belief has moved returns 409 conflict, marks the local row refused/terminal, and issues no further approve on a second sync', async () => {
-    const seed = seedProposal({ beliefTombstoned: true });
+  it('refusal round-trip: approving a proposal whose belief moved between the list and the approve returns 409 conflict, marks the local row refused/terminal, and issues no further approve on a second sync', async () => {
+    // CR-01 (v10 cross-review) closed the case this test used to seed: a proposal whose
+    // belief was ALREADY tombstoned at list time is no longer listed at all, precisely so
+    // no consumer can be handed a row that is guaranteed to 409. The refusal path now
+    // fires only on the genuine race — the belief moves AFTER the list response and
+    // BEFORE the approve — so the fixture injects exactly that race by tombstoning inside
+    // a wrapper around listProposals.
+    const seed = seedProposal();
     const storePath = newStorePath();
-    const client = createProposalClient(`http://127.0.0.1:${port}`, TEST_TOKEN);
+    const inner = createProposalClient(`http://127.0.0.1:${port}`, TEST_TOKEN);
+    const client: ProposalClient = {
+      async listProposals() {
+        const records = await inner.listProposals();
+        new SemanticStore(seedDb, realClock, config(tmpDbPath)).tombstone(seed.beliefNodeId);
+        return records;
+      },
+      approve: (id) => inner.approve(id),
+      reject: (id) => inner.reject(id),
+    };
 
     const report = await syncProposals(client, storePath, noopLog);
 
