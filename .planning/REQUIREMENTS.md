@@ -86,8 +86,8 @@
 > roadmap, not one of the milestone's 30 producer/consumer requirements. Tracked here separately
 > so the v10.0 coverage table below stays exact.
 
-- [x] **RECALL-01**: Ambient recall reaches facts anchored by a proper noun in the prompt via **LLM-free indexed entity lookup on the hot path** — distinctive prompt tokens alias/exact-matched to entity nodes, their facts unioned with cosine top-k before ranking. The audit's "contract with vtx" class (asked twice, whiffed twice, facts present) resolves. (F2; SC1)
-- [x] **RECALL-02**: Cross-project recall is PRESERVED (resume sessions legitimately pull VTX/recense facts) but a foreign-project deep-dive doc no longer outranks own-project facts — a same-project rank NUDGE plus doc-type demotion/re-rendering (title + `recense://` link, not a truncated 200-char body), never a hard scope filter. (F1+F4; SC2; carries the D-S1 reversal)
+- [ ] **RECALL-01**: Ambient recall reaches facts anchored by a proper noun in the prompt via **LLM-free indexed entity lookup on the hot path** — distinctive prompt tokens alias/exact-matched to entity nodes, their facts unioned with cosine top-k before ranking. The audit's "contract with vtx" class (asked twice, whiffed twice, facts present) resolves. (F2; SC1) — **ACCEPTED-NULL 2026-08-07**: capability built, tested, review-hardened, but `entityAnchoringEnabled` ships dark. Three gate runs block it on G2 relevance: lexical 20/53 then 16/51 regressed, and the LLM-judge re-gate (gpt-4o-mini, `--judge`) fails harder — 30/54 regressed, mean judged relevance 0.70→0.55, same-line-count rows regress, refuting the mean-dilution hypothesis. Next attempt must revisit anchoring *selection*, not grading.
+- [x] **RECALL-02**: Cross-project recall is PRESERVED (resume sessions legitimately pull VTX/recense facts) but a foreign-project deep-dive doc no longer outranks own-project facts — a same-project rank NUDGE plus doc-type demotion/re-rendering (title + `recense://` link, not a truncated 200-char body), never a hard scope filter. (F1+F4; SC2; carries the D-S1 reversal) — **PARTIAL**: ranking half live (`sameProjectRankNudge=0.05`, `foreignDocDemotion=0.10`, gated ON 2026-08-03); doc-link rendering half accepted-null — vacuous through three gate runs including the 2026-08-07 refreshed-eval-set re-gate (0/57 rows render a doc line; blocker is doc-candidate surfacing, not the eval set), `ambientDocLinkRenderEnabled` stays dark.
 - [x] **RECALL-03**: The injected block carries each fact's 1-hop relations — the edges `buildHonestOneHopTrace` already computes (AMBIENT_HOP_TOPN=6) and currently discards to the viz sink — within the existing token budget (~5 lines × 200 chars unless explicitly re-budgeted). (SC3)
 - [x] **RECALL-04**: `recense recall` gains an **evidence mode**: cited node ids + traversed edges instead of only LLM-composed prose, read-only, so a caller can verify a claim without grepping. (SC4)
 - [x] **RECALL-05**: Every change is gated on the 58-prompt eval set: no regression on the 42 currently-hit prompts; injected-line relevance improves on the whiffs (the "contract with vtx" class must surface contract facts); ambient block token budget held. `ambient_hit` labels are outcome observations, NOT ground truth — grading is by injected-line relevance. (SC5)
@@ -135,7 +135,7 @@
 | RESOLVE-03 | 64 | Complete |
 | DRIFT-01 | 65 | Complete |
 | DRIFT-02 | 65 | Complete |
-| DRIFT-03 | 65 | Complete |
+| DRIFT-03 | 65 | Complete (mechanism verified; `provenanceDistinctnessEnabled` dark pending 65-HUMAN-UAT founder review incl. WR-01 farming-bar) |
 | DRIFT-04 | 65 | Complete |
 | DRIFT-05 | 65 | Complete |
 | EMIT-01 | 66 | Complete |
@@ -152,11 +152,11 @@
 | APPROVE-02 | 68 | Complete |
 | APPROVE-03 | 68 | Complete |
 | APPROVE-04 | 68 | Complete |
-| RECALL-01 | 69 | Planned |
-| RECALL-02 | 69 | Planned |
-| RECALL-03 | 69 | Planned |
-| RECALL-04 | 69 | Planned |
-| RECALL-05 | 69 | Planned |
+| RECALL-01 | 69 | Accepted-null (built + tested, `entityAnchoringEnabled` dark — G2 fails on lexical ×2 and LLM-judge re-gate 2026-08-07) |
+| RECALL-02 | 69 | Partial (ranking half live; doc-link render half accepted-null — vacuous ×3 incl. refreshed-set re-gate 2026-08-07) |
+| RECALL-03 | 69 | Complete (`ambientHopInjectionEnabled` live) |
+| RECALL-04 | 69 | Complete (`recall --evidence` live) |
+| RECALL-05 | 69 | Complete (fail-closed gate built + run; `--judge` grader added 2026-08-07) |
 
 _Source of truth for the EMAIL-01..04 rows above: `62-VERIFICATION.md` (pass 6, 2026-08-02,
 status `passed`) — future rounds must update the verification report and this table together,
@@ -173,3 +173,4 @@ not one without the other._
 ---
 *Requirements defined: 2026-07-29*
 *Last updated: 2026-07-29 after v10.0 roadmap creation — Traceability populated (7 phases, 62–68), coverage 30/30 (100%).*
+*Reconciled: 2026-08-07 — RECALL-01..05 checkboxes + traceability rows updated together per the rule above, from `69-VERIFICATION.md` (passed_with_open_item) plus the 2026-08-07 re-gates (LLM-judge G2 fail → RECALL-01 accepted-null; refreshed-set doc-link gate still vacuous → RECALL-02 partial). DRIFT-03 row annotated with its enablement-time founder gate (65-VERIFICATION human_needed items).*
