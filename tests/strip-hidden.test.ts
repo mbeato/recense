@@ -1306,16 +1306,27 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     expect(elapsed).toBeLessThan(1000);
   });
 
+  // De-flake (2026-08-07): both runs measure ~0.05-0.13ms, so a single GC pause or context
+  // switch under parallel test load inflated one sample past the bound (8.7 and 10.9
+  // observed 2026-08-03; both pass in isolation). Min-of-5 discards scheduler noise while
+  // keeping the <= 8 bound itself UNCHANGED — a real quadratic/backtracking blowup inflates
+  // every run, not just an unlucky one.
+  const timeMin = (fn: () => void, runs = 5): number => {
+    let best = Infinity;
+    for (let i = 0; i < runs; i++) {
+      const start = performance.now();
+      fn();
+      best = Math.min(best, performance.now() - start);
+    }
+    return best;
+  };
+
   it('Shape A growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
     const input32 = shapeA(32 * 1024);
-    const start32 = performance.now();
-    stripHiddenContent(input32);
-    const t32 = performance.now() - start32;
+    const t32 = timeMin(() => stripHiddenContent(input32));
 
     const input64 = shapeA(64 * 1024);
-    const start64 = performance.now();
-    stripHiddenContent(input64);
-    const t64 = performance.now() - start64;
+    const t64 = timeMin(() => stripHiddenContent(input64));
 
     // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow
     // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure.
@@ -1324,14 +1335,10 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
 
   it('Shape U growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
     const input32 = shapeU(32 * 1024);
-    const start32 = performance.now();
-    stripHiddenContent(input32);
-    const t32 = performance.now() - start32;
+    const t32 = timeMin(() => stripHiddenContent(input32));
 
     const input64 = shapeU(64 * 1024);
-    const start64 = performance.now();
-    stripHiddenContent(input64);
-    const t64 = performance.now() - start64;
+    const t64 = timeMin(() => stripHiddenContent(input64));
 
     // Quadratic growth gives ~4x per doubling; catastrophic backtracking would blow
     // past 8x or hang. max(t32, 1) avoids a divide-by-tiny false failure. The three
