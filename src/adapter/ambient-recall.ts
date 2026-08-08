@@ -166,6 +166,17 @@ export interface RenderRow {
  *      further hop appending (never "skip and keep trying" — that would reorder enrichment
  *      nondeterministically across facts).
  */
+/**
+ * Collapse newline runs (plus surrounding indentation) to a single space (2026-08-07
+ * cross-review CR-01). The block's grammar is one `- `/`  ↳ ` line per row/hop — a
+ * multi-line node value (159/159 live embedded doc bodies, plus 17 fact nodes) must
+ * never shatter a line into several. This is a rendering INVARIANT, independent of the
+ * doc-link knob: it applies to the raw-value fact branch and hop labels alike, and it
+ * makes deriveDocTitle's own first-line extraction a strict refinement rather than the
+ * only newline-safe path.
+ */
+const flatten = (s: string): string => s.replace(/\s*\n+\s*/g, ' ');
+
 export function renderAmbientBlock(rows: RenderRow[], opts?: { docLinks?: boolean }): string {
   const docLinks = opts?.docLinks ?? false;
   const selected = rows.slice(0, AMBIENT_K);
@@ -187,7 +198,7 @@ export function renderAmbientBlock(rows: RenderRow[], opts?: { docLinks?: boolea
       factLine = `- ${marker}${title} — recense://doc/${row.id} (doc, score ${row.score.toFixed(2)}${anchoredSuffix})`;
       contentLen = marker.length + title.length;
     } else {
-      const value = row.value.slice(0, valueCap);
+      const value = flatten(row.value).slice(0, valueCap);
       factLine = `- ${marker}${value} (${row.origin}, score ${row.score.toFixed(2)}${anchoredSuffix})`;
       contentLen = marker.length + value.length;
     }
@@ -202,7 +213,7 @@ export function renderAmbientBlock(rows: RenderRow[], opts?: { docLinks?: boolea
     outLines.push(factLine);
     if (hopsExhausted) continue;
     for (const hop of (row.hops ?? []).slice(0, MAX_HOP_LINES_PER_FACT)) {
-      const label = hop.label.slice(0, HOP_LABEL_CHARS);
+      const label = flatten(hop.label).slice(0, HOP_LABEL_CHARS);
       if (runningChars + label.length > AMBIENT_BLOCK_CHAR_BUDGET) {
         hopsExhausted = true;
         break;

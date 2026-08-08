@@ -214,7 +214,8 @@ const DOC_SEP = ' — recense://doc/';
 function parseBlock(block) {
   const parsedRows = [];
   let charCount = 0;
-  if (!block || block === '{}') return { rows: parsedRows, charCount };
+  let unparseableCount = 0;
+  if (!block || block === '{}') return { rows: parsedRows, charCount, unparseableCount };
   const lines = block.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -226,7 +227,9 @@ function parseBlock(block) {
       continue;
     }
     const m = FACT_RE.exec(line);
-    if (!m) continue; // defensively skip any unparseable line rather than crash the gate
+    if (!m) { unparseableCount++; continue; } // counted, never a silent skip (CR-01 2026-08-07): a
+    // renderer line the grammar does not describe must surface as a G4 violation, not read as
+    // "no line" — the pre-fix skip made a shattered multi-line row indistinguishable from absence.
     const [, scopeRaw, content, originOrDoc, scoreStr, via] = m;
     const scope = scopeRaw || GLOBAL_SCOPE;
     const marker = scopeRaw ? `[${scopeRaw}] ` : '';
@@ -250,7 +253,7 @@ function parseBlock(block) {
       score: parseFloat(scoreStr),
     });
   }
-  return { rows: parsedRows, charCount };
+  return { rows: parsedRows, charCount, unparseableCount };
 }
 
 function diceOverlap(promptText, valueText) {
@@ -324,7 +327,7 @@ async function main() {
       console.error(`[recall-audit-gate] prompt_id=${promptId} ambientRecall threw: ${e.message}`);
       block = '';
     }
-    const { rows: parsedRows, charCount } = parseBlock(block);
+    const { rows: parsedRows, charCount, unparseableCount } = parseBlock(block);
     const relevances = IS_JUDGE
       ? await judgeGradeRow(row.prompt, parsedRows.map(r => r.value))
       : parsedRows.map(r => diceOverlap(row.prompt, r.value));
@@ -352,8 +355,9 @@ async function main() {
       }
     }
 
-    // G4 BUDGET
-    if (charCount > AMBIENT_BLOCK_CHAR_BUDGET || parsedRows.length > AMBIENT_K) {
+    // G4 BUDGET + GRAMMAR (CR-01 2026-08-07: any non-header line matching neither FACT_RE nor
+    // HOP_RE is a violation — malformed renderer output must never read as a silent pass).
+    if (charCount > AMBIENT_BLOCK_CHAR_BUDGET || parsedRows.length > AMBIENT_K || unparseableCount > 0) {
       g4Violations.push(promptId);
     }
 
@@ -362,6 +366,7 @@ async function main() {
       project: row.project,
       line_count: parsedRows.length,
       char_count: charCount,
+      unparseable_line_count: unparseableCount,
       relevance: Number(meanRelevance.toFixed(4)),
       has_anchored: parsedRows.some(r => r.is_anchored),
       has_doc: parsedRows.some(r => r.is_doc),
@@ -391,6 +396,7 @@ async function main() {
       mean_char_count: mean(perRow.map(r => r.char_count)),
       mean_relevance: Number(mean(perRow.map(r => r.relevance)).toFixed(4)),
       anchored_block_count: perRow.filter(r => r.has_anchored).length,
+      unparseable_line_count: perRow.reduce((n, r) => n + r.unparseable_line_count, 0),
     },
   };
 
@@ -442,7 +448,7 @@ async function main() {
       G4_budget: {
         pass: g4Pass,
         detail: {
-          description: `block char count <= ${AMBIENT_BLOCK_CHAR_BUDGET} and line count <= ${AMBIENT_K}`,
+          description: `block char count <= ${AMBIENT_BLOCK_CHAR_BUDGET}, line count <= ${AMBIENT_K}, and zero unparseable lines`,
           violations: g4Violations,
         },
       },

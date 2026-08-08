@@ -540,8 +540,12 @@ describe('renderAmbientBlock', () => {
       factRow({ id: `r${i}`, value: `fact ${i}` }),
     );
     const text = renderAmbientBlock(rows);
-    const factLines = text.split('\n').slice(1).filter(l => l.startsWith('- '));
-    expect(factLines).toHaveLength(AMBIENT_K);
+    // CR-01 (2026-08-07): count ALL non-header lines, not just `- `-prefixed ones — a
+    // `.filter(l => l.startsWith('- '))` here would silently discard exactly the
+    // continuation lines a shattered multi-line value produces, hiding the defect.
+    const allLines = text.split('\n').slice(1);
+    expect(allLines).toHaveLength(AMBIENT_K);
+    for (const line of allLines) expect(line.startsWith('- ')).toBe(true);
   });
 
   it('o. is pure: same input twice yields the same string, and the source touches no store/db/clock', () => {
@@ -620,13 +624,33 @@ describe('renderAmbientBlock', () => {
     expect(text).not.toContain('The brain-memory system does many things');
   });
 
-  it('s. doc row renders as pre-phase truncated body when docLinks:false', () => {
+  it('s. doc row renders as a SINGLE flattened truncated-body line when docLinks:false', () => {
     const rows: RenderRow[] = [
       factRow({ id: 'doc-1', type: 'doc', value: '# Deep Dive Title\n\nBody text here', score: 0.9 }),
     ];
     const text = renderAmbientBlock(rows, { docLinks: false });
-    expect(text).toContain('# Deep Dive Title');
+    // CR-01 (2026-08-07): assert the full line grammar, not a substring — the old
+    // toContain('# Deep Dive Title') passed even when the multi-line body shattered the
+    // block into several lines with a dangling parenthetical.
+    const lines = text.split('\n');
+    expect(lines).toHaveLength(2); // header + exactly one fact line
+    expect(lines[1]).toBe('- # Deep Dive Title Body text here (observed, score 0.90)');
     expect(text).not.toContain('recense://doc/');
+  });
+
+  it('s2. CR-01 regression: a newline-bearing fact value renders as exactly ONE `- ` line; hop labels are flattened too', () => {
+    const rows: RenderRow[] = [
+      factRow({
+        id: 'ml-1',
+        value: 'first line\n\n  second line\nthird line',
+        hops: [{ rel: 'works_on', label: 'neighbour\nwith newline' }],
+      }),
+    ];
+    const text = renderAmbientBlock(rows);
+    const lines = text.split('\n');
+    expect(lines).toHaveLength(3); // header + one fact line + one hop line
+    expect(lines[1]).toBe('- first line second line third line (observed, score 0.72)');
+    expect(lines[2]).toBe('  ↳ works_on neighbour with newline');
   });
 
   it('t. non-doc rows are unaffected by docLinks in either state', () => {
