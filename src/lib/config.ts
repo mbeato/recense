@@ -1117,6 +1117,15 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   // Phase 69 D-08 RE-GATE 2026-08-03 (post WR-01/WR-03 fixes): still vacuous — the re-run against
   // the same 58-prompt set again surfaced 0/58 doc-type rows. No code change in this re-gate
   // touches doc-candidate surfacing, so this was expected. Stays dark; unchanged status.
+  // Phase 69 D-08 RE-GATE 2026-08-07 (refreshed eval set, discharges the 69-06 eval-set-addition
+  // follow-up): turn-records regenerated from live transcripts (704 turns; older sessions have
+  // rotated out) and gated on the deduped UNION of the original 58-prompt set + the refresh — 57
+  // unique real prompts, 4 genuinely new. Run arm used the new --no-anchor flag so the
+  // known-failing anchoring knob could not conflate this gate. G1-G4 all pass but STILL VACUOUS:
+  // 0/57 rows rendered a doc line. Two refreshes have now shown the eval distribution does not
+  // surface doc-type candidates above the floor — the blocker is graph/candidate state, not the
+  // set. Stays dark; next honest step is doc-candidate surfacing work, not another replay.
+  // Artifacts: scripts/eval/results/recall-audit/69-doclink-{baseline,run}.json (gitignored).
   ambientHopInjectionEnabled: true,   // Phase 69 D-08 gate 2026-08-03: ENABLED — literal flipped per the gate annotation below (CR-01)
   // Phase 69 D-08 gate 2026-08-03: enabled — G1/G2/G3/G4 all pass (G1 4/4 contract-class, G2
   // 0/53 regressions — hop lines are structurally additive/enrichment-only per D-06 and never

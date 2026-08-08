@@ -190,8 +190,12 @@ const DARK_KNOBS = {
   ambientDocLinkRenderEnabled: false,
   ambientHopInjectionEnabled: false,
 };
+// --no-anchor (2026-08-07): keep entityAnchoringEnabled dark in --run. Added for the doc-link
+// re-gate after the judge re-gate confirmed anchoring's G2 failure — without it, every --run
+// conflates the known-failing anchoring knob into whichever OTHER knob is being gated.
+const NO_ANCHOR = process.argv.includes('--no-anchor');
 const LIT_KNOBS = {
-  entityAnchoringEnabled: true,
+  entityAnchoringEnabled: !NO_ANCHOR,
   sameProjectRankNudge: NUDGE,
   foreignDocDemotion: DEMOTE,
   ambientDocLinkRenderEnabled: true,
