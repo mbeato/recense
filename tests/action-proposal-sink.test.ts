@@ -131,6 +131,31 @@ describe('proposalId', () => {
     expect(a).toBe(b);
   });
 
+  it('WR-05: the encoding is byte-locked (golden vector)', () => {
+    // The proposalId doc calls the array ordering and the JSON.stringify serialization
+    // "locked as part of the contract", but until this test nothing enforced either: every
+    // other assertion in this describe block (determinism, per-field sensitivity) is
+    // satisfied by ANY hash encoding, including an object-keyed one. That matters because
+    // proposalId is the idempotency key both consumers persist — LocalRow.proposalId in the
+    // reference adapter, and its 32-char prefix as the store key in the Telegram bridge.
+    // Reordering the array or switching to an object would change every id, orphan every
+    // stored local row, and re-prompt every already-decided proposal, with a green suite.
+    //
+    // The literal below is the frozen answer: it fails on an encoding change AND on a hash
+    // change, neither of which the derived form beside it would catch on its own.
+    const GOLDEN = 'a3daded7e75f14353232490e69de947a4d16643c0dd5b5d8750993072a515704';
+    const vector = {
+      entity_node_id: 'e1',
+      change_field: 'status',
+      change_from: null,
+      change_to: 'offer',
+      evidence_episode: 'ep1',
+    };
+    expect(proposalId(vector)).toBe(GOLDEN);
+    // Spelled-out form: names the exact array ordering and serialization being locked.
+    expect(proposalId(vector)).toBe(sha256(JSON.stringify(['e1', 'status', null, 'offer', 'ep1'])));
+  });
+
   it('is unaffected by any timestamp (proposalId takes no timestamp input at all)', () => {
     // proposalId's signature has no timestamp parameter — the same five-key Pick produces
     // the same id regardless of when it is called.
