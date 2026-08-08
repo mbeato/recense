@@ -1131,7 +1131,21 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   // 0/53 regressions — hop lines are structurally additive/enrichment-only per D-06 and never
   // enter the fact-relevance mean, G3 vacuous as above, G4 held by the renderer's own two-pass
   // budget accounting). REAL exercise (not vacuous): 11 hop lines rendered across the 58-prompt
-  // replay, attached beneath 1-hop facts the engine already computed.
+  // replay, attached beneath 1-hop facts the engine already computed. NOTE (2026-08-07 WR-01):
+  // that verdict was produced by the ALL-LIT arm (doclinks+anchoring also on) — the shipped arm
+  // replay below is the configuration-faithful evidence.
+  // 2026-08-07 SHIP-ARM REPLAY (cross-review WR-01, post CR-01/WR-02/WR-03/WR-04 fixes): first
+  // replay of the exact shipped configuration (anchor OFF via --no-anchor, doclinks OFF via
+  // --no-doclinks, hops ON, nudge 0.05, demote 0.10) on the 58-prompt set against a fresh
+  // same-code all-dark baseline, lexical grader. G1 PASS (4/4 contract-class), G3 PASS (0
+  // violations), G4 PASS (0 violations; unparseable_line_count 0 — CR-01's new grammar check
+  // observed zero malformed lines in the shipped arm, closing the gate's structural blind spot).
+  // G2: 53/54 qualifying rows held (mean relevance 0.1029 dark -> 0.1033 ship); the single
+  // failing row is a demonstrated AMBIENT_FLOOR boundary artifact — its lone hit scores exactly
+  // 0.45 and flips above/below the floor run-to-run WITHIN THE DARK ARM ITSELF (embed
+  // nondeterminism, reproduced 3x), so the miss is not attributable to any lit knob. Per WR-01,
+  // per-knob verdicts must name the arm that produced them. Artifacts:
+  // scripts/eval/results/recall-audit/ship-arm-{baseline,run}.json (gitignored).
 
   // Phase 39.1: subject doc exhaust-gate tunables (D-06/D-07)
   corpusSubjectDriftThreshold: 3,     // min atom-touch-count since last gen to trigger REFRESH gate (D-06; analogous to highMass:10 shape)

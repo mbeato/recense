@@ -61,6 +61,13 @@
  * text alone — node_id is populated when present (doc lines) and left null otherwise, which is
  * sufficient because G3 (the only id-adjacent gate) reasons over scope+is_doc, not raw ids.
  *
+ * ARM NAMING (2026-08-07, cross-review WR-01): a --run arm is defined by the exact knob set it
+ * replays (`--no-anchor` / `--no-doclinks` / `--no-hops` plus --nudge/--demote). Per-knob
+ * verdicts recorded in config.ts annotations MUST name the arm that produced them — a verdict
+ * from the all-lit arm says nothing about the shipped arm (guard-set/ship-set drift). The
+ * shipped configuration (anchor off, doclinks off, hops on, nudge 0.05, demote 0.10) replays as:
+ *   node scripts/eval/recall-audit-gate.cjs --run --no-anchor --no-doclinks ...
+ *
  * Read-only-intent invariant (T-69-06-WRITE): the DB is opened normally (not SQLite-readonly,
  * since ambientRecall's SwitchableActivationTraceSink prepares a statement against `meta` even
  * when the flag is off) but this script issues zero writes itself. `activation_trace` row count
@@ -102,6 +109,10 @@ if (!IS_BASELINE && !IS_RUN) {
   console.error('  --nudge <n> --demote <n> rank-weight sweep overrides (--run only)');
   console.error('  --judge                 PAID: grade relevance with gpt-4o-mini instead of the lexical proxy.');
   console.error('                          Never the default. Baseline and run must use the same grader.');
+  console.error('  --no-anchor             --run only: keep entityAnchoringEnabled dark in the lit arm.');
+  console.error('  --no-doclinks           --run only: keep ambientDocLinkRenderEnabled dark in the lit arm.');
+  console.error('  --no-hops               --run only: keep ambientHopInjectionEnabled dark in the lit arm.');
+  console.error('                          Ship-arm replay: --run --no-anchor --no-doclinks (WR-01).');
   console.error('');
   console.error('  This is NOT part of `npm run gate` — needs a live personal DB + OPENAI_API_KEY.');
   process.exit(1);
@@ -193,13 +204,18 @@ const DARK_KNOBS = {
 // --no-anchor (2026-08-07): keep entityAnchoringEnabled dark in --run. Added for the doc-link
 // re-gate after the judge re-gate confirmed anchoring's G2 failure — without it, every --run
 // conflates the known-failing anchoring knob into whichever OTHER knob is being gated.
+// --no-doclinks / --no-hops (2026-08-07, cross-review WR-01): same pattern extended so the
+// SHIPPED knob set is replayable as its own arm — before WR-01 the gate had exactly two
+// hard-coded arms (all-dark, all-lit) and the shipped configuration matched neither.
 const NO_ANCHOR = process.argv.includes('--no-anchor');
+const NO_DOCLINKS = process.argv.includes('--no-doclinks');
+const NO_HOPS = process.argv.includes('--no-hops');
 const LIT_KNOBS = {
   entityAnchoringEnabled: !NO_ANCHOR,
   sameProjectRankNudge: NUDGE,
   foreignDocDemotion: DEMOTE,
-  ambientDocLinkRenderEnabled: true,
-  ambientHopInjectionEnabled: true,
+  ambientDocLinkRenderEnabled: !NO_DOCLINKS,
+  ambientHopInjectionEnabled: !NO_HOPS,
 };
 const knobs = IS_BASELINE ? DARK_KNOBS : LIT_KNOBS;
 const config = { ...DEFAULT_CONFIG, dbPath: DB_PATH, ...knobs };
