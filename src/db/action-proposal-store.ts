@@ -157,10 +157,26 @@ export class ActionProposalStore {
     // lock-free read-only property; the DURABLE 'expired' transition still happens only
     // at approve time (D-10). Boundary matches classifyProposalStaleness: expires_at <=
     // now is expired, so only expires_at > now is listed.
+    //
+    // CR-01 (v10 cross-review): the read filter must be the exact complement of
+    // classifyProposalStaleness, which refuses on THREE grounds — entity_gone, superseded,
+    // expired. Filtering only the third one re-created the very starvation WR-03 was
+    // written to prevent: a tombstoned belief node is the NORMAL outcome of the mechanism
+    // that emits proposals (the next contradiction against the same entity tombstones the
+    // node the previous proposal named), so those rows stay pending, stay listed, burn the
+    // Telegram bridge's per-entity/daily budget, and are guaranteed to 409 on the tap for
+    // the full 14-day TTL. Same join as getStalenessInputs below. The INNER JOIN also
+    // inherits the fail-closed property for free: a proposal orphaned by a hard-deleted
+    // node drops out of the list instead of being surfaced and then refused.
     this.stmtListPending = db.prepare(`
-      SELECT * FROM action_proposal
-      WHERE status = 'pending' AND expires_at > @now
-      ORDER BY created_at ASC
+      SELECT p.* FROM action_proposal p
+      JOIN node e ON e.id = p.entity_node_id
+      JOIN node b ON b.id = p.belief_node_id
+      WHERE p.status = 'pending'
+        AND p.expires_at > @now
+        AND e.tombstoned = 0
+        AND b.tombstoned = 0
+      ORDER BY p.created_at ASC
       LIMIT @limit
     `);
 

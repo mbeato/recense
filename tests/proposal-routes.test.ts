@@ -268,6 +268,37 @@ describe('proposal routes: GET /v1/proposals, POST /v1/proposals/:id/approve|rej
     }
   });
 
+  // ── CR-01: the list filter is the exact complement of the refusal classifier ──
+  // Both fixtures below are the SAME ones the EMIT-07 refusal matrix uses further down;
+  // pre-fix each was listed to every consumer and then guaranteed to 409 on the tap.
+
+  it('CR-01: GET /v1/proposals excludes a pending proposal whose belief node is tombstoned', async () => {
+    const live = seedProposal();
+    const superseded = seedProposal({ beliefTombstoned: true });
+
+    const res = await request('GET', '/v1/proposals');
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { items: Array<Record<string, unknown>> };
+    const ids = body.items.map((item) => item.id);
+    expect(ids).toContain(live.proposalId);
+    expect(ids).not.toContain(superseded.proposalId);
+    // Still pending in the DB — the filter is a read-side complement, not a lazy sweep.
+    expect(getProposalStatus(superseded.proposalId)).toBe('pending');
+  });
+
+  it('CR-01: GET /v1/proposals excludes a pending proposal whose entity node is tombstoned', async () => {
+    const live = seedProposal();
+    const entityGone = seedProposal({ entityTombstoned: true });
+
+    const res = await request('GET', '/v1/proposals');
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { items: Array<Record<string, unknown>> };
+    const ids = body.items.map((item) => item.id);
+    expect(ids).toContain(live.proposalId);
+    expect(ids).not.toContain(entityGone.proposalId);
+    expect(getProposalStatus(entityGone.proposalId)).toBe('pending');
+  });
+
   // ── Approve / reject happy paths ──────────────────────────────────────────
 
   it('POST .../approve on a pending fresh proposal returns 200 {status:"approved"} and persists it', async () => {
