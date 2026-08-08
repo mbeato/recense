@@ -509,6 +509,47 @@ describe('ambientRecall', () => {
     expect(text).not.toContain('↳');
   });
 
+  it('hop-injection WR-03: a foreign-scope neighbour is dropped for a known-scope caller, kept for a global caller', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+    store.upsertNode({ id: 'wr3-seed', type: 'fact', value: 'wr3 seed fact', origin: 'observed' });
+    store.setEmbedding('wr3-seed', FIXED_VEC);
+    store.upsertNode({ id: 'wr3-foreign-nb', type: 'fact', value: 'a foreign project neighbour', origin: 'observed' });
+    store.upsertEdge({ src: 'wr3-seed', dst: 'wr3-foreign-nb', rel: 'works_on', w: 1, kind: 'relation' });
+    seedScope(db, 'wr3-foreign-nb', 'projb');
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: true };
+
+    // Known caller scope (projA) — the projB neighbour is foreign and must be dropped.
+    const textKnown = await ambientRecall(db, PROMPT, provider, cfg, clock, '/Users/tester/projA');
+    expect(textKnown).toContain('wr3 seed fact');
+    expect(textKnown).not.toContain('a foreign project neighbour');
+
+    // Global caller (cwd='') — scope filter is neutral (WR-02 symmetry rule): hop renders.
+    const textGlobal = await ambientRecall(db, PROMPT, provider, cfg, clock);
+    expect(textGlobal).toContain('  ↳ works_on a foreign project neighbour');
+  });
+
+  it('hop-injection WR-03: an already-selected row never renders twice as a hop line', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+    // Both nodes are top-k cosine hits AND connected by a relation edge — without the
+    // dedup guard the neighbour renders once as a fact line and again as a hop line,
+    // paying twice against the char budget.
+    store.upsertNode({ id: 'wr3-dup-a', type: 'fact', value: 'duplicate candidate alpha', origin: 'observed' });
+    store.setEmbedding('wr3-dup-a', FIXED_VEC);
+    store.upsertNode({ id: 'wr3-dup-b', type: 'fact', value: 'duplicate candidate beta', origin: 'observed' });
+    store.setEmbedding('wr3-dup-b', FIXED_VEC);
+    store.upsertEdge({ src: 'wr3-dup-a', dst: 'wr3-dup-b', rel: 'works_on', w: 1, kind: 'relation' });
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: true };
+
+    const text = await ambientRecall(db, PROMPT, provider, cfg, clock);
+    const betaMentions = text.split('\n').filter(l => l.includes('duplicate candidate beta'));
+    expect(betaMentions).toHaveLength(1); // fact line only — never again as a hop
+    expect(betaMentions[0].startsWith('- ')).toBe(true);
+  });
+
   it('hop-injection: activation_trace rows are byte-identical in shape whether the knob is on or off (viz sink unaffected, D-06)', async () => {
     const clock = new FakeClock(Date.UTC(2026, 0, 1));
     const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });

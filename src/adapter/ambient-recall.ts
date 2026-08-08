@@ -359,7 +359,13 @@ export async function ambientRecall(
   // method remains display-only and never influences selection/order (D-S1); on THIS path
   // only, Phase 69 D-01 partially reverses that for ordering (never existence) — see the
   // bounded carve-out recorded at the store method's own doc comment.
-  const scopes = store.getNodeScopes(results.map(r => r.id));
+  // 2026-08-07 cross-review WR-03: the batch is widened to include collected hop target
+  // ids (still ONE query) so the hop-attribution pass below can apply the same scope
+  // discipline to hop neighbours that the rank nudge/demotion applies to fact lines.
+  const scopes = store.getNodeScopes([
+    ...results.map(r => r.id),
+    ...collectedHops.map(h => h.node_id),
+  ]);
 
   // One indexed getNode per distinct id, cached — shared by the foreign-doc check below
   // and the origin lookup in the render loop, so no id is read from the node table twice.
@@ -440,10 +446,22 @@ export async function ambientRecall(
   // drop hops whose neighbour is missing or tombstoned, and cap at MAX_HOP_LINES_PER_FACT
   // per fact preserving the collector's own order (already weight-desc from
   // buildHonestOneHopTrace). No score is attached — hop scores are always null (WR-02).
+  // 2026-08-07 cross-review WR-03: hop neighbours obey the block's existing disciplines
+  // before consuming a slot — (1) never duplicate an already-selected fact line (both can
+  // be top-k cosine hits for the same query), and (2) never inject a neighbour whose scope
+  // is foreign to a KNOWN caller scope (neutral when the caller scope is global, consistent
+  // with WR-02's symmetry rule — the same knobs shipped to bias the block toward the
+  // caller's project must not be bypassed by a hop line). Hop lines are enrichment by D-06,
+  // so dropping one is always safe.
   const hopsBySrc = new Map<string, Array<{ rel: string; label: string }>>();
   if (config.ambientHopInjectionEnabled) {
     for (const hop of collectedHops) {
       if (!selectedIds.has(hop.src)) continue;
+      if (selectedIds.has(hop.node_id)) continue; // WR-03: never duplicate a fact line
+      const nScope = scopes.get(hop.node_id) ?? GLOBAL_SCOPE;
+      if (currentScope !== GLOBAL_SCOPE && nScope !== GLOBAL_SCOPE && nScope !== currentScope) {
+        continue; // WR-03: foreign-scope neighbour dropped for a known-scope caller
+      }
       const list = hopsBySrc.get(hop.src) ?? [];
       if (list.length >= MAX_HOP_LINES_PER_FACT) continue;
       const neighbour = getCachedNode(hop.node_id);
