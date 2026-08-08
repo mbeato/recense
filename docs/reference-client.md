@@ -127,6 +127,35 @@ clients/telegram/
 
 ## Proposal reference client
 
+> **One settling consumer per serve instance. This is a hard operational
+> constraint, not a recommendation.**
+>
+> `action_proposal.status` is a single global field with no consumer identity.
+> The first consumer to call approve or reject wins, and that outcome is recorded
+> for everyone; a second consumer's later call on the same proposal gets a `409`
+> it cannot distinguish from any other conflict.
+>
+> This matters most for the pairing that is easiest to create by accident. The
+> proposal reference adapter's `decideOutcome()` **auto-approves every
+> high-confidence proposal with no human in the loop**, while the Telegram belief
+> bridge exists precisely to put a human in that loop. Both read
+> `RECENSE_SERVE_TOKEN` and both default to `http://127.0.0.1:7701`, so running
+> them together against one serve instance is a two-line configuration mistake —
+> and the result is that the reference adapter's cron sync silently approves
+> proposals out from under the human gate. The human's later tap returns `409`
+> and is parked as `needs_reconciliation`, and the approval-rate self-report that
+> is supposed to make rubber-stamping visible never counts the decision at all.
+>
+> Nothing in the clients, in `serve-cli.ts`, or in config detects or prevents
+> this pairing. Run **one** settling consumer per serve instance. If you need a
+> second one, give it its own serve instance and its own database — or replace
+> `decideOutcome()` with a policy that never settles (see below).
+>
+> `decideOutcome()` is demo policy, not contract: it is deliberately the smallest
+> readable decision rule, and a real consumer replaces it with its own domain
+> rule. If you are adopting this adapter alongside any human-gated consumer,
+> replacing it is the first thing to do.
+
 `clients/proposal-reference/` is a second, self-contained, engine-free consumer
 proving the domain-neutral action-proposal contract (`GET /v1/proposals`,
 `POST /v1/proposals/:id/approve|reject`) end-to-end. Like the Telegram client,

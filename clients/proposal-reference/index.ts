@@ -40,6 +40,15 @@ import {
  * MUST NOT read `evidence_quote` — the quote is approver context/data, never
  * a programmatic gate (D-07, 66 D-12; mirrors the APPROVE-04 spirit that raw
  * confidence is not shown to a human as the decision surface either).
+ *
+ * WR-07 (v10 cross-review) — operational constraint this policy depends on:
+ * `action_proposal.status` is a single global field with no consumer identity,
+ * so the first consumer to settle a proposal wins for everyone. This function
+ * auto-approves every high-confidence proposal with NO human anywhere, so
+ * running this adapter against the same serve instance as the Telegram belief
+ * bridge silently bypasses that bridge's human gate — the cron sync approves
+ * first, and the human's later tap gets a 409 parked as `needs_reconciliation`.
+ * ONE settling consumer per serve instance. See docs/reference-client.md.
  */
 export function decideOutcome(record: ActionProposalRecord): 'approve' | 'reject' {
   return record.confidence === 'high' ? 'approve' : 'reject';
