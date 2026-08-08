@@ -26,10 +26,14 @@ export type ProposalKind = 'belief';
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'superseded' | 'expired';
 
 /**
- * The `schema_version` value this adapter was written against (src/db/schema.ts
- * SCHEMA_VERSION === 17 at authoring time). A mismatch on a fetched record is a
- * stop condition for the caller (D-07) — never coerce a proposal with a different
- * schema_version into this adapter's mapping logic.
+ * The `action_proposal` WIRE contract version this adapter was written against —
+ * src/consolidation/action-proposal-sink.ts:PROPOSAL_CONTRACT_VERSION, transcribed
+ * by hand per CONSUME-02. It versions the 16-field record shape below and NOTHING
+ * else; it is deliberately not the engine's database SCHEMA_VERSION, which moves
+ * for unrelated DDL changes (WR-04). Bump this only when the record shape changes.
+ *
+ * A mismatch on a fetched record is a stop condition for the caller (D-07) — never
+ * coerce a proposal with a different schema_version into this adapter's mapping logic.
  */
 export const PROPOSAL_SCHEMA_VERSION = 17;
 

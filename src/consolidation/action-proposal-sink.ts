@@ -22,7 +22,6 @@
  *   T-66-12: `actionProposalSinkEnabled` defaults `false` AND the Consolidator constructor
  *            default is `NoopActionProposalSink` — two independent barriers.
  */
-import { SCHEMA_VERSION } from '../db/schema';
 import { sha256 } from '../lib/hash';
 import type { Clock } from '../lib/clock';
 import type { IntentConfidence } from '../model/claim-extractor';
@@ -43,6 +42,33 @@ import { PROPOSAL_TTL_MS } from '../db/action-proposal-store';
  * string through this exact seam, unchanged.
  */
 export const BELIEF_CHANGE_FIELD_STATUS = 'status';
+
+// ---------------------------------------------------------------------------
+// PROPOSAL_CONTRACT_VERSION — the WIRE contract version (WR-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * The version of the `action_proposal` WIRE contract — the 16-field record shape both
+ * consumers gate on. Bump this ONLY when that record shape changes.
+ *
+ * WR-04 (v10 cross-review): the record's `schema_version` field used to be stamped with
+ * `SCHEMA_VERSION` from src/db/schema.ts — the version of the ENTIRE database schema, bumped
+ * for any DDL change anywhere. Both consumers treat a `schema_version` they do not recognise
+ * as a stop-the-whole-pass condition that applies nothing, so adding an unrelated table in
+ * some later phase would have silently disabled the reference adapter AND the Telegram belief
+ * bridge with the proposal contract itself byte-unchanged. The version being gated on was not
+ * the version of the thing being versioned.
+ *
+ * Starts at 17, NOT 1: pending rows already persisted in live databases carry 17, and both
+ * clients already hard-code 17. Starting anywhere else would strand every in-flight proposal
+ * behind the consumers' own mismatch gate. The two numbers coinciding today is history, not
+ * coupling — the DB SCHEMA_VERSION moves independently from here on.
+ *
+ * The clients cannot import this (CONSUME-02 forbids importing from src/), so they keep
+ * hand-transcribed copies: clients/proposal-reference/proposal-client.ts and
+ * clients/telegram/belief-proposal-client.ts. Bumping this means bumping those two.
+ */
+export const PROPOSAL_CONTRACT_VERSION = 17;
 
 // ---------------------------------------------------------------------------
 // ActionProposalInput — caller-supplied half (id/schema_version/status/timestamps minted)
@@ -118,7 +144,7 @@ export class SQLiteActionProposalSink implements ActionProposalSink {
   }
 
   /**
-   * Mint id=proposalId(proposal), schema_version=SCHEMA_VERSION, status='pending',
+   * Mint id=proposalId(proposal), schema_version=PROPOSAL_CONTRACT_VERSION, status='pending',
    * created_at=updated_at=clock.nowMs(), expires_at=created_at+PROPOSAL_TTL_MS, then delegate
    * to ActionProposalStore.insert. Synchronous — safe inside an existing db.transaction (D-06).
    */
@@ -136,7 +162,7 @@ export class SQLiteActionProposalSink implements ActionProposalSink {
       evidence_episode: proposal.evidence_episode,
       evidence_quote: proposal.evidence_quote,
       confidence: proposal.confidence,
-      schema_version: SCHEMA_VERSION,
+      schema_version: PROPOSAL_CONTRACT_VERSION,
       status: 'pending',
       created_at: now,
       updated_at: now,

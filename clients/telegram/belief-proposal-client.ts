@@ -23,9 +23,13 @@
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'superseded' | 'expired';
 
 /**
- * The `schema_version` value this client was written against (src/db/schema.ts
- * SCHEMA_VERSION === 17 at authoring time). A mismatch on a fetched record is a
- * stop condition for the caller — never a coercion.
+ * The `action_proposal` WIRE contract version this client was written against —
+ * src/consolidation/action-proposal-sink.ts:PROPOSAL_CONTRACT_VERSION, transcribed
+ * by hand (never imported from src/). It versions the 16-field record shape below
+ * and NOTHING else; it is deliberately not the engine's database SCHEMA_VERSION,
+ * which moves for unrelated DDL changes (WR-04). Bump only on a record-shape change.
+ *
+ * A mismatch on a fetched record is a stop condition for the caller — never a coercion.
  */
 export const PROPOSAL_SCHEMA_VERSION = 17;
 

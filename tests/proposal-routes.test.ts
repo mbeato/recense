@@ -22,7 +22,7 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
+import { initSchema } from '../src/db/schema';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import { realClock } from '../src/lib/clock';
 import { SemanticStore } from '../src/db/semantic-store';
@@ -32,6 +32,7 @@ import {
   type ActionProposalRecord,
   type ProposalStatus,
 } from '../src/db/action-proposal-store';
+import { PROPOSAL_CONTRACT_VERSION } from '../src/consolidation/action-proposal-sink';
 import { createBrainHttpServer, type BrainHttpServer } from '../src/adapter/serve-cli';
 import type { ModelProvider } from '../src/model/provider';
 
@@ -183,7 +184,7 @@ describe('proposal routes: GET /v1/proposals, POST /v1/proposals/:id/approve|rej
       evidence_episode: episodeId,
       evidence_quote: `${EVIDENCE_SENTINEL}-${n}`,
       confidence: 'high',
-      schema_version: SCHEMA_VERSION,
+      schema_version: PROPOSAL_CONTRACT_VERSION,
       status: overrides?.status ?? 'pending',
       created_at: now,
       updated_at: now,

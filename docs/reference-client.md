@@ -310,6 +310,14 @@ Closed vocabularies:
 - `confidence`: `'high' | 'medium' | 'low'`
 - The current `schema_version` value is `17`.
 
+`schema_version` carries the **proposal wire-contract version**
+(`PROPOSAL_CONTRACT_VERSION`), which versions the 16-field record shape above and
+nothing else. It is deliberately not recense's internal database schema version,
+which moves for unrelated storage changes: a consumer that stops on an unknown
+`schema_version` would otherwise be disabled by a DDL change that left this
+contract byte-identical. The two happen to be equal at `17` for historical
+reasons — treat that as coincidence, not coupling.
+
 **`schema_version` gating is mandatory, not optional.** A consumer must check
 every record's `schema_version` against the value it was written against
 before touching the record. Unknown `schema_version` → **stop**. Do not

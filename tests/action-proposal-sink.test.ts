@@ -11,7 +11,7 @@
  */
 import Database from 'better-sqlite3';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
+import { initSchema } from '../src/db/schema';
 import { FakeClock } from '../src/lib/clock';
 import { newId, sha256 } from '../src/lib/hash';
 import { ActionProposalStore, PROPOSAL_TTL_MS } from '../src/db/action-proposal-store';
@@ -21,6 +21,7 @@ import {
   SQLiteActionProposalSink,
   MockActionProposalSink,
   BELIEF_CHANGE_FIELD_STATUS,
+  PROPOSAL_CONTRACT_VERSION,
   type ActionProposalInput,
 } from '../src/consolidation/action-proposal-sink';
 
@@ -204,7 +205,7 @@ describe('SQLiteActionProposalSink', () => {
 
     const row = store.getById(proposalId(input));
     expect(row).not.toBeNull();
-    expect(row!.schema_version).toBe(SCHEMA_VERSION);
+    expect(row!.schema_version).toBe(PROPOSAL_CONTRACT_VERSION);
     expect(row!.status).toBe('pending');
     expect(row!.created_at).toBe(clock.nowMs());
     expect(row!.updated_at).toBe(clock.nowMs());

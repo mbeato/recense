@@ -18,7 +18,6 @@
 import Database from 'better-sqlite3';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { initSchema } from '../src/db/schema';
-import { SCHEMA_VERSION } from '../src/db/schema';
 import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import type { EngineConfig } from '../src/lib/config';
@@ -38,6 +37,7 @@ import type { NodeRow } from '../src/lib/types';
 import {
   SQLiteActionProposalSink,
   NoopActionProposalSink,
+  PROPOSAL_CONTRACT_VERSION,
   type ActionProposalSink,
 } from '../src/consolidation/action-proposal-sink';
 import { ActionProposalStore, type ActionProposalRecord } from '../src/db/action-proposal-store';
@@ -330,7 +330,7 @@ describe('action-proposal-emission — decisive change writes a proposal through
     expect(row.entity_node_id).toBe(entityId);
     expect(row.entity_descriptor).toBe('Acme Corp');
     expect(row.status).toBe('pending');
-    expect(row.schema_version).toBe(SCHEMA_VERSION);
+    expect(row.schema_version).toBe(PROPOSAL_CONTRACT_VERSION);
     expect(row.confidence).toBe('high');
 
     // The graph mutation also happened: original tombstoned, new value node exists.

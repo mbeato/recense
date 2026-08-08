@@ -28,11 +28,12 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { initSchema, SCHEMA_VERSION } from '../src/db/schema';
+import { initSchema } from '../src/db/schema';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import { realClock } from '../src/lib/clock';
 import { SemanticStore } from '../src/db/semantic-store';
 import { ActionProposalStore, type ActionProposalRecord } from '../src/db/action-proposal-store';
+import { PROPOSAL_CONTRACT_VERSION } from '../src/consolidation/action-proposal-sink';
 import { createBrainHttpServer, type BrainHttpServer } from '../src/adapter/serve-cli';
 import type { ModelProvider } from '../src/model/provider';
 import { createProposalClient, type ProposalClient } from '../clients/proposal-reference/proposal-client';
@@ -152,7 +153,7 @@ describe('proposal-reference adapter e2e: real HTTP surface + adapter public ent
       evidence_episode: episodeId,
       evidence_quote: `e2e quote ${n}`,
       confidence: overrides?.confidence ?? 'high',
-      schema_version: SCHEMA_VERSION,
+      schema_version: PROPOSAL_CONTRACT_VERSION,
       status: 'pending',
       created_at: now,
       updated_at: now,
