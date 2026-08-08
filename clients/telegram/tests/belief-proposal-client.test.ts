@@ -191,6 +191,24 @@ describe('createBeliefProposalClient — stub-server behavioral proof', () => {
     expect(isInspectableProposalRecord(makeRecord(pid('t-null'), { change_from: null }))).toBe(true);
   });
 
+  it('(WR-06) timestamps must be Date-convertible epoch ms, not merely numbers', () => {
+    // Every value below is `typeof === "number"` and every one of them makes
+    // new Date(v).toISOString() throw RangeError — which the bridge calls on expires_at
+    // with no surrounding try. Infinity is reachable from the wire: JSON `1e999` parses
+    // to it.
+    for (const field of ['created_at', 'updated_at', 'expires_at']) {
+      for (const bad of [Infinity, -Infinity, NaN, 8.64e15 + 1, -8.64e15 - 1]) {
+        expect(
+          isInspectableProposalRecord(makeRecord(pid(`t-${field}-${String(bad)}`), { [field]: bad })),
+        ).toBe(false);
+      }
+      // The ±8.64e15 ms Date range is inclusive at both edges.
+      expect(
+        isInspectableProposalRecord(makeRecord(pid(`t-${field}-edge`), { [field]: 8.64e15 })),
+      ).toBe(true);
+    }
+  });
+
   it('the serve token appears in no thrown Error message and in no value the module returns', async () => {
     const id = pid('token-leak-check');
     actionStatus.set(id, 500);

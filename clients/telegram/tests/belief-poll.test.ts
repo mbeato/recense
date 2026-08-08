@@ -122,7 +122,11 @@ beforeEach(async () => {
         return;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(listBody));
+      // A string listBody is emitted as the raw response body. JSON.stringify cannot
+      // produce every JSON text a real server could send — notably `1e999`, which
+      // JSON.parse turns into Infinity — so the raw path is the only way to test what
+      // the client does with one (WR-06).
+      res.end(typeof listBody === 'string' ? listBody : JSON.stringify(listBody));
       return;
     }
     res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -171,6 +175,34 @@ describe('runBeliefBridgePass — gates, dedup, batching, cap, rollback', () => 
       dailyCap: 10, log: () => {}, nowMs: Date.now(),
     });
     expect(transport.sent).toHaveLength(0);
+  });
+
+  it('(WR-06) a record whose expires_at parses to Infinity stops the pass without throwing', async () => {
+    // `1e999` is valid JSON and JSON.parse turns it into Infinity, which passes a plain
+    // `typeof === "number"` check. toStoredBeliefProposal then calls
+    // new Date(Infinity).toISOString(), which throws RangeError inside the dedup loop with
+    // no surrounding try — breaking runBeliefBridgePass's documented "never throws"
+    // contract and aborting the pass on every retry for as long as the record is listed.
+    const record = makeRecord(pid('infinite-expiry'));
+    const raw = JSON.stringify({ items: [record] }).replace(
+      `"expires_at":${String(record['expires_at'])}`,
+      '"expires_at":1e999',
+    );
+    expect(raw).toContain('1e999'); // the substitution really landed
+    listBody = raw;
+
+    const transport = new MockTelegramTransport();
+    const storePath = tmpPath('infinity-store');
+    // Resolves rather than rejecting — the malformed item takes the documented
+    // stop-the-pass path instead of escaping as a RangeError.
+    await expect(runBeliefBridgePass({
+      client: makeClient(), transport, chatIds: [111],
+      storePath, statePath: tmpPath('infinity-state'),
+      dailyCap: 10, log: () => {}, nowMs: Date.now(),
+    })).resolves.toBeUndefined();
+
+    expect(transport.sent).toHaveLength(0);
+    expect(fs.existsSync(storePath)).toBe(false);
   });
 
   it('(WR-05) a record with a non-string entity_descriptor stops the whole pass with zero rows written', async () => {

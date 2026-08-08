@@ -61,7 +61,8 @@ export interface ActionProposalRecord {
  * `ActionProposalRecord` requires WITH the value type the consumer reads
  * (WR-05): strings where strings are read (`id` additionally matching the
  * 64-hex sha256 shape it is later interpolated from), `string | null` for
- * `change_from`, numbers for the timestamps and `schema_version`, and the
+ * `change_from`, a number for `schema_version`, Date-convertible epoch
+ * milliseconds for the three timestamps (`isEpochMs`, WR-06), and the
  * closed categorical enum for `confidence` (it is rendered as plain text, so
  * free text there could carry structure into the decision card). `kind` and
  * `status` are checked as strings only — unknown vocabulary there is a
@@ -88,11 +89,31 @@ export function isInspectableProposalRecord(v: unknown): boolean {
     (r['confidence'] === 'high' || r['confidence'] === 'medium' || r['confidence'] === 'low') &&
     typeof r['schema_version'] === 'number' &&
     typeof r['status'] === 'string' &&
-    typeof r['created_at'] === 'number' &&
-    typeof r['updated_at'] === 'number' &&
-    typeof r['expires_at'] === 'number'
+    isEpochMs(r['created_at']) &&
+    isEpochMs(r['updated_at']) &&
+    isEpochMs(r['expires_at'])
   );
 }
+
+/**
+ * A timestamp the bridge can safely hand to `new Date(...).toISOString()`.
+ *
+ * WR-06 (v10 cross-review): a plain `typeof === 'number'` check admits `Infinity`
+ * (JSON `1e999` parses to it) and any value outside the ±8.64e15 ms Date range.
+ * `toStoredBeliefProposal` converts `expires_at` with
+ * `new Date(record.expires_at).toISOString()`, which throws
+ * `RangeError: Invalid time value` on exactly those values — inside the dedup loop,
+ * with no surrounding try, contradicting `runBeliefBridgePass`'s documented "never
+ * throws" contract. No rows are written before the throw so there is no partial
+ * state, but the pass aborts on every retry for as long as the offending record is
+ * listed, silently disabling the belief bridge.
+ *
+ * Tightening the GATE rather than the conversion is deliberate: it routes the value
+ * into the already-designed "malformed item stops the pass" path, which logs and
+ * returns, instead of adding a second error convention at the conversion site.
+ */
+const isEpochMs = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 8.64e15;
 
 /**
  * Proposal ids are sha256 hex by construction (docs/reference-client.md) and the
