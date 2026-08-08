@@ -195,9 +195,12 @@ clients/proposal-reference/
    fail-closed, mirroring the Telegram client's runtime gate.
 2. `syncProposals()` calls `GET /v1/proposals` and validates the response
    shape before touching any item: every item must be an object carrying the
-   record key set, and every record's `schema_version` must match. A
+   record fields at the types the adapter reads them as (including a
+   64-hex-shaped `id`), and every record's `schema_version` must match. A
    malformed item or an unknown `schema_version` stops the whole sync —
    nothing is applied (graceful fail-closed stop, never a raw TypeError).
+   Type-checking on the way IN is what keeps the adapter from persisting a
+   local row its own read path would later reject as corrupt.
 3. For each record, an unrecognised `kind` is skipped (the loop keeps going);
    a recognised `kind: 'belief'` record is checked against the local store via
    `findByProposalId` — a proposal id already present with a non-`'pending'`
