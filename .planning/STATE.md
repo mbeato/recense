@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v10.0
 milestone_name: Action Proposals
 status: completed
-stopped_at: "Phase 69 COMPLETE (passed_with_open_item). ALL roadmapped phases 62-69 done. Open: 65-HUMAN-UAT 3 founder items; 69 re-gate follow-ups (LLM-judge grader, doc-row eval addition). Next: milestone audit/completion for v10.0"
-last_updated: "2026-08-03T14:17:10.607Z"
-last_activity: 2026-08-03
+stopped_at: "Cross-phase deep review + delegated decisions session DONE (2026-08-07): both surface reviews fixed on main (2C/11W), --judge + doc-link re-gates both honest nulls (knobs stay dark), REQUIREMENTS reconciled, flake/stash housekeeping done. Suite 4029, tsc clean. Open: 65-HUMAN-UAT 3 founder items; v10.0 milestone audit/close (founder sign-off)"
+last_updated: "2026-08-07T22:20:00.000Z"
+last_activity: 2026-08-07
 progress:
   total_phases: 8
   completed_phases: 8
@@ -245,10 +245,12 @@ Carried from v7.0/v8.0 close:
 
 ## Session Continuity
 
-Last session: 2026-08-03T14:17:10.600Z
-Stopped at: Phase 69 COMPLETE (passed_with_open_item). ALL roadmapped phases 62-69 done. Open: 65-HUMAN-UAT 3 founder items; 69 re-gate follow-ups (LLM-judge grader, doc-row eval addition). Next: milestone audit/completion for v10.0
-Next: `/gsd:plan-phase 62` (Multi-Inbox Email Ingest Hardening) — first phase of v10.0, no dependencies.
+Last session: 2026-08-07 (cross-phase review + delegated decisions, per the cb362f1 handoff)
+Stopped at: Both cross-phase deep reviews (proposal pipeline, retrieval path) done and ALL Critical+Warning findings fixed on main — reports in `.planning/reviews/` (both `status: fixed`). 69 re-gates: `--judge` LLM grader implemented and run — entityAnchoringEnabled G2 fails HARDER under the judge (30/54 regressed, mean 0.70→0.55; refutes the mean-dilution hypothesis) → accepted-null; doc-link re-gate on refreshed eval set (57-prompt union) still vacuous 0/57 → stays dark. Ship-arm gate replay (post-fix) G1/G3/G4 pass, G2 53/54 (single miss = demonstrated floor-boundary embed nondeterminism, not knob-attributable). strip-hidden flake de-flaked (min-of-5, bound unchanged). Both stashes verified superseded, dropped. REQUIREMENTS RECALL rows reconciled. Suite 4029 / tsc clean.
+Next: v10.0 milestone close — `/gsd-audit-milestone` → `/gsd-complete-milestone` (founder sign-off), and 65-HUMAN-UAT items 1-3 (provenanceDistinctnessEnabled ENABLE/HOLD, needs Max's real inbox export + WR-01 farming-bar review).
 
 ## Operator Next Steps
 
-- Plan Phase 62 with `/gsd:plan-phase 62` (or run `/gsd:discuss-phase 62` first — CLASSIFY and DRIFT phases carry research flags recommending a design pass before planning, but Phase 62 itself mirrors shipped v4.0 patterns and needs none)
+- 65-HUMAN-UAT.md items 1–3 (founder-only): provenanceDistinctnessEnabled ENABLE/HOLD with real inbox export; resolve the WR-01 threadId-farming bar before any ENABLE
+- v10.0 milestone close: `/gsd-audit-milestone` → `/gsd-complete-milestone` — review is clean, sign-off is Max's
+- Three Info advisories per review left open by design (see the two reports' Fix Logs)
