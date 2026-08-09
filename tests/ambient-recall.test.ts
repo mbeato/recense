@@ -571,7 +571,7 @@ describe('ambientRecall', () => {
     const text = await ambientRecall(db, PROMPT, provider, cfg, clock);
     const betaMentions = text.split('\n').filter(l => l.includes('duplicate candidate beta'));
     expect(betaMentions).toHaveLength(1); // fact line only — never again as a hop
-    expect(betaMentions[0].startsWith('- ')).toBe(true);
+    expect(betaMentions[0]!.startsWith('- ')).toBe(true);
   });
 
   it('hop-injection: activation_trace rows are byte-identical in shape whether the knob is on or off (viz sink unaffected, D-06)', async () => {
