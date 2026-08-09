@@ -41,6 +41,7 @@ import { MockModelProvider } from '../src/model/provider';
 import { NoopConsolidationSink } from '../src/consolidation/sink';
 import { Consolidator } from '../src/consolidation/consolidator';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
+import { hasDistEntries, distSkipReason } from './support/dist-build';
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -49,6 +50,13 @@ import { SchemaInducer } from '../src/consolidation/schema-induction';
 const HARNESS_PATH  = path.resolve(__dirname, '../scripts/eval/episodic-dryrun.cjs');
 const FIXTURE_PATH  = path.resolve(__dirname, 'fixtures/episodic-dryrun-fixture.json');
 const LIVE_DB_PATH  = path.join(os.homedir(), '.config', 'recense', 'recense.db');
+
+// Test 2 below runs past the live-DB guard, so the harness reaches its
+// `require('../../dist/src/db/schema')` et al; pretest builds dist/ for `npm test`, but a
+// bare `vitest run` in a fresh worktree does not. Test 1 exits before that require, so it
+// needs no gate.
+const DIST_ENTRIES = ['dist/src/db/schema.js'];
+const SKIP_NO_DIST = !hasDistEntries(...DIST_ENTRIES);
 
 // ---------------------------------------------------------------------------
 // In-process harness (mirrors eval-harness-smoke.test.ts makeHarness)
@@ -207,7 +215,9 @@ describe('episodic-dryrun-gate', () => {
   // This proves the default-OFF state cannot write temporal rows even after
   // full mock-consolidation over temporal-bearing email content (T-20-13).
 
-  it('--off-check exits 0 and reports ZERO node_temporal rows with flag OFF (no API keys)', () => {
+  it.skipIf(SKIP_NO_DIST)(
+    `--off-check exits 0 and reports ZERO node_temporal rows with flag OFF (no API keys)${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+    () => {
     const result = spawnSync(
       process.execPath,
       [

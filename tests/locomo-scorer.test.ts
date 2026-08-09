@@ -14,6 +14,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { describe, it, expect, afterEach } from 'vitest';
+import { hasDistEntries, distSkipReason } from './support/dist-build';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -22,6 +23,12 @@ import { describe, it, expect, afterEach } from 'vitest';
 const MINI_FIXTURE_PATH = path.resolve(__dirname, '../scripts/eval/fixtures/locomo-mini.json');
 const SCORER_PATH       = path.resolve(__dirname, '../scripts/eval/locomo-scorer.cjs');
 const REPO_ROOT         = path.resolve(__dirname, '..');
+
+// Tests 2/3/4 below spawn scripts/eval/locomo-scorer.cjs, which requires dist/src/lib/config
+// at module load; pretest builds dist/ for `npm test`, but a bare `vitest run` in a fresh
+// worktree does not. Test 1 does not spawn, so it needs no gate.
+const DIST_ENTRIES = ['dist/src/lib/config.js'];
+const SKIP_NO_DIST = !hasDistEntries(...DIST_ENTRIES);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -151,7 +158,9 @@ describe('locomo-scorer', () => {
   // The mini fixture has 5 QA rows, 1 of which is category 5.
   // Scorer denominator must equal 5 - 1 = 4. Adversarial excluded count = 1.
 
-  it('scorer denominator equals total QA minus category-5 count (--mock, zero API)', () => {
+  it.skipIf(SKIP_NO_DIST)(
+    `scorer denominator equals total QA minus category-5 count (--mock, zero API)${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+    () => {
     const conversations = loadMiniFixture();
     const conv = conversations[0];
     expect(conv).toBeDefined();
@@ -187,7 +196,9 @@ describe('locomo-scorer', () => {
   //  - A row whose gold answer appears in the hypothesis → mock judge assigns CORRECT (label=1)
   //  - A row whose gold answer does NOT appear in the hypothesis → WRONG (label=0)
 
-  it('scorer correctly scores CORRECT (match) and WRONG (no-match) rows via --mock', () => {
+  it.skipIf(SKIP_NO_DIST)(
+    `scorer correctly scores CORRECT (match) and WRONG (no-match) rows via --mock${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+    () => {
     const conversations = loadMiniFixture();
     const conv = conversations[0];
     expect(conv).toBeDefined();
@@ -235,7 +246,9 @@ describe('locomo-scorer', () => {
   // A --mock run must write a result whose meta.sut_config contains all 15 knob keys
   // verified from src/lib/config.ts and meta.judge_model === 'gpt-4o-mini'.
 
-  it('scorer meta.sut_config has all 15 D-10 v7.0 knob keys and judge_model is gpt-4o-mini', () => {
+  it.skipIf(SKIP_NO_DIST)(
+    `scorer meta.sut_config has all 15 D-10 v7.0 knob keys and judge_model is gpt-4o-mini${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+    () => {
     const conversations = loadMiniFixture();
     const conv = conversations[0];
     expect(conv).toBeDefined();

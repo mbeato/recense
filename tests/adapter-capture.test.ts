@@ -24,9 +24,15 @@ import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { initSchema } from '../src/db/schema';
+import { hasDistEntries, distSkipReason } from './support/dist-build';
 
 /** Absolute path to the compiled dist directory. */
 const DIST_DIR = join(__dirname, '..', 'dist', 'src', 'adapter');
+
+// Both describes below spawn compiled dist/ CLIs; pretest builds dist/ for `npm test`, but a
+// bare `vitest run` in a fresh worktree does not.
+const DIST_ENTRIES = ['dist/src/adapter/turn-capture-cli.js', 'dist/src/adapter/stop-cli.js'];
+const SKIP_NO_DIST = !hasDistEntries(...DIST_ENTRIES);
 
 /** Create a fresh temp DB path for isolation. */
 function makeTempDbPath(suffix: string): string {
@@ -78,7 +84,9 @@ function readEpisodes(dbPath: string): Array<{ role: string; origin: string; ses
   return rows;
 }
 
-describe('turn-capture-cli (UserPromptSubmit → role=user)', () => {
+describe.skipIf(SKIP_NO_DIST)(
+  `turn-capture-cli (UserPromptSubmit → role=user)${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+  () => {
   let dbPath: string;
 
   afterEach(() => {
@@ -178,7 +186,9 @@ describe('turn-capture-cli (UserPromptSubmit → role=user)', () => {
   });
 });
 
-describe('stop-cli (Stop → role=assistant)', () => {
+describe.skipIf(SKIP_NO_DIST)(
+  `stop-cli (Stop → role=assistant)${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+  () => {
   let dbPath: string;
 
   afterEach(() => {
