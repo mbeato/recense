@@ -44,7 +44,7 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 Phase: 69
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-08-03
+Last activity: 2026-08-09 - Completed quick task 260809-1n3: fix TS2532 in tests/ambient-recall.test.ts (typecheck green)
 
 ## Performance Metrics
 
@@ -233,6 +233,7 @@ Carried from v7.0/v8.0 close:
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260809-1n3 | Fix TS2532 at tests/ambient-recall.test.ts:574 — non-null assert `betaMentions[0]!` (post-`toHaveLength` suite idiom); typecheck green, 33/33 ambient-recall tests pass. Clears the v10.0 audit typecheck blocker | 2026-08-09 | ec9d6e1 | [260809-1n3-fix-ts2532-in-tests-ambient-recall-test-](./quick/260809-1n3-fix-ts2532-in-tests-ambient-recall-test-/) |
 | 260802-m2e | Restore backlog lane 998.x → 999.x, fixing the recurring `gsd-sdk phase.add` 999 mis-numbering (5th occurrence: phases 52/54/56/57/69). Root cause was on disk, not in ROADMAP prose: GSD reserves only `999.x` and skips it via `num >= 999`, so two `998.x` dirs mis-named by 40ffcde (v9.0 archival) slipped the guard and made maxPhase=998 → next=999. Pure `git mv`, 6 files, 0 insertions/0 deletions; frontmatter already read 999.3. Verified `phase.add --dry-run` → 70 | 2026-08-02 | 6568059 | [260802-m2e-restore-backlog-lane-999](./quick/260802-m2e-restore-backlog-lane-999/) |
 | 260729-s8a | Fix two causes of recense write-lock contention: remember-cli now retries the lock (600s budget) instead of fast-failing in 0.11s, and graph hygiene (VACUUM+dedup, measured 486s) is gated to once per 20h via meta instead of running on every per-turn sleep pass | 2026-07-30 | b817e69, e85c8a1 | [260729-s8a-retry-remember-lock-gate-graph-hygiene](./quick/260729-s8a-retry-remember-lock-gate-graph-hygiene/) |
 | 260720-nup | Wire regression gate into CI merge-blocking (gate:ci offline tier + gate job + required-check context) — closes v9.0 audit GATE-01; branch-protection apply pending maintainer | 2026-07-20 | c114b5b, 6812ecd | [260720-nup-wire-regression-gate-into-ci-merge-block](./quick/260720-nup-wire-regression-gate-into-ci-merge-block/) |
