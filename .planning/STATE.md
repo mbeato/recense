@@ -44,7 +44,7 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 Phase: 69
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-08-09 - Completed quick task 260809-1vg: dist/ build gate for CLI-subprocess tests + calibration-relative strip-hidden perf bounds (v10.0 debt items 1-2)
+Last activity: 2026-08-09 - Completed quick task 260809-2fo: WR-03 stripQuotedForwarded idempotence fix + WR-01 farming-bar comment correction (Phase-65 pre-enablement code items)
 
 ## Performance Metrics
 
@@ -233,6 +233,7 @@ Carried from v7.0/v8.0 close:
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260809-2fo | Phase-65 review debt (pre-enablement code items): WR-03 — stripQuotedForwarded now idempotent for >=4-space-indented quote/boundary lines and no longer leaks quoted bodies under indented attributions (13 RED regression cases, then GREEN 156/156); WR-01 — farming-bar rationale comment corrected in provenance-key.ts + gmail-adapter.ts (comment-only, grep-gated). Enablement decision for provenanceDistinctnessEnabled remains with founder | 2026-08-09 | 9d8348b, b5bbc1f, b49bef4 | [260809-2fo-phase-65-review-debt-fix-wr-03-stripquot](./quick/260809-2fo-phase-65-review-debt-fix-wr-03-stripquot/) |
 | 260809-1vg | Test-suite hygiene clearing two v10.0 audit debt items: shared `tests/support/dist-build.ts` gate makes 8 CLI-subprocess test files skip (not fail) when dist/ is absent — full suite unbuilt now 0 failed (was 24); all 17 absolute wall-clock bounds in strip-hidden.test.ts converted to WR-07-style calibration-relative form | 2026-08-09 | 4a20210, 6e52633 | [260809-1vg-test-suite-hygiene-dist-dependent-tests-](./quick/260809-1vg-test-suite-hygiene-dist-dependent-tests-/) |
 | 260809-1n3 | Fix TS2532 at tests/ambient-recall.test.ts:574 — non-null assert `betaMentions[0]!` (post-`toHaveLength` suite idiom); typecheck green, 33/33 ambient-recall tests pass. Clears the v10.0 audit typecheck blocker | 2026-08-09 | ec9d6e1 | [260809-1n3-fix-ts2532-in-tests-ambient-recall-test-](./quick/260809-1n3-fix-ts2532-in-tests-ambient-recall-test-/) |
 | 260802-m2e | Restore backlog lane 998.x → 999.x, fixing the recurring `gsd-sdk phase.add` 999 mis-numbering (5th occurrence: phases 52/54/56/57/69). Root cause was on disk, not in ROADMAP prose: GSD reserves only `999.x` and skips it via `num >= 999`, so two `998.x` dirs mis-named by 40ffcde (v9.0 archival) slipped the guard and made maxPhase=998 → next=999. Pure `git mv`, 6 files, 0 insertions/0 deletions; frontmatter already read 999.3. Verified `phase.add --dry-run` → 70 | 2026-08-02 | 6568059 | [260802-m2e-restore-backlog-lane-999](./quick/260802-m2e-restore-backlog-lane-999/) |
