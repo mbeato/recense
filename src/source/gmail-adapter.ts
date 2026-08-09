@@ -78,7 +78,12 @@ export interface RawGmailMessage {
    * component of the DRIFT-03 provenance-distinctness key (see provenance-key.ts). Lineage
    * must NEVER be reconstructed from the `References` or `In-Reply-To` headers instead —
    * those are sender-controlled and forgeable, while `threadId` is assigned by Gmail's own
-   * servers and is the one component of the key not under the sender's control (D-04).
+   * servers (D-04). Server-assignment prevents a sender from CHOOSING or COLLIDING a
+   * `threadId`, but does NOT prevent a sender from MINTING unlimited new ones at zero cost —
+   * any message with a fresh Subject and no `In-Reply-To` starts a new thread. So `threadId`
+   * is not "the one component of the key not under the sender's control"; see 65-REVIEW WR-01
+   * for the real farming-bar analysis and provenance-key.ts for how the key composition
+   * accounts for it.
    */
   threadId: string;
   headers: {
