@@ -1224,6 +1224,21 @@ describe('stripHiddenContent — totality (never throws)', () => {
   });
 });
 
+/**
+ * 260809-1vg (WR-07 idiom, mirrors gmail-hidden-content.test.ts's e2eReferenceElapsedMs):
+ * calibration-relative, not absolute — measures a BENIGN body of the SAME size, through the
+ * SAME entry point (stripHiddenContent), in the SAME test invocation as the adversarial shape
+ * it calibrates, so both sides share whatever JIT/GC/parallel-fork load is in effect at that
+ * moment. Called inside each test body, never hoisted to module init.
+ */
+function benignReferenceElapsedMs(byteLength: number): number {
+  const unit = '<p>text</p>';
+  const referenceBody = unit.repeat(Math.ceil(byteLength / unit.length) + 1).slice(0, byteLength);
+  const start = performance.now();
+  stripHiddenContent(referenceBody);
+  return performance.now() - start;
+}
+
 describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surface)', () => {
   // The quote-aware alternation `(?:"[^"]*"|'[^']*'|[^'">])*` (the shared ATTRS fragment,
   // 62-12) runs on attacker-supplied email HTML (input size is attacker-controlled — see
@@ -1247,63 +1262,73 @@ describe('stripHiddenContent — adversarial input cost bound (CR-01 ReDoS surfa
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
 
-  // Ceilings moved DOWN, 5000ms -> 1000ms (62-14, Task 3), the opposite direction from
-  // 62-12's 500ms -> 5000ms raise: the constant these ceilings guard against COLLAPSED once
-  // Bound A closed the failing-scan region (62-14 Bound A) -- shapes A/B/S/U now measure
-  // 0.05-0.13ms at 64 KB (this executor's own measurement, 62-14 SUMMARY), roughly four
-  // orders of magnitude under both the old 5000ms ceiling and the new 1000ms one. 1000ms is
-  // still a hang-catcher (matching the bound Task 1 chose for the report's shape, V, W, X,
-  // X3, Y and Z) and not a rubber stamp. The growth-ratio assertions below remain the
-  // ReDoS instrument of record, UNCHANGED.
-  it('Shape A at ~64 KB completes under 1000ms and does not throw', () => {
+  // 260809-1vg: calibration-relative, not absolute (was: ceilings moved DOWN, 5000ms ->
+  // 1000ms, 62-14 Task 3). Bound A closed the failing-scan region (62-14 Bound A) -- shapes
+  // A/B/S/U now measure 0.05-0.13ms at 64 KB (this executor's own measurement, 62-14
+  // SUMMARY), roughly four orders of magnitude under the old 5000ms ceiling. A fixed
+  // millisecond ceiling flakes under full-suite parallel load even with that much headroom,
+  // so each assertion below is now a ratio against a same-size benign body measured through
+  // the same stripHiddenContent entry point in the same test invocation: this plan measured
+  // 0.02-0.03x for these shapes at 64/512 KB (max observed ratio anywhere in this file is
+  // 1.52, on the well-formed control below), so 10x carries ~6.6x headroom over that max
+  // while staying within one order of magnitude of it -- not a rubber stamp: a returning
+  // quadratic pushes the ratio to 10^2-10^4x the same reference. The growth-ratio assertions
+  // below remain the ReDoS instrument of record, UNCHANGED.
+  it('Shape A at ~64 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeA(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(64 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape B at ~64 KB completes under 1000ms and does not throw', () => {
+  it('Shape B at ~64 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeB(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(64 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape U at ~64 KB completes under 1000ms and does not throw', () => {
+  it('Shape U at ~64 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeU(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(64 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
   // 512 KB extensions (62-14, Task 3): the existing shapes above were only asserted at 32
   // and 64 KB, far below the size the WR-02 gap was filed about. These assert the property
   // at the size the verification report actually measured.
-  it('Shape A at 512 KB completes under 1000ms and does not throw', () => {
+  it('Shape A at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeA(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape B at 512 KB completes under 1000ms and does not throw', () => {
+  it('Shape B at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeB(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape U at 512 KB completes under 1000ms and does not throw', () => {
+  it('Shape U at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeU(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
   // De-flake (2026-08-07): both runs measure ~0.05-0.13ms, so a single GC pause or context
@@ -1369,40 +1394,45 @@ describe('stripHiddenContent — adversarial <style> cost bound (CR-01 stage-2 R
     return unit.repeat(Math.ceil(bytes / unit.length));
   };
 
-  // Ceiling moved DOWN, 5000ms -> 1000ms (62-14, Task 3) -- see the rationale above the
-  // A/B/U ceilings: Shape S measures 0.05ms at 64 KB post-Bound-A (this executor's own
-  // measurement). Shape T's ceiling ALSO moves down for consistency, even though Bound
-  // A/B do not touch its cause (STYLE_BLOCK_RE's lazy tail scan, T-62-54) -- Shape T at 64
-  // KB measures ~1.8ms, comfortably under 1000ms; T-62-54 only becomes visible at sizes
-  // this suite does not assert against (see the 62-14 SUMMARY for T measured at 512
-  // KB/1 MB/2 MB/4 MB, the residual plan 62-15's cap is sized against). Growth-ratio
-  // assertions remain the ReDoS instrument of record, UNCHANGED.
-  it('Shape S at ~64 KB completes under 1000ms and does not throw', () => {
+  // 260809-1vg: calibration-relative, not absolute (was: ceiling moved DOWN, 5000ms ->
+  // 1000ms, 62-14 Task 3) -- see the rationale above the A/B/U ceilings: Shape S measures
+  // 0.05ms at 64 KB post-Bound-A (this executor's own measurement), well above timer
+  // resolution, so a ratio bound is defensible. Shape T at 64 KB measures ~1.8ms,
+  // comfortably inside the 10x bound; T-62-54 only becomes visible at sizes this suite does
+  // not assert against (see the 62-14 SUMMARY for T measured at 512 KB/1 MB/2 MB/4 MB, the
+  // residual plan 62-15's cap is sized against). This plan's measured ratios top out at
+  // 1.52x (well-formed control below); 10x carries ~6.6x headroom over that max while a
+  // returning quadratic produces 10^2-10^4x the same reference. Growth-ratio assertions
+  // remain the ReDoS instrument of record, UNCHANGED.
+  it('Shape S at ~64 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeS(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(64 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape T at ~64 KB completes under 1000ms and does not throw', () => {
+  it('Shape T at ~64 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeT(64 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(64 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
   // 512 KB extension (62-14, Task 3): Shape S is fixed by Bound A/B, so it is asserted at
   // the size the gap was filed about. Shape T is NOT asserted here -- it is the named,
   // deliberately-unfixed residual (T-62-54); asserting it at 512 KB would imply this plan
   // closed it, which it explicitly does not.
-  it('Shape S at 512 KB completes under 1000ms and does not throw', () => {
+  it('Shape S at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeS(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
   it('Shape T growth from ~32 KB to ~64 KB stays polynomial (t64 / max(t32,1) <= 8)', () => {
@@ -1427,11 +1457,14 @@ describe('stripHiddenContent — T62-91: STYLE_BLOCK_RE\'s quadratic eliminated 
   // (T-62-54) costs 2.9-156.2 SECONDS on these five shapes at exactly the
   // MAX_STRIP_INPUT_CODE_UNITS cap boundary (1,048,576 code units); the linear
   // START_TAG_RE + findRawtextCloseBounds walk this plan ships measured 0.2-3.6 ms on the
-  // same shapes during planning — roughly two orders of magnitude of headroom under the
-  // 1000 ms ceiling below, so this is not a CI-flaky wall-clock assertion (IN-03). No
-  // custom per-test timeout is set here deliberately: against the PRE-fix module these
-  // shapes blow past vitest's default 5000ms test timeout long before they'd ever reach
-  // the `elapsed < 1000` assertion — a fast, unambiguous RED, not a multi-minute wait.
+  // same shapes during planning. No custom per-test timeout is set here deliberately:
+  // against the PRE-fix module these shapes blow past vitest's default 5000ms test timeout
+  // long before they'd ever reach the assertion below — a fast, unambiguous RED, not a
+  // multi-minute wait. 260809-1vg: the assertion itself is now calibration-relative, not
+  // absolute — a same-size benign body through the same entry point, measured in the same
+  // test invocation. This plan's measured ratios top out at 1.52x, on this file's own
+  // well-formed control (shape 5 below); 10x carries ~6.6x headroom over that observed max
+  // while a returning quadratic produces 10^2-10^4x the same reference.
   const CAP = 1048576;
 
   function padToExactLength(unit: string, length: number): string {
@@ -1471,7 +1504,7 @@ describe('stripHiddenContent — T62-91: STYLE_BLOCK_RE\'s quadratic eliminated 
     ['single unquoted attribute triple', shapeUnquotedTriple],
     ['<style  repeated with no > until the final byte', shapeNoCloseUntilFinalByte],
     ['well-formed blocks repeated (control)', shapeWellFormedRepeated],
-  ] as const)('%s: completes under 1000ms at exactly 1,048,576 code units, and stays idempotent', (_label, makeShape) => {
+  ] as const)('%s: costs at most 10x a same-size benign body (documented budget: 1000ms) at exactly 1,048,576 code units, and stays idempotent', (_label, makeShape) => {
     const input = makeShape();
     expect(input.length).toBe(CAP);
     const start = performance.now();
@@ -1480,7 +1513,8 @@ describe('stripHiddenContent — T62-91: STYLE_BLOCK_RE\'s quadratic eliminated 
       once = stripHiddenContent(input);
     }).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(CAP);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
     // Totality + idempotence must still hold on every pathological shape above.
     expect(() => stripHiddenContent(once)).not.toThrow();
     expect(stripHiddenContent(once)).toBe(once);
@@ -1554,9 +1588,14 @@ describe('stripHiddenContent — WR-02: the 62-VERIFICATION.md adversarial shape
   // consequence, with no separate change to stripCssComments required — see the 62-14
   // SUMMARY for the full argument and the decision it produced.
   //
-  // The 1000 ms bound: the planning-measured post-fix value for the report's shape is
-  // ~1.5 ms, so 1000 ms is roughly 600x headroom — chosen per IN-03 so the assertion catches
-  // a RETURN of the quadratic and cannot catch a loaded CI runner.
+  // 260809-1vg: the bound below is calibration-relative, not absolute — a same-size benign
+  // body through the same entry point, measured in the same test invocation, rather than a
+  // fixed millisecond ceiling that flakes under full-suite parallel load. This plan's
+  // measured ratios for these shapes are 0.14-0.87x (report/V/W/X/X3/Y/Z at 512 KB; max
+  // observed anywhere in this file is 1.52x, on strip-hidden's own well-formed control), so
+  // 10x carries ~6.6x headroom over that max while a returning quadratic produces
+  // 10^2-10^4x the same reference (the pre-fix report shape alone measured 126,422 ms at
+  // 512 KB against a benign reference of ~15-32 ms).
   const shapeReport = (bytes: number) => {
     const unit = 'a<x ';
     return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
@@ -1580,12 +1619,13 @@ describe('stripHiddenContent — WR-02: the 62-VERIFICATION.md adversarial shape
     return '<style>' + unit.repeat(Math.ceil(bytes / unit.length)) + '</style>';
   };
 
-  it('the report shape (a<x repeated, no braces) at 512 KB completes in under 1000ms and does not throw', () => {
+  it('the report shape (a<x repeated, no braces) at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms) and does not throw', () => {
     const input = shapeReport(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
   it('the report shape growth from 128 KB to 256 KB stays polynomial (t256/max(t128,1) <= 8)', () => {
@@ -1604,52 +1644,58 @@ describe('stripHiddenContent — WR-02: the 62-VERIFICATION.md adversarial shape
     expect(t256 / Math.max(t128, 1)).toBeLessThanOrEqual(8);
   });
 
-  it('Shape V (an open brace then a brace-free tail) at 512 KB completes in under 1000ms', () => {
+  it('Shape V (an open brace then a brace-free tail) at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms)', () => {
     const input = shapeV(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape W (a brace-free run followed by a real hiding rule) at 512 KB completes in under 1000ms', () => {
+  it('Shape W (a brace-free run followed by a real hiding rule) at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms)', () => {
     const input = shapeW(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape X (unterminated CSS comment, no rule) at 512 KB completes in under 1000ms — control, already passes pre-fix', () => {
+  it('Shape X (unterminated CSS comment, no rule) at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms) — control, already passes pre-fix', () => {
     const input = shapeX(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape X3 (unterminated CSS comment that would carry a rule if closed) at 512 KB completes in under 1000ms — control, already passes pre-fix', () => {
+  it('Shape X3 (unterminated CSS comment that would carry a rule if closed) at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms) — control, already passes pre-fix', () => {
     const input = shapeX3(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape Y (alternating quotes, no comment marker — reaches RULE_RE unshortened) at 512 KB completes in under 1000ms', () => {
+  it('Shape Y (alternating quotes, no comment marker — reaches RULE_RE unshortened) at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms)', () => {
     const input = shapeY(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 
-  it('Shape Z (repeated unterminated url-tokens, no comment marker — reaches RULE_RE unshortened) at 512 KB completes in under 1000ms', () => {
+  it('Shape Z (repeated unterminated url-tokens, no comment marker — reaches RULE_RE unshortened) at 512 KB costs at most 10x a same-size benign body (documented budget: 1000ms)', () => {
     const input = shapeZ(512 * 1024);
     const start = performance.now();
     expect(() => stripHiddenContent(input)).not.toThrow();
     const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(1000);
+    const referenceElapsed = benignReferenceElapsedMs(512 * 1024);
+    expect(elapsed).toBeLessThanOrEqual(10 * Math.max(referenceElapsed, 1));
   });
 }, 20000);
 
