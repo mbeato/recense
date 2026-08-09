@@ -29,12 +29,20 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { describe, it, expect } from 'vitest';
+import { hasDistEntries, distSkipReason } from './support/dist-build';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const MINI_FIXTURE_PATH  = path.resolve(__dirname, '../scripts/eval/fixtures/locomo-mini.json');
+
+// Tests 3/4 below spawn scripts/eval/locomo-harness.cjs, which requires
+// dist/src/db/schema et al at module load — even the no-flag-guard test hits this, since the
+// requires run before the flag guard. pretest builds dist/ for `npm test`, but a bare
+// `vitest run` in a fresh worktree does not.
+const DIST_ENTRIES = ['dist/src/db/schema.js'];
+const SKIP_NO_DIST = !hasDistEntries(...DIST_ENTRIES);
 // locomo10.json is gitignored; tests that load it are conditional on its presence
 const LOCOMO10_PATH = path.resolve(__dirname, '../scripts/eval/locomo10.json');
 const LOCOMO10_EXISTS = fs.existsSync(LOCOMO10_PATH);
@@ -269,7 +277,9 @@ describe('locomo-harness', () => {
   // and writes one result line per scoreable QA pair (category !== 5).
   // Mini fixture has 5 QA pairs; 1 is category 5 → 4 result lines expected.
 
-  it('harness --dry-run exits 0 and writes result lines per scoreable QA pair', () => {
+  it.skipIf(SKIP_NO_DIST)(
+    `harness --dry-run exits 0 and writes result lines per scoreable QA pair${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+    () => {
     const HARNESS_PATH = path.resolve(__dirname, '../scripts/eval/locomo-harness.cjs');
     const OUT = path.join(os.tmpdir(), `locomo-dry-smoke-${Date.now()}-${process.pid}.jsonl`);
 
@@ -309,7 +319,9 @@ describe('locomo-harness', () => {
   //
   // Running the harness with no mode flag must exit non-zero (T-40-03).
 
-  it('harness exits non-zero when no mode flag is passed (--run gate)', () => {
+  it.skipIf(SKIP_NO_DIST)(
+    `harness exits non-zero when no mode flag is passed (--run gate)${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+    () => {
     const HARNESS_PATH = path.resolve(__dirname, '../scripts/eval/locomo-harness.cjs');
 
     const result = spawnSync(

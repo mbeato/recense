@@ -21,9 +21,15 @@ import { SemanticStore } from '../src/db/semantic-store';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import { realClock } from '../src/lib/clock';
 import { newId } from '../src/lib/hash';
+import { hasDistEntries, distSkipReason } from './support/dist-build';
 
 /** Path to the compiled CLI — must exist before running (npm run build first). */
 const COMPILED_CLI = join(process.cwd(), 'dist', 'src', 'adapter', 'session-start-cli.js');
+
+// Every test in both describes below spawns the compiled session-start-cli; pretest builds
+// dist/ for `npm test`, but a bare `vitest run` in a fresh worktree does not.
+const DIST_ENTRIES = ['dist/src/adapter/session-start-cli.js'];
+const SKIP_NO_DIST = !hasDistEntries(...DIST_ENTRIES);
 
 /** Minimal SessionStart stdin payload that satisfies consumeStdin(). */
 const STDIN_PAYLOAD = JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'test' });
@@ -88,7 +94,9 @@ function runCLI(seed: (store: SemanticStore) => void): {
   };
 }
 
-describe('session-start-cli (ADAPT-01)', () => {
+describe.skipIf(SKIP_NO_DIST)(
+  `session-start-cli (ADAPT-01)${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+  () => {
   it('(a) emits valid hookSpecificOutput.additionalContext string', () => {
     const { status, additionalContext } = runCLI(store => {
       store.upsertNode({
@@ -180,10 +188,7 @@ describe('session-start-cli (ADAPT-01)', () => {
 // ── M-3: read-only guard tests ───────────────────────────────────────────────
 
 describe('session-start-cli — M-3 read-only guard (requires build)', () => {
-  /** True when the compiled CLI exists — same gate used by the existing tests above. */
-  const hasBuild = existsSync(COMPILED_CLI);
-
-  it.skipIf(!hasBuild)('emits empty context + exit 0 when schema_version mismatches (stale DB)', () => {
+  it.skipIf(SKIP_NO_DIST)('emits empty context + exit 0 when schema_version mismatches (stale DB)', () => {
     const dbPath = join(
       tmpdir(),
       `brain-inject-mismatch-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
@@ -239,7 +244,7 @@ describe('session-start-cli — M-3 read-only guard (requires build)', () => {
     expect(typeof mtimeBefore).toBe('number');
   });
 
-  it.skipIf(!hasBuild)('emits empty context + exit 0 when DB file does not exist (fresh install)', () => {
+  it.skipIf(SKIP_NO_DIST)('emits empty context + exit 0 when DB file does not exist (fresh install)', () => {
     const nonExistentPath = join(
       tmpdir(),
       `brain-inject-noexist-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
@@ -264,7 +269,7 @@ describe('session-start-cli — M-3 read-only guard (requires build)', () => {
     expect(payload.hookSpecificOutput.additionalContext).toBe('');
   });
 
-  it.skipIf(!hasBuild)('injects context when DB is correctly versioned (regression guard)', () => {
+  it.skipIf(SKIP_NO_DIST)('injects context when DB is correctly versioned (regression guard)', () => {
     // This is the happy path: a correctly-versioned DB with nodes → content injected.
     const { status, additionalContext } = runCLI(store => {
       store.upsertNode({

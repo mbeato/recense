@@ -37,12 +37,19 @@ import { MockModelProvider } from '../src/model/provider';
 import type { NodeRow } from '../src/lib/types';
 import { Consolidator } from '../src/consolidation/consolidator';
 import { SchemaInducer } from '../src/consolidation/schema-induction';
+import { hasDistEntries, distSkipReason } from './support/dist-build';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const FIXTURE_PATH = path.resolve(__dirname, '../scripts/eval/fixtures/longmemeval-mini.jsonl');
+
+// Tests 4/6/7 below spawn scripts/eval/longmemeval-harness.cjs, which requires
+// dist/src/db/schema et al at module load; pretest builds dist/ for `npm test`, but a bare
+// `vitest run` in a fresh worktree does not.
+const DIST_ENTRIES = ['dist/src/db/schema.js'];
+const SKIP_NO_DIST = !hasDistEntries(...DIST_ENTRIES);
 
 // ---------------------------------------------------------------------------
 // Shared harness (mirrors tests/consolidation.test.ts makeHarness)
@@ -288,7 +295,9 @@ describe('eval-harness-smoke', () => {
   // one question_id; verifies the harness skips it and processes the rest.
   // Requires the dist/ build (pretest runs `npm run build` so this is always present in CI).
 
-  it('harness --dry-run resumes: skips question_ids already present in OUT_FILE', () => {
+  it.skipIf(SKIP_NO_DIST)(
+    `harness --dry-run resumes: skips question_ids already present in OUT_FILE${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+    () => {
     const OUT = path.join(os.tmpdir(), `harness-resume-test-${Date.now()}-${process.pid}.jsonl`);
 
     // Pre-seed: mini-001 already done (simulates a prior partial run)
@@ -503,7 +512,9 @@ describe('eval-harness-smoke', () => {
   //  - Each record has the required keys: question_id, claims, nodes, retrieved, hypothesis, gold_answer
   //  - The hypothesis field is the dry-run stub value (not an LLM response)
 
-  it('harness --dry-run --instrument writes one attribution record per question with required keys', () => {
+  it.skipIf(SKIP_NO_DIST)(
+    `harness --dry-run --instrument writes one attribution record per question with required keys${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+    () => {
     const INST_OUT = path.join(os.tmpdir(), `harness-instrument-test-${Date.now()}-${process.pid}.jsonl`);
     // Isolated --out: without it the harness appends to its default OUT_FILE, and the
     // resume logic would skip all questions on re-runs (no instrument records written).
@@ -557,7 +568,9 @@ describe('eval-harness-smoke', () => {
   // Pre-seeds OUT_FILE with one successful line and one error line.
   // Verifies that --retry-errors drops the error line and retries that question_id.
 
-  it('harness --dry-run --retry-errors re-attempts error-bearing question_ids', () => {
+  it.skipIf(SKIP_NO_DIST)(
+    `harness --dry-run --retry-errors re-attempts error-bearing question_ids${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+    () => {
     const OUT = path.join(os.tmpdir(), `harness-retry-test-${Date.now()}-${process.pid}.jsonl`);
 
     // Pre-seed: mini-001 done successfully, mini-002 had an error

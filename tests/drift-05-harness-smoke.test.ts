@@ -26,18 +26,27 @@
  *     environment — the zero-network claim is enforced, not assumed.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { spawnSync } from 'child_process';
 import { describe, it, expect } from 'vitest';
 import { deriveGmailProvenanceKey } from '../src/source/provenance-key';
 import { DEFAULT_CONFIG } from '../src/lib/config';
+import { hasDistEntries, distSkipReason } from './support/dist-build';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const CASES_PATH = resolve(__dirname, '../scripts/eval/cases/drift-05-cases.json');
 const HARNESS_PATH = resolve(__dirname, '../scripts/eval/drift-05-dry-run.cjs');
 const REPO_ROOT = resolve(__dirname, '..');
+
+// Test 4 below spawns drift-05-dry-run.cjs, which requires dist/src/source/provenance-key et
+// al at module load; pretest builds dist/ for `npm test`, but a bare `vitest run` in a fresh
+// worktree does not. Test 5 (missing --cases file) is NOT gated: its assertions (non-zero
+// exit, non-empty stderr) hold whether the harness fails on the missing --cases arg or on a
+// missing-dist require crash, so it already passes on an unbuilt tree.
+const DIST_ENTRIES = ['dist/src/source/provenance-key.js'];
+const SKIP_NO_DIST = !hasDistEntries(...DIST_ENTRIES);
 
 const REQUIRED_FIELDS = [
   'case_id', 'scenario', 'requirement', 'initial_status_fact',
@@ -173,18 +182,9 @@ describe('DRIFT-05 harness smoke tests', () => {
   // ── Test 4: spawnSync dry-run invocation ──────────────────────────────────────
 
   describe('Test 4: --dry-run invocation (spawnSync, zero network)', () => {
-    it('exits 0, produces a JSON file with the three top-level sections, and the methodology block is honest', () => {
-      // Guard: the compiled dist/ output must exist (built by `npm run build` ahead of the
-      // suite, mirroring tests/eval-harness-smoke.test.ts's own precedent for the .cjs
-      // harnesses it spawns — this suite does not invoke `npm run build` itself).
-      const distEntry = resolve(REPO_ROOT, 'dist/src/source/provenance-key.js');
-      if (!existsSync(distEntry)) {
-        throw new Error(
-          `dist/ build output missing at ${distEntry} — run "npm run build" before this suite ` +
-          '(mirrors the eval-harness-smoke.test.ts precedent).',
-        );
-      }
-
+    it.skipIf(SKIP_NO_DIST)(
+      `exits 0, produces a JSON file with the three top-level sections, and the methodology block is honest${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+      () => {
       const outPath = resolve(REPO_ROOT, `scripts/eval/results/drift-05-smoke-${process.pid}.json`);
       // ANTHROPIC_API_KEY / OPENAI_API_KEY deliberately DELETED from the child env — the
       // zero-network claim is enforced here, not assumed.

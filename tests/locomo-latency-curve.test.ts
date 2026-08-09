@@ -18,6 +18,7 @@ import * as os   from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { describe, it, expect, afterAll } from 'vitest';
+import { hasDistEntries, distSkipReason } from './support/dist-build';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -27,6 +28,11 @@ const HARNESS_PATH   = path.resolve(__dirname, '../scripts/eval/latency-curve.cj
 const FIXTURE_POOL   = path.resolve(__dirname, '../scripts/eval/fixtures/locomo-node-pool.json');
 const REPO_ROOT      = path.resolve(__dirname, '..');
 const OUT_PATH       = path.join(os.tmpdir(), `latency-curve-smoke-${Date.now()}-${process.pid}.json`);
+
+// latency-curve.cjs requires dist/src/db/schema et al at module load; pretest builds dist/
+// for `npm test`, but a bare `vitest run` in a fresh worktree does not.
+const DIST_ENTRIES = ['dist/src/db/schema.js'];
+const SKIP_NO_DIST = !hasDistEntries(...DIST_ENTRIES);
 
 // ---------------------------------------------------------------------------
 // Cleanup
@@ -40,7 +46,9 @@ afterAll(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('latency-curve.cjs smoke', () => {
+describe.skipIf(SKIP_NO_DIST)(
+  `latency-curve.cjs smoke${SKIP_NO_DIST ? ` [${distSkipReason(...DIST_ENTRIES)}]` : ''}`,
+  () => {
   it('--quick exits 0, emits curve JSON with p50_ms and p95_ms keys', () => {
     // Verify pre-conditions
     expect(fs.existsSync(HARNESS_PATH)).toBe(true);
