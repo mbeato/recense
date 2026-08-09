@@ -13,27 +13,28 @@
  * `it`, so the join is a first-class assertion instead of an inference across suite
  * boundaries.
  *
- * TASK 1 of 2 (this revision): stages 1-6 — gmail raw bytes through proposal emission, with
- * the emit->store join pinned. Task 2 extends this SAME `it` with stages 7-8 (the
- * /v1/proposals HTTP surface and the Telegram approval) — "one continuous run" is the whole
- * point of the file, so a second `it` is never added.
- *
  * Every helper below is COPIED, not imported, per the existing e2e files' documented "each
  * consumer keeps its own copy" convention (MarkerProvider is not exported anywhere):
- *  - makeTempDbPath / RECENSE_LOCK_PATH handling — tests/proposal-reference-e2e.test.ts
- *  - constVec / constEmbedFn / MarkerProvider / seedNode / seedEntity /
+ *  - makeTempDbPath / getFreePort / RECENSE_LOCK_PATH handling — tests/proposal-reference-e2e.test.ts
+ *  - constVec / constEmbedFn / MarkerProvider / swapProvider / seedNode / seedEntity /
  *    findNodeIdByValue / getNodeById / makeConsolidatorWithProposalSink — tests/action-proposal-emission.test.ts
  *  - FakeGmailFetcher shape — tests/gmail-adapter.test.ts, extended to a scripted queue (P-5)
+ *  - makeLlmFreeProvider / getProposalStatus / assertDb split — tests/telegram-belief-e2e.test.ts
  *
  * Seams that are REAL (never mocked) in this file: GmailAdapter (with an injected fake
  * GmailFetcher only — no network), runPullPhase, IngestionPipeline, AllocationGate,
  * Consolidator.consolidate() (real graph mutation + drift + emission logic),
- * SQLiteConsolidationSink, SQLiteActionProposalSink over a REAL ActionProposalStore. Seams
- * that stay STUBBED, exactly as the composed suites already stub them: LLM calls, via the
- * content-keyed MarkerProvider offline (extraction + judge).
+ * SQLiteConsolidationSink, SQLiteActionProposalSink over a REAL ActionProposalStore,
+ * createBrainHttpServer, the real Telegram belief-bridge (runBeliefBridgePass,
+ * handleBeliefProposalAction, decodeBeliefCallbackData). Seams that stay STUBBED, exactly as
+ * the composed suites already stub them: LLM calls, via the content-keyed MarkerProvider
+ * offline (extraction + judge) and a fail-if-called ModelProvider online (the HTTP server's
+ * provider) — proving the online path (GET /v1/proposals, the approve POST) never invokes
+ * an LLM.
  */
 import Database from 'better-sqlite3';
 import { describe, it, expect } from 'vitest';
+import * as http from 'node:http';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -65,6 +66,13 @@ import { AllocationGate, IngestionPipeline } from '../src/ingest/pipeline';
 import { GmailAdapter, parseEmailDate, type RawGmailMessage, type GmailFetcher } from '../src/source/gmail-adapter';
 import { COLLAPSED_GMAIL_PROVENANCE_KEY } from '../src/source/provenance-key';
 import { runPullPhase } from '../src/adapter/ingest-cli';
+import { createBrainHttpServer, type BrainHttpServer } from '../src/adapter/serve-cli';
+import { createBeliefProposalClient } from '../clients/telegram/belief-proposal-client';
+import { runBeliefBridgePass, handleBeliefProposalAction } from '../clients/telegram/belief-bridge';
+import { decodeBeliefCallbackData } from '../clients/telegram/push-codec';
+import { MockTelegramTransport } from '../clients/telegram/transport';
+import { getProposal } from '../clients/telegram/proposal-store';
+import type { MemoryClient } from '../clients/telegram/memory-client';
 
 // ---------------------------------------------------------------------------
 // Embed helper — constant vector for every text (cosine 1.0 between any two embedded texts).
@@ -84,8 +92,7 @@ function constEmbedFn(dims: number): (_t: string) => Float32Array {
 // ---------------------------------------------------------------------------
 // Harness — copied from tests/action-proposal-emission.test.ts / tests/drift-belief-correction-e2e.test.ts,
 // but P-1 requires a file-backed temp DB (createBrainHttpServer opens its own handles on
-// dbPath, wired in Task 2) so this harness's db field is opened against tmpDbPath, never
-// ':memory:'.
+// dbPath) so this harness's db field is opened against tmpDbPath, never ':memory:'.
 // ---------------------------------------------------------------------------
 
 interface Harness {
@@ -101,13 +108,12 @@ interface Harness {
 function makeHarness(dbPath: string, db: Database.Database): Harness {
   // P-2: seed the FakeClock at real Date.now(), NOT the customary Date.UTC(2026, 0, 1).
   // SQLiteActionProposalSink stamps expires_at = clock.nowMs() + PROPOSAL_TTL_MS (14 days),
-  // and the HTTP server's ActionProposalStore (wired in Task 2) filters expires_at > now
-  // against realClock. Seeding the customary 2026-01-01 fake clock would make every emitted
-  // proposal already expired by the time GET /v1/proposals runs against real wall-clock
-  // time, so stage 7-8 would silently prove nothing (empty list, test passes for the wrong
-  // reason). Seeding at real Date.now() keeps determinism WITHIN this run (the clock never
-  // advances after construction) while keeping the TTL window open against the real clock
-  // the server uses.
+  // and the HTTP server's ActionProposalStore filters expires_at > now against realClock.
+  // Seeding the customary 2026-01-01 fake clock would make every emitted proposal already
+  // expired by the time GET /v1/proposals runs against real wall-clock time, so stage 7-8
+  // would silently prove nothing (empty list, test passes for the wrong reason). Seeding at
+  // real Date.now() keeps determinism WITHIN this run (the clock never advances after
+  // construction) while keeping the TTL window open against the real clock the server uses.
   const clock = new FakeClock(Date.now());
   const config: EngineConfig = {
     ...DEFAULT_CONFIG,
@@ -236,6 +242,29 @@ class MarkerProvider implements ModelProvider {
 }
 
 // ---------------------------------------------------------------------------
+// Fail-if-called provider — copied from tests/proposal-reference-e2e.test.ts /
+// tests/telegram-belief-e2e.test.ts. Proves the online path (HTTP server + Telegram bridge)
+// never invokes an LLM.
+// ---------------------------------------------------------------------------
+
+function makeLlmFreeProvider(): ModelProvider {
+  return {
+    async embed(texts: string[]): Promise<Float32Array[]> {
+      return texts.map(() => new Float32Array([0, 1, 0]));
+    },
+    async generate(): Promise<string> {
+      throw new Error('generate must not be called on the full-chain e2e online path');
+    },
+    async judge(): Promise<never> {
+      throw new Error('judge must not be called on the full-chain e2e online path');
+    },
+    async judgeBatch(): Promise<never> {
+      throw new Error('judgeBatch must not be called on the full-chain e2e online path');
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // FakeGmailFetcher — shape from tests/gmail-adapter.test.ts, extended to a scripted queue
 // (P-5): successive fetchMessages calls shift successive batches off an array.
 // ---------------------------------------------------------------------------
@@ -277,14 +306,42 @@ function makeTempDbPath(prefix: string): string {
   return path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 }
 
+function makeTempPath(prefix: string): string {
+  return path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+}
+
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = http.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address() as { port: number };
+      srv.close(() => resolve(addr.port));
+    });
+    srv.on('error', reject);
+  });
+}
+
 const noopLog = (_msg: string): void => {};
+
+function makeNoopMemoryClient(): MemoryClient {
+  return {
+    async ask() { return { answer: null, origin: 'none' }; },
+    async search() { return []; },
+    async surface() { return []; },
+    async surfaceSeen() {},
+    async hitlEpisode() {},
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Test
 // ---------------------------------------------------------------------------
 
-describe('full-chain e2e: gmail raw bytes -> normalize/strip -> ingest -> consolidation -> emission -> store', () => {
-  it('drives one fixture Gmail contradiction through stages 1-6, pinning the emit->store join (Task 2 extends this same run with stages 7-8)', async () => {
+describe('full-chain e2e: gmail raw bytes -> normalize/strip -> ingest -> consolidation -> emission -> store -> /v1/proposals -> telegram approval', () => {
+  const TEST_TOKEN = 'f'.repeat(64);
+  const CHAT_ID = 555555;
+
+  it('drives one fixture Gmail contradiction through all 8 stages in a single continuous run, pinning the emit->store join across the whole chain', async () => {
     // ── Fixture constants (single nowMs so parseEmailDate assertions can reuse it) ──
     const nowMs = Date.now();
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -326,16 +383,19 @@ describe('full-chain e2e: gmail raw bytes -> normalize/strip -> ingest -> consol
     ];
 
     // ── Stage 0: file-backed temp DB (P-1) — never :memory:, so createBrainHttpServer's
-    // own handles (stage 7-8, Task 2) will see the same rows the consolidation half
-    // (stage 1-6, this task) writes.
+    // own handles (stage 7-8) see the same rows the consolidation half (stage 1-6) writes.
     const tmpDbPath = makeTempDbPath('full-chain-e2e');
     const tmpLockPath = path.join(
       os.tmpdir(),
       `full-chain-e2e-lock-${Date.now()}-${Math.random().toString(36).slice(2)}.lock`,
     );
     process.env['RECENSE_LOCK_PATH'] = tmpLockPath;
+    const storePath = makeTempPath('full-chain-e2e-store');
+    const statePath = makeTempPath('full-chain-e2e-state');
 
     let db: Database.Database | undefined;
+    let assertDb: Database.Database | undefined;
+    let serverResult: BrainHttpServer | undefined;
 
     try {
       db = new Database(tmpDbPath);
@@ -480,11 +540,78 @@ describe('full-chain e2e: gmail raw bytes -> normalize/strip -> ingest -> consol
       // P-2 guard, stated as an assertion so a future clock regression fails loudly here
       // instead of silently emptying stage 7.
       expect(row.expires_at).toBeGreaterThan(Date.now());
+
+      const emittedProposalId = row.id;
+
+      // ── Close the engine-half DB handle BEFORE createBrainHttpServer opens its own,
+      // per proposal-reference-e2e.test.ts's setup/seed handle split (Task 2 sequencing,
+      // step 1) — keeps the approve path's per-call lock from contending with an open
+      // writer. ──
+      db.close();
+      db = undefined;
+
+      // ── Stage 7: /v1/proposals over the real HTTP server ──
+      const port = await getFreePort();
+      serverResult = await createBrainHttpServer({ dbPath: tmpDbPath, token: TEST_TOKEN, provider: makeLlmFreeProvider() });
+      serverResult.server.listen(port, '127.0.0.1');
+      await new Promise<void>((resolve) => {
+        if (serverResult!.server.listening) { resolve(); return; }
+        serverResult!.server.once('listening', resolve);
+      });
+
+      assertDb = new Database(tmpDbPath);
+      function getProposalStatus(id: string): string {
+        const r = assertDb!.prepare('SELECT status FROM action_proposal WHERE id = ?').get(id) as { status: string } | undefined;
+        return r?.status ?? '';
+      }
+
+      const client = createBeliefProposalClient(`http://127.0.0.1:${String(port)}`, TEST_TOKEN);
+      const transport = new MockTelegramTransport();
+      const memoryClient = makeNoopMemoryClient();
+
+      await runBeliefBridgePass({
+        client, transport, chatIds: [CHAT_ID], storePath, statePath,
+        dailyCap: 10, log: noopLog, nowMs: Date.now(),
+      });
+
+      expect(transport.sent).toHaveLength(1);
+      const sent = transport.sent[0];
+      expect(sent?.text).toContain(ENTITY);
+      const buttons = sent?.replyMarkup?.inline_keyboard.flat() ?? [];
+      // APPROVE-01: the approve button's callback_data starts with the belief-kind prefix
+      // and its label carries the transition target 'rejected' — never a bare "Approve".
+      const approveButton = buttons.find((b) => b.callback_data.startsWith('3|') && b.text.includes('rejected'));
+      expect(approveButton).toBeDefined();
+
+      // ── Stage 8: decode the REAL callback_data, drive the approval ──
+      const decoded = decodeBeliefCallbackData(approveButton?.callback_data ?? '');
+      expect(decoded).not.toBeNull();
+      expect(decoded?.action).toBe('approve');
+
+      await handleBeliefProposalAction(
+        transport, memoryClient, client, storePath, statePath, CHAT_ID,
+        decoded as { localId: string; action: 'approve' | 'edit' | 'reject' | 'snooze' },
+        Date.now(),
+      );
+
+      expect(getProposalStatus(emittedProposalId)).toBe('approved');
+      const localId = decoded?.localId ?? '';
+      const localRow = getProposal(localId, storePath);
+      expect(localRow && 'localStatus' in localRow ? localRow.localStatus : undefined).toBe('terminal');
+
+      // Cross-boundary id conservation (the emit->store pin extended across the HTTP seam):
+      // asserted against the CAPTURED constant, not a re-query — a re-query would pass even
+      // if the surface listed a different row.
+      expect(row.id).toBe(emittedProposalId);
     } finally {
+      try { assertDb?.close(); } catch { /* ignore */ }
+      if (serverResult) { try { await serverResult.close(); } catch { /* ignore */ } }
       try { db?.close(); } catch { /* ignore */ }
       delete process.env['RECENSE_LOCK_PATH'];
       try { fs.unlinkSync(tmpLockPath); } catch { /* ignore */ }
       try { fs.unlinkSync(tmpDbPath); } catch { /* ignore */ }
+      try { fs.unlinkSync(storePath); } catch { /* ignore */ }
+      try { fs.unlinkSync(statePath); } catch { /* ignore */ }
     }
   });
 });
