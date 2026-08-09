@@ -22,6 +22,9 @@
  * Contract (adapted from `strip-hidden.ts`'s four-guarantee block):
  *  - **Pure**: no side effects, no I/O, no randomness, no clock read.
  *  - **Idempotent**: `stripQuotedForwarded(stripQuotedForwarded(x)) === stripQuotedForwarded(x)`.
+ *    Holds structurally, not just by fixture coverage (65-REVIEW WR-03): the boundary/quote
+ *    regexes are indent-agnostic, and the trim never re-anchors a surviving line to column 0,
+ *    so a second pass sees the same lines at the same indent and can match nothing new.
  *  - **Total**: never throws, for any string including empty/malformed/unterminated/
  *    adversarially-nested input.
  *  - **Monotone toward less content**: `stripQuotedForwarded(x).length <= x.length` always;
@@ -42,29 +45,34 @@
 // ---------------------------------------------------------------------------
 
 /**
- * A line whose first non-space character is `>` (up to 3 leading spaces tolerated, matching
- * common mailer soft-wrap of quoted lines). Multiline so `^`/`$` anchor per line.
+ * A line whose first non-space character is `>` (any leading horizontal whitespace tolerated,
+ * matching common mailer soft-wrap of quoted lines). Multiline so `^`/`$` anchor per line.
  */
-const QUOTE_LINE_RE = /^ {0,3}>.*$/gm;
+const QUOTE_LINE_RE = /^[ \t]*>.*$/gm;
 
 /**
  * The `On <anything> wrote:` attribution boundary. The middle span is bounded by an explicit
  * length-limited character class (up to ~200 non-newline characters, optionally spanning ONE
  * newline) rather than a greedy `.*` — an unbounded greedy match across a large body is the
  * classic catastrophic-backtracking foot-gun, and this function must stay total and bounded.
- * Anchored at line start (multiline) to avoid matching "on" mid-sentence.
+ * Anchored at line start (multiline) after optional leading horizontal whitespace, to avoid
+ * matching "on" mid-sentence.
  */
-const ATTRIBUTION_RE = /^On [^\n]{0,200}(?:\n[^\n]{0,200})? wrote:\s*$/gim;
+const ATTRIBUTION_RE = /^[ \t]*On [^\n]{0,200}(?:\n[^\n]{0,200})? wrote:\s*$/gim;
 
 /**
- * Forwarded-message banners recognized at line start. Covers: a run of 2+ dashes, the word
- * "Forwarded message" (case-insensitive), a run of 2+ dashes; "-----Original Message-----"
- * (any dash count >=2); and "Begin forwarded message:".
+ * Forwarded-message banners recognized at line start (any leading horizontal whitespace
+ * tolerated). Covers: a run of 2+ dashes, the word "Forwarded message" (case-insensitive), a
+ * run of 2+ dashes; "-----Original Message-----" (any dash count >=2); and
+ * "Begin forwarded message:".
  */
-const FORWARD_MARKER_RE = /^(?:-{2,}\s*Forwarded message\s*-{2,}|-{2,}\s*Original Message\s*-{2,}|Begin forwarded message:)\s*$/gim;
+const FORWARD_MARKER_RE = /^[ \t]*(?:-{2,}\s*Forwarded message\s*-{2,}|-{2,}\s*Original Message\s*-{2,}|Begin forwarded message:)\s*$/gim;
 
-/** RFC 3676 signature delimiter: a line consisting of exactly `-- ` (dash dash space). */
-const SIGNATURE_DELIM_RE = /^-- $/gm;
+/**
+ * RFC 3676 signature delimiter: a line consisting of exactly `-- ` (dash dash space), any
+ * leading horizontal whitespace tolerated.
+ */
+const SIGNATURE_DELIM_RE = /^[ \t]*-- $/gm;
 
 /** Non-whitespace character, used by `isNearEmptyResidual` for the residual-size count. */
 const NON_WHITESPACE_RE = /\S/g;
@@ -99,7 +107,11 @@ const MAX_QUOTE_STRIP_CODE_UNITS = 200_000;
  *     HTML-to-text conversion often drops `>` prefixes on quoted content), so a quote-line-only
  *     filter would leak the quoted body through and defeat D-07's farming-prevention guarantee.
  *  3. From the surviving prefix, drop every line matching `QUOTE_LINE_RE`.
- *  4. Rejoin with `\n`, collapse runs of 3+ blank lines to one, and `.trim()` the result.
+ *  4. Rejoin with `\n`, strip trailing horizontal whitespace from each line, drop leading and
+ *     trailing now-empty lines, then collapse runs of 3+ blank lines to one. A surviving
+ *     line's LEADING indentation is preserved deliberately (65-REVIEW WR-03) — re-anchoring
+ *     an indented line to column 0 would manufacture a fresh boundary/quote context that only
+ *     a second application would see, breaking idempotence.
  *
  * @param text - Raw email body text (post EMAIL-03 `stripHiddenContent`, never the reverse).
  * @returns    The author's own newly-written text, with all quoted/forwarded/signature
@@ -150,10 +162,16 @@ export function stripQuotedForwarded(text: string): string {
     return !QUOTE_LINE_RE.test(line);
   });
 
-  // Step 4: rejoin, collapse excess blank lines, trim.
-  let result = kept.join('\n');
+  // Step 4: strip trailing horizontal whitespace per line (never leading — leading
+  // indentation of a surviving line is preserved deliberately, see the algorithm doc above),
+  // drop leading/trailing now-empty lines, rejoin, collapse excess blank lines.
+  const trimmedLines = kept.map(line => line.replace(/[ \t\r]+$/, ''));
+  let start = 0;
+  let end = trimmedLines.length;
+  while (start < end && trimmedLines[start] === '') start++;
+  while (end > start && trimmedLines[end - 1] === '') end--;
+  let result = trimmedLines.slice(start, end).join('\n');
   result = result.replace(EXCESS_BLANK_LINES_RE, '\n\n');
-  result = result.trim();
 
   // Monotonicity safety net: the transformation above is structurally length-reducing
   // (line removal + trim), but guard explicitly — truncating RESULT (never re-expanding

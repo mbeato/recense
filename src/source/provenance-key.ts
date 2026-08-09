@@ -16,10 +16,20 @@
  * not just in the plan, so a future reader does not have to re-derive them):
  *  - **Domain, not full address.** A single mailbox can mint unlimited local parts
  *    (`a+1@`, `a+2@`), so keying on the address would let one sender manufacture N independent
- *    provenances. Keying on the domain reduces that to controlling N domains — the same bar as
- *    controlling N Claude Code sessions. Honest cost, stated plainly: two different humans at
- *    the same company corroborating the same status count as ONE provenance. This is the
- *    deliberate conservative direction — under-count, never over-count.
+ *    provenances. The composed key is `(sender domain, Gmail threadId)`, so distinctness is
+ *    per-thread, not per-domain — and the real farming bar is NOT "N domains". A Gmail
+ *    `threadId` is server-ASSIGNED (a sender cannot choose or collide one) but sender-MINTABLE
+ *    at zero cost: any new message with a fresh Subject and no `In-Reply-To` starts a new
+ *    thread. The `From:` domain component is itself sender-asserted, not independently
+ *    verified. And the residual gate (`isNearEmptyResidual`) does not raise this bar either —
+ *    it only suppresses DUPLICATED quoted/forwarded content, so N freshly-worded emails clear
+ *    it trivially. The real bar is therefore ONE sender domain plus N freshly-minted Gmail
+ *    threads (N emails), not N domains. This is why `provenanceDistinctnessEnabled` ships
+ *    dark, and the key-composition fix is reserved for the founder's enablement review
+ *    (65-HUMAN-UAT items 1-3) — see 65-REVIEW WR-01 for the full analysis. Honest cost, stated
+ *    plainly regardless of that open question: two different humans at the same company
+ *    corroborating the same status count as ONE provenance. This is the deliberate
+ *    conservative direction — under-count, never over-count.
  *  - **accountId excluded.** The same thread landing in two of the founder's own inboxes is one
  *    piece of evidence, not two. Including accountId would double-count a CC.
  *  - **Plaintext, not hashed.** The sender domain already appears verbatim inside
