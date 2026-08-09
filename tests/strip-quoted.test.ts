@@ -14,6 +14,11 @@
  * the load-bearing proof that the boundary rule — not the quote-line rule — is what saves us;
  * weakening the boundary rule to rely on `>`-prefix detection alone is a regression, not a
  * simplification.
+ *
+ * The WR-03 regression cases below exist because 65-REVIEW found both defects (idempotence
+ * breach and boundary-leak) resolving toward MORE residual, and the FIXTURES table at the
+ * time lacked any indented quote or indented boundary line — which is precisely why the
+ * idempotence loop passed while the contract was broken.
  */
 import { describe, it, expect } from 'vitest';
 import { stripQuotedForwarded, isNearEmptyResidual } from '../src/source/strip-quoted';
@@ -84,6 +89,31 @@ const FIXTURES: ReadonlyArray<{ readonly label: string; readonly input: string }
       'On Wed, Jan 7, 2026 at 11:00 AM Dave <d@x.com> wrote:\n' +
       '> Any update on my application?',
   },
+  // WR-03 idempotence breach: a 4-space-indented quote line survives pass 1 (indent >3
+  // spaces defeats QUOTE_LINE_RE's {0,3} cap), then the old .trim() re-anchors it to column
+  // 0 on pass 2, where it newly matches — non-idempotent.
+  { label: 'four-space-indented quote line (WR-03 idempotence)', input: '    > x' },
+  // WR-03 leak: the indented quote lines below the author's own text survive pass 1 for the
+  // same reason.
+  {
+    label: 'own text above a four-space-indented quote (WR-03 leak)',
+    input: 'My note.\n    > quoted\n    > more',
+  },
+  // WR-03 leak: a 2-space-indented attribution line defeats ATTRIBUTION_RE's column-0 anchor,
+  // so the boundary rule never fires and the whole quoted body leaks into the residual.
+  {
+    label: 'indented On ... wrote: attribution (WR-03 leak)',
+    input:
+      '  On Mon, Jan 5, 2026 at 9:00 AM Alice <a@x.com> wrote:\n' +
+      'We regret to inform you that we are moving forward with other candidates.',
+  },
+  // WR-03 leak: same defect against FORWARD_MARKER_RE.
+  {
+    label: 'indented forwarded-message banner (WR-03 leak)',
+    input: '  ---------- Forwarded message ----------\nFrom: Bob\nWe regret to inform you.',
+  },
+  // WR-03 leak: same defect against SIGNATURE_DELIM_RE.
+  { label: 'indented signature delimiter (WR-03 leak)', input: 'Hi.\n  -- \nMax\nCEO' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -187,6 +217,73 @@ describe('stripQuotedForwarded', () => {
     expect(stripQuotedForwarded('See this.\n\nBegin forwarded message:\n\nFrom: Bob\nbody')).toBe(
       'See this.'
     );
+  });
+
+  describe('WR-03 regression: indented quotes and boundaries', () => {
+    it('a 4-space-indented quote line strips to empty', () => {
+      expect(stripQuotedForwarded('    > x')).toBe('');
+    });
+
+    it('own text above a 4-space-indented quote strips the quote', () => {
+      expect(stripQuotedForwarded('My note.\n    > quoted\n    > more')).toBe('My note.');
+    });
+
+    it('a tab-indented quote line strips too', () => {
+      expect(stripQuotedForwarded('Own.\n\t> quoted')).toBe('Own.');
+    });
+
+    it('an indented attribution boundary strips the whole quoted body, not just the banner', () => {
+      const input =
+        '  On Mon, Jan 5, 2026 at 9:00 AM Alice <a@x.com> wrote:\n' +
+        'We regret to inform you that we are moving forward with other candidates.';
+      const residual = stripQuotedForwarded(input);
+      expect(residual).toBe('');
+      expect(residual).not.toContain('regret');
+    });
+
+    it('own text above an indented attribution boundary is preserved, quoted body is not', () => {
+      const input =
+        'Thanks.\n\n' +
+        '  On Mon, Jan 5, 2026 at 9:00 AM Alice <a@x.com> wrote:\n' +
+        'We regret to inform you.';
+      const residual = stripQuotedForwarded(input);
+      expect(residual).toBe('Thanks.');
+      expect(residual).not.toContain('regret');
+    });
+
+    it('an indented forward banner strips the whole forwarded body', () => {
+      const input = '  ---------- Forwarded message ----------\nFrom: Bob\nWe regret to inform you.';
+      const residual = stripQuotedForwarded(input);
+      expect(residual).toBe('');
+      expect(residual).not.toContain('regret');
+    });
+
+    it('an indented signature delimiter strips the signature block', () => {
+      expect(stripQuotedForwarded('Hi.\n  -- \nMax\nCEO')).toBe('Hi.');
+    });
+
+    it('a 5-space-indented attribution also strips (not a magic-3-space widening)', () => {
+      const input = '     On Mon, Jan 5, 2026 at 9:00 AM Alice <a@x.com> wrote:\nbody';
+      expect(stripQuotedForwarded(input)).toBe('');
+    });
+
+    it('double application is idempotent for the indented-quote case', () => {
+      const once = stripQuotedForwarded('    > x');
+      expect(stripQuotedForwarded(once)).toBe(once);
+    });
+
+    it('double application is idempotent for the indented-attribution case', () => {
+      const input =
+        '  On Mon, Jan 5, 2026 at 9:00 AM Alice <a@x.com> wrote:\n' +
+        'We regret to inform you that we are moving forward with other candidates.';
+      const once = stripQuotedForwarded(input);
+      expect(stripQuotedForwarded(once)).toBe(once);
+    });
+
+    it('an author\'s own indented line survives at its original indentation, not shifted to column 0', () => {
+      const input = 'Line one\n    indented own text\nLine three';
+      expect(stripQuotedForwarded(input)).toBe('Line one\n    indented own text\nLine three');
+    });
   });
 
   describe('over-cap fail-closed branch', () => {
