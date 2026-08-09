@@ -219,6 +219,46 @@ Engine: reconsolidation candidate broadening (union of entity-graph + BM25 + den
 
 ---
 
+## Milestone: v10.0 — Action Proposals
+
+**Shipped:** 2026-08-09
+**Phases:** 62–69 (7 planned + Phase 69 promoted from SEED-005) | **Plans:** 69 (172 tasks)
+
+### What Was Built
+recense now watches multiple Gmail inboxes and turns belief change into human-approved action: guided `gmail-auth` account onboarding + per-account backfill scoping + a 7-round adversarially-verified hidden-content stripping pipeline at the ingest boundary (62); offline intent classification riding the existing extraction call with zero net-new LLM calls (63); confident-or-null three-channel entity resolution (64); belief-gated status drift on the byte-unmodified PE-gate machinery + the provenance-distinctness redesign, knob dark pending founder gate (65); the domain-neutral `ActionProposalSink` + `/v1/proposals` with the D-43-for-proposals sentinel (66); a reference consumer adapter and Telegram belief-kind HITL proving the contract from both sides (67–68); and eval-first entity-anchored ambient recall — 2 knobs live on passed gates, 2 honest nulls (69). One continuous 8-stage E2E test pins the whole chain.
+
+### What Worked
+- **Audit-before-close is now the norm — and this time every clearable finding was resolved BEFORE close.** Four quick tasks (260809-1n3/1vg/2fo/2qe) cleared the typecheck blocker, the dist-suite failures, the perf flake, the WR-03 idempotence defect, and the composed-suites-only E2E warning; the audit was re-run and the close proceeded with zero clearable debt. Contrast v9.0 (blocker found at audit, closed same-day) and v8.0 (no audit at all).
+- **Bookkeeping lag finally beaten.** REQUIREMENTS.md traceability was reconciled 2026-08-07 *before* the audit; checkboxes matched verifications at close for the first time since the pattern was named in v2.0.
+- **Oracle-driven adversarial verification found real defects hand-review missed.** The strip-hidden gap-closure loop (62-13..62-30) built independent conformant oracles (css-tree liveness, parse5 HTML layer) and both-directions differentials — rediscovering chartered findings independently and surfacing genuinely new leak classes (NF-06 compound leak, CSS-escaped selectors) plus quadratic blowups measured down from 126 s to 1.2 ms.
+- **Structural inheritance over re-implementation held everywhere.** Classification sits below the existing hitl hard-stop; hold-exclusion flows from one exported eligibility set; the belief-kind rides the frozen proposal store behind a hash-lock test. Zero re-implementations of existing guards.
+- **Eval-first knob discipline extended to features.** Phase 69's gates decided what shipped; the LLM-judge re-gate *refuted* the grader-artifact hypothesis rather than rescuing the knob — the null was verified, not just recorded.
+
+### What Was Inefficient
+- **Phase 62 consumed 31 of 69 plans.** Planned as "ingest hardening," it became a seven-round adversarial parsing campaign once attacker-controlled HTML met a hand-rolled stripper. The lesson is a budgeting one: parsing hostile input at a trust boundary costs a multiple of any initial estimate.
+- **The SDK 999-sentinel misnumber recurred a fifth time (Phase 69)** before quick 260802-m2e found the root cause on disk (two mis-named `998.x` dirs from v9.0 archival) rather than in ROADMAP prose.
+- **`milestone.complete` auto-scraped a junk accomplishments list again** (all ~70 plan one-liners dumped into MILESTONES.md; hand-curated at close, same as v9.0).
+- **Nyquist validation is enabled in config but produced zero VALIDATION.md files across all 8 phases** — either run it per-phase or disable the flag; the current state is a standing audit warning.
+
+### Patterns Established
+- **Independent conformant oracle + both-directions differential** for any surface that parses attacker-controlled input (the test-layer oracle must not share the production parser).
+- **Two-layer invariant sentinels** (static grep/import-boundary + runtime byte-identity) for self-confirmation-class risks — D-43-for-proposals is the template.
+- **Calibration-relative perf bounds** (elapsed ≤ k × same-process reference) replacing absolute wall-clock assertions that flake under suite load.
+- **dist-build gate**: CLI-subprocess tests skip with a message, never fail, on unbuilt trees.
+- **Founder gates as designed pre-decision states**: `provenanceDistinctnessEnabled` dark-with-harness-ready is a shippable state, not an oversight.
+
+### Key Lessons
+1. Budget adversarial-input hardening as a campaign, not a task — and reach for a conformant parser early; v10.0 consciously spent its first runtime-dep exceptions since v2.0 (`css-tree`, `htmlparser2`, exact-pinned) after hand-rolled scanning lost repeatedly. *(v10.0)*
+2. Resolve clearable audit findings before close, not after — the audit-fix-reaudit loop (tech_debt verdict, 6 resolved gaps) produced a clean close with no same-day scramble. *(v10.0)*
+3. Root-cause recurring tooling bugs in state on disk, not in prose — five occurrences of the 999-misnumber were "manually corrected" before one look at the phases directory found the actual cause. *(v10.0)*
+4. A verified null beats a recorded null: re-gate with a better instrument before accepting failure — and accept it harder if the better instrument agrees. *(v10.0)*
+
+### Cost Observations
+- All LLM cost stayed in the offline sleep pass on the Max subscription; `MAX_THINKING_TOKENS=0` held.
+- The one measured marginal-cost change: +597 input tokens (+117.52%) per gmail extraction call for intent classification — measured live (two-arm `claude -p` harness), founder-confirmed, zero net-new calls.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -231,6 +271,7 @@ Engine: reconsolidation candidate broadening (union of entity-graph + BM25 + den
 | v6.0 | ~2 days | 6 | Spike-gated the off-distribution survey-quality bet before build; onboarding rode existing seams net-zero deps. Bookkeeping lag bit a THIRD time — interleaved v6.0/v7.0 history left no clean per-milestone tag boundary. |
 | v8.0 | ~4 days | 5 (+1 deferred, +2 folded-in) | Baseline-before-optimize enforced as a hard gate; spike chose the zero-dep mechanism; productization phases (44/45) interleaved with the perf line. Bookkeeping lag bit a FOURTH time — scope grew 40–43→40–45 with no audit; Phase 43 (the milestone's own "lock the numbers" thesis) deferred unbuilt. |
 | v9.0 | ~23 days | 16 (5 planned + 11 appended) | First audit-before-close since v6.0 — caught the one real blocker (GATE-01 text vs on-demand gate), closed same-day as a quick task. Honest-null discipline (w*=0 ships dark). Bookkeeping lag bit a FIFTH time — scope tripled, checkboxes stale, 5 phases without VERIFICATION.md, SDK 999-misnumber ×4. |
+| v10.0 | ~11 days | 8 (7 planned + 1 promoted seed) | Audit → fix → re-audit → close: all clearable findings resolved pre-close via 4 quick tasks. Bookkeeping lag beaten (traceability reconciled before audit). Adversarial gap-closure campaign (7 rounds, Phase 62) became the dominant schedule item; 999-misnumber root-caused on disk after a 5th occurrence. |
 
 ### Cumulative Quality
 
@@ -242,11 +283,12 @@ Engine: reconsolidation candidate broadening (union of entity-graph + BM25 + den
 | v6.0 | full suite green; 109 cross-phase integration tests pass, tsc clean (audit) | Zero new runtime npm deps; onboarding reused existing seams (IngestionPipeline/node_scope/consolidation/corpus promoter); 4/4 E2E flows wired; engine invariants held (single-tenant, graph-as-truth, hot path LLM-free, D-43). |
 | v8.0 | full suite green (2383 pass / 3 skip), tsc clean | Zero new runtime npm deps (vector index = zero-dep flat-buffer sidecar, NOT sqlite-vec); byte-exact top-k preserved (no accuracy trade for latency); derived-cache discipline extended to the vector index. **No milestone audit run** (closed with Phase 43 as a documented known gap). |
 | v9.0 | full suite green (2701 pass / 3 skip), tsc clean | Zero new runtime npm deps (WASM kernel = committed base64 blob, no node-gyp; troika vendored with CDN phone-home patched out); byte-exact retrieval preserved through both the kernel and fusion changes; engine invariants held; regression gate now merge-blocking in CI. Audit `passed` (9/9 integration seams, 3/3 E2E flows). |
+| v10.0 | full suite green (4029 pass), tsc clean | TWO new exact-pinned runtime deps (`css-tree@3.2.1`, `htmlparser2@10.0.0`) — the first deliberate net-zero exception since v2.0, spent on conformant parsing of attacker-controlled email; parse5 stayed dev-only as an oracle. D-43 family extended to the approve/reject path (two-layer sentinel); online paths LLM-free incl. `/v1/proposals`; hitl exclusion inherited structurally. Audit `tech_debt`, zero critical blockers (30/30 REQ, 8/8 seams, 8/8 flows, one continuous 8-stage E2E). |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. Dogfood against real data — mock-only suites hide production no-ops. *(v1.0)*
 2. Lock + `process.exit` discipline belongs in the CLI skeleton, not memory. *(v1.0)*
 3. Plan-ordering is not a runtime gate — production-touching code needs a default-OFF flag. *(v1.0, re-confirmed v2.0)*
-4. Flip requirements/traceability at phase close; archive the milestone the day it ships. *(v2.0, re-confirmed v3.1, re-confirmed AGAIN v6.0 — leaving v6.0 + v7.0 both open produced interleaved git history with no recoverable per-milestone tag boundary; the cost escalated from lumpy archives to permanent loss of git milestone granularity; re-confirmed a FIFTH time v9.0 — stale checkboxes forced the close to reconstruct requirement status from phase summaries)*
+4. Flip requirements/traceability at phase close; archive the milestone the day it ships. *(v2.0, re-confirmed v3.1, re-confirmed AGAIN v6.0 — leaving v6.0 + v7.0 both open produced interleaved git history with no recoverable per-milestone tag boundary; the cost escalated from lumpy archives to permanent loss of git milestone granularity; re-confirmed a FIFTH time v9.0 — stale checkboxes forced the close to reconstruct requirement status from phase summaries. **First clean hold at v10.0**: traceability reconciled before the audit, clearable findings resolved before the close.)*
 5. When a plan authorizes a fallback branch, assert the *delivered* artifact in verification, not the default-path one. *(v3.1 — Phase 19's hardcoded `foldSuppress` check went stale when the hull shipped via the D-06 display-hull branch)*

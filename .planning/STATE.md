@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v10.0
 milestone_name: Action Proposals
-status: completed
-stopped_at: "Cross-phase deep review + delegated decisions session DONE (2026-08-07): both surface reviews fixed on main (2C/11W), --judge + doc-link re-gates both honest nulls (knobs stay dark), REQUIREMENTS reconciled, flake/stash housekeeping done. Suite 4029, tsc clean. Open: 65-HUMAN-UAT 3 founder items; v10.0 milestone audit/close (founder sign-off)"
-last_updated: "2026-08-07T22:20:00.000Z"
-last_activity: 2026-08-07
+status: Awaiting next milestone
+stopped_at: "Both cross-phase deep reviews (proposal pipeline, retrieval path) done and ALL Critical+Warning findings fixed on main — reports in `.planning/reviews/` (both `status: fixed`). 69 re-gates: `--judge` LLM grader implemented and run — entityAnchoringEnabled G2 fails HARDER under the judge (30/54 regressed, mean 0.70→0.55; refutes the mean-dilution hypothesis) → accepted-null; doc-link re-gate on refreshed eval set (57-prompt union) still vacuous 0/57 → stays dark. Ship-arm gate replay (post-fix) G1/G3/G4 pass, G2 53/54 (single miss = demonstrated floor-boundary embed nondeterminism, not knob-attributable). strip-hidden flake de-flaked (min-of-5, bound unchanged). Both stashes verified superseded, dropped. REQUIREMENTS RECALL rows reconciled. Suite 4029 / tsc clean."
+last_updated: "2026-08-09T16:55:40.688Z"
+last_activity: 2026-08-09 — Milestone v10.0 completed and archived
 progress:
   total_phases: 8
   completed_phases: 8
@@ -18,11 +18,11 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
+See: .planning/PROJECT.md (updated 2026-08-09 — v10.0 Action Proposals shipped)
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Milestone complete
+**Current focus:** Planning next milestone (v10.0 shipped 2026-08-09)
 
 **v9.0 Key research grounding (June-2026 deep-research pass — historical, still load-bearing for RESOLVE/DRIFT reuse):**
 
@@ -41,10 +41,10 @@ See: .planning/PROJECT.md (updated 2026-07-29 — v10.0 Action Proposals opened)
 
 ## Current Position
 
-Phase: 69
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-08-09 - Completed quick task 260809-2qe: single continuous 8-stage E2E test (tests/full-chain-e2e.test.ts) — all clearable v10.0 audit debt now resolved (5 items via 260809-1vg/2fo/2qe)
+Phase: Milestone v10.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-08-09 — Milestone v10.0 completed and archived
 
 ## Performance Metrics
 
@@ -67,7 +67,7 @@ Last activity: 2026-08-09 - Completed quick task 260809-2qe: single continuous 8
 | v7.0 | 35–39.1 | ~26 | 2026-06-23 |
 | v8.0 | 40–45 | 24 | 2026-06-26 |
 | v9.0 | 46–61 | 92 | 2026-07-20 |
-| v10.0 | 62–68 | TBD | in progress |
+| v10.0 | 62–69 | 69 | 2026-08-09 |
 | Phase 56 P01 | 20min | 2 tasks | 3 files |
 | Phase 56 P03 | 15min | 3 tasks | 3 files |
 | Phase 56 P02 | 15min | 2 tasks | 1 files |
@@ -200,6 +200,22 @@ Last activity: 2026-08-09 - Completed quick task 260809-2qe: single continuous 8
 
 ## Deferred Items
 
+Acknowledged and deferred at v10.0 milestone close on 2026-08-09 (67 open-audit items, none new — all pre-existing or by-design):
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat_gap | Phase 65 — 65-HUMAN-UAT items 1–3: `provenanceDistinctnessEnabled` ENABLE/HOLD decision (DRIFT-05 dry-run vs real inbox export via `npm run eval:drift05 -- --inbox <path>`; threadId-in-key vs `contradictionNBySource.gmail` farming-bar decision). Mechanism verified + WR-01/WR-03 code items resolved; the enablement decision is founder-only, designed pre-decision state | partial |
+| requirement | RECALL-01 — `entityAnchoringEnabled` ships dark; accepted-null after 3 failed G2 gates incl. LLM-judge re-gate (30/54 regressed, mean 0.70→0.55). Next attempt must revisit anchoring SELECTION, not grading | accepted-null |
+| requirement | RECALL-02 — doc-link render half dark (`ambientDocLinkRenderEnabled`); vacuous 3× (0/57). Blocker is doc-candidate surfacing. Ranking half live | partial |
+| tech_debt | EMAIL-02 scoping is backfill-only (`users.history.list` has no `q` param) — documented + surfaced by doctor; labelId-based incremental enforcement is the deferred alternative | accepted |
+| tech_debt | Confidence calibration against real approve/reject outcomes — v10.x follow-up (outcome data must exist first) | pending |
+| nyquist | VALIDATION.md missing for all 8 v10.0 phases (62–69) despite `nyquist_validation` enabled — discovery-only flag; run `/gsd:validate-phase` per phase if coverage wanted | open |
+| debug | `knowledge-base` debug session, status unknown (stale) | stale |
+| triage | tests/recense-viz-no-open.test.ts gates on a stale pre-rename dist path — silently skipping regardless of build state (side-finding of 260809-1vg) | open |
+| metadata | 53 historical quick tasks flagged "missing" metadata in audit-open scan (all completed work; bookkeeping noise, same class as v9.0's 46) | noise |
+
+Carried from v9.0 close (still open): 4 todos (prompt-prefix caching, content-hardening, corpus-brain-3d-transition, viz-search-and-hull-quality), 3 dormant seeds (003, 004, 005 — 005 partially consumed by Phase 69), Phase 57/58 UAT residuals, pre-v9.0 human_needed VERIFICATIONs (39.3, 41, 44).
+
 Acknowledged and deferred at v9.0 milestone close on 2026-07-20:
 
 | Category | Item | Status |
@@ -249,12 +265,11 @@ Carried from v7.0/v8.0 close:
 
 ## Session Continuity
 
-Last session: 2026-08-07 (cross-phase review + delegated decisions, per the cb362f1 handoff)
-Stopped at: Both cross-phase deep reviews (proposal pipeline, retrieval path) done and ALL Critical+Warning findings fixed on main — reports in `.planning/reviews/` (both `status: fixed`). 69 re-gates: `--judge` LLM grader implemented and run — entityAnchoringEnabled G2 fails HARDER under the judge (30/54 regressed, mean 0.70→0.55; refutes the mean-dilution hypothesis) → accepted-null; doc-link re-gate on refreshed eval set (57-prompt union) still vacuous 0/57 → stays dark. Ship-arm gate replay (post-fix) G1/G3/G4 pass, G2 53/54 (single miss = demonstrated floor-boundary embed nondeterminism, not knob-attributable). strip-hidden flake de-flaked (min-of-5, bound unchanged). Both stashes verified superseded, dropped. REQUIREMENTS RECALL rows reconciled. Suite 4029 / tsc clean.
-Next: v10.0 milestone close — `/gsd-audit-milestone` → `/gsd-complete-milestone` (founder sign-off), and 65-HUMAN-UAT items 1-3 (provenanceDistinctnessEnabled ENABLE/HOLD, needs Max's real inbox export + WR-01 farming-bar review).
+Last session: 2026-08-09 (v10.0 milestone close)
+Stopped at: v10.0 "Action Proposals" archived and tagged — audit `tech_debt` (30/30 REQ, 8/8 seams, 8/8 flows, all 6 clearable gaps resolved pre-close), 67 open-audit items acknowledged as deferred (see Deferred Items), archives in `.planning/milestones/` (ROADMAP, REQUIREMENTS, AUDIT, phase dirs 62–69), REQUIREMENTS.md removed for fresh start, tag v10.0 pushed.
+Next: `/gsd-new-milestone` for v10.x/v11.0, and the founder-only 65-HUMAN-UAT items 1–3 (provenanceDistinctnessEnabled ENABLE/HOLD).
 
 ## Operator Next Steps
 
-- 65-HUMAN-UAT.md items 1–3 (founder-only): provenanceDistinctnessEnabled ENABLE/HOLD with real inbox export; resolve the WR-01 threadId-farming bar before any ENABLE
-- v10.0 milestone close: `/gsd-audit-milestone` → `/gsd-complete-milestone` — review is clean, sign-off is Max's
-- Three Info advisories per review left open by design (see the two reports' Fix Logs)
+- 65-HUMAN-UAT items 1–3 (founder-only, survives the close): `provenanceDistinctnessEnabled` ENABLE/HOLD with real inbox export (`npm run eval:drift05 -- --inbox <path>`); resolve the threadId-farming bar before any ENABLE. Archived at `.planning/milestones/v10.0-phases/65-belief-gated-status-drift-provenance-distinctness-fix/65-HUMAN-UAT.md`
+- Start the next milestone with /gsd-new-milestone

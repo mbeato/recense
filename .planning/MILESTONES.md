@@ -1,5 +1,26 @@
 # Milestones
 
+## v10.0 Action Proposals (Shipped: 2026-08-09)
+
+**Phases completed:** 8 phases (62–69), 69 plans, 172 tasks
+**Timeline:** 2026-07-29 → 2026-08-09 (11 days) · 579 commits · 173 source files changed (+39,525 / −289) vs v9.0
+**Audit:** tech_debt (.planning/milestones/v10.0-MILESTONE-AUDIT.md) — 30/30 requirements satisfied; integration 8/8 seams; E2E flows 8/8; all 6 clearable gaps resolved pre-close (BUILD-01, SEAM-08-E2E, DIST-SUITE, STRIP-HIDDEN-PERF, WR-03, WR-01-COMMENT)
+**Suite at close:** 4029 passed · tsc clean
+
+**Delivered:** recense now watches multiple Gmail inboxes and turns belief change into human-approved action — hardened multi-account ingest with adversarial-grade HTML/hidden-content stripping, offline intent classification riding the existing extraction call, confident-or-null entity resolution, PE-gated status drift, and a domain-neutral proposal seam consumed end-to-end by a reference adapter and Telegram approve/reject buttons.
+
+**Key accomplishments:**
+
+1. **Multi-inbox Gmail ingest hardening (Phase 62, 31 plans)** — guided `recense gmail-auth` OAuth loopback flow, per-account backfill query scoping (backfill-only limitation honestly documented + surfaced by `recense doctor`), chronological `event_ts` ordering with a 48h future-skew clamp, and a 7-round adversarially-verified `stripHiddenContent` pipeline (htmlparser2 + css-tree tokenizer layers, oracle-driven differentials, linear-time bounds) closing the EchoLeak-class hidden-content injection vector at the ingest boundary.
+2. **Offline intent classification with zero net-new LLM calls (Phase 63)** — 4-state closed vocabulary rides the existing gmail extraction call as optional all-or-nothing fields, structurally inherits the hitl hard-stop, and extends the online-LLM-free sentinel to `/v1/proposals` (measured cost: +597 input tokens per gmail extraction call).
+3. **Confident-or-null entity resolution (Phase 64)** — three-channel union resolver (exact ∪ BM25 ∪ dense) reusing v9.0 RECON machinery; abstains rather than guesses; proven inert (two independent dark switches) until Phase 66 consumes it.
+4. **Belief-gated status drift + provenance-distinctness redesign (Phase 65, 11 plans)** — status lifecycles update through the existing PE-gate/tombstone machinery (no new data model); provenance distinctness rebuilt from sender identity + thread lineage with quoted/forwarded stripping (idempotent post-WR-03); `provenanceDistinctnessEnabled` ships dark pending founder enablement review against a real inbox export (DRIFT-05 dry-run harness ready).
+5. **Domain-neutral proposal emit seam + HITL consumers (Phases 66–68)** — `ActionProposalSink` (Noop default) emits flat domain-neutral proposals with deterministic ids and verbatim evidence quotes over `/v1/proposals`; the D-43-for-proposals sentinel structurally closes the milestone's largest correctness risk (approve/reject writes only proposal status, never belief); proven end-to-end by an import-boundary-enforced reference adapter and Telegram belief-kind approve/reject with from→to transitions, same-day batching, and no raw confidence shown.
+6. **Entity-anchored ambient recall, eval-first (Phase 69)** — 58-prompt real-transcript gate built first; ranking knobs live (`sameProjectRankNudge=0.05`, `foreignDocDemotion=0.10`, ambient hop injection); two knobs honestly dark on 3× failed gates (RECALL-01 accepted-null incl. LLM-judge re-gate; doc-link render vacuous 0/57) — the D-09 discipline working as designed.
+7. **One continuous 8-stage E2E proof** — `tests/full-chain-e2e.test.ts` drives raw Gmail bytes → strip → ingest → consolidation → emission → store → `/v1/proposals` → Telegram approval in a single `it`, pinning the emit→store join as a first-class assertion.
+
+**Known deferred items at close:** 67 acknowledged (see STATE.md Deferred Items) — notably the Phase 65 `provenanceDistinctnessEnabled` founder enablement gate (65-HUMAN-UAT items 1–3), Phase 69's two honest nulls, Nyquist VALIDATION.md missing for all 8 phases, and 53 metadata-noise historical quick tasks.
+
 ## v9.0 Memory Quality (Shipped: 2026-07-20)
 
 **Phases completed:** 16 phases (46–61), 92 plans
