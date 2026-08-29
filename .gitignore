@@ -46,3 +46,6 @@ scripts/eval/*-results-*.json
 scripts/eval/judge-eval-set.json
 scripts/eval/*-batch-haiku.json
 scripts/eval/*.csv
+scripts/eval/fixtures/bridge-snapshot.db*
+scripts/eval/cases/bridge-probes.json
+!scripts/eval/results/bridge-af2a5f5.json

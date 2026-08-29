@@ -1,0 +1,25 @@
+{
+  "_meta": { "note": "Out-of-domain queries; expected: nothing above floor. Vectors cached separately by --embed-abstention." },
+  "probes": [
+    { "id": "ab01", "query": "melting point of tungsten carbide under vacuum" },
+    { "id": "ab02", "query": "how to repot an orchid after flowering" },
+    { "id": "ab03", "query": "rules of curling scoring in the final end" },
+    { "id": "ab04", "query": "history of the Hanseatic League trade routes" },
+    { "id": "ab05", "query": "recipe for sourdough starter with rye flour" },
+    { "id": "ab06", "query": "tidal locking of exoplanets around red dwarfs" },
+    { "id": "ab07", "query": "medieval falconry training techniques" },
+    { "id": "ab08", "query": "differences between baroque and classical counterpoint" },
+    { "id": "ab09", "query": "maintenance schedule for a two-stroke outboard motor" },
+    { "id": "ab10", "query": "symptoms of iron chlorosis in citrus trees" },
+    { "id": "ab11", "query": "origin of the Basque language" },
+    { "id": "ab12", "query": "how glaciers form moraines" },
+    { "id": "ab13", "query": "care instructions for cast iron cookware seasoning" },
+    { "id": "ab14", "query": "scoring a perfect game in ten-pin bowling" },
+    { "id": "ab15", "query": "knitting a cable pattern with circular needles" },
+    { "id": "ab16", "query": "migration patterns of arctic terns" },
+    { "id": "ab17", "query": "restoring a vintage mechanical typewriter platen" },
+    { "id": "ab18", "query": "difference between sake and shochu brewing" },
+    { "id": "ab19", "query": "how to read a nautical chart depth sounding" },
+    { "id": "ab20", "query": "pruning espalier apple trees in winter" }
+  ]
+}
