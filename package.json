@@ -54,6 +54,8 @@
     "eval:injection": "npm run build && node scripts/eval/injection-efficiency-harness.cjs",
     "eval:cost-benefit": "npm run build && node scripts/eval/cost-benefit-harness.cjs",
     "eval:recall-gate": "npm run build && node scripts/eval/recall-audit-gate.cjs",
+    "eval:bridge:derive": "npm run build && node scripts/eval/derive-bridge-probes.cjs --db scripts/eval/fixtures/bridge-snapshot.db",
+    "eval:bridge": "npm run build && node scripts/eval/bridge-harness.cjs --run --db scripts/eval/fixtures/bridge-snapshot.db",
     "gate": "npm run build && node scripts/eval/gate-runner.cjs --run --locomo scripts/eval/results/locomo-d41d5c8.json",
     "gate:baseline": "npm run build && node scripts/eval/gate-runner.cjs --update-baseline --locomo scripts/eval/results/locomo-d41d5c8.json",
     "gate:accuracy": "npm run build && node scripts/eval/gate-accuracy-runner.cjs --run",
