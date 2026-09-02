@@ -45,7 +45,7 @@ try { COMMIT = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim
 const OUT = arg('--out', path.resolve(__dirname, `results/bridge-${COMMIT}.json`));
 
 if (!RUN && !EMBED_ABSTENTION) {
-  console.error('Usage: bridge-harness.cjs --run --db <snapshot> [--probes ...] [--mode oracle|e2e|both] [--k N] [--floor F] [--out ...]\n       bridge-harness.cjs --embed-abstention   (requires OPENAI_API_KEY)');
+  console.error('Usage: bridge-harness.cjs --run --db <snapshot> [--probes ...] [--mode oracle|e2e|both] [--k N] [--floor F] [--bm25-weight W] [--spread-damping D] [--spread-floor F] [--spread-frontier-cap N] [--spread-fan-exp E] [--out ...]\n       bridge-harness.cjs --embed-abstention   (requires OPENAI_API_KEY)');
   process.exit(1);
 }
 
@@ -72,6 +72,9 @@ if (!fs.existsSync(PROBES)) { console.error(`ERROR: probe set not found: ${PROBE
 
 const db = new Database(DB_PATH, { readonly: true });
 const config = loadMergedConfig(DB_PATH);
+// --bm25-weight <w>: override bm25FusionWeight for the hybrid arm (0 = dark, the shipped default).
+const BM25_WEIGHT = arg('--bm25-weight', null);
+if (BM25_WEIGHT !== null) config.bm25FusionWeight = parseFloat(BM25_WEIGHT);
 const store = new SemanticStore(db, realClock, config);
 const retriever = new CandidateRetriever(db);
 const strength = new StrengthDecayManager(db, realClock, config);
