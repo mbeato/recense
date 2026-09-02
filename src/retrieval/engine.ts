@@ -458,6 +458,8 @@ export class RetrievalEngine {
       hopCollector?: (hops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }>) => void;
       /** Graph-aware recall spec §3.3 associative channel; 0/absent = byte-identical legacy behavior. */
       spreadHops?: number;
+      /** Admission predicate for associative rows only (spec §3.3: never scope-exempt). Ambient passes its WR-03 caller-scope rule; absent = admit all. Never consulted for cosine/anchored rows. */
+      assocAdmit?: (id: string) => boolean;
     },
   ): Array<{ id: string; value: string; score: number }> {
     // LEVER 1: route through hybridTopk when queryText is supplied; else pure cosine topk.
@@ -639,6 +641,7 @@ export class RetrievalEngine {
           if (assocRows.length >= this.config.spreadAssocSlotCap) break;
           const row = this.store.getNode(id);
           if (!row || row.tombstoned === 1) continue;  // graph arrival exempts nothing (B2 discipline)
+          if (opts.assocAdmit && !opts.assocAdmit(id)) continue;  // caller discipline (WR-03 scope) — same bar as hop lines
           assocRows.push({ id, value: row.value, score: Math.min(1, node.activation) });
         }
         if (assocRows.length > 0) {

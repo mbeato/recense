@@ -52,6 +52,14 @@ describe('retrieveRanked spread channel', () => {
     expect(term.score).toBeLessThanOrEqual(1);
   });
 
+  it('assocAdmit gates associative rows only: rejecting the id drops it, admitting keeps it, cosine rows untouched', () => {
+    const rejected = engine.retrieveRanked(basis(0), 5, 0.3, undefined, { spreadHops: 2, assocAdmit: id => id !== 'term' });
+    expect(rejected.map(r => r.id)).not.toContain('term');
+    expect(rejected.map(r => r.id)).toEqual(engine.retrieveRanked(basis(0), 5, 0.3).map(r => r.id));
+    const admitted = engine.retrieveRanked(basis(0), 5, 0.3, undefined, { spreadHops: 2, assocAdmit: () => true });
+    expect(admitted.map(r => r.id)).toContain('term');
+  });
+
   it('associative rows never bypass tombstone discipline', () => {
     store.tombstone('term');
     const spread = engine.retrieveRanked(basis(0), 5, 0.3, undefined, { spreadHops: 2 });

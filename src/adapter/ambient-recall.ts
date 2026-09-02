@@ -343,8 +343,18 @@ export async function ambientRecall(
   // real read happened), while injection still uses AMBIENT_FLOOR. Do NOT add a second
   // emit here.
   const engine = new RetrievalEngine(db, clock, config, retriever, store, strength, gate, traceSink);
+  // Graph-aware recall §3.3: associative rows obey WR-03 exactly like hop lines — a neighbour whose
+  // scope is foreign to a KNOWN caller scope never takes a slot (neutral for a global caller).
+  // Consulted only for associative candidates, a handful of indexed sidecar reads at most.
+  const assocAdmit = currentScope === GLOBAL_SCOPE
+    ? undefined
+    : (id: string): boolean => {
+        const s = store.getNodeScopes([id]).get(id) ?? GLOBAL_SCOPE;
+        return s === GLOBAL_SCOPE || s === currentScope;
+      };
   const results = engine.retrieveRanked(vec, AMBIENT_K, AMBIENT_FLOOR, undefined, {
     spreadHops: config.spreadHops,
+    ...(assocAdmit ? { assocAdmit } : {}),
     vizFloor: AMBIENT_VIZ_FLOOR,
     anchoredIds: anchored.map(a => a.id),
     ...(config.ambientHopInjectionEnabled

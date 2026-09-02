@@ -377,7 +377,8 @@ describe('ambientRecall', () => {
     store.upsertNode({ id: 'scarce-cosine-hit', type: 'fact', value: 'the one genuine cosine hit', origin: 'observed' });
     store.setEmbedding('scarce-cosine-hit', FIXED_VEC);
     const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
-    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, entityAnchoringEnabled: true };
+    // spreadHops: 0 — this pins the anchoring slot invariant in isolation; the associative channel is covered separately below.
+    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, entityAnchoringEnabled: true, spreadHops: 0 };
 
     const text = await ambientRecall(db, 'tell me everything about zyloquartz please', provider, cfg, clock);
     const lines = factLines(text);
@@ -506,13 +507,14 @@ describe('ambientRecall', () => {
     store.upsertEdge({ src: 'e2e-hop-seed', dst: 'e2e-hop-neighbour', rel: 'works_on', w: 1, kind: 'relation' });
     const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
 
-    const onCfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: true };
+    // spreadHops: 0 — pins the 1-hop hand-off rendering in isolation (with the channel on, the neighbour surfaces as its own row instead).
+    const onCfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: true, spreadHops: 0 };
     const textOn = await ambientRecall(db, PROMPT, provider, onCfg, clock);
     expect(textOn).toContain('seed fact value');
     expect(textOn).toContain('  ↳ works_on a real neighbour fact');
     expect(textOn).not.toMatch(/↳.*score/);
 
-    const offCfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: false };
+    const offCfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: false, spreadHops: 0 };
     const textOff = await ambientRecall(db, PROMPT, provider, offCfg, clock);
     expect(textOff).not.toContain('↳');
   });
@@ -542,7 +544,8 @@ describe('ambientRecall', () => {
     store.upsertEdge({ src: 'wr3-seed', dst: 'wr3-foreign-nb', rel: 'works_on', w: 1, kind: 'relation' });
     seedScope(db, 'wr3-foreign-nb', 'projb');
     const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
-    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: true };
+    // spreadHops: 0 — WR-03 governs hop LINES; top-level rows (cosine or associative) are scope-marked, never scope-filtered (D-S1).
+    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: true, spreadHops: 0 };
 
     // Known caller scope (projA) — the projB neighbour is foreign and must be dropped.
     const textKnown = await ambientRecall(db, PROMPT, provider, cfg, clock, '/Users/tester/projA');
@@ -552,6 +555,57 @@ describe('ambientRecall', () => {
     // Global caller (cwd='') — scope filter is neutral (WR-02 symmetry rule): hop renders.
     const textGlobal = await ambientRecall(db, PROMPT, provider, cfg, clock);
     expect(textGlobal).toContain('  ↳ works_on a foreign project neighbour');
+  });
+
+  it('associative channel (graph-aware recall §3.3): a connected, orthogonal fact surfaces as its own row with a real activation; off at spreadHops 0; cosine hits never lost', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+    store.upsertNode({ id: 'assoc-seed', type: 'fact', value: 'assoc seed fact', origin: 'observed' });
+    store.setEmbedding('assoc-seed', FIXED_VEC);
+    store.upsertNode({ id: 'assoc-nb', type: 'fact', value: 'an orthogonal associated fact', origin: 'observed' }); // no embedding: unreachable by cosine
+    store.upsertEdge({ src: 'assoc-seed', dst: 'assoc-nb', rel: 'depends_on', w: 0.1, kind: 'relation' });
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+
+    expect(DEFAULT_CONFIG.spreadHops).toBe(2); // the shipped ambient setting
+    const textOn = await ambientRecall(db, PROMPT, provider, { ...DEFAULT_CONFIG, dbPath: tmpDbPath }, clock);
+    const onLines = factLines(textOn);
+    expect(textOn).toContain('assoc seed fact');
+    const assocLine = onLines.find(l => l.includes('an orthogonal associated fact'))!;
+    expect(assocLine).toBeDefined();
+    const score = parseFloat(/score (\d\.\d+)/.exec(assocLine)![1]!);
+    expect(score).toBeGreaterThan(0);       // real activation, never fabricated (WR-02)
+    expect(score).toBeLessThanOrEqual(1);
+
+    const textOff = await ambientRecall(db, PROMPT, provider, { ...DEFAULT_CONFIG, dbPath: tmpDbPath, spreadHops: 0 }, clock);
+    expect(textOff).toContain('assoc seed fact');
+    // Off: the neighbour is at most a 1-hop '↳' line under the seed (hop injection), never a top-level row.
+    const topLevel = (t: string) => t.split('\n').filter(l => l.startsWith('- '));
+    expect(topLevel(textOff).some(l => l.includes('an orthogonal associated fact'))).toBe(false);
+    // No single-hop regression: every top-level row of the off block is still present with the channel on,
+    // and at most spreadAssocSlotCap rows were added.
+    const offTop = topLevel(textOff); const onTop = topLevel(textOn);
+    for (const l of offTop) expect(onTop).toContain(l);
+    expect(onTop.length - offTop.length).toBeLessThanOrEqual(DEFAULT_CONFIG.spreadAssocSlotCap);
+  });
+
+  it('associative channel WR-03: a foreign-scope connected fact never takes a slot for a known-scope caller, kept for a global caller', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const store = new SemanticStore(db, clock, { ...DEFAULT_CONFIG, dbPath: tmpDbPath });
+    store.upsertNode({ id: 'wr3a-seed', type: 'fact', value: 'wr3a seed fact', origin: 'observed' });
+    store.setEmbedding('wr3a-seed', FIXED_VEC);
+    store.upsertNode({ id: 'wr3a-foreign', type: 'fact', value: 'a foreign project associate', origin: 'observed' }); // no embedding
+    store.upsertEdge({ src: 'wr3a-seed', dst: 'wr3a-foreign', rel: 'depends_on', w: 0.1, kind: 'relation' });
+    seedScope(db, 'wr3a-foreign', 'projb');
+    const provider = new MockModelProvider({ embedFn: () => FIXED_VEC });
+    const cfg = { ...DEFAULT_CONFIG, dbPath: tmpDbPath, ambientHopInjectionEnabled: false };
+    const topLevel = (t: string) => t.split('\n').filter(l => l.startsWith('- '));
+
+    const textKnown = await ambientRecall(db, PROMPT, provider, cfg, clock, '/Users/tester/projA');
+    expect(textKnown).toContain('wr3a seed fact');
+    expect(topLevel(textKnown).some(l => l.includes('a foreign project associate'))).toBe(false);
+
+    const textGlobal = await ambientRecall(db, PROMPT, provider, cfg, clock);
+    expect(topLevel(textGlobal).some(l => l.includes('a foreign project associate'))).toBe(true);
   });
 
   it('hop-injection WR-03: an already-selected row never renders twice as a hop line', async () => {
