@@ -344,6 +344,7 @@ export async function ambientRecall(
   // emit here.
   const engine = new RetrievalEngine(db, clock, config, retriever, store, strength, gate, traceSink);
   const results = engine.retrieveRanked(vec, AMBIENT_K, AMBIENT_FLOOR, undefined, {
+    spreadHops: config.spreadHops,
     vizFloor: AMBIENT_VIZ_FLOOR,
     anchoredIds: anchored.map(a => a.id),
     ...(config.ambientHopInjectionEnabled
