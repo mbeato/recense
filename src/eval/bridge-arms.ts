@@ -8,6 +8,8 @@ import type Database from 'better-sqlite3';
 import type { SemanticStore } from '../db/semantic-store';
 import type { CandidateRetriever } from '../retrieval/topk';
 import type { RetrievalEngine } from '../retrieval/engine';
+import { spreadActivation, prepareSeeds, type SpreadParams } from '../retrieval/activation';
+import { SqliteSpreadReader } from '../retrieval/spread-reader';
 import { typedReach } from '../recall/typed-traversal';
 import { PRED_SET } from '../model/typed-predicates';
 import type { BridgeProbe } from './bridge-probes';
@@ -25,6 +27,10 @@ export interface ArmContext {
   k: number;
   floor: number;
   e2eSeedK: number;
+  spreadParams2: SpreadParams;
+  spreadParams3: SpreadParams;
+  supportCounts: Map<string, number>;
+  docIds: Set<string>;
 }
 
 export interface ProbeInput { probe: BridgeProbe; queryVec: Float32Array; mode: SeedMode }
@@ -110,4 +116,36 @@ const pprExactArm: Arm = {
   }),
 };
 
-export const ARMS: Arm[] = [cosineArm, hybridArm, typedArm, pprExactArm];
+/** Seed the spread: oracle = gold seed mass 1; e2e = prepareSeeds over hybrid hits (spec §3.2). */
+function spreadSeeds(input: ProbeInput, ctx: ArmContext): Map<string, number> {
+  if (input.mode === 'oracle') return new Map([[input.probe.seed.id, 1]]);
+  const hits = ctx.engine.retrieveRanked(input.queryVec, ctx.e2eSeedK, 0, input.probe.query);
+  return prepareSeeds(
+    hits.map(h => ({ id: h.id, score: h.score, type: ctx.docIds.has(h.id) ? 'doc' : undefined })),
+    ctx.supportCounts,
+    0.05,
+  );
+}
+
+function makeSpreadArm(name: string, pick: (ctx: ArmContext) => SpreadParams): Arm {
+  return {
+    name,
+    usesSeeds: true,
+    run: (input, ctx) => timed(() => {
+      const seeds = spreadSeeds(input, ctx);
+      const reader = new SqliteSpreadReader(ctx.db);
+      const activated = spreadActivation(reader, seeds, pick(ctx));
+      const entries = Array.from(activated.entries())
+        .filter(([id]) => id !== input.probe.seed.id)
+        .sort((a, b) => (b[1].activation - a[1].activation) || (a[0] < b[0] ? -1 : 1))
+        .slice(0, ctx.k);
+      const paths = new Map(entries.map(([id, n]) => [id, n.paths[0]!]));
+      return { rankedIds: entries.map(([id]) => id), nodesExpanded: activated.size, paths };
+    }),
+  };
+}
+
+export const ARMS: Arm[] = [cosineArm, hybridArm, typedArm, pprExactArm,
+  makeSpreadArm('spread-2hop', ctx => ctx.spreadParams2),
+  makeSpreadArm('spread-3hop', ctx => ctx.spreadParams3),
+];

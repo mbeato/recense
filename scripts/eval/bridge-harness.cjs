@@ -27,6 +27,7 @@ const { RetrievalEngine } = require('../../dist/src/retrieval/engine');
 const { ARMS, readEmbedding, edgeExistence } = require('../../dist/src/eval/bridge-arms');
 const { scoreProbe, aggregate } = require('../../dist/src/eval/bridge-metrics');
 const { loadAdjacency } = require('../../dist/src/eval/ppr-reference');
+const { spreadParamsFromConfig } = require('../../dist/src/retrieval/activation');
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i !== -1 ? process.argv[i + 1] : d; };
 const RUN = process.argv.includes('--run');
@@ -44,7 +45,7 @@ try { COMMIT = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim
 const OUT = arg('--out', path.resolve(__dirname, `results/bridge-${COMMIT}.json`));
 
 if (!RUN && !EMBED_ABSTENTION) {
-  console.error('Usage: bridge-harness.cjs --run --db <snapshot> [--probes ...] [--mode oracle|e2e|both] [--k N] [--floor F] [--out ...]\n       bridge-harness.cjs --embed-abstention   (requires OPENAI_API_KEY)');
+  console.error('Usage: bridge-harness.cjs --run --db <snapshot> [--probes ...] [--mode oracle|e2e|both] [--k N] [--floor F] [--bm25-weight W] [--spread-damping D] [--spread-floor F] [--spread-frontier-cap N] [--spread-fan-exp E] [--out ...]\n       bridge-harness.cjs --embed-abstention   (requires OPENAI_API_KEY)');
   process.exit(1);
 }
 
@@ -71,12 +72,29 @@ if (!fs.existsSync(PROBES)) { console.error(`ERROR: probe set not found: ${PROBE
 
 const db = new Database(DB_PATH, { readonly: true });
 const config = loadMergedConfig(DB_PATH);
+// --bm25-weight <w>: override bm25FusionWeight for the hybrid arm (0 = dark, the shipped default).
+const BM25_WEIGHT = arg('--bm25-weight', null);
+if (BM25_WEIGHT !== null) config.bm25FusionWeight = parseFloat(BM25_WEIGHT);
 const store = new SemanticStore(db, realClock, config);
 const retriever = new CandidateRetriever(db);
 const strength = new StrengthDecayManager(db, realClock, config);
 const gate = new AllocationGate(config);
 const engine = new RetrievalEngine(db, realClock, config, retriever, store, strength, gate);
-const ctx = { db, store, retriever, engine, adjacency: loadAdjacency(db), k: K, floor: FLOOR, e2eSeedK: E2E_SEED_K };
+const spreadOverride = (p) => ({
+  ...p,
+  damping: parseFloat(arg('--spread-damping', String(p.damping))),
+  activationFloor: parseFloat(arg('--spread-floor', String(p.activationFloor))),
+  frontierCap: parseInt(arg('--spread-frontier-cap', String(p.frontierCap)), 10),
+  fanExponent: parseFloat(arg('--spread-fan-exp', String(p.fanExponent))),
+});
+const supportCounts = new Map(db.prepare(`SELECT node_id, COUNT(*) AS c FROM consolidation_event WHERE node_id IS NOT NULL GROUP BY node_id`).all().map(r => [r.node_id, r.c]));
+const docIds = new Set(db.prepare(`SELECT id FROM node WHERE type = 'doc' AND tombstoned = 0`).all().map(r => r.id));
+const spreadParams2 = spreadOverride(spreadParamsFromConfig(config, 2));
+const spreadParams3 = spreadOverride(spreadParamsFromConfig(config, 3));
+const ctx = {
+  db, store, retriever, engine, adjacency: loadAdjacency(db), k: K, floor: FLOOR, e2eSeedK: E2E_SEED_K,
+  spreadParams2, spreadParams3, supportCounts, docIds,
+};
 const edges = edgeExistence(db);
 const probeSet = JSON.parse(fs.readFileSync(PROBES, 'utf8'));
 const modes = MODE === 'both' ? ['oracle', 'e2e'] : [MODE];
@@ -160,6 +178,7 @@ const envelope = {
       lambda: config.lambda,
       spreadDecay: config.spreadDecay,
       rankedRetrievalFloor: config.rankedRetrievalFloor,
+      spread: { spreadParams2, spreadParams3 },
     },
   },
   scores: { ...scores, delta_vs_hybrid: delta, abstention },

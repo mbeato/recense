@@ -574,6 +574,33 @@ export interface EngineConfig {
    */
   spreadDecay: number;
 
+  /** Graph-aware recall spec §3.1: maximum activation hops; 0 keeps the feature dark. 2 is the validated setting (bridge sweep: 2hop ≥ 3hop on every row). */
+  spreadHops: number;
+
+  /** Graph-aware recall spec §3.1: per-hop probability of continuing activation. */
+  spreadDamping: number;
+
+  /** Graph-aware recall spec §3.1: absolute transfer mass below which activation is dropped. */
+  spreadActivationFloor: number;
+
+  /** Graph-aware recall spec §3.1: maximum nodes propagated after each hop's aggregation. */
+  spreadFrontierCap: number;
+
+  /** Graph-aware recall spec §3.1: exponent applied to eligible weighted fan normalization. */
+  spreadFanExponent: number;
+
+  /** Graph-aware recall spec §3.1: strongest contribution paths retained per activated node. */
+  spreadPathsPerNode: number;
+
+  /** Graph-aware recall spec §3.3: maximum associative rows admitted to ranked retrieval. */
+  spreadAssocSlotCap: number;
+
+  /** Graph-aware recall spec §3.2: seed-mass multiplier for doc-type nodes. */
+  spreadDocSeedWeight: number;
+
+  /** Graph-aware recall spec §3.1: directional propagation weights by edge kind and relation. */
+  spreadRelWeights: Record<string, { fwd: number; rev: number }>;
+
   /**
    * Min cosine similarity for the tombstone scan to classify 'deleted' (D-29).
    * Default: 0.7 — intentionally high to avoid false 'deleted' on weak matches.
@@ -1084,6 +1111,25 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   typedAnchorPoolK: 20,
   injectionTokenBudget: 500,
   spreadDecay: 0.5,
+  spreadHops: 0,
+  spreadDamping: 0.6,          // 2026-09-02 bridge sweep: 0.550 oracle r@10 vs 0.450 at 0.5 (floor 0.005)
+  spreadActivationFloor: 0.005, // 2026-09-02 bridge sweep: the dominant knob; 0.02 collapsed 3hop r@10 to 0.233
+  spreadFrontierCap: 64,
+  spreadFanExponent: 1.0,
+  spreadPathsPerNode: 3,
+  spreadAssocSlotCap: 2,
+  spreadDocSeedWeight: 0.05,
+  spreadRelWeights: {
+    'relation:*': { fwd: 1.0, rev: 0.8 },
+    'relation:extends': { fwd: 0.7, rev: 0.5 },
+    'abstracts:*': { fwd: 0.8, rev: 0.8 },
+    'derived_from:*': { fwd: 0.9, rev: 0.6 },
+    'schema_rel:*': { fwd: 0.6, rev: 0.6 },
+    'cites:*': { fwd: 0.4, rev: 0.2 },
+    'doc_link:*': { fwd: 0.3, rev: 0.3 },
+    'doc_reference:*': { fwd: 0.3, rev: 0.3 },
+    'doc_containment:*': { fwd: 0, rev: 0 },
+  },
   deletedSimilarityThreshold: 0.7,
   rankedRetrievalK: 10,     // breadth for product Q&A path; matches memory_search SEARCH_TOP_K
   rankedRetrievalFloor: 0.3, // min cosine for ranked path; matches SEARCH_SCORE_FLOOR (noise < 0.3)

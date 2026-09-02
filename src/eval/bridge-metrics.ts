@@ -2,7 +2,8 @@
 
 export interface ArmResult {
   rankedIds: string[];
-  paths?: Map<string, Array<{ src: string; rel: string; dst: string }>>;
+  /** Walk-order steps; dir (optional, default 'fwd') says whether the stored edge is src→dst or dst→src. */
+  paths?: Map<string, Array<{ src: string; rel: string; dst: string; dir?: 'fwd' | 'rev' }>>;
   nodesExpanded: number;
   latencyMs: number;
 }
@@ -34,7 +35,8 @@ export function scoreProbe(
   let path_valid: boolean | null = null;
   const path = result.paths?.get(terminalId);
   if (path) {
-    path_valid = path.length > 0 && path.every(st => edges.has(st.src, st.rel, st.dst));
+    path_valid = path.length > 0 && path.every(st =>
+      st.dir === 'rev' ? edges.has(st.dst, st.rel, st.src) : edges.has(st.src, st.rel, st.dst));
   }
   return {
     terminal_at_5: hitAt(result.rankedIds, terminalId, 5),
