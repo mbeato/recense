@@ -10,6 +10,7 @@ import { FakeClock } from '../src/lib/clock';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 import { ARMS, resolveSeeds, readEmbedding, edgeExistence, type ArmContext } from '../src/eval/bridge-arms';
 import { loadAdjacency } from '../src/eval/ppr-reference';
+import { spreadParamsFromConfig } from '../src/retrieval/activation';
 import type { BridgeProbe } from '../src/eval/bridge-probes';
 
 const cfg = { ...DEFAULT_CONFIG, dbPath: ':memory:' };
@@ -40,7 +41,13 @@ describe('bridge arms', () => {
 
     const retriever = new CandidateRetriever(db);
     const engine = new RetrievalEngine(db, clock, cfg, retriever, store, new StrengthDecayManager(db, clock, cfg), new AllocationGate(cfg));
-    ctx = { db, store, retriever, engine, adjacency: loadAdjacency(db), k: 10, floor: 0.3, e2eSeedK: 3 };
+    ctx = {
+      db, store, retriever, engine, adjacency: loadAdjacency(db), k: 10, floor: 0.3, e2eSeedK: 3,
+      spreadParams2: spreadParamsFromConfig(cfg, 2),
+      spreadParams3: spreadParamsFromConfig(cfg, 3),
+      supportCounts: new Map(),
+      docIds: new Set(),
+    };
     probe = {
       id: 'bp001', query: 'urby-www deploys to Cloudflare Pages',
       seed: { id: 'seed', type: 'fact', value: 'urby-www deploys to Cloudflare Pages' },
@@ -89,5 +96,19 @@ describe('bridge arms', () => {
     const ex = edgeExistence(db);
     expect(ex.has('seed', 'runs_on', 'bridge')).toBe(true);
     expect(ex.has('seed', 'runs_on', 'term')).toBe(false);
+  });
+
+  it('spread-2hop reaches the terminal with a verifiable path; spread-3hop too', () => {
+    const input = { probe, queryVec: basis(0), mode: 'oracle' as const };
+    for (const name of ['spread-2hop', 'spread-3hop']) {
+      const res = ARMS.find(a => a.name === name)!.run(input, ctx)!;
+      expect(res.rankedIds, name).toContain('term');
+      const path = res.paths!.get('term')!;
+      expect(path).toEqual([
+        { src: 'seed', rel: 'runs_on', dst: 'bridge', dir: 'fwd' },
+        { src: 'bridge', rel: 'extends', dst: 'term', dir: 'fwd' },
+      ]);
+      expect(res.nodesExpanded).toBeGreaterThan(0);
+    }
   });
 });
