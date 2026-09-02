@@ -1270,6 +1270,9 @@ export interface SettingsFile {
       // `overrides.actionProposalSinkEnabled: true` in settings.json (recense doctor's
       // detail text), so it must be part of the typed key set (WR-04, phase 66 review).
       | 'actionProposalSinkEnabled'
+      // Graph-aware recall: the documented per-machine off switch for the ambient associative
+      // channel is `overrides.spreadHops: 0` in settings.json (WR-04: typed, not passthrough).
+      | 'spreadHops'
     >
   > & {
     /** Applied by `recense config apply` → scheduler reinstall; NOT read at sleep-pass runtime (D-07). */

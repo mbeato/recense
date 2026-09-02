@@ -228,6 +228,15 @@ describe('loadMergedConfig — D-05 precedence (env > file > preset > DEFAULT_CO
     const cfg = loadMergedConfig(TEST_DB, {}, TMP_SETTINGS);
     expect(cfg.actionProposalSinkEnabled).toBe(true);
   });
+
+  it('WR-04: overrides.spreadHops=0 type-checks as SettingsFile and turns the ambient associative channel off (the documented per-machine switch)', () => {
+    ensureTmpDir();
+    const settings: SettingsFile = { preset: 'standard', overrides: { spreadHops: 0 } };
+    writeSettingsFile(settings, TMP_SETTINGS);
+    expect(DEFAULT_CONFIG.spreadHops).toBe(2); // shipped on
+    const cfg = loadMergedConfig(TEST_DB, {}, TMP_SETTINGS);
+    expect(cfg.spreadHops).toBe(0);
+  });
 });
 
 describe('loadMergedConfig — D-12 core guardrail', () => {
