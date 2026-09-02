@@ -18,7 +18,8 @@ function makeReader(edges: SpreadEdgeRow[], dead: string[] = []): SpreadReader {
 }
 const rel = (src: string, dst: string, rl = 'depends_on', kind = 'relation', w = 0.1): SpreadEdgeRow => ({ src, dst, rel: rl, kind, w });
 
-const P: SpreadParams = spreadParamsFromConfig({ ...DEFAULT_CONFIG, dbPath: ':memory:' } as never, 3);
+// Pinned math params: the assertions below encode damping 0.5 / floor 0.02, independent of the tuned DEFAULT_CONFIG values.
+const P: SpreadParams = { ...spreadParamsFromConfig({ ...DEFAULT_CONFIG, dbPath: ':memory:' } as never, 3), damping: 0.5, activationFloor: 0.02 };
 
 describe('normalizeSeeds / prepareSeeds', () => {
   it('normalizes total seed mass to 1', () => {

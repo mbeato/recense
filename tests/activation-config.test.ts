@@ -4,8 +4,8 @@ import { DEFAULT_CONFIG } from '../src/lib/config';
 describe('spread config defaults', () => {
   it('ships dark with the spec §3.1/§4 defaults', () => {
     expect(DEFAULT_CONFIG.spreadHops).toBe(0);
-    expect(DEFAULT_CONFIG.spreadDamping).toBe(0.5);
-    expect(DEFAULT_CONFIG.spreadActivationFloor).toBe(0.02);
+    expect(DEFAULT_CONFIG.spreadDamping).toBe(0.6);
+    expect(DEFAULT_CONFIG.spreadActivationFloor).toBe(0.005);
     expect(DEFAULT_CONFIG.spreadFrontierCap).toBe(64);
     expect(DEFAULT_CONFIG.spreadFanExponent).toBe(1.0);
     expect(DEFAULT_CONFIG.spreadPathsPerNode).toBe(3);
