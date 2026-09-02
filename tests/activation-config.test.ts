@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_CONFIG } from '../src/lib/config';
 
 describe('spread config defaults', () => {
-  it('ships dark with the spec §3.1/§4 defaults', () => {
-    expect(DEFAULT_CONFIG.spreadHops).toBe(0);
+  it('ships the spec §3.1/§4 defaults with the ambient channel on at 2 hops', () => {
+    expect(DEFAULT_CONFIG.spreadHops).toBe(2);
     expect(DEFAULT_CONFIG.spreadDamping).toBe(0.6);
     expect(DEFAULT_CONFIG.spreadActivationFloor).toBe(0.005);
     expect(DEFAULT_CONFIG.spreadFrontierCap).toBe(64);

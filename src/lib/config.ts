@@ -574,7 +574,7 @@ export interface EngineConfig {
    */
   spreadDecay: number;
 
-  /** Graph-aware recall spec §3.1: maximum activation hops; 0 keeps the feature dark. 2 is the validated setting (bridge sweep: 2hop ≥ 3hop on every row). */
+  /** Graph-aware recall spec §3.1: maximum activation hops for the ambient associative channel; 0 turns it off (byte-identical legacy output). 2 is the validated setting (bridge sweep: 2hop ≥ 3hop on every row). */
   spreadHops: number;
 
   /** Graph-aware recall spec §3.1: per-hop probability of continuing activation. */
@@ -1111,7 +1111,7 @@ export const DEFAULT_CONFIG: Omit<EngineConfig, 'dbPath'> = {
   typedAnchorPoolK: 20,
   injectionTokenBudget: 500,
   spreadDecay: 0.5,
-  spreadHops: 0,
+  spreadHops: 2,               // 2026-09-02: flipped on for ambient (spec §6 phase 2 exit: beats baseline, no single-hop regression); 0 = off
   spreadDamping: 0.6,          // 2026-09-02 bridge sweep: 0.550 oracle r@10 vs 0.450 at 0.5 (floor 0.005)
   spreadActivationFloor: 0.005, // 2026-09-02 bridge sweep: the dominant knob; 0.02 collapsed 3hop r@10 to 0.233
   spreadFrontierCap: 64,
