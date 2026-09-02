@@ -22,6 +22,7 @@
 - ✅ **v8.0 Performance, Efficiency & Competitive Parity** — Phases 40–45 (shipped 2026-06-26) — full detail: [milestones/v8.0-ROADMAP.md](milestones/v8.0-ROADMAP.md). LoCoMo competitive baseline (honest, reproducible: J=86.0% relative-only, R@5/R@10 77.3/82.2%, p50/p95 45/46ms) → zero-dep flat-buffer vector index (warm ~3.4×, byte-exact top-k, killed brute-force cosine at 7000+ nodes) → token/cost audit (marginal write ~7.1k tok/turn, per-source consolSkipThreshold lever) → productization phases folded in: bundled-app settings + cost controls (Phase 44), subscription-default install + billing-leak warning (Phase 45). **Phase 43 (Eval Regression Gates) DEFERRED — not built; GATE-01/02/03 + Phase 41 PERF-03(b) carried forward.** Hard rule held: every competitive number reproducible or cited — no inflated metrics.
 - ✅ **v9.0 Memory Quality** — Phases 46–61 (shipped 2026-07-20) — full detail: [milestones/v9.0-ROADMAP.md](milestones/v9.0-ROADMAP.md); audit: [milestones/v9.0-MILESTONE-AUDIT.md](milestones/v9.0-MILESTONE-AUDIT.md). Engine: reconsolidation candidate broadening (union graph+BM25+dense — judge fires 368 KU contradicts vs pre-46 ZERO; belief-correction 84.6%, no clean-case regression), hybrid BM25+dense fusion live on the LLM-free hot path (honest null w*=0, ships dark), correctness hardening (C-2/M-5/M-9/L-2), ANN NO-GO → portable WASM SIMD f32x4 exact-scan kernel (byte-exact, ~4–5×), regression gates merge-blocking in CI (offline gate:ci required check; accuracy floors armed; docs/evals.md re-baselined v9.0-final). Viz overhaul 52–61: honest traces, layout at 15.4k nodes, ambient liveliness + spontaneous idle activation, identity palette, node/motion overhaul, HUD integration, settings/stats depth, corpus index-column browsing — all founder-signed-off.
 - ✅ **v10.0 Action Proposals** — Phases 62–69 (shipped 2026-08-09) — full detail: [milestones/v10.0-ROADMAP.md](milestones/v10.0-ROADMAP.md); audit: [milestones/v10.0-MILESTONE-AUDIT.md](milestones/v10.0-MILESTONE-AUDIT.md). recense ingests real events across both Gmail inboxes, decides *what changed* about a tracked entity as a belief, and emits domain-neutral action proposals a separate system of record confirms — the context-layer-proposes / system-of-record-confirms split proven end-to-end (one continuous 8-stage E2E test). Multi-inbox ingest hardening incl. 7-round adversarially-verified hidden-content stripping (62); offline intent classification with zero net-new LLM calls (63); confident-or-null entity resolution (64); belief-gated status drift on the unmodified PE-gate machinery + provenance-distinctness redesign, knob dark pending founder gate (65); `ActionProposalSink` + `/v1/proposals` with the D-43-for-proposals sentinel (66); reference consumer adapter (67); Telegram belief-kind HITL (68); eval-first entity-anchored ambient recall — 2 knobs live, 2 honest nulls per D-09 (69). Audit `tech_debt`, zero critical blockers, 30/30 requirements.
+- 🚧 **v11.0 Graph-Aware Recall** — Phases 70–75 (roadmapped 2026-09-02; Phases 70–71 shipped 2026-09-02) — spec: [docs/superpowers/specs/2026-08-26-graph-aware-recall-design.md](../docs/superpowers/specs/2026-08-26-graph-aware-recall-design.md); phase details below, "Phase Details — v11.0 Graph-Aware Recall". The graph stops being decoration at query time: a truncated personalized-PageRank spreading-activation core with path provenance becomes a third retrieval channel (after cosine and entity anchoring), first ambient, then `recense recall`, then rendering, then write-side usage learning and validated bridge insights. Phases 70–71 ran as superpowers spec/plan work outside GSD (branch `activation-core`, merged `c2729dd`; ambient channel flipped on `892903e`) and are recorded here retroactively.
 
 ## Phases
 
@@ -309,6 +310,15 @@ Plans:
 
 - [x] 28-03-PLAN.md — CorpusPromoter: mass-gate+noise filter, centroid-cosine+mass-direction ladder, eager doc stubs, CLI + sleep-pass wiring; BLOCKING CORPUS-05 snapshot test (CORPUS-02/03/05)
 - [x] 28-04-PLAN.md — /graph?type=doc + corpus.js link-kind styling (containment solid/directed, reference faint/dashed); hero-verify legible forest (CORPUS-04)
+
+### 🚧 v11.0 Graph-Aware Recall (Phases 70–75)
+
+- [x] Phase 70: Bridge Eval Suite — completed 2026-09-02 (superpowers; merged `e1fcd69`)
+- [x] Phase 71: Activation Core + Ambient Associative Channel — completed 2026-09-02 (superpowers; merged `c2729dd`, flipped on `892903e`)
+- [ ] Phase 72: `recense recall` Integration — spread replaces the one-hop fallback, evidence paths, connections section
+- [ ] Phase 73: Rendering — ambient via-paths, multi-hop viz traces
+- [ ] Phase 74: Usage Learning — exposure/outcome logging, shadow mode, chronological eval, then live
+- [ ] Phase 75: Bridge-Insight Candidates + Validated Promotion (gated on measuring the existing reflector)
 
 ## Phase Details — v6.0 Project Onboarding — SHIPPED 2026-06-22
 
@@ -817,6 +827,54 @@ Plans:
 ## Phase Details — v10.0 Action Proposals — SHIPPED 2026-08-09
 
 Full phase details archived: [milestones/v10.0-ROADMAP.md](milestones/v10.0-ROADMAP.md) · audit: [milestones/v10.0-MILESTONE-AUDIT.md](milestones/v10.0-MILESTONE-AUDIT.md) · requirements: [milestones/v10.0-REQUIREMENTS.md](milestones/v10.0-REQUIREMENTS.md)
+
+## Phase Details — v11.0 Graph-Aware Recall
+
+Spec of record: `docs/superpowers/specs/2026-08-26-graph-aware-recall-design.md` (§6 phasing maps 1:1 onto Phases 70–75). Hard constraints carried from the spec: no query-time LLM calls in the ambient path; recall stays read-only; every new behavior ships behind a knob whose off value is byte-identical to today; bridge evals are LLM-free and cost nothing to run.
+
+### Phase 70: Bridge Eval Suite ✅ COMPLETE (2026-09-02)
+
+**Goal**: Prove there is a graph channel worth building and know its ceiling before writing the core. Mine bridge probes (seed → bridge → terminal, terminal orthogonal to the query) from a read-only graph snapshot, run pluggable arms (cosine, hybrid, typed, exact PPR), record the baseline.
+**Artifacts**: `src/eval/bridge-*.ts`, `src/eval/ppr-reference.ts`, `scripts/eval/bridge-harness.cjs`, `scripts/eval/results/bridge-af2a5f5.json` (baseline: hybrid r@10 0.000 on all 60 probes; ppr-exact 0.617 oracle / 0.150 e2e).
+**Landed as**: superpowers spec work, merged `e1fcd69`.
+
+### Phase 71: Activation Core + Ambient Associative Channel ✅ COMPLETE (2026-09-02)
+
+**Goal**: The spreading-activation core (spec §3.1–3.3) with path provenance, proven against Phase 70, wired into `retrieveRanked` as an opt-in associative channel and flipped on for ambient recall.
+**Plan**: `docs/superpowers/plans/2026-09-02-activation-core.md` (Tasks 1–7; Fable architected/reviewed, Codex executed).
+**Result**: oracle spread-2hop/3hop r@10 0.583/0.550 vs the 0.617 exact-PPR ceiling; e2e 0.233/0.217 vs 0.150 baseline; `path_valid_rate` 1.0. Tuned defaults damping 0.6 / floor 0.005 (the absolute floor was the dominant knob; the plan's 0.02 collapsed 3-hop r@10 to 0.233). Ambient channel on at 2 hops, scope-guarded (associative rows obey WR-03 like hop lines), 0.98 s live including the embed call; `overrides.spreadHops: 0` in settings.json is the per-machine off switch. bm25 fusion sanity check on the bridge set: no appreciable gain, stays dark.
+**Landed as**: branch `activation-core` → merge `c2729dd`; flip `892903e`; typed override `a2a39b3`. Results: `scripts/eval/results/bridge-spread-7797307.json`, `bridge-fefa66a.json`.
+
+### Phase 72: `recense recall` Integration
+
+**Goal**: Explicit recall uses the spread core at 3 hops in place of the single-hop typed branch and the one-hop schema fallback, returns evidence paths built from `PathStep` provenance, and the composed answer gains a "connections" section.
+**Depends on**: Phase 71 (core, reader, `PathStep` with `dir`, harness arms all reusable as-is)
+**Success Criteria** (what must be TRUE):
+  1. `recense recall` reaches bridge terminals the current fallback cannot, measured on the Phase 70 harness in e2e mode with a recall-side arm
+  2. `--evidence` returns real traversed edges for every associative fact (path_valid_rate 1.0), verifiable without grep
+  3. No regression on the existing recall eval set; the 3-hop vs 2-hop choice for recall is made on evidence — mine a small 3-hop bridge probe set with the Phase 70 miner first (the Phase 71 sweep favored 2 hops on every row, an artifact of 2-hop probes)
+  4. Zero new LLM calls on the retrieval side; composition unchanged in cost
+**Plans**: TBD (`/gsd:plan-phase 72`)
+
+### Phase 73: Rendering
+
+**Goal**: Associative facts render their strongest real path compactly in the ambient block (`↳ via <label> —runs_on→ <label>`) instead of a bare activation in the score slot, and the viz receives multi-hop traces.
+**Depends on**: Phase 71 (ambient rows already carry real activations; `PathStep.dir` exists for rendering direction)
+**Success Criteria**: via-paths within existing char budgets and `AMBIENT_K`; activation values rendered are real (WR-02); multi-hop trace payload honored by the viz without breaking the 1-hop sink contract.
+**Plans**: TBD
+
+### Phase 74: Usage Learning
+
+**Goal**: The graph learns which connections matter, on the write side (spec §3.5): `w_usage` overlay on `edge`, gated on validated use (facts cited in a composed recall answer), saturating update with decay, shadow mode first with a chronologically split eval before it touches live ranking.
+**Depends on**: Phase 72 (validated-use signal comes from composed recall answers)
+**Success Criteria**: exposures and outcomes logged; shadow rankings compared offline; live only after no popularity-entrenchment regression on the chronological split.
+**Plans**: TBD
+
+### Phase 75: Bridge-Insight Candidates + Validated Promotion
+
+**Goal**: Sleep-pass bridge detector flags nodes spanning ≥2 weakly connected schemas/scopes; insight nodes are minted only after semantic validation, novelty and contradiction checks, with `derived_from` provenance so they surface through the recall core with no further work (spec §3.6).
+**Depends on**: Phase 71; **precondition**: measure the existing insight reflector's output quality first — do not build a second generator before evaluating the first.
+**Plans**: TBD
 
 ## Backlog
 

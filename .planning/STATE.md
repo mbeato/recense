@@ -22,7 +22,7 @@ See: .planning/PROJECT.md (updated 2026-08-09 — v10.0 Action Proposals shipped
 
 **Core value:** The memory learns and stays correct over time — forms generalizations the user never stated, and updates the right belief in place when a fact changes.
 
-**Current focus:** Planning next milestone (v10.0 shipped 2026-08-09)
+**Current focus:** v11.0 Graph-Aware Recall — Phases 70–71 shipped 2026-09-02 (superpowers spec/plan flow); next is Phase 72 `recense recall` integration
 
 **v9.0 Key research grounding (June-2026 deep-research pass — historical, still load-bearing for RESOLVE/DRIFT reuse):**
 
@@ -41,10 +41,10 @@ See: .planning/PROJECT.md (updated 2026-08-09 — v10.0 Action Proposals shipped
 
 ## Current Position
 
-Phase: Milestone v10.0 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-08-09 — Milestone v10.0 completed and archived
+Phase: 72 — `recense recall` Integration (v11.0 Graph-Aware Recall)
+Plan: — (not planned yet)
+Status: Phases 70–71 complete; Phase 72 ready for /gsd:plan-phase
+Last activity: 2026-09-02 — Phase 71 activation core merged (c2729dd), ambient associative channel flipped on (892903e)
 
 ## Performance Metrics
 
@@ -178,6 +178,8 @@ Last activity: 2026-08-09 — Milestone v10.0 completed and archived
 | GATE-03 | 50 |
 
 ### Roadmap Evolution
+
+- 2026-09-02: v11.0 Graph-Aware Recall milestone added (Phases 70–75, mapping the spec's §6 phasing). Phases 70–71 were executed as superpowers spec/plan work outside GSD and recorded retroactively; 72–75 not yet planned.
 
 - **Phase 69 added 2026-08-02:** Retrieval Upgrade — Entity-Anchored Ambient Recall. Promoted from `SEED-005`, which was written from a live transcript audit (1,942 real user turns / 302 sessions / 5 projects, `scripts/eval/recall-audit.py`) rather than from intuition. Measured drivers: ambient recall is flat cosine top-5 with no graph hop on the injected path (`retrieveRanked` with `queryText=undefined`); 49% of scoped injected lines are foreign-project and outscore own-project lines (0.541 vs 0.530); proper-noun queries whiff (the "contract with vtx" class was asked twice and whiffed twice with the facts present); the 1-hop edges `buildHonestOneHopTrace` computes are handed to the viz and discarded before injection. Placed AFTER Phase 64 deliberately — 64's SC-1 builds the broadened candidate generator (exact/entity-keyed ∪ BM25 ∪ dense over RECON) that this phase's entity anchoring should reuse rather than duplicate into a second divergent generator. Carries an explicit **D-S1 reversal** (scope becomes a retrieval signal) that must be recorded in the phase CONTEXT. Gated on a 58-prompt memory-shaped eval set from real sessions. (Same SDK `phase.add` 999-sentinel misnumber as 52/54/56/57 — it matched `999.3-MIGRATION.md` in Phase 24's free text; manually corrected to 69 and the misplaced end-of-file entry relocated into the v10.0 phase list.)
 - **v10.0 roadmapped 2026-07-29:** 7 phases (62–68), 30 requirements, 100% coverage. Promoted from ROADMAP backlog B-01. Research proposed 8 phases; "Proposal Schema & Sink Foundation" folded into Phase 66 (no REQ-IDs of its own; the table shape isn't load-bearing until Phase 66's own emission/HTTP workstreams need it — see ROADMAP.md rationale). Dependency chain: 62 → 63 (EMAIL-03 hard prereq for CLASSIFY-01) → 64 → 65 → 66 → {67, 68} parallel. Two live-code-verified constraints carried in as phase-level notes: Gmail query-scoping is backfill-only (Phase 62), and the `session_id:'ingest:gmail'` provenance collapse blocks the differentiator until redesigned (Phase 65). EMIT-05's "D-43-for-proposals" sentinel is the milestone's largest correctness risk, closed structurally in Phase 66, not just documented.
