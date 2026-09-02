@@ -20,7 +20,7 @@ import Database from 'better-sqlite3';
 import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
 import type { NodeRow } from '../lib/types';
-import { CandidateRetriever, cosineSimF32 } from './topk';
+import { CandidateRetriever, cosineSimF32, rrfFuse } from './topk';
 import { StrengthDecayManager } from '../strength/decay';
 import { SemanticStore } from '../db/semantic-store';
 import { AllocationGate } from '../gate/allocation-gate';
@@ -28,6 +28,8 @@ import type { ActivationTraceSink } from '../viz/activation-sink';
 import { NoopActivationTraceSink } from '../viz/activation-sink';
 import { buildHonestOneHopTrace, projectHopsForSink } from './honest-trace';
 import { newId } from '../lib/hash';
+import { prepareSeeds, spreadActivation, spreadParamsFromConfig } from './activation';
+import { SqliteSpreadReader } from './spread-reader';
 
 export type RetrieveStatus = 'ok' | 'deleted' | 'unreachable';
 
@@ -89,6 +91,9 @@ export class RetrievalEngine {
   // corpus (no consolidation_event rows) → treated as undated, never demoted on missing data.
   // Indexed: idx_consolidation_event_node + idx_consolidation_event_episode (v5 schema).
   private readonly stmtLatestSupportTs: Database.Statement;
+
+  private readonly spreadReader: SqliteSpreadReader;
+  private readonly stmtSupportCounts: Database.Statement;
 
   constructor(
     db: Database.Database,
@@ -182,6 +187,14 @@ export class RetrievalEngine {
       JOIN episode e ON ce.episode_id = e.id
       WHERE ce.node_id IN (SELECT value FROM json_each(?))
       GROUP BY ce.node_id
+    `);
+
+    this.spreadReader = new SqliteSpreadReader(db);
+    this.stmtSupportCounts = db.prepare(`
+      SELECT node_id, COUNT(*) AS c
+      FROM consolidation_event
+      WHERE node_id IN (SELECT value FROM json_each(?))
+      GROUP BY node_id
     `);
   }
 
@@ -443,6 +456,8 @@ export class RetrievalEngine {
       vizFloor?: number;
       anchoredIds?: string[];
       hopCollector?: (hops: Array<{ node_id: string; src: string; rel: string; score: null; hop: 1 }>) => void;
+      /** Graph-aware recall spec §3.3 associative channel; 0/absent = byte-identical legacy behavior. */
+      spreadHops?: number;
     },
   ): Array<{ id: string; value: string; score: number }> {
     // LEVER 1: route through hybridTopk when queryText is supplied; else pure cosine topk.
@@ -591,6 +606,51 @@ export class RetrievalEngine {
       finalResults = annotated;
     } else {
       finalResults = unioned;
+    }
+
+    // ── Graph-aware associative channel (spec §3.3) — additive, dark by default ──
+    // spreadHops absent/0 ⇒ this block is skipped entirely (byte-identity, D-29 discipline).
+    if (opts?.spreadHops && opts.spreadHops > 0 && finalResults.length > 0) {
+      try {
+        const seedIds = finalResults.map(r => r.id);
+        const counts = new Map<string, number>(
+          (this.stmtSupportCounts.all(JSON.stringify(seedIds)) as Array<{ node_id: string; c: number }>)
+            .map(r => [r.node_id, r.c]),
+        );
+        const seeds = prepareSeeds(
+          finalResults.map(r => {
+            const n = this.store.getNode(r.id);
+            return { id: r.id, score: r.score, type: n?.type };
+          }),
+          counts,
+          this.config.spreadDocSeedWeight,
+        );
+        const activated = spreadActivation(
+          this.spreadReader,
+          seeds,
+          spreadParamsFromConfig(this.config, opts.spreadHops),
+        );
+        const present = new Set(finalResults.map(r => r.id));
+        const assocRanked = Array.from(activated.entries())
+          .filter(([id]) => !present.has(id) && !staleEntityIds.has(id))
+          .sort((a, b) => (b[1].activation - a[1].activation) || (a[0] < b[0] ? -1 : 1));
+        const assocRows: Array<{ id: string; value: string; score: number }> = [];
+        for (const [id, node] of assocRanked) {
+          if (assocRows.length >= this.config.spreadAssocSlotCap) break;
+          const row = this.store.getNode(id);
+          if (!row || row.tombstoned === 1) continue;  // graph arrival exempts nothing (B2 discipline)
+          assocRows.push({ id, value: row.value, score: Math.min(1, node.activation) });
+        }
+        if (assocRows.length > 0) {
+          // RRF-fuse the two orderings (spec §3.3), keep k rows, assoc contribution already capped.
+          const fusedIds = rrfFuse([finalResults, assocRows], 60, k + assocRows.length).map(f => f.id);
+          const byId = new Map<string, { id: string; value: string; score: number }>();
+          for (const r of [...finalResults, ...assocRows]) if (!byId.has(r.id)) byId.set(r.id, r);
+          finalResults = fusedIds.map(id => byId.get(id)!).filter(Boolean).slice(0, k);
+        }
+      } catch {
+        // fail-open: associative channel must never break retrieval (spec §3.1)
+      }
     }
 
     // ── Trace emission + hop hand-off (D-97 guarded, mirrors retrieveCueless ~L279-300) ──
