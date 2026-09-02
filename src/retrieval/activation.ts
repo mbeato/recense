@@ -40,7 +40,8 @@ export interface SpreadReader {
   liveIds(ids: string[]): Set<string>;
 }
 
-export interface PathStep { src: string; rel: string; dst: string }
+/** One traversal step: src→dst is walk order; dir says whether the stored edge is src→dst ('fwd') or dst→src ('rev'). */
+export interface PathStep { src: string; rel: string; dst: string; dir: 'fwd' | 'rev' }
 export interface ActivatedNode { activation: number; hopDepth: number; paths: PathStep[][] }
 
 export function relWeight(params: SpreadParams, kind: string, rel: string, dir: 'fwd' | 'rev'): number {
@@ -100,15 +101,15 @@ export function spreadActivation(
 
     // Directed eligible out-lists for this frontier (fwd along src→dst, rev along dst→src).
     const outLists = new Map<string, Array<{ to: string; w: number; step: PathStep }>>();
-    const pushOut = (from: string, to: string, w: number, rel: string) => {
+    const pushOut = (from: string, to: string, w: number, rel: string, dir: 'fwd' | 'rev') => {
       if (w <= 0) return;
       let l = outLists.get(from);
       if (!l) { l = []; outLists.set(from, l); }
-      l.push({ to, w, step: { src: from, rel, dst: to } });
+      l.push({ to, w, step: { src: from, rel, dst: to, dir } });
     };
     for (const e of edges) {
-      if (frontier.has(e.src)) pushOut(e.src, e.dst, relWeight(params, e.kind, e.rel, 'fwd') * e.w, e.rel);
-      if (frontier.has(e.dst)) pushOut(e.dst, e.src, relWeight(params, e.kind, e.rel, 'rev') * e.w, e.rel);
+      if (frontier.has(e.src)) pushOut(e.src, e.dst, relWeight(params, e.kind, e.rel, 'fwd') * e.w, e.rel, 'fwd');
+      if (frontier.has(e.dst)) pushOut(e.dst, e.src, relWeight(params, e.kind, e.rel, 'rev') * e.w, e.rel, 'rev');
     }
 
     // One batched liveness check for every transfer target this hop.

@@ -27,6 +27,13 @@ describe('scoreProbe', () => {
     expect(scoreProbe({ rankedIds: ['term'], paths: good, nodesExpanded: 1, latencyMs: 1 }, 'term', 'bridge', edges).path_valid).toBe(true);
     expect(scoreProbe({ rankedIds: ['term'], paths: bad, nodesExpanded: 1, latencyMs: 1 }, 'term', 'bridge', edges).path_valid).toBe(false);
   });
+  it('honors walk direction: a rev step is valid when the stored edge runs dst→src', () => {
+    // walked term ← bridge ← seed, i.e. against both stored edges
+    const rev = new Map([['seed', [{ src: 'term', rel: 'extends', dst: 'bridge', dir: 'rev' as const }, { src: 'bridge', rel: 'uses', dst: 'seed', dir: 'rev' as const }]]]);
+    const wrongDir = new Map([['seed', [{ src: 'term', rel: 'extends', dst: 'bridge', dir: 'fwd' as const }]]]);
+    expect(scoreProbe({ rankedIds: ['seed'], paths: rev, nodesExpanded: 1, latencyMs: 1 }, 'seed', 'bridge', edges).path_valid).toBe(true);
+    expect(scoreProbe({ rankedIds: ['seed'], paths: wrongDir, nodesExpanded: 1, latencyMs: 1 }, 'seed', 'bridge', edges).path_valid).toBe(false);
+  });
 });
 
 describe('aggregate / percentile', () => {

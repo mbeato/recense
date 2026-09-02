@@ -51,7 +51,7 @@ describe('spreadActivation', () => {
     expect(b.activation).toBeCloseTo(0.5);        // 1 × damping, single eligible edge = full share
     expect(c.activation).toBeCloseTo(0.25);       // second hop halves again
     expect(c.hopDepth).toBe(2);
-    expect(c.paths[0]).toEqual([{ src: 'A', rel: 'depends_on', dst: 'B' }, { src: 'B', rel: 'depends_on', dst: 'C' }]);
+    expect(c.paths[0]).toEqual([{ src: 'A', rel: 'depends_on', dst: 'B', dir: 'fwd' }, { src: 'B', rel: 'depends_on', dst: 'C', dir: 'fwd' }]);
     expect(out.has('A')).toBe(false);             // seeds are never in the output
   });
 
@@ -80,6 +80,7 @@ describe('spreadActivation', () => {
     ]);
     const out = spreadActivation(r, new Map([['A', 1]]), { ...P, hops: 1 });
     expect(out.get('B')!.activation).toBeCloseTo(0.5);  // sole eligible edge → full damped share
+    expect(out.get('B')!.paths[0]).toEqual([{ src: 'A', rel: 'uses', dst: 'B', dir: 'rev' }]); // walk order, stored B→A
     expect(out.has('D')).toBe(false);
   });
 
@@ -88,7 +89,7 @@ describe('spreadActivation', () => {
     const out = spreadActivation(r, new Map([['A', 1]]), P);
     expect(out.has('A')).toBe(false);
     // B's mass at hop 2 must not have bounced A→B→A→B; C exists via A→B→C only
-    expect(out.get('C')!.paths[0]).toEqual([{ src: 'A', rel: 'depends_on', dst: 'B' }, { src: 'B', rel: 'depends_on', dst: 'C' }]);
+    expect(out.get('C')!.paths[0]).toEqual([{ src: 'A', rel: 'depends_on', dst: 'B', dir: 'fwd' }, { src: 'B', rel: 'depends_on', dst: 'C', dir: 'fwd' }]);
   });
 
   it('drops sub-floor transfers and prunes the frontier after aggregation', () => {
