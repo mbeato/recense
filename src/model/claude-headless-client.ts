@@ -174,6 +174,7 @@ export function buildHeadlessArgs(model: string, systemPrompt: string): string[]
       '--system-prompt', systemPrompt,
       '--tools', 'none',
       '--strict-mcp-config',
+      '--no-session-persistence',
     ];
   }
   return [
@@ -185,6 +186,7 @@ export function buildHeadlessArgs(model: string, systemPrompt: string): string[]
     '--tools', 'none',
     '--strict-mcp-config',
     '--exclude-dynamic-system-prompt-sections',
+    '--no-session-persistence',
   ];
 }
 
@@ -227,6 +229,7 @@ export function buildSurveyHeadlessArgs(model: string, systemPrompt: string, sur
     '--permission-mode', 'bypassPermissions', // NEW — non-interactive; no stdin for prompts
     '--strict-mcp-config',
     '--exclude-dynamic-system-prompt-sections',
+    '--no-session-persistence',
   ];
 }
 

@@ -331,6 +331,20 @@ describe('buildHeadlessArgs', () => {
   });
 });
 
+// ── Transcript hygiene: every headless spawn is non-persistent ─────────────
+
+describe('--no-session-persistence', () => {
+  afterEach(() => { delete process.env['RECENSE_HEADLESS_BARE']; });
+
+  it('is on the default, --bare, and survey arg lists', () => {
+    delete process.env['RECENSE_HEADLESS_BARE'];
+    expect(buildHeadlessArgs('m', 'sys')).toContain('--no-session-persistence');
+    process.env['RECENSE_HEADLESS_BARE'] = '1';
+    expect(buildHeadlessArgs('m', 'sys')).toContain('--no-session-persistence');
+    expect(buildSurveyHeadlessArgs('m', 'sys', '/d')).toContain('--no-session-persistence');
+  });
+});
+
 // ── Survey transport: buildSurveyHeadlessArgs ───────────────────────────────
 
 describe('buildSurveyHeadlessArgs', () => {
