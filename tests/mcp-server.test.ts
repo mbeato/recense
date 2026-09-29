@@ -20,7 +20,7 @@
  * verification handle could not see the server's writes) and override
  * RECENSE_LOCK_PATH so lock acquisition is hermetic per test dir.
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Database from 'better-sqlite3';
@@ -421,17 +421,21 @@ describe('mcp-server memory_add (episodic-only write)', () => {
     expect(validateOrigin('asserted_by_user')).toBe('asserted_by_user');
   });
 
-  it('returns isError when the lock is held, and the server keeps running', async () => {
-    // Hold the lock as a live process (our own PID) — acquireLockWithRetry must
-    // give up after its bounded retries and the handler must NOT process.exit.
+  it('still stores the episode when the lock is held (sleep pass running), and leaves the lock alone', async () => {
+    // Hold the lock as a live process (our own PID) — acquireLockWithRetry gives up
+    // after its bounded retries; add must append lock-free instead of rejecting.
     writeFileSync(lockPath, String(process.pid));
     const before = countRows(dbPath, 'episode');
     const result = await client.callTool({
       name: 'memory_add',
-      arguments: { content: 'should not be stored' },
+      arguments: { content: 'written during consolidation' },
     });
-    expect(result.isError).toBe(true);
-    expect(countRows(dbPath, 'episode')).toBe(before); // nothing written
+    expect(result.isError ?? false).toBe(false);
+    expect((result.structuredContent as { status: string }).status).toBe('queued');
+    expect(countRows(dbPath, 'episode')).toBe(before + 1);
+    expect(newestEpisode(dbPath)!.content).toBe('written during consolidation');
+    // The holder's lock is untouched (add never acquired it, so never releases it)
+    expect(readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
     // Server is still alive and answering requests (no process.exit)
     const { tools } = await client.listTools();
     expect(tools.length).toBe(3);

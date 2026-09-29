@@ -15,7 +15,8 @@
  * Threat mitigations:
  *  - T-12-01: validateOrigin clamp survives extraction — 'inferred'/unknown → 'observed'.
  *  - T-12-02: add/ask acquire acquireLockWithRetry and release in finally; sleep pass
- *    stays sole graph writer (episodic-only recordEvent, no graph mutation).
+ *    stays sole graph writer (episodic-only recordEvent, no graph mutation). add falls
+ *    back to a lock-free episode append when a sleep pass holds the lock.
  */
 import { appendFileSync } from 'fs';
 import { randomUUID } from 'crypto';
@@ -462,12 +463,14 @@ export function wireMemoryEngine(
     // everything else falls back to the engine instance default (opts.source).
     const source = validateSource(rawSource, opts.source);
 
-    // Single-writer lock per call (T-12-02): coexists with the hourly sleep pass
-    // and the always-on watcher. Lock-fail throws MemoryBusyError — callers surface
-    // an appropriate busy response for their transport.
-    if (!(await acquireLockWithRetry())) {
-      throw new MemoryBusyError();
-    }
+    // Single-writer lock per call (T-12-02) when it is free. If the sleep pass still
+    // holds it after the short retry, append anyway instead of rejecting: an episode
+    // append never touches the graph, the Stop and turn-capture hooks already append
+    // lock-free while a pass runs, and consolidation marks episodes consolidated per id,
+    // so a mid-pass insert simply lands in the next pass. Only a SQLite-level busy on
+    // that lock-free append (e.g. a long VACUUM) surfaces as MemoryBusyError, so the
+    // caller is told to retry rather than the write being dropped.
+    const locked = await acquireLockWithRetry();
     try {
       // Episodic path ONLY (MCP-03): recordEvent → gate.score → episode append.
       // No graph node is ever created or mutated here — the sleep pass remains
@@ -485,8 +488,13 @@ export function wireMemoryEngine(
         status: 'queued',
         message: 'stored as episode; becomes searchable after the next consolidation pass (runs hourly)',
       };
+    } catch (err) {
+      if (!locked && String((err as { code?: unknown }).code ?? '').startsWith('SQLITE_BUSY')) {
+        throw new MemoryBusyError();
+      }
+      throw err;
     } finally {
-      releaseLock();
+      if (locked) releaseLock();
     }
   }
 
