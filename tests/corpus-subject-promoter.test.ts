@@ -553,6 +553,51 @@ describe('SubjectPromoter — relatedSchemaIndexes index mapping (Phase 39.2 roo
 });
 
 // ---------------------------------------------------------------------------
+// Proposal-input cache: skip the LLM call when the schema set is unchanged
+// ---------------------------------------------------------------------------
+
+describe('SubjectPromoter — proposal-input cache', () => {
+  it('skips the proposal on an unchanged schema set, re-proposes when the set changes, and force bypasses it', async () => {
+    const { db, store, clock } = makeDb();
+    const scope = 'cache-scope';
+    seedScopeWithSchema(db, store, scope, 'schema-a', 'Alpha Topic', 5);
+    // Subject name never matches the schema label, so the CREATE gate stays open every pass
+    const provider = makeMockProvider(JSON.stringify([{ name: 'Grouped Area', relatedSchemaIndexes: [0] }]));
+    const promoter = new SubjectPromoter(db, store, clock, provider, DEFAULT_CONFIG);
+
+    await promoter.promoteSubjects(scope);
+    expect(provider.callCount).toBe(1);
+
+    // Same schema set, more members (mass grows every pass) -> no new call
+    seedNode(db, store, 'schema-a-extra', 'Alpha Topic fact extra', scope);
+    abstracts(db, 'schema-a', 'schema-a-extra');
+    const skipped = await promoter.promoteSubjects(scope);
+    expect(provider.callCount).toBe(1);
+    expect(skipped.proposed).toHaveLength(0);
+
+    // A new schema enters the set -> re-proposed
+    seedScopeWithSchema(db, store, scope, 'schema-b', 'Beta Topic', 5);
+    await promoter.promoteSubjects(scope);
+    expect(provider.callCount).toBe(2);
+
+    // force bypasses the cache
+    await promoter.promoteSubjects(scope, { force: true });
+    expect(provider.callCount).toBe(3);
+  });
+
+  it('does not cache a failed proposal', async () => {
+    const { db, store, clock } = makeDb();
+    const scope = 'cache-fail-scope';
+    seedScopeWithSchema(db, store, scope, 'schema-f', 'Fail Topic', 5);
+    const provider = makeMockProvider('not json');
+    const promoter = new SubjectPromoter(db, store, clock, provider, DEFAULT_CONFIG);
+    await expect(promoter.promoteSubjects(scope)).rejects.toThrow();
+    await expect(promoter.promoteSubjects(scope)).rejects.toThrow();
+    expect(provider.callCount).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Exhaust-theme gate (39.1 residual, closed 2026-07-01)
 // ---------------------------------------------------------------------------
 

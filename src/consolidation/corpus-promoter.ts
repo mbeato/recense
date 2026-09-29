@@ -36,7 +36,7 @@ import type { Clock } from '../lib/clock';
 import type { EngineConfig } from '../lib/config';
 import type { SemanticStore } from '../db/semantic-store';
 import type { ModelProvider } from '../model/provider';
-import { newId } from '../lib/hash';
+import { newId, sha256 } from '../lib/hash';
 import { GLOBAL_SCOPE } from '../lib/scope';
 
 // ---------------------------------------------------------------------------
@@ -928,6 +928,20 @@ export class SubjectPromoter {
       return emptyResult;
     }
 
+    // Proposal-input cache: the CREATE gate compares schema labels to subject slugs, but
+    // subjects are LLM-named groupings of schemas, so it stays open on every pass and the
+    // proposal was re-issued hourly per scope with nothing new to say. Skip the call when
+    // the proposal's schema set (ids + labels; member counts excluded, they grow every
+    // pass) is unchanged since the last successful proposal. The subject stubs and
+    // subject-schema-ids meta from that proposal are still in place. force bypasses it.
+    const inputHashKey = `subject-proposal-input-hash:${scope}`;
+    const inputHash = sha256(
+      schemas.map(s => `${s.schemaId}\t${s.schemaLabel}`).sort().join('\n'),
+    );
+    if (!opts?.force && this.store.getMeta(inputHashKey) === inputHash) {
+      return emptyResult;
+    }
+
     // ── Phase B: Stage-2 subject-proposal LLM call ─────────────────────────
 
     // Build the subject-names list from existing slugs (strip the 'scope:' prefix)
@@ -970,6 +984,7 @@ Output ONLY valid JSON (no markdown, no explanation):
     } catch {
       throw new Error(`SubjectPromoter: subject-proposal JSON parse failed for scope "${scope}": ${md.slice(0, 200)}`);
     }
+    this.store.setMeta(inputHashKey, inputHash);
 
     // Validate and normalize each proposed subject
     const MAX_NAME_LEN = 200; // Security V5 — length-bound subject names
